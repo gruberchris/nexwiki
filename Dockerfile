@@ -26,7 +26,7 @@ FROM golang:1.26-alpine AS backend-builder
 WORKDIR /app
 
 # Initialize Go environment
-COPY go.mod ./
+COPY go.mod go.sum ./
 
 # Copy built frontend assets from Stage 1 into position for embedding
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist

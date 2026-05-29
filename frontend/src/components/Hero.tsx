@@ -22,12 +22,20 @@ interface HeroProps {
 
 export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, wikiName }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [ftsQuery, setFtsQuery] = useState('');
 
   // Filter articles based on home search input
   const filteredArticles = articles.filter(art =>
     art.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
     art.slug.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const handleFtsSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (ftsQuery.trim()) {
+      onNavigate(`search?q=${encodeURIComponent(ftsQuery.trim())}`);
+    }
+  };
 
   return (
     <div className="flex-1 overflow-y-auto h-screen bg-slate-50 dark:bg-slate-950/40 p-8 sm:p-12 md:p-16 selection:bg-indigo-500 selection:text-white transition-colors">
@@ -56,6 +64,41 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
               Wiki Pages
             </span>
           </div>
+        </div>
+
+        {/* Prominent Center Search Bar (Google-Style) */}
+        <div className="max-w-2xl mx-auto py-2 select-none">
+          <form onSubmit={handleFtsSearch} className="space-y-4">
+            <div className="relative group">
+              <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 to-violet-600 dark:from-indigo-600 dark:to-emerald-500 rounded-2xl blur opacity-15 group-hover:opacity-25 transition duration-300"></div>
+              <div className="relative">
+                <Search size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 group-focus-within:text-indigo-500 dark:group-focus-within:text-emerald-400 transition-colors" />
+                <input
+                  type="text"
+                  placeholder={`Search ${wikiName} for articles, keywords, or topics...`}
+                  value={ftsQuery}
+                  onChange={(e) => setFtsQuery(e.target.value)}
+                  className="w-full pl-12 pr-4 py-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-emerald-500 text-sm shadow-md text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 transition-all font-medium"
+                />
+              </div>
+            </div>
+            
+            <div className="flex justify-center gap-3">
+              <button
+                type="submit"
+                className="py-2.5 px-6 rounded-xl bg-slate-200/60 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white font-bold text-xs shadow-sm hover:scale-[1.01] active:scale-95 transition-all select-none border border-slate-200/30 dark:border-slate-800/40"
+              >
+                Search {wikiName}
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('new?title=Markdown%20Playground')}
+                className="py-2.5 px-6 rounded-xl bg-slate-200/60 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white font-bold text-xs shadow-sm hover:scale-[1.01] active:scale-95 transition-all select-none border border-slate-200/30 dark:border-slate-800/40"
+              >
+                Draft Sandbox
+              </button>
+            </div>
+          </form>
         </div>
 
         {/* Dashboard Quick Action Cards */}

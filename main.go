@@ -8,16 +8,20 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"nexwiki/server"
 	"os"
 	"path/filepath"
 	"strings"
-	"nexwiki/server"
 )
 
 //go:embed frontend/dist/*
 var embeddedFrontend embed.FS
 
 func main() {
+	// Force all log statements to print exclusively to Stderr!
+	// This prevents logs from corrupting the Stdio MCP JSON-RPC communication on Stdout.
+	log.SetOutput(os.Stderr)
+
 	// Setup command-line configurations
 	port := flag.String("port", "8080", "Port to run the web server on")
 	dataDir := flag.String("data", "./data", "Directory to persist wiki markdown files and assets")
@@ -43,11 +47,16 @@ func main() {
 	// Initialize server instance with configured name
 	srv := server.NewServer(storage, name)
 
+	// Spin up the stdio MCP JSON-RPC server in a background goroutine!
+	go srv.StartMCPServer()
+
 	// Create New Mux Router (Go 1.22+ supports methods and wildcards out-of-the-box!)
 	mux := http.NewServeMux()
 
 	// Register API endpoints
+	mux.HandleFunc("/api/mcp", srv.HandleStreamableHTTP)
 	mux.HandleFunc("GET /api/config", srv.HandleGetConfig)
+	mux.HandleFunc("GET /api/search", srv.HandleSearchArticles)
 	mux.HandleFunc("GET /api/articles", srv.HandleListArticles)
 	mux.HandleFunc("GET /api/articles/{slug}", srv.HandleGetArticle)
 	mux.HandleFunc("POST /api/articles", srv.HandleCreateArticle)
@@ -85,7 +94,7 @@ func main() {
 
 	addr := fmt.Sprintf(":%s", *port)
 	log.Printf("NexWiki web server is running on http://localhost%s", addr)
-	
+
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatalf("Fatal: server exited: %v", err)
 	}

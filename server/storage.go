@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/blevesearch/bleve/v2"
 )
 
 // Article represents a wiki article page, containing metadata in a front matter block and content body.
@@ -21,15 +23,17 @@ type Article struct {
 
 // Storage manages persistent article files and uploaded assets on disk.
 type Storage struct {
-	DataDir    string
-	ArticleDir string
-	AssetDir   string
+	DataDir     string
+	ArticleDir  string
+	AssetDir    string
+	SearchIndex bleve.Index
 }
 
 // NewStorage initializes and returns a Storage manager, ensuring required subdirectories exist.
 func NewStorage(dataDir string) (*Storage, error) {
 	articleDir := filepath.Join(dataDir, "articles")
 	assetDir := filepath.Join(dataDir, "assets")
+	indexPath := filepath.Join(dataDir, "search.bleve")
 
 	if err := os.MkdirAll(articleDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create article directory: %w", err)
@@ -38,15 +42,39 @@ func NewStorage(dataDir string) (*Storage, error) {
 		return nil, fmt.Errorf("failed to create asset directory: %w", err)
 	}
 
+	// Open or create Bleve index
+	var index bleve.Index
+	var err error
+	if _, err = os.Stat(indexPath); os.IsNotExist(err) {
+		mapping := bleve.NewIndexMapping()
+		index, err = bleve.New(indexPath, mapping)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create search index: %w", err)
+		}
+	} else {
+		index, err = bleve.Open(indexPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open search index: %w", err)
+		}
+	}
+
 	s := &Storage{
-		DataDir:    dataDir,
-		ArticleDir: articleDir,
-		AssetDir:   assetDir,
+		DataDir:     dataDir,
+		ArticleDir:  articleDir,
+		AssetDir:    assetDir,
+		SearchIndex: index,
 	}
 
 	// Seed standard 'home' page if no articles exist
 	if err := s.seedDefaultHome(); err != nil {
+		index.Close()
 		return nil, err
+	}
+
+	// Sync/populate search index
+	if err := s.SyncSearchIndex(); err != nil {
+		index.Close()
+		return nil, fmt.Errorf("failed to sync search index: %w", err)
 	}
 
 	return s, nil
@@ -171,6 +199,9 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string) (*Ar
 				return nil, fmt.Errorf("failed to rename article file: %w", err)
 			}
 
+			// Remove old slug from search index
+			_ = s.UnindexArticle(oldSlug)
+
 			// Rename corresponding asset directory if it exists
 			oldAssetDir := filepath.Join(s.AssetDir, oldSlug)
 			newAssetDir := filepath.Join(s.AssetDir, newSlug)
@@ -200,6 +231,11 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string) (*Ar
 		return nil, fmt.Errorf("failed to write article file: %w", err)
 	}
 
+	// Add updated/new article to search index
+	if err := s.IndexArticle(art); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to index article '%s' in search engine: %v\n", newSlug, err)
+	}
+
 	return art, nil
 }
 
@@ -215,6 +251,9 @@ func (s *Storage) DeleteArticle(slug string) error {
 	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to delete article file: %w", err)
 	}
+
+	// Remove from search index
+	_ = s.UnindexArticle(cleanedSlug)
 
 	// 2. Recursively delete asset folder
 	assetPath := filepath.Join(s.AssetDir, cleanedSlug)
@@ -261,7 +300,7 @@ func (s *Storage) GetAssetPath(slug, filename string) (string, error) {
 	}
 
 	filePath := filepath.Clean(filepath.Join(s.AssetDir, cleanedSlug, safeFilename))
-	
+
 	// Double security check to ensure it doesn't escape our asset directory
 	expectedPrefix, err := filepath.Abs(s.AssetDir)
 	if err != nil {
@@ -385,4 +424,113 @@ func serializeFrontMatter(art *Article) string {
 		art.CreatedAt.Format(time.RFC3339),
 		art.UpdatedAt.Format(time.RFC3339),
 	)
+}
+
+// IndexArticle adds or updates a single article inside the Bleve search index.
+func (s *Storage) IndexArticle(art *Article) error {
+	return s.SearchIndex.Index(art.Slug, art)
+}
+
+// UnindexArticle deletes a single article from the Bleve search index.
+func (s *Storage) UnindexArticle(slug string) error {
+	return s.SearchIndex.Delete(slug)
+}
+
+// SyncSearchIndex populates the Bleve index with all existing markdown articles on startup if the index is brand new.
+func (s *Storage) SyncSearchIndex() error {
+	count, err := s.SearchIndex.DocCount()
+	if err != nil {
+		return fmt.Errorf("failed to count search index documents: %w", err)
+	}
+
+	// If the index is empty, read all articles from disk and index them
+	if count == 0 {
+		fmt.Fprintf(os.Stderr, "Search index is empty. Commencing full boot synchronization...\n")
+		articles, err := s.ListArticles()
+		if err != nil {
+			return fmt.Errorf("failed to list articles for indexing: %w", err)
+		}
+
+		for _, item := range articles {
+			art, err := s.GetArticle(item.Slug)
+			if err == nil {
+				if err := s.IndexArticle(art); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to index article '%s' on boot sync: %v\n", item.Slug, err)
+				}
+			}
+		}
+		newCount, _ := s.SearchIndex.DocCount()
+		fmt.Fprintf(os.Stderr, "Boot synchronization complete. Successfully indexed %d articles.\n", newCount)
+	}
+
+	return nil
+}
+
+// SearchResult represents a single full-text query match.
+type SearchResult struct {
+	Title     string    `json:"title"`
+	Slug      string    `json:"slug"`
+	Score     float64   `json:"score"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Snippets  []string  `json:"snippets"`
+}
+
+// SearchArticles searches for keywords inside article titles and contents, returning HTML highlighted snippets.
+func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
+	if queryStr == "" {
+		return []SearchResult{}, nil
+	}
+
+	// Create a query matching terms (supports boolean logic, wildcards, fuzzy matching natively!)
+	q := bleve.NewQueryStringQuery(queryStr)
+	searchRequest := bleve.NewSearchRequest(q)
+
+	// Configure Bleve highlighter style to wrap matched words in HTML <mark> tags
+	searchRequest.Highlight = bleve.NewHighlightWithStyle("html")
+	searchRequest.Highlight.AddField("content")
+	searchRequest.Highlight.AddField("title")
+
+	// Limit to top 40 matches
+	searchRequest.Size = 40
+
+	searchResults, err := s.SearchIndex.Search(searchRequest)
+	if err != nil {
+		return nil, fmt.Errorf("bleve search failed: %w", err)
+	}
+
+	results := []SearchResult{}
+	for _, hit := range searchResults.Hits {
+		art, err := s.GetArticle(hit.ID)
+		if err != nil {
+			// Skip if the physical markdown file was deleted on disk but search index is slightly out of sync
+			continue
+		}
+
+		var snippets []string
+		if frags, ok := hit.Fragments["content"]; ok {
+			snippets = frags
+		} else if frags, ok := hit.Fragments["title"]; ok {
+			snippets = frags
+		}
+
+		// Fallback snippet if Bleve returns empty fragments (extract first 150 characters)
+		if len(snippets) == 0 {
+			runes := []rune(art.Content)
+			limit := 150
+			if len(runes) < limit {
+				limit = len(runes)
+			}
+			snippets = []string{string(runes[:limit]) + "..."}
+		}
+
+		results = append(results, SearchResult{
+			Title:     art.Title,
+			Slug:      art.Slug,
+			Score:     hit.Score,
+			UpdatedAt: art.UpdatedAt,
+			Snippets:  snippets,
+		})
+	}
+
+	return results, nil
 }

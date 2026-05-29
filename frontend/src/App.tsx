@@ -5,6 +5,7 @@ import { Viewer } from './components/Viewer';
 import { Editor } from './components/Editor';
 import { TOC } from './components/TOC';
 import { Hero } from './components/Hero';
+import { SearchResults } from './components/SearchResults';
 import { Slugify } from './utils';
 import { 
   Edit, 
@@ -51,6 +52,10 @@ export const App: React.FC = () => {
       const params = new URLSearchParams(currentSearch);
       return { route: 'new', slug: '', prefillTitle: params.get('title') || '' };
     }
+    if (currentPath === '/search') {
+      const params = new URLSearchParams(currentSearch);
+      return { route: 'search', slug: '', searchQuery: params.get('q') || '' };
+    }
     if (currentPath.startsWith('/articles/')) {
       const slug = currentPath.substring('/articles/'.length);
       return { route: 'article', slug };
@@ -76,6 +81,8 @@ export const App: React.FC = () => {
     if (target === 'home') {
       navigate('/');
     } else if (target.startsWith('new') || target.startsWith('/new')) {
+      navigate(target);
+    } else if (target.startsWith('search') || target.startsWith('/search')) {
       navigate(target);
     } else {
       navigate(`/articles/${target}`);
@@ -337,6 +344,13 @@ export const App: React.FC = () => {
           articles={articles}
           onNavigate={handleNavigate}
           onCreateNew={() => navigate('/new')}
+          wikiName={wikiName}
+        />
+      ) : routeInfo.route === 'search' ? (
+        // Dedicated Google-Style Search Results View
+        <SearchResults
+          initialQuery={routeInfo.searchQuery || ''}
+          onNavigate={handleNavigate}
           wikiName={wikiName}
         />
       ) : routeInfo.route === '404' ? (

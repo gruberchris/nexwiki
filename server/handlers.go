@@ -191,10 +191,10 @@ func (srv *Server) HandleUploadAsset(w http.ResponseWriter, r *http.Request) {
 	// Basic safety check for mime types
 	mimeType := header.Header.Get("Content-Type")
 	allowedMime := map[string]bool{
-		"image/jpeg": true,
-		"image/png":  true,
-		"image/gif":  true,
-		"image/webp": true,
+		"image/jpeg":    true,
+		"image/png":     true,
+		"image/gif":     true,
+		"image/webp":    true,
 		"image/svg+xml": true,
 	}
 
@@ -246,4 +246,15 @@ func EnableCORS(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// HandleSearchArticles executes full-text search against the index and returns matching summaries.
+func (srv *Server) HandleSearchArticles(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	results, err := srv.Storage.SearchArticles(query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, results)
 }
