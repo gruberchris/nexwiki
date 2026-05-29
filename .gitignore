@@ -1,0 +1,69 @@
+# ==========================================
+# Go Backend ignores
+# ==========================================
+# Compiled binaries
+wiki-app
+wiki-dev-bin
+nexwiki
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries and profiles
+*.test
+*.out
+*.prof
+
+# Local Go tools / coverage reports
+cover.out
+coverage.html
+
+# ==========================================
+# React Frontend (Node/Vite) ignores
+# ==========================================
+# Dependencies
+frontend/node_modules/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# Vite / React builds
+frontend/dist/
+frontend/.vite/
+
+# Local environment variables
+frontend/.env*.local
+
+# TS build caches
+frontend/tsconfig.tsbuildinfo
+
+# ==========================================
+# Local Dev Storage & Volumes (Privacy & Security)
+# ==========================================
+# Ignore local persistence volumes so your personal notes aren't committed
+data/
+my-wiki-data/
+dev-data/
+
+# ==========================================
+# System & Editor configs
+# ==========================================
+# IDEs
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

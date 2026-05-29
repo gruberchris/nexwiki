@@ -1,0 +1,9 @@
+services:
+  wiki:
+    build: .
+    container_name: personal-wiki
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./my-wiki-data:/app/data
+    restart: unless-stopped
