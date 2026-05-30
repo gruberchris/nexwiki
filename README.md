@@ -62,7 +62,7 @@ If you prefer running the container manually without compose:
 
 ### Understanding the Volume Mount (`/app/data`)
 The Docker container maps `/app/data` to your local machine (`./my-wiki-data` in compose or the path specified in CLI). This directory contains:
-- `articles/` - All your markdown wiki files (e.g., `home.md`, `setup-guide.md`).
+- `articles/` - All your Markdown wiki files (e.g., `home.md`, `setup-guide.md`).
 - `assets/` - Uploaded images and media attachments grouped by article.
 - `search.bleve/` - The Bleve full-text search index database.
 
@@ -76,8 +76,10 @@ If you are a developer looking to modify the Go backend or React frontend locall
 - **Go**: 1.26 or later
 - **Node.js**: 20.x or later (includes `npm`)
 
-### 1. Build and Run the Frontend
-First, compile the frontend assets so the Go server has something to embed:
+### 1. Build the Frontend
+To compile the static React assets so the Go server can embed them, you can choose one of the following paths:
+
+**Option A: Manual CLI Commands**
 ```bash
 cd frontend
 npm install
@@ -85,10 +87,25 @@ npm run build
 cd ..
 ```
 
-### 2. Start the Backend
-With the frontend built, start the Go server:
+**Option B: Makefile Command**
 ```bash
-go run main.go -port=8080 -data=./data -name="NexWiki Development"
+make build-frontend
+```
+
+### 2. Build & Start the Backend
+Once the frontend assets exist in `frontend/dist/`, you can compile and start the Go server:
+
+**Option A: Manual CLI Commands**
+```bash
+go build -o nexwiki main.go
+./nexwiki -port=8080 -data=./data -name="NexWiki Development"
+```
+
+**Option B: Makefile Command**
+*(This compiles both the frontend assets and backend binary in a single command)*
+```bash
+make
+./nexwiki -port=8080 -data=./data -name="NexWiki Development"
 ```
 Now, you can access the combined app at `http://localhost:8080`.
 
@@ -106,6 +123,62 @@ The Go backend includes a built-in CORS middleware that automatically permits re
 
 ---
 
+## 🛠️ Build Automation & Multi-Platform Cross-Compilation (Makefile)
+
+We provide a robust `Makefile` to simplify frontend compilation, local builds, Docker controls, and cross-compiling the self-contained zero-dependency binary for various architectures.
+
+> 💡 **Tip:** Always make sure the frontend assets are compiled (`make build-frontend`) before running compilation steps, since Go's standard `embed` library will fail to build if `frontend/dist/` is empty. The Makefile cross-compilation targets automatically trigger this step for you.
+
+### Core Developer Targets
+* **Build Everything (Frontend + Backend for Host)**:
+  ```bash
+  make
+  # or: make all
+  ```
+* **Clean Artifacts**: Removes the host binary, `bin/` directory, and compiled frontend assets:
+  ```bash
+  make clean
+  ```
+
+### Docker Compose Automation
+* **Build and Spin Up Containers in background**:
+  ```bash
+  make docker-up
+  ```
+* **Shut Down Container Service**:
+  ```bash
+  make docker-down
+  ```
+* **Build Raw Docker Image**:
+  ```bash
+  make docker-build
+  ```
+
+### Cross-Compilation Targets
+All cross-compiled binaries are saved inside the `./bin/` directory:
+* **Windows (AMD64)**:
+  ```bash
+  make build-windows-amd64
+  ```
+* **Linux (AMD64)**:
+  ```bash
+  make build-linux-amd64
+  ```
+* **Linux (ARM64)**:
+  ```bash
+  make build-linux-arm64
+  ```
+* **macOS (ARM64 / Apple Silicon)**:
+  ```bash
+  make build-macos-arm64
+  ```
+* **Compile for All Platforms Simultaneously**: Builds binaries for all of the above operating systems and architectures in one go:
+  ```bash
+  make build-all-platforms
+  ```
+
+---
+
 ## 🤖 Connecting to AI Agents via MCP
 
 Because NexWiki contains an embedded Model Context Protocol (MCP) server, you can attach it to your favorite AI tools to query your personal wiki.
@@ -119,7 +192,7 @@ To allow Claude Desktop to search and read your wiki pages, add the following to
   "mcpServers": {
     "nexwiki": {
       "command": "docker",
-      "args": ["exec", "-i", "personal-wiki", "/app/wiki-app"]
+      "args": ["exec", "-i", "personal-wiki", "/app/nexwiki"]
     }
   }
 }
@@ -130,7 +203,7 @@ To allow Claude Desktop to search and read your wiki pages, add the following to
 {
   "mcpServers": {
     "nexwiki": {
-      "command": "/path/to/your/compiled/wiki-app",
+      "command": "/path/to/your/compiled/nexwiki",
       "args": ["-data", "/path/to/your/wiki-data"]
     }
   }

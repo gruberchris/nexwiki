@@ -36,7 +36,7 @@ COPY main.go ./
 COPY server/ ./server/
 
 # Compile static self-contained binary, stripping debugging symbols (-w -s) for tiny footprint
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o wiki-app main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o nexwiki main.go
 
 # ==========================================
 # Stage 3: Minimal and Secure Production Runner
@@ -47,7 +47,7 @@ RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /app
 
 # Copy single compiled static binary from Stage 2
-COPY --from=backend-builder /app/wiki-app .
+COPY --from=backend-builder /app/nexwiki .
 
 # Pre-create data directory for volume mapping
 RUN mkdir -p /app/data
@@ -59,4 +59,4 @@ EXPOSE 8080
 VOLUME ["/app/data"]
 
 # Run the single binary, directing persistence to the mounted volume
-ENTRYPOINT ["/app/wiki-app", "-port=8080", "-data=/app/data"]
+ENTRYPOINT ["/app/nexwiki", "-port=8080", "-data=/app/data"]

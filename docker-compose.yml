@@ -1,7 +1,7 @@
 services:
   wiki:
     build: .
-    container_name: personal-wiki
+    container_name: nexwiki
     ports:
       - "8080:8080"
     volumes:
