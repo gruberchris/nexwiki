@@ -7,6 +7,18 @@ export default {
   darkMode: 'class',
   theme: {
     extend: {
+      colors: {
+        themeBgPrimary: 'var(--bg-primary)',
+        themeBgSecondary: 'var(--bg-secondary)',
+        themeTextPrimary: 'var(--text-primary)',
+        themeTextSecondary: 'var(--text-secondary)',
+        themeTextMuted: 'var(--text-muted)',
+        themeBorder: 'var(--border-color)',
+        themeAccent: 'var(--accent-primary)',
+        themeAccentSecondary: 'var(--accent-secondary)',
+        themeAccentHover: 'var(--accent-hover)',
+        themeAccentBg: 'var(--accent-bg)',
+      },
       fontFamily: {
         sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Open Sans', 'Helvetica Neue', 'sans-serif'],
       },

@@ -35,6 +35,12 @@ An advanced user and developer manual designed to help you organize content and 
 * **AI Agent Memory System**: Protected `aiagent-` prefixed tags and the dedicated collapsible sidebar directory.
 * **Search & Index Isolation**: How NexWiki auto-excludes agent-created memories from standard browsing/searches by default, keeping your workspace clean.
 
+### 5. [NexWiki Customizable Themes Engine Guide](./theme_guide.md)
+A comprehensive technical and user guide covering the customizable, dual-variant themes engine:
+* **Startup Configurations**: Setting default active themes via CLI flags or environment variables.
+* **Dual-Variant Designing**: Building themes with specific Light and Dark mode variants, along with dynamic custom color pickers in the UI.
+* **Theme Persistence**: Understanding how custom themes are stored in `custom_themes.json` inside the wiki's data directory.
+
 ---
 
 ## 🏗️ Architecture Overview

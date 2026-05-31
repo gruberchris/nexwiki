@@ -10,15 +10,17 @@ import (
 
 // Server coordinates the API handlers with the persistence storage layer.
 type Server struct {
-	Storage  *Storage
-	WikiName string
+	Storage      *Storage
+	WikiName     string
+	DefaultTheme string
 }
 
 // NewServer builds a new API controller.
-func NewServer(storage *Storage, wikiName string) *Server {
+func NewServer(storage *Storage, wikiName string, defaultTheme string) *Server {
 	return &Server{
-		Storage:  storage,
-		WikiName: wikiName,
+		Storage:      storage,
+		WikiName:     wikiName,
+		DefaultTheme: defaultTheme,
 	}
 }
 
@@ -44,12 +46,16 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 
 // ConfigResp represents the public deployment settings exposed to the frontend.
 type ConfigResp struct {
-	WikiName string `json:"wiki_name"`
+	WikiName     string `json:"wiki_name"`
+	DefaultTheme string `json:"default_theme"`
 }
 
 // HandleGetConfig serves the custom title configuration settings to the client.
 func (srv *Server) HandleGetConfig(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, ConfigResp{WikiName: srv.WikiName})
+	writeJSON(w, http.StatusOK, ConfigResp{
+		WikiName:     srv.WikiName,
+		DefaultTheme: srv.DefaultTheme,
+	})
 }
 
 // HandleListArticles lists all wiki pages' front-matter metadata.
@@ -62,7 +68,7 @@ func (srv *Server) HandleListArticles(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, articles)
 }
 
-// HandleGetArticle gets metadata and markdown body for a single slug.
+// HandleGetArticle gets metadata and Markdown body for a single slug.
 func (srv *Server) HandleGetArticle(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	if slug == "" {
@@ -182,7 +188,7 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clean tags and preserve existing aiagent- tags
+	// Clean tags and preserve existing "aiagent-" tags
 	cleanedTags := validateAndCleanUserTags(req.Tags, existing.Tags)
 
 	art, err := srv.Storage.SaveArticle(slug, req.Title, req.Content, req.EditSummary, cleanedTags)
@@ -224,7 +230,7 @@ func (srv *Server) HandleUploadAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse multi-part form (10 MB max)
+	// Parse multipart form (10 MB max)
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "failed to parse multipart form data")
 		return
@@ -267,7 +273,7 @@ func (srv *Server) HandleUploadAsset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
-// HandleGetAsset serves the requested uploaded file from disk.
+// HandleGetAsset serves the requested uploaded file from the disk.
 func (srv *Server) HandleGetAsset(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	filename := r.PathValue("filename")
@@ -330,7 +336,7 @@ func (srv *Server) HandleGetArticleHistory(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, history)
 }
 
-// HandleGetArticleVersion retrieves a single historical version details including content body.
+// HandleGetArticleVersion retrieves single historical version details including content body.
 func (srv *Server) HandleGetArticleVersion(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	if slug == "" {
@@ -403,4 +409,115 @@ func (srv *Server) HandleDeleteTagGlobally(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "tag deleted globally successfully"})
+}
+
+// HandleGetThemes serves all default and custom themes to the client.
+func (srv *Server) HandleGetThemes(w http.ResponseWriter, _ *http.Request) {
+	customThemes, err := srv.Storage.ThemeStore.LoadCustomThemes()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load custom themes")
+		return
+	}
+
+	allThemes := make([]Theme, 0, len(DefaultThemes)+len(customThemes))
+	allThemes = append(allThemes, DefaultThemes...)
+	allThemes = append(allThemes, customThemes...)
+
+	writeJSON(w, http.StatusOK, allThemes)
+}
+
+// HandleSaveTheme saves a custom dual-mode theme to storage.
+func (srv *Server) HandleSaveTheme(w http.ResponseWriter, r *http.Request) {
+	var newTheme Theme
+	if err := json.NewDecoder(r.Body).Decode(&newTheme); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request payload")
+		return
+	}
+
+	if newTheme.Name == "" {
+		writeError(w, http.StatusBadRequest, "theme name is required")
+		return
+	}
+
+	// Validate theme name does not conflict with default themes
+	for _, t := range DefaultThemes {
+		if strings.EqualFold(t.Name, newTheme.Name) {
+			writeError(w, http.StatusConflict, "cannot overwrite default theme")
+			return
+		}
+	}
+
+	newTheme.Custom = true // enforce custom
+
+	customThemes, err := srv.Storage.ThemeStore.LoadCustomThemes()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load custom themes")
+		return
+	}
+
+	// Check if updating an existing custom theme or adding a new one
+	found := false
+	for i, t := range customThemes {
+		if strings.EqualFold(t.Name, newTheme.Name) {
+			customThemes[i] = newTheme
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		customThemes = append(customThemes, newTheme)
+	}
+
+	if err := srv.Storage.ThemeStore.SaveCustomThemes(customThemes); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save custom theme")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, newTheme)
+}
+
+// HandleDeleteTheme deletes a custom theme by name.
+func (srv *Server) HandleDeleteTheme(w http.ResponseWriter, r *http.Request) {
+	themeName := r.PathValue("name")
+	if themeName == "" {
+		writeError(w, http.StatusBadRequest, "theme name is required")
+		return
+	}
+
+	// Validate not default theme
+	for _, t := range DefaultThemes {
+		if strings.EqualFold(t.Name, themeName) {
+			writeError(w, http.StatusBadRequest, "cannot delete default theme")
+			return
+		}
+	}
+
+	customThemes, err := srv.Storage.ThemeStore.LoadCustomThemes()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load custom themes")
+		return
+	}
+
+	var updatedThemes []Theme
+	found := false
+	for _, t := range customThemes {
+		if strings.EqualFold(t.Name, themeName) {
+			found = true
+			continue
+		}
+		updatedThemes = append(updatedThemes, t)
+	}
+
+	if !found {
+		writeError(w, http.StatusNotFound, "theme not found")
+		return
+	}
+
+	if err := srv.Storage.ThemeStore.SaveCustomThemes(updatedThemes); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save updated custom themes")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "theme deleted successfully"})
 }

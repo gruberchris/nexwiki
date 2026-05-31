@@ -2,10 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --border-color: #e2e8f0;
+  --accent-primary: #4f46e5;
+  --accent-secondary: #7c3aed;
+  --accent-hover: #3730a3;
+  --accent-bg: #e0e7ff;
+}
+
 @layer base {
   body {
-    @apply transition-colors duration-200 bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-100 antialiased selection:bg-indigo-500 selection:text-white;
+    background-color: var(--bg-primary);
+    color: var(--text-secondary);
+    @apply transition-colors duration-200 antialiased selection:bg-indigo-500 selection:text-white;
   }
+}
+
+/* Dynamic transparent theme utilities */
+.theme-sidebar {
+  background-color: color-mix(in srgb, var(--bg-secondary) 85%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+}
+
+.theme-panel {
+  background-color: color-mix(in srgb, var(--bg-secondary) 75%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+}
+
+.theme-card {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
 }
 
 /* Custom Scrollbars */
@@ -17,29 +48,43 @@
   @apply bg-transparent;
 }
 ::-webkit-scrollbar-thumb {
-  @apply bg-slate-300 dark:bg-slate-800 rounded-full hover:bg-slate-400 dark:hover:bg-slate-700 transition-colors;
+  background-color: color-mix(in srgb, var(--border-color) 70%, transparent);
+  @apply rounded-full transition-colors;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-muted);
 }
 
 /* Glassmorphism utility classes */
 .glass-panel {
-  @apply bg-white/70 dark:bg-slate-900/60 backdrop-blur-md border border-slate-200/50 dark:border-slate-800/50 shadow-lg shadow-slate-100/10 dark:shadow-none;
+  background-color: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
 }
 
 /* Main typography engine for raw markdown content */
 .wiki-content {
-  @apply text-base leading-relaxed text-slate-700 dark:text-slate-300 space-y-4;
+  color: var(--text-secondary);
+  @apply text-base leading-relaxed space-y-4;
 }
 
 .wiki-content h1 {
-  @apply text-3xl font-extrabold text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-800 pb-3 mb-6 mt-2 tracking-tight transition-colors;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-color);
+  @apply text-3xl font-extrabold pb-3 mb-6 mt-2 tracking-tight transition-colors;
 }
 
 .wiki-content h2 {
-  @apply text-2xl font-bold text-slate-900 dark:text-slate-100 border-b border-slate-100 dark:border-slate-800/40 pb-2 mb-4 mt-8 tracking-tight transition-colors;
+  color: var(--text-primary);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  @apply text-2xl font-bold pb-2 mb-4 mt-8 tracking-tight transition-colors;
 }
 
 .wiki-content h3 {
-  @apply text-xl font-bold text-slate-900 dark:text-slate-200 mb-3 mt-6 tracking-tight transition-colors;
+  color: var(--text-primary);
+  @apply text-xl font-bold mb-3 mt-6 tracking-tight transition-colors;
 }
 
 .wiki-content p {
@@ -47,7 +92,8 @@
 }
 
 .wiki-content a {
-  @apply font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 underline underline-offset-4 decoration-2 transition-colors;
+  color: var(--accent-primary);
+  @apply font-semibold hover:opacity-80 underline underline-offset-4 decoration-2 transition-colors;
 }
 
 .wiki-content ul {
@@ -59,47 +105,66 @@
 }
 
 .wiki-content blockquote {
-  @apply border-l-4 border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/20 text-slate-800 dark:text-slate-200 px-5 py-4 my-6 rounded-r-lg font-medium italic;
+  border-left: 4px solid var(--accent-primary);
+  background-color: var(--accent-bg);
+  color: var(--text-secondary);
+  @apply px-5 py-4 my-6 rounded-r-lg font-medium italic;
 }
 
 /* Code block styles */
 .wiki-content pre {
-  @apply bg-slate-900 dark:bg-slate-950 text-slate-100 p-5 rounded-xl border border-slate-800/80 my-6 overflow-x-auto shadow-inner text-sm font-mono leading-normal;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  @apply p-5 rounded-xl my-6 overflow-x-auto shadow-inner text-sm font-mono leading-normal;
 }
 
 .wiki-content code {
-  @apply font-mono text-sm bg-slate-100 dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded border border-slate-200/60 dark:border-slate-800/60 transition-colors;
+  background-color: var(--accent-bg);
+  color: var(--accent-primary);
+  border: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+  @apply font-mono text-sm px-1.5 py-0.5 rounded transition-colors;
 }
 
 .wiki-content pre code {
-  @apply bg-transparent text-slate-100 p-0 rounded-none border-none text-inherit;
+  @apply bg-transparent text-inherit p-0 rounded-none border-none;
 }
 
 /* Image styles */
 .wiki-content img {
-  @apply max-w-full h-auto rounded-xl border border-slate-200 dark:border-slate-800 shadow-md my-6 hover:shadow-xl transition-all duration-300 mx-auto;
+  border: 1px solid var(--border-color);
+  @apply max-w-full h-auto rounded-xl shadow-md my-6 hover:shadow-xl transition-all duration-300 mx-auto;
 }
 
 /* Table styles */
 .wiki-content table {
-  @apply w-full border-collapse border border-slate-200 dark:border-slate-800 my-6 text-sm rounded-lg overflow-hidden shadow-sm;
+  border: 1px solid var(--border-color);
+  @apply w-full border-collapse my-6 text-sm rounded-lg overflow-hidden shadow-sm;
 }
 
 .wiki-content th {
-  @apply bg-slate-100 dark:bg-slate-900/60 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-800 px-4 py-3 text-left font-semibold;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  @apply px-4 py-3 text-left font-semibold;
 }
 
 .wiki-content td {
-  @apply border border-slate-200 dark:border-slate-800 px-4 py-2.5 text-slate-700 dark:text-slate-300 bg-white/40 dark:bg-slate-900/10;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  background-color: color-mix(in srgb, var(--bg-primary) 40%, transparent);
+  @apply px-4 py-2.5;
 }
 
 .wiki-content tr:nth-child(even) td {
-  @apply bg-slate-50/50 dark:bg-slate-900/30;
+  background-color: color-mix(in srgb, var(--bg-secondary) 30%, transparent);
 }
 
 /* Horizontal line */
 .wiki-content hr {
-  @apply border-0 border-t border-slate-200 dark:border-slate-800 my-8;
+  border: 0;
+  border-top: 1px solid var(--border-color);
+  @apply my-8;
 }
 
 /* Custom internal WikiLink badge styles */

@@ -35,6 +35,7 @@ type Storage struct {
 	AssetDir    string
 	HistoryDir  string
 	SearchIndex bleve.Index
+	ThemeStore  *ThemeStore
 }
 
 // NewStorage initializes and returns a Storage manager, ensuring required subdirectories exist.
@@ -76,6 +77,7 @@ func NewStorage(dataDir string) (*Storage, error) {
 		AssetDir:    assetDir,
 		HistoryDir:  historyDir,
 		SearchIndex: index,
+		ThemeStore:  NewThemeStore(dataDir),
 	}
 
 	// Seed standard 'home' page if no articles exist

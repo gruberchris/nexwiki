@@ -8,6 +8,8 @@ import { Hero } from './components/Hero';
 import { SearchResults } from './components/SearchResults';
 import { Slugify, saveFile, generateDocxContent } from './utils';
 import { HistoryDrawer } from './components/HistoryDrawer';
+import { ThemeManagerModal } from './components/ThemeManagerModal';
+import type { Theme } from './components/ThemeManagerModal';
 import { 
   Edit, 
   Trash2, 
@@ -60,6 +62,11 @@ export const App: React.FC = () => {
   });
   const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [wikiName, setWikiName] = useState('NexWiki');
+
+  // Theme Manager states
+  const [themes, setThemes] = useState<Theme[]>([]);
+  const [activeThemeName, setActiveThemeName] = useState('default');
+  const [themeModalOpen, setThemeModalOpen] = useState(false);
 
   // Alert notifier triggers
   const triggerAlert = (type: 'success' | 'error', text: string) => {
@@ -203,10 +210,95 @@ export const App: React.FC = () => {
     }
   };
 
+  // Synchronize CSS custom properties for active theme and variant
+  useEffect(() => {
+    if (themes.length === 0) return;
+    const currentTheme = themes.find(t => t.name === activeThemeName) || themes[0];
+    if (!currentTheme) return;
+
+    const variant = darkMode ? currentTheme.dark : currentTheme.light;
+    const root = document.documentElement;
+
+    // Apply is-dark or light class for standard tailwind and CodeMirror
+    if (darkMode) {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+
+    // Apply all color custom variables to root style
+    Object.entries(variant).forEach(([key, val]) => {
+      const cssVarName = `--${key.replace(/_/g, '-')}`;
+      root.style.setProperty(cssVarName, val);
+    });
+  }, [activeThemeName, themes, darkMode]);
+
+  // Theme Manager Actions
+  const fetchThemes = async () => {
+    try {
+      const res = await fetch('/api/themes');
+      if (res.ok) {
+        const data = await res.json();
+        setThemes(data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch themes:', err);
+    }
+  };
+
+  const handleSelectTheme = (name: string) => {
+    setActiveThemeName(name);
+    localStorage.setItem('active-theme', name);
+    
+    // Automatically apply its default variant mode initially
+    const targetTheme = themes.find(t => t.name === name);
+    if (targetTheme) {
+      const mode = targetTheme.default_mode;
+      setDarkMode(mode === 'dark');
+      localStorage.setItem('theme', mode);
+    }
+  };
+
+  const handleSaveTheme = async (newTheme: Theme) => {
+    const res = await fetch('/api/themes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(newTheme),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error || 'Failed to save theme');
+    }
+
+    triggerAlert('success', `Theme "${newTheme.name}" saved successfully!`);
+    await fetchThemes();
+  };
+
+  const handleDeleteTheme = async (name: string) => {
+    const res = await fetch(`/api/themes/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
+
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error || 'Failed to delete theme');
+    }
+
+    triggerAlert('success', `Theme "${name}" deleted successfully!`);
+    if (activeThemeName === name) {
+      handleSelectTheme('default');
+    }
+    await fetchThemes();
+  };
+
   // Initial loading boots
   useEffect(() => {
     const bootApp = async () => {
-      // Fetch dynamic custom name/title configuration
+      // 1. Fetch dynamic custom name/title and theme configuration
+      let defaultTheme = 'default';
       try {
         const configRes = await fetch('/api/config');
         if (configRes.ok) {
@@ -214,9 +306,39 @@ export const App: React.FC = () => {
           if (configData.wiki_name) {
             setWikiName(configData.wiki_name);
           }
+          if (configData.default_theme) {
+            defaultTheme = configData.default_theme;
+          }
         }
       } catch (err) {
-        console.error('Failed to load wiki title configurations:', err);
+        console.error('Failed to load wiki configurations:', err);
+      }
+
+      // 2. Fetch all available themes
+      let loadedThemes: Theme[] = [];
+      try {
+        const res = await fetch('/api/themes');
+        if (res.ok) {
+          loadedThemes = await res.json();
+          setThemes(loadedThemes || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch themes during boot:', err);
+      }
+
+      // 3. Set active theme based on localStorage, falling back to server default config
+      const savedTheme = localStorage.getItem('active-theme');
+      const finalThemeName = savedTheme || defaultTheme;
+      setActiveThemeName(finalThemeName);
+
+      // 4. Set initial dark/light variant mode
+      const activeThemeObj = loadedThemes.find(t => t.name === finalThemeName);
+      const activeMode = localStorage.getItem('theme');
+      if (activeMode) {
+        setDarkMode(activeMode === 'dark');
+      } else if (activeThemeObj) {
+        setDarkMode(activeThemeObj.default_mode === 'dark');
+        localStorage.setItem('theme', activeThemeObj.default_mode);
       }
 
       await fetchArticles();
@@ -236,17 +358,11 @@ export const App: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath]);
 
-  // Toggle dark/light theme
+  // Toggle dark/light theme variant of active theme
   const toggleDarkMode = () => {
-    if (darkMode) {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-      setDarkMode(false);
-    } else {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-      setDarkMode(true);
-    }
+    const nextMode = !darkMode;
+    setDarkMode(nextMode);
+    localStorage.setItem('theme', nextMode ? 'dark' : 'light');
   };
 
   // CRUD: Saving Article edits/creates
@@ -493,6 +609,7 @@ export const App: React.FC = () => {
           currentSlug={routeInfo.slug || (routeInfo.route === 'home' ? 'home' : '')}
           darkMode={darkMode}
           onToggleDarkMode={toggleDarkMode}
+          onOpenThemeManager={() => setThemeModalOpen(true)}
           onNavigate={handleNavigate}
           onCreateNew={() => navigate('/new')}
           wikiName={wikiName}
@@ -749,6 +866,18 @@ export const App: React.FC = () => {
             await fetchArticleContent(currentArticle.slug);
             await fetchArticles();
           }}
+        />
+      )}
+
+      {themeModalOpen && (
+        <ThemeManagerModal
+          isOpen={themeModalOpen}
+          onClose={() => setThemeModalOpen(false)}
+          themes={themes}
+          activeThemeName={activeThemeName}
+          onSelectTheme={handleSelectTheme}
+          onSaveTheme={handleSaveTheme}
+          onDeleteTheme={handleDeleteTheme}
         />
       )}
     </div>

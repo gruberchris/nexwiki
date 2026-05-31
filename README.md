@@ -18,7 +18,8 @@ Beyond acting as a traditional wiki, NexWiki features an **always-on Model Conte
 - 🕒 **Gzipped Flat-File Versioning**: Built-in revision engine that saves highly efficient compressed `.md.gz` gzip snapshots of your article history. Review historical changes side-by-side using interactive **Split Pane** or **Unified Inline** diff modes, roll back changes instantly, and prevent session write conflicts with automatic optimistic locking guards.
 - 📤 **Export, Share, and Copy Utilities**: Export any wiki article directly to a professional print-styled PDF (via a native vector-drawn printing engine), Microsoft Word (`.docx`), or plain Text (`.txt`). Instantly copy the raw, metadata-free Markdown body text or shareable page URL directly to the clipboard from a consolidated, glassmorphic dropdown menu.
 - 🖼️ **Asset & Image Uploads**: Built-in support for uploading and referencing media assets (such as PNG, JPEG, GIF, SVG, and WebP) directly within articles.
-- **⚙️ Dynamic Customization**: Easily personalize your wiki's name via environment variables (`WIKI_NAME`) or command-line flags.
+- **⚙️ Dynamic Customization**: Easily personalize your wiki's name via environment variables (`NEXWIKI_NAME`) or command-line flags.
+- 🎨 **Multi-Mode Customizable Themes**: Configure your default theme on startup using flags (`-theme`) or environment variables (`NEXWIKI_THEME`), and design, preview, and persist customized dual-variant (Light + Dark modes) themes directly in the browser with interactive HTML5 color pickers.
 - **🔒 Development Safety**: System logs are directed exclusively to standard error (`Stderr`) to prevent stdout corruption, guaranteeing stable MCP JSON-RPC Stdio piping.
 
 ---
@@ -58,7 +59,7 @@ If you prefer running the container manually without compose:
    docker run -d \
      -p 8080:8080 \
      -v "$(pwd)/my-wiki-data:/app/data" \
-     -e WIKI_NAME="My Personal Wiki" \
+     -e NEXWIKI_NAME="My Personal Wiki" \
      --name personal-wiki \
      --restart unless-stopped \
      nexwiki:latest
@@ -227,7 +228,8 @@ When deploying NexWiki for production use, containerized deployments are highly 
 ### 1. Core Deployment Requirements
 - **Persistent Volume**: Since NexWiki stores articles as flat files and hosts the Bleve database on disk, **you must mount a persistent volume** to `/app/data`. If using cloud platforms (like AWS ECS, GCP Cloud Run, fly.io, or DigitalOcean), make sure to attach a persistent block store or network file share (like EFS or GCP Persistent Disk).
 - **Environment Variables**:
-  - `WIKI_NAME`: Configure the title of your wiki shown on the page and in the HTML headers (e.g. `WIKI_NAME="Company Knowledge Base"`).
+  - `NEXWIKI_NAME`: Configure the title of your wiki shown on the page and in the HTML headers (e.g. `NEXWIKI_NAME="Company Knowledge Base"`).
+  - `NEXWIKI_THEME`: Configure the initial active default theme.
 
 ### 2. Production Docker Compose Setup
 Create a `docker-compose.prod.yml` behind a reverse proxy:
@@ -240,7 +242,7 @@ services:
     image: nexwiki:latest  # Or pull from your container registry
     container_name: production-wiki
     environment:
-      - WIKI_NAME=Company Wiki
+      - NEXWIKI_NAME=Company Wiki
     volumes:
       - wiki-prod-data:/app/data
     ports:

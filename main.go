@@ -22,21 +22,35 @@ func main() {
 	// This prevents logs from corrupting the Stdio MCP JSON-RPC communication on Stdout.
 	log.SetOutput(os.Stderr)
 
-	// Setup command-line configurations
+	// Set up command-line configurations
 	port := flag.String("port", "8080", "Port to run the web server on")
 	dataDir := flag.String("data", "./data", "Directory to persist wiki markdown files and assets")
 	wikiName := flag.String("name", "NexWiki", "The custom name/title of your wiki displayed in the UI")
+	theme := flag.String("theme", "default", "The default theme of your wiki")
 	flag.Parse()
 
-	// Environment variable WIKI_NAME takes precedence over command line flag
+	// Environment variable NEXWIKI_NAME (or fallback WIKI_NAME) takes precedence over command line flag
 	name := *wikiName
-	if envName := os.Getenv("WIKI_NAME"); envName != "" {
+	if envName := os.Getenv("NEXWIKI_NAME"); envName != "" {
 		name = envName
+	} else if envName := os.Getenv("WIKI_NAME"); envName != "" {
+		name = envName
+	}
+
+	// Environment variable NEXWIKI_THEME (or fallbacks WIKI_THEME/THEME) takes precedence over command line flag
+	defaultTheme := *theme
+	if envTheme := os.Getenv("NEXWIKI_THEME"); envTheme != "" {
+		defaultTheme = envTheme
+	} else if envTheme := os.Getenv("WIKI_THEME"); envTheme != "" {
+		defaultTheme = envTheme
+	} else if envTheme := os.Getenv("THEME"); envTheme != "" {
+		defaultTheme = envTheme
 	}
 
 	log.Printf("Starting NexWiki backend...")
 	log.Printf("Data directory: %s", *dataDir)
 	log.Printf("Wiki Name/Title: %s", name)
+	log.Printf("Default Theme: %s", defaultTheme)
 
 	// Ensure storage is initialized
 	storage, err := server.NewStorage(*dataDir)
@@ -44,8 +58,8 @@ func main() {
 		log.Fatalf("Fatal: failed to initialize storage: %v", err)
 	}
 
-	// Initialize server instance with configured name
-	srv := server.NewServer(storage, name)
+	// Initialize server instance with configured name and theme
+	srv := server.NewServer(storage, name, defaultTheme)
 
 	// Spin up the stdio MCP JSON-RPC server in a background goroutine!
 	go srv.StartMCPServer()
@@ -56,6 +70,9 @@ func main() {
 	// Register API endpoints
 	mux.HandleFunc("/api/mcp", srv.HandleStreamableHTTP)
 	mux.HandleFunc("GET /api/config", srv.HandleGetConfig)
+	mux.HandleFunc("GET /api/themes", srv.HandleGetThemes)
+	mux.HandleFunc("POST /api/themes", srv.HandleSaveTheme)
+	mux.HandleFunc("DELETE /api/themes/{name}", srv.HandleDeleteTheme)
 	mux.HandleFunc("GET /api/search", srv.HandleSearchArticles)
 	mux.HandleFunc("GET /api/articles", srv.HandleListArticles)
 	mux.HandleFunc("GET /api/articles/{slug}", srv.HandleGetArticle)
@@ -105,7 +122,7 @@ func main() {
 	}
 }
 
-// SPAFrontendHandler serves static files from React build directory,
+// SPAFrontendHandler serves static files from the React build directory,
 // falling back to index.html for direct loads of client routes.
 type SPAFrontendHandler struct {
 	staticFS fs.FS
@@ -131,7 +148,7 @@ func (h *SPAFrontendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If file does not exist, serve index.html as fallback for React SPA Routing.
+	// If the file does not exist, serve index.html as a fallback for React SPA Routing.
 	// This enables direct bookmarks or page-reloads to work flawlessly!
 	indexFile, err := h.staticFS.Open("index.html")
 	if err != nil {
