@@ -37,13 +37,32 @@ If no configurations are specified, NexWiki defaults to the `"default"` system t
 
 ## 🎨 2. Standard System Themes
 
-NexWiki compiles with a built-in system theme named `"default"`. 
+NexWiki compiles with five pre-installed system default themes, all configured to render in **Light Mode by default** while fully supporting dual-variant dark modes:
 
-* **Default Active Mode**: Light Mode
-* **Light Mode Variant**: A premium slate-based styling (`bg-slate-50`, `bg-white`, `text-slate-900`, `text-slate-700`) with high-fidelity indigo accents.
-* **Dark Mode Variant**: A gorgeous deep space-based styling (`bg-slate-955`, `bg-slate-900`, `text-slate-50`, `text-slate-300`) with emerald-green highlighting.
+### 1. Default (`"default"`)
+The standard premium look and feel of NexWiki:
+* **Light Mode**: High-fidelity indigo accents (`#4f46e5`) on a clean slate-50 backdrop.
+* **Dark Mode**: High-contrast emerald accents (`#10b981`) on a deep slate-955 backdrop.
 
-When you click the **Moon 🌙 / Sun ☀️ Toggle Button** in the sidebar, NexWiki switches back and forth between these light and dark variants instantly.
+### 2. Fourth of July (`"july-4th"`)
+A patriotic theme capturing the crimson red, white, and navy blue spirit:
+* **Light Mode**: Clean snow-white background with patriotic crimson red (`#b91c1c`) links and bold navy blue (`#1d4ed8`) highlighting.
+* **Dark Mode**: Deep navy starry night backdrop (`#0b0f19`) with bright holiday red (`#ef4444`) and blue (`#3b82f6`) accents.
+
+### 3. Halloween (`"halloween"`)
+A festive, warm, and spooky theme:
+* **Light Mode**: Pumpkin cream canvas (`#fffbeb`) with stone accents, orange pumpkin (`#ea580c`) highlights, and spooky witch purple (`#7c3aed`) indicators.
+* **Dark Mode**: Haunted crypt stone black (`#0c0a09`) with glowing neon orange (`#f97316`) and violet (`#a78bfa`) accents.
+
+### 4. Christmas (`"christmas"`)
+A comforting, snowy, evergreen festive theme:
+* **Light Mode**: Minty snow canvas (`#f0fdf4`) with evergreen pine headers, crimson red (`#b91c1c`) links, and shimmering gold (`#eab308`) highlighting.
+* **Dark Mode**: Warm evergreen cabin forest backdrop (`#022c22`) with bright holiday red (`#ef4444`) and gold (`#facc15`) accents.
+
+### 5. New Year's Eve (`"new-years"`)
+An elegant, glittering celebration theme:
+* **Light Mode**: Warm champagne stone backdrop (`#fafaf9`) with metallic midnight gold (`#ca8a04`) primary elements and celebration silver (`#78716c`) accents.
+* **Dark Mode**: Midnight sky black backdrop (`#09090b`) with glistening silver text, sparkling fireworks gold (`#eab308`), and silver (`#a1a1aa`) celebration elements.
 
 ---
 
