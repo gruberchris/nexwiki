@@ -84,6 +84,7 @@ func main() {
 	// Dynamic SPA routing handler for static frontend files
 	frontendHandler := &SPAFrontendHandler{
 		staticFS: frontendFS,
+		storage:  storage,
 	}
 
 	// Mount frontend handler to catch all other requests
@@ -104,6 +105,7 @@ func main() {
 // falling back to index.html for direct loads of client routes.
 type SPAFrontendHandler struct {
 	staticFS fs.FS
+	storage  *server.Storage
 }
 
 func (h *SPAFrontendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +137,18 @@ func (h *SPAFrontendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer indexFile.Close()
 
-	// Serve the index file
+	// Set content type header before writing the status code or body
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// If it is an article path, check if the article actually exists.
+	// If it does not exist, return a 404 status code while still serving index.html.
+	if strings.HasPrefix(path, "/articles/") {
+		slug := strings.TrimPrefix(path, "/articles/")
+		if _, err := h.storage.GetArticle(slug); err != nil {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}
+
+	// Serve the index file
 	io.Copy(w, indexFile)
 }

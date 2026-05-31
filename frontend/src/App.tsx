@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type { Article } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Viewer } from './components/Viewer';
@@ -15,6 +15,11 @@ import {
   Clock,
   BookOpen
 } from 'lucide-react';
+
+// Simple check to identify new page creation urls
+function isNewRequest(path: string): boolean {
+  return path.startsWith('/new');
+}
 
 export const App: React.FC = () => {
   // Navigation & routing state
@@ -34,17 +39,29 @@ export const App: React.FC = () => {
   // UI state
   const [isLoading, setIsLoading] = useState(true);
   const [isArticleLoading, setIsArticleLoading] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    const savedTheme = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return savedTheme === 'dark' || (!savedTheme && prefersDark);
+  });
   const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [wikiName, setWikiName] = useState('NexWiki');
+
+  // Alert notifier triggers
+  const triggerAlert = (type: 'success' | 'error', text: string) => {
+    setAlertMsg({ type, text });
+    setTimeout(() => {
+      setAlertMsg(null);
+    }, 4000);
+  };
 
   // Synchronize browser tab document title with configured wiki name
   useEffect(() => {
     document.title = `${wikiName} — Personal Knowledge Engine`;
   }, [wikiName]);
 
-  // Parse current route parameters
-  const getRouteInfo = () => {
+  // Parse current route parameters memoized cleanly
+  const routeInfo = useMemo(() => {
     if (currentPath === '/' || currentPath === '') {
       return { route: 'home', slug: '' };
     }
@@ -58,12 +75,41 @@ export const App: React.FC = () => {
     }
     if (currentPath.startsWith('/articles/')) {
       const slug = currentPath.substring('/articles/'.length);
+      // Once booting/loading is complete, if the article slug is not present in the list, route to 404
+      if (!isLoading && !articles.some(art => art.slug === slug)) {
+        return { route: '404', slug: '' };
+      }
       return { route: 'article', slug };
     }
     return { route: '404', slug: '' };
-  };
+  }, [currentPath, currentSearch, isLoading, articles]);
 
-  const routeInfo = getRouteInfo();
+  // Sync state on path/search changes during rendering (avoids useEffect cascading renders)
+  const [prevPath, setPrevPath] = useState(currentPath);
+  const [prevSearch, setPrevSearch] = useState(currentSearch);
+  if (currentPath !== prevPath || currentSearch !== prevSearch) {
+    setPrevPath(currentPath);
+    setPrevSearch(currentSearch);
+    
+    if (!(routeInfo.route === 'article' && routeInfo.slug)) {
+      setCurrentArticle(null);
+    }
+    if (routeInfo.route === 'new') {
+      setEditorSlug('');
+      setEditorTitle(routeInfo.prefillTitle || '');
+      setEditorContent('# ' + (routeInfo.prefillTitle || 'New Page') + '\n\nStart typing content here...');
+      setIsEditing(true);
+    }
+  }
+
+  // Synchronize document dark mode class
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [darkMode]);
 
   // Custom navigate routing helper
   const navigate = (fullUrl: string) => {
@@ -104,30 +150,39 @@ export const App: React.FC = () => {
   const fetchArticles = async (selectSlugAfter?: string) => {
     try {
       const response = await fetch('/api/articles');
-      if (!response.ok) throw new Error('Failed to load articles index');
+      if (!response.ok) {
+        triggerAlert('error', 'Failed to load articles index');
+        return;
+      }
       const data = await response.json();
       setArticles(data || []);
 
       if (selectSlugAfter) {
         navigate(`/articles/${selectSlugAfter}`);
       }
-    } catch (err: any) {
-      triggerAlert('error', err.message || 'Failed to sync index directory');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to sync index directory';
+      triggerAlert('error', msg);
     }
   };
 
   // Retrieve single full article content
   const fetchArticleContent = async (slug: string) => {
-    setIsArticleLoading(true);
+    setTimeout(() => {
+      setIsArticleLoading(true);
+    }, 0);
     try {
       const response = await fetch(`/api/articles/${slug}`);
       if (!response.ok) {
-        throw new Error('Article details not found on server');
+        triggerAlert('error', 'Article details not found on server');
+        setCurrentArticle(null);
+        return;
       }
       const data = await response.json();
       setCurrentArticle(data);
-    } catch (err: any) {
-      triggerAlert('error', err.message || 'Failed to load article content');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to load article content';
+      triggerAlert('error', msg);
       setCurrentArticle(null);
     } finally {
       setIsArticleLoading(false);
@@ -137,8 +192,6 @@ export const App: React.FC = () => {
   // Initial loading boots
   useEffect(() => {
     const bootApp = async () => {
-      setIsLoading(true);
-      
       // Fetch dynamic custom name/title configuration
       try {
         const configRes = await fetch('/api/config');
@@ -151,42 +204,23 @@ export const App: React.FC = () => {
       } catch (err) {
         console.error('Failed to load wiki title configurations:', err);
       }
-      
-      // Init theme settings
-      const savedTheme = localStorage.getItem('theme');
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
-        setDarkMode(true);
-        document.documentElement.classList.add('dark');
-      } else {
-        setDarkMode(false);
-        document.documentElement.classList.remove('dark');
-      }
 
       await fetchArticles();
       setIsLoading(false);
     };
-    bootApp();
+    void bootApp();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load article contents dynamically based on route active slug
   useEffect(() => {
     if (routeInfo.route === 'article' && routeInfo.slug) {
-      fetchArticleContent(routeInfo.slug);
-    } else {
-      setCurrentArticle(null);
+      setTimeout(() => {
+        void fetchArticleContent(routeInfo.slug);
+      }, 0);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath]);
-
-  // Handle new page creation requests
-  useEffect(() => {
-    if (routeInfo.route === 'new') {
-      setEditorSlug('');
-      setEditorTitle(routeInfo.prefillTitle || '');
-      setEditorContent('# ' + (routeInfo.prefillTitle || 'New Page') + '\n\nStart typing content here...');
-      setIsEditing(true);
-    }
-  }, [currentPath, currentSearch]);
 
   // Toggle dark/light theme
   const toggleDarkMode = () => {
@@ -199,14 +233,6 @@ export const App: React.FC = () => {
       localStorage.setItem('theme', 'dark');
       setDarkMode(true);
     }
-  };
-
-  // Alert notifier triggers
-  const triggerAlert = (type: 'success' | 'error', text: string) => {
-    setAlertMsg({ type, text });
-    setTimeout(() => {
-      setAlertMsg(null);
-    }, 4000);
   };
 
   // CRUD: Saving Article edits/creates
@@ -253,7 +279,8 @@ export const App: React.FC = () => {
 
       if (!response.ok) {
         const errData = await response.json();
-        throw new Error(errData.error || 'Failed to delete article');
+        triggerAlert('error', errData.error || 'Failed to delete article');
+        return;
       }
 
       triggerAlert('success', `Article "${currentArticle.title}" and assets deleted successfully.`);
@@ -262,8 +289,9 @@ export const App: React.FC = () => {
       // Refresh list and navigate to homepage dashboard
       await fetchArticles();
       navigate('/');
-    } catch (err: any) {
-      triggerAlert('error', err.message || 'Deletion failed');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Deletion failed';
+      triggerAlert('error', msg);
     }
   };
 
@@ -468,7 +496,4 @@ export const App: React.FC = () => {
   );
 };
 
-// Simple check to identify new page creation urls
-function isNewRequest(path: string): boolean {
-  return path.startsWith('/new');
-}
+
