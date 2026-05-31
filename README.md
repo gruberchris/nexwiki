@@ -289,8 +289,3 @@ server {
 ## 📚 Documentation
 
 For in-depth user manuals and technical descriptions of NexWiki's capabilities, visit our [Documentation Hub](./docs/README.md).
-
-Available guides inside the hub:
-* **[NexWiki User & Content Creation Guide](./docs/user_guide.md)**: Manual covering article management, editing layout view modes, double-bracket internal WikiLinks, asset uploads, and document sharing/copying/exporting.
-* **[NexWiki Article Versioning & Revision Guide](./docs/version_control.md)**: Detailed guide explaining flat-file gzipped backup history, Split and Inline diff panels, instant versions reversion, and optimistic locking write conflict guards.
-
