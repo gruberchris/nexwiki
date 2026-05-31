@@ -20,7 +20,7 @@ In order to prevent stdio pipe corruption (which breaks JSON-RPC communication i
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes nine powerful, semantic tools for AI agents:
+The NexWiki MCP server registers and exposes twelve powerful, semantic tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine.
@@ -114,6 +114,42 @@ Scans the entire knowledge base to compile total page stats and **autonomously s
 * **Arguments**: None (empty object `{}`).
 * **Behavior**:
   Scans the raw content of all wiki articles for double-bracket WikiLink references. It normalizes targets into slugs and matches them against active articles. It returns a summary text listing total pages, total WikiLinks, total broken links, and details on exactly which pages contain dead references so the AI agent can autonomously fix them!
+
+---
+
+### 10. `create_agent_memory`
+Creates a brand new protected AI Agent Memory document (such as a plan, troubleshooting note, or general memory block).
+
+* **Arguments**:
+  * `title` (string, **required**): The human-readable title of the memory article (e.g. "React Migration Plan").
+  * `content` (string, **required**): The raw Markdown content of the memory document body.
+  * `memory_type` (string, **required**): The type of memory to log. Must be one of: `plan`, `troubleshooting`, `memory`, `decision`, `todo`, `rules`.
+  * `project_context` (string, **optional**): A context string (like a project ID) to generate a secondary contextual tag (e.g. `"project-x"` tags the document with `aiagent-<type>-project-x`).
+  * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
+* **Behavior**:
+  Checks for slug collision, automatically attaches protected `aiagent-` prefixed tags based on memory type, saves the flat Markdown file, commits the first version snapshot, and indexes the document in the search engine.
+
+---
+
+### 11. `append_agent_memory`
+Appends observations, subtask completions, or updates to the end of an existing protected AI Agent Memory page.
+
+* **Arguments**:
+  * `slug` (string, **required**): The unique URL-safe slug of the target memory article.
+  * `content_to_append` (string, **required**): The raw Markdown text to append.
+  * `edit_summary` (string, **optional**): Optional summary outlining what was appended (e.g. "Logged database migration success").
+* **Behavior**:
+  Verifies that the target article is a protected agent memory (possesses at least one `aiagent-` prefixed tag), appends the new text cleanly with double newlines, creates a gzipped history backup snapshot, and saves the updated active file.
+
+---
+
+### 12. `list_agent_memories`
+Lists all protected AI Agent Memory articles saved in your wiki.
+
+* **Arguments**:
+  * `memory_type` (string, **optional**): An optional memory type to filter the listing (e.g., plan, troubleshooting, memory, decision, todo, rules).
+* **Behavior**:
+  Scans all active articles, isolates pages that possess tags starting with `"aiagent-"`, optionally filters them by the specified memory type, and returns a bulleted index of matches including titles, slugs, and active tags.
 
 ---
 

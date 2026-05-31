@@ -6,4 +6,5 @@ export interface Article {
   content?: string;
   version?: number;
   edit_summary?: string;
+  tags?: string[];
 }

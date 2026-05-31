@@ -14,7 +14,8 @@ import {
   Edit3, 
   Columns,
   Sparkles,
-  Link2
+  Link2,
+  Tag
 } from 'lucide-react';
 import { Slugify } from '../utils'; // We will create this simple utility next
 import { Viewer } from './Viewer';
@@ -22,20 +23,24 @@ import { Viewer } from './Viewer';
 interface EditorProps {
   initialTitle: string;
   initialContent: string;
+  initialTags?: string[];
   slug: string; // empty if new page
-  onSave: (title: string, content: string, editSummary: string) => Promise<void>;
+  onSave: (title: string, content: string, editSummary: string, tags: string[]) => Promise<void>;
   onCancel: () => void;
 }
 
 export const Editor: React.FC<EditorProps> = ({
   initialTitle,
   initialContent,
+  initialTags,
   slug,
   onSave,
   onCancel
 }) => {
   const [title, setTitle] = useState(initialTitle);
   const [content, setContent] = useState(initialContent);
+  const [tags, setTags] = useState<string[]>(initialTags || []);
+  const [tagInput, setTagInput] = useState('');
   const [viewMode, setViewMode] = useState<'split' | 'edit' | 'preview'>('split');
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -167,7 +172,7 @@ export const Editor: React.FC<EditorProps> = ({
     setErrorMsg('');
 
     try {
-      await onSave(title.trim(), content, editSummary);
+      await onSave(title.trim(), content, editSummary, tags);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to save article.';
       setErrorMsg(msg);
@@ -195,17 +200,76 @@ export const Editor: React.FC<EditorProps> = ({
               disabled={isSaving}
             />
             {title.trim() && (
-              <div className="flex items-center gap-1.5 mt-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500">
-                <Sparkles size={10} className="text-indigo-400 dark:text-emerald-400 animate-pulse-subtle" />
-                <span>Clean Slug Routing:</span>
-                <span className="font-mono bg-slate-100 dark:bg-slate-900 px-1 rounded text-indigo-500 dark:text-indigo-400">
-                  /articles/{liveSlug || '...'}
-                </span>
-                {slug && slug !== liveSlug && (
-                  <span className="text-amber-500 font-medium">
-                    (Renaming will update all routes & assets)
+              <div className="flex flex-col gap-1 mt-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles size={10} className="text-indigo-400 dark:text-emerald-400 animate-pulse-subtle" />
+                  <span>Clean Slug Routing:</span>
+                  <span className="font-mono bg-slate-100 dark:bg-slate-900 px-1 rounded text-indigo-500 dark:text-indigo-400">
+                    /articles/{liveSlug || '...'}
                   </span>
-                )}
+                  {slug && slug !== liveSlug && (
+                    <span className="text-amber-500 font-medium">
+                      (Renaming will update all routes & assets)
+                    </span>
+                  )}
+                </div>
+
+                {/* Visual Tag Manager */}
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-1">
+                    <Tag size={9} />
+                    Tags:
+                  </span>
+                  {tags.map(tag => {
+                    const isAgentTag = tag.toLowerCase().startsWith('aiagent-');
+                    return (
+                      <span
+                        key={tag}
+                        className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium shadow-sm transition-all border ${
+                          isAgentTag
+                            ? 'bg-indigo-500/10 dark:bg-emerald-400/10 border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400 animate-pulse-subtle'
+                            : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {tag}
+                        {!isAgentTag && (
+                          <button
+                            type="button"
+                            onClick={() => setTags(tags.filter(t => t !== tag))}
+                            className="text-slate-400 hover:text-rose-500 transition-colors ml-0.5 cursor-pointer font-bold"
+                          >
+                            &times;
+                          </button>
+                        )}
+                      </span>
+                    );
+                  })}
+                  <input
+                    type="text"
+                    placeholder="Add tag..."
+                    value={tagInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val.toLowerCase().startsWith('aiagent-')) return;
+                      setTagInput(val);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ',') {
+                        e.preventDefault();
+                        const cleanTag = tagInput.trim().replace(/,/g, '');
+                        if (cleanTag && !tags.some(t => t.toLowerCase() === cleanTag.toLowerCase())) {
+                          if (cleanTag.toLowerCase().startsWith('aiagent-')) {
+                            setTagInput('');
+                            return;
+                          }
+                          setTags([...tags, cleanTag]);
+                        }
+                        setTagInput('');
+                      }
+                    }}
+                    className="text-[10px] py-0.5 px-2 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-200 outline-none w-20 focus:w-28 focus:ring-1 focus:ring-indigo-500 transition-all font-medium"
+                  />
+                </div>
               </div>
             )}
           </div>

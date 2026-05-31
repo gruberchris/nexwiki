@@ -51,7 +51,7 @@ func (srv *Server) StartMCPServer() {
 	scanner := bufio.NewScanner(os.Stdin)
 	writer := os.Stdout
 
-	fmt.Fprintf(os.Stderr, "Always-on stdio MCP server loop successfully started in background!\n")
+	_, _ = fmt.Fprintf(os.Stderr, "Always-on stdio MCP server loop successfully started in background!\n")
 
 	// Read lines of JSON-RPC requests from standard input
 	for scanner.Scan() {
@@ -71,7 +71,7 @@ func (srv *Server) StartMCPServer() {
 	}
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
-		fmt.Fprintf(os.Stderr, "MCP server stdio error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "MCP server stdio error: %v\n", err)
 	}
 }
 
@@ -243,6 +243,71 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 						"properties": map[string]interface{}{},
 					},
 				},
+				{
+					"name":        "create_agent_memory",
+					"description": "Create a brand new protected AI Agent Memory document (like a plan, troubleshooting log, or architecture decision). Automatically categorizes the page using special protected 'aiagent-' tags.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "The human-readable title of the memory article (e.g. 'Project X Implementation Plan').",
+							},
+							"content": map[string]interface{}{
+								"type":        "string",
+								"description": "The raw Markdown content of the memory document.",
+							},
+							"memory_type": map[string]interface{}{
+								"type":        "string",
+								"description": "The classification type of memory. Must be one of: plan, troubleshooting, memory, decision, todo, rules.",
+							},
+							"project_context": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional project identifier to apply a secondary contextual tag (e.g. 'project-x' generates 'aiagent-<type>-project-x').",
+							},
+							"edit_summary": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional revision log description summarizing why this memory was created.",
+							},
+						},
+						"required": []string{"title", "content", "memory_type"},
+					},
+				},
+				{
+					"name":        "append_agent_memory",
+					"description": "Append logs, subtask completions, or troubleshooting observations to the end of an existing protected AI Agent Memory document.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"slug": map[string]interface{}{
+								"type":        "string",
+								"description": "The unique URL-safe slug of the memory article to append to.",
+							},
+							"content_to_append": map[string]interface{}{
+								"type":        "string",
+								"description": "The raw Markdown text to append to the end of the memory content.",
+							},
+							"edit_summary": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional summary outlining what details were appended (e.g. 'Logged milestone 1 completion').",
+							},
+						},
+						"required": []string{"slug", "content_to_append"},
+					},
+				},
+				{
+					"name":        "list_agent_memories",
+					"description": "List all protected AI Agent Memory documents currently saved inside the knowledge base.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"memory_type": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional memory type to filter the list (e.g., plan, troubleshooting, memory, decision, todo, rules).",
+							},
+						},
+					},
+				},
 			},
 		}
 
@@ -270,7 +335,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 	respBytes, err := json.Marshal(resp)
 	if err == nil {
 		// Stdio transport expects each JSON-RPC envelope strictly on a single line!
-		fmt.Fprintf(w, "%s\n", string(respBytes))
+		_, _ = fmt.Fprintf(w, "%s\n", string(respBytes))
 	}
 }
 
@@ -308,9 +373,13 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 		} else {
 			text = fmt.Sprintf("Found %d matching articles in NexWiki:\n\n", len(results))
 			for i, res := range results {
-				text += fmt.Sprintf("[%d] %s (Slug: %s, Score: %.3f)\n", i+1, res.Title, res.Slug, res.Score)
+				tagsStr := ""
+				if len(res.Tags) > 0 {
+					tagsStr = fmt.Sprintf(" | Tags: %s", strings.Join(res.Tags, ", "))
+				}
+				text += fmt.Sprintf("[%d] %s (Slug: %s, Score: %.3f%s)\n", i+1, res.Title, res.Slug, res.Score, tagsStr)
 				for _, snippet := range res.Snippets {
-					// Strip HTML <mark> tags to make it clean markdown for the AI agent
+					// Strip HTML <mark> tags to make it clean Markdown for the AI agent
 					cleanSnippet := strings.ReplaceAll(snippet, "<mark>", "**")
 					cleanSnippet = strings.ReplaceAll(cleanSnippet, "</mark>", "**")
 					text += fmt.Sprintf("    Snippet: ... %s ...\n", cleanSnippet)
@@ -335,9 +404,15 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error loading article '%s': %v", readArgs.Slug, err)}}}, nil
 		}
 
-		// Return both front-matter configurations and full markdown content to the agent
-		text := fmt.Sprintf("Title: %s\nSlug: %s\nCreated: %s\nUpdated: %s\n\n%s",
-			art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.UpdatedAt.Format(time.RFC3339), art.Content)
+		// Return tags in read metadata
+		tagsStr := ""
+		if len(art.Tags) > 0 {
+			tagsStr = fmt.Sprintf("\nTags: %s", strings.Join(art.Tags, ", "))
+		}
+
+		// Return both front-matter configurations and full Markdown content to the agent
+		text := fmt.Sprintf("Title: %s\nSlug: %s\nCreated: %s\nUpdated: %s%s\n\n%s",
+			art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.UpdatedAt.Format(time.RFC3339), tagsStr, art.Content)
 
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
 
@@ -353,8 +428,12 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 		} else {
 			text = fmt.Sprintf("NexWiki Directory Index contains %d articles:\n\n", len(articles))
 			for i, art := range articles {
-				text += fmt.Sprintf("[%d] %s (Slug: %s, Last Edited: %s)\n",
-					i+1, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"))
+				tagsStr := ""
+				if len(art.Tags) > 0 {
+					tagsStr = fmt.Sprintf(" | Tags: %s", strings.Join(art.Tags, ", "))
+				}
+				text += fmt.Sprintf("[%d] %s (Slug: %s, Last Edited: %s%s)\n",
+					i+1, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"), tagsStr)
 			}
 		}
 
@@ -376,7 +455,7 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: an article with title '%s' (slug: '%s') already exists", cArgs.Title, slug)}}}, nil
 		}
 
-		art, err := srv.Storage.SaveArticle("", cArgs.Title, cArgs.Content, cArgs.EditSummary)
+		art, err := srv.Storage.SaveArticle("", cArgs.Title, cArgs.Content, cArgs.EditSummary, nil)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating article: %v", err)}}}, nil
 		}
@@ -407,7 +486,7 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: Version conflict! The article was updated by another session. Disk version is %d, but you loaded version %d. Re-fetch the article and try again.", existing.Version, eArgs.LoadedVersion)}}}, nil
 		}
 
-		art, err := srv.Storage.SaveArticle(eArgs.Slug, eArgs.Title, eArgs.Content, eArgs.EditSummary)
+		art, err := srv.Storage.SaveArticle(eArgs.Slug, eArgs.Title, eArgs.Content, eArgs.EditSummary, existing.Tags)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing article: %v", err)}}}, nil
 		}
@@ -436,6 +515,161 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 
 		respText := fmt.Sprintf("Success! Article with slug '%s' has been permanently deleted from disk along with all history backups and media assets.\n", dArgs.Slug)
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "create_agent_memory":
+		type CreateMemoryArgs struct {
+			Title          string `json:"title"`
+			Content        string `json:"content"`
+			MemoryType     string `json:"memory_type"`
+			ProjectContext string `json:"project_context"`
+			EditSummary    string `json:"edit_summary"`
+		}
+		var mArgs CreateMemoryArgs
+		if err := json.Unmarshal(args.Arguments, &mArgs); err != nil || mArgs.Title == "" || mArgs.Content == "" || mArgs.MemoryType == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title', 'content', and 'memory_type' are required."}
+		}
+
+		mType := strings.ToLower(strings.TrimSpace(mArgs.MemoryType))
+		validTypes := map[string]bool{
+			"plan":            true,
+			"troubleshooting": true,
+			"memory":          true,
+			"decision":        true,
+			"todo":            true,
+			"rules":           true,
+		}
+		if !validTypes[mType] {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: invalid memory_type '%s'. Valid types are: plan, troubleshooting, memory, decision, todo, rules", mArgs.MemoryType)}}}, nil
+		}
+
+		primaryTag := "aiagent-" + mType
+		tags := []string{primaryTag}
+
+		projCtx := strings.TrimSpace(mArgs.ProjectContext)
+		if projCtx != "" {
+			contextTag := fmt.Sprintf("aiagent-%s-%s", mType, Slugify(projCtx))
+			tags = append(tags, contextTag)
+		}
+
+		slug := Slugify(mArgs.Title)
+		if _, err := srv.Storage.GetArticle(slug); err == nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: an article with slug '%s' already exists", slug)}}}, nil
+		}
+
+		summary := mArgs.EditSummary
+		if summary == "" {
+			summary = fmt.Sprintf("Created AI Agent %s Memory", mType)
+		}
+
+		art, err := srv.Storage.SaveArticle("", mArgs.Title, mArgs.Content, summary, tags)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent memory: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! Protected AI Agent Memory '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\nTags: %s\n",
+			art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Version, strings.Join(art.Tags, ", "))
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "append_agent_memory":
+		type AppendMemoryArgs struct {
+			Slug            string `json:"slug"`
+			ContentToAppend string `json:"content_to_append"`
+			EditSummary     string `json:"edit_summary"`
+		}
+		var aArgs AppendMemoryArgs
+		if err := json.Unmarshal(args.Arguments, &aArgs); err != nil || aArgs.Slug == "" || aArgs.ContentToAppend == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'slug' and 'content_to_append' are required."}
+		}
+
+		existing, err := srv.Storage.GetArticle(aArgs.Slug)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", aArgs.Slug)}}}, nil
+		}
+
+		hasAgentTag := false
+		for _, tag := range existing.Tags {
+			if strings.HasPrefix(strings.ToLower(tag), "aiagent-") {
+				hasAgentTag = true
+				break
+			}
+		}
+		if !hasAgentTag {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: cannot append memory to a standard non-agent article."}}}, nil
+		}
+
+		newContent := existing.Content + "\n\n" + aArgs.ContentToAppend
+
+		summary := aArgs.EditSummary
+		if summary == "" {
+			summary = "Appended AI Agent memory details"
+		}
+
+		art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, summary, existing.Tags)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent memory: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! Appended memory to '%s' (version: %d, edited: %s).\n",
+			art.Title, art.Version, art.UpdatedAt.Format(time.RFC3339))
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "list_agent_memories":
+		type ListMemoriesArgs struct {
+			MemoryType string `json:"memory_type"`
+		}
+		var lArgs ListMemoriesArgs
+		_ = json.Unmarshal(args.Arguments, &lArgs) // ignore err, it is optional
+
+		articles, err := srv.Storage.ListArticles()
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+		}
+
+		filterType := strings.ToLower(strings.TrimSpace(lArgs.MemoryType))
+
+		var text string
+		count := 0
+		for _, artMeta := range articles {
+			art, err := srv.Storage.GetArticle(artMeta.Slug)
+			if err != nil {
+				continue
+			}
+
+			isAgentMemory := false
+			matchFilter := filterType == ""
+			var agentTags []string
+
+			for _, tag := range art.Tags {
+				tagLower := strings.ToLower(tag)
+				if strings.HasPrefix(tagLower, "aiagent-") {
+					isAgentMemory = true
+					agentTags = append(agentTags, tag)
+					if filterType != "" && strings.HasPrefix(tagLower, "aiagent-"+filterType) {
+						matchFilter = true
+					}
+				}
+			}
+
+			if isAgentMemory && matchFilter {
+				count++
+				if count == 1 {
+					text = "AI Agent Memories Index:\n\n"
+				}
+				text += fmt.Sprintf("[%d] %s (Slug: %s, Edited: %s)\n",
+					count, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"))
+				text += fmt.Sprintf("    Tags: %s\n\n", strings.Join(agentTags, ", "))
+			}
+		}
+
+		if count == 0 {
+			if filterType != "" {
+				text = fmt.Sprintf("No AI Agent memories found of type '%s'.\n", filterType)
+			} else {
+				text = "No AI Agent memories found inside the knowledge base.\n"
+			}
+		}
+
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
 
 	case "get_article_history":
 		type HistArgs struct {
@@ -583,7 +817,7 @@ func sendError(w io.Writer, code int, msg string, id interface{}) {
 	}
 	respBytes, err := json.Marshal(resp)
 	if err == nil {
-		fmt.Fprintf(w, "%s\n", string(respBytes))
+		_, _ = fmt.Fprintf(w, "%s\n", string(respBytes))
 	}
 }
 
@@ -619,7 +853,7 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set("Connection", "keep-alive")
 
 		// Priming comment to flush connection
-		fmt.Fprint(w, ": keepalive\n\n")
+		_, _ = fmt.Fprint(w, ": keepalive\n\n")
 		flusher.Flush()
 
 		// Keep stream open with periodic keepalives
@@ -632,7 +866,7 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 			case <-notify:
 				return
 			case <-ticker.C:
-				fmt.Fprint(w, ": keepalive\n\n")
+				_, _ = fmt.Fprint(w, ": keepalive\n\n")
 				flusher.Flush()
 			}
 		}
@@ -643,7 +877,7 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "Failed to read request body", http.StatusBadRequest)
 			return
 		}
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 
 		var req JSONRPCRequest
 		if err := json.Unmarshal(body, &req); err != nil {

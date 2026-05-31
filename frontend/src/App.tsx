@@ -250,7 +250,7 @@ export const App: React.FC = () => {
   };
 
   // CRUD: Saving Article edits/creates
-  const handleSaveArticle = async (title: string, content: string, editSummary: string) => {
+  const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[]) => {
     const targetSlug = editorSlug; // empty if new
     const isNew = targetSlug === '';
     const newComputedSlug = Slugify(title);
@@ -259,7 +259,8 @@ export const App: React.FC = () => {
       title, 
       content,
       edit_summary: editSummary,
-      loaded_version: currentArticle ? currentArticle.version : 0
+      loaded_version: currentArticle ? currentArticle.version : 0,
+      tags
     };
     const url = isNew ? '/api/articles' : `/api/articles/${targetSlug}`;
     const method = isNew ? 'POST' : 'PUT';
@@ -504,6 +505,7 @@ export const App: React.FC = () => {
         <Editor
           initialTitle={editorTitle}
           initialContent={editorContent}
+          initialTags={currentArticle ? currentArticle.tags : []}
           slug={editorSlug}
           onSave={handleSaveArticle}
           onCancel={() => {
@@ -587,6 +589,32 @@ export const App: React.FC = () => {
                         </span>
                       )}
                     </div>
+                    {/* Visual Tag Badges */}
+                    {currentArticle.tags && currentArticle.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-3 select-none">
+                        {currentArticle.tags.map(tag => {
+                          const isAgentTag = tag.toLowerCase().startsWith('aiagent-');
+                          return isAgentTag ? (
+                            <span 
+                              key={tag}
+                              title="Protected AI Agent Memory Tag"
+                              className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 dark:bg-emerald-400/10 border border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400 shadow-sm shadow-indigo-100/50 dark:shadow-none animate-pulse"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-emerald-400 animate-ping"></span>
+                              {tag}
+                            </span>
+                          ) : (
+                            <span 
+                              key={tag}
+                              className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 shadow-sm"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-600"></span>
+                              {tag}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                   {/* Actions buttons */}
                   <div className="flex items-center justify-end gap-2 self-stretch no-print mt-1">

@@ -12,6 +12,10 @@ If you are a developer or an AI agent interacting with this repository, please o
 * **Developer Setup & Quickstart**: Refer to the root [README.md](./README.md) for everything needed to get NexWiki up and running for local development, compilation, and building.
 * **Technical & Content Guides**: Technical documentation, user manuals, and content guides are located in the [docs/](./docs) directory (e.g., the [docs/user_guide.md](./docs/user_guide.md)).
 * **AI & MCP Agent Specifications**: This file ([AGENTS.md](./AGENTS.md)) is strictly reserved for documenting the Model Context Protocol details, exposed AI tools, and integration configurations.
+* **Documentation Integrity Rule ⚠️**: When new features are created in NexWiki:
+  1. The feature must be added to the feature list in the root [README.md](./README.md).
+  2. A new, detailed user guide document must be created inside the [docs/](./docs) folder. All user guides must teach the user how to use the feature and provide useful, practical examples.
+  3. A reference and link to this new document must be added directly into the [docs/README.md](./docs/README.md) hub page.
 
 ---
 

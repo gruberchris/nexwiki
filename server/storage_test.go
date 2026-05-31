@@ -15,7 +15,7 @@ func TestStorageVersioning(t *testing.T) {
 	}
 
 	// 1. Test Saving Initial version
-	art, err := storage.SaveArticle("", "Test Page", "# Version 1 content", "Initial commit")
+	art, err := storage.SaveArticle("", "Test Page", "# Version 1 content", "Initial commit", []string{"tag1", "tag2"})
 	if err != nil {
 		t.Fatalf("SaveArticle failed: %v", err)
 	}
@@ -23,12 +23,15 @@ func TestStorageVersioning(t *testing.T) {
 	if art.Version != 1 {
 		t.Errorf("Expected version 1, got %d", art.Version)
 	}
+	if len(art.Tags) != 2 || art.Tags[0] != "tag1" || art.Tags[1] != "tag2" {
+		t.Errorf("Expected tags ['tag1', 'tag2'], got %v", art.Tags)
+	}
 	if art.EditSummary != "Initial commit" {
 		t.Errorf("Expected edit summary 'Initial commit', got '%s'", art.EditSummary)
 	}
 
 	// 2. Test saving second version
-	art2, err := storage.SaveArticle("test-page", "Test Page", "# Version 2 content", "Typo fix")
+	art2, err := storage.SaveArticle("test-page", "Test Page", "# Version 2 content", "Typo fix", []string{"tag1", "tag2"})
 	if err != nil {
 		t.Fatalf("SaveArticle update failed: %v", err)
 	}
@@ -72,7 +75,7 @@ func TestStorageVersioning(t *testing.T) {
 	}
 
 	// 5. Test slug renaming
-	art3, err := storage.SaveArticle("test-page", "Renamed Page", "# Renamed content", "Renamed slug")
+	art3, err := storage.SaveArticle("test-page", "Renamed Page", "# Renamed content", "Renamed slug", []string{"tag1", "tag2", "renamed-tag"})
 	if err != nil {
 		t.Fatalf("SaveArticle rename failed: %v", err)
 	}
@@ -102,7 +105,73 @@ func TestStorageVersioning(t *testing.T) {
 		t.Errorf("Expected revert to increment version to 4, got %d", art4.Version)
 	}
 
-	// 7. Test deleting article clears history folder
+	// 7. Test global tag deletion
+	art5, err := storage.SaveArticle("", "Tag Delete Test", "# Content", "Summary", []string{"tag1", "delete-me"})
+	if err != nil {
+		t.Fatalf("SaveArticle for tag delete test failed: %v", err)
+	}
+
+	err = storage.DeleteTagGlobally("delete-me")
+	if err != nil {
+		t.Fatalf("DeleteTagGlobally failed: %v", err)
+	}
+
+	art5Updated, err := storage.GetArticle(art5.Slug)
+	if err != nil {
+		t.Fatalf("GetArticle failed: %v", err)
+	}
+
+	for _, tName := range art5Updated.Tags {
+		if tName == "delete-me" {
+			t.Errorf("Expected 'delete-me' tag to be deleted globally")
+		}
+	}
+
+	// Verify that protected tags cannot be deleted
+	err = storage.DeleteTagGlobally("aiagent-plan")
+	if err == nil {
+		t.Errorf("Expected error deleting protected AI tag, got nil")
+	}
+
+	// Verify search filtering of agent tags by default
+	_, err = storage.SaveArticle("", "AI Plan Page", "# Content", "Summary", []string{"aiagent-plan"})
+	if err != nil {
+		t.Fatalf("SaveArticle for AI plan failed: %v", err)
+	}
+
+	results, err := storage.SearchArticles("AI")
+	if err != nil {
+		t.Fatalf("SearchArticles failed: %v", err)
+	}
+
+	for _, res := range results {
+		if res.Slug == "ai-plan-page" {
+			t.Errorf("Expected AI plan page to be filtered out from default search")
+		}
+	}
+
+	// Search explicitly containing 'aiagent-' should find it
+	resultsExplicit, err := storage.SearchArticles("aiagent-plan")
+	if err != nil {
+		t.Fatalf("SearchArticles explicit failed: %v", err)
+	}
+
+	foundAIPlan := false
+	for _, res := range resultsExplicit {
+		if res.Slug == "ai-plan-page" {
+			foundAIPlan = true
+			break
+		}
+	}
+	if !foundAIPlan {
+		t.Errorf("Expected explicit search to find AI plan page")
+	}
+
+	// Clean up
+	_ = storage.DeleteArticle("ai-plan-page")
+	_ = storage.DeleteArticle("tag-delete-test")
+
+	// 8. Test deleting article clears history folder
 	err = storage.DeleteArticle("renamed-page")
 	if err != nil {
 		t.Fatalf("DeleteArticle failed: %v", err)

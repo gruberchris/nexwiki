@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // Server coordinates the API handlers with the persistence storage layer.
@@ -28,7 +29,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // JSON Helper to write standard success responses.
@@ -38,7 +39,7 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	_ = json.NewEncoder(w).Encode(data)
 }
 
 // ConfigResp represents the public deployment settings exposed to the frontend.
@@ -47,12 +48,12 @@ type ConfigResp struct {
 }
 
 // HandleGetConfig serves the custom title configuration settings to the client.
-func (srv *Server) HandleGetConfig(w http.ResponseWriter, r *http.Request) {
+func (srv *Server) HandleGetConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, ConfigResp{WikiName: srv.WikiName})
 }
 
 // HandleListArticles lists all wiki pages' front-matter metadata.
-func (srv *Server) HandleListArticles(w http.ResponseWriter, r *http.Request) {
+func (srv *Server) HandleListArticles(w http.ResponseWriter, _ *http.Request) {
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -77,12 +78,52 @@ func (srv *Server) HandleGetArticle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, art)
 }
 
-// HandleCreateArticle payload body
+// CreateArticleReq represents the payload body for creating a new article.
 type CreateArticleReq struct {
-	Title         string `json:"title"`
-	Content       string `json:"content"`
-	EditSummary   string `json:"edit_summary"`   // Summary for revision history
-	LoadedVersion int    `json:"loaded_version"` // Version loaded by client for conflict validation
+	Title         string   `json:"title"`
+	Content       string   `json:"content"`
+	EditSummary   string   `json:"edit_summary"`   // Summary for revision history
+	LoadedVersion int      `json:"loaded_version"` // Version loaded by client for conflict validation
+	Tags          []string `json:"tags"`           // Tags list
+}
+
+// validateAndCleanUserTags handles stripping new aiagent- tags while preserving existing ones.
+func validateAndCleanUserTags(incomingTags []string, existingTags []string) []string {
+	var preservedTags []string
+	for _, t := range existingTags {
+		tLower := strings.ToLower(t)
+		if strings.HasPrefix(tLower, "aiagent-") {
+			preservedTags = append(preservedTags, t)
+		}
+	}
+
+	var result []string
+	seen := make(map[string]bool)
+
+	for _, t := range preservedTags {
+		tLower := strings.ToLower(t)
+		if !seen[tLower] {
+			seen[tLower] = true
+			result = append(result, t)
+		}
+	}
+
+	for _, t := range incomingTags {
+		tTrimmed := strings.TrimSpace(t)
+		if tTrimmed == "" {
+			continue
+		}
+		tLower := strings.ToLower(tTrimmed)
+		if strings.HasPrefix(tLower, "aiagent-") {
+			continue
+		}
+		if !seen[tLower] {
+			seen[tLower] = true
+			result = append(result, tTrimmed)
+		}
+	}
+
+	return result
 }
 
 // HandleCreateArticle parses details and creates a new article file.
@@ -105,7 +146,10 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	art, err := srv.Storage.SaveArticle("", req.Title, req.Content, req.EditSummary)
+	// Clean tags (existingTags is nil on creation)
+	cleanedTags := validateAndCleanUserTags(req.Tags, nil)
+
+	art, err := srv.Storage.SaveArticle("", req.Title, req.Content, req.EditSummary, cleanedTags)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -146,7 +190,10 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	art, err := srv.Storage.SaveArticle(slug, req.Title, req.Content, req.EditSummary)
+	// Clean tags and preserve existing aiagent- tags
+	cleanedTags := validateAndCleanUserTags(req.Tags, existing.Tags)
+
+	art, err := srv.Storage.SaveArticle(slug, req.Title, req.Content, req.EditSummary, cleanedTags)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -196,7 +243,7 @@ func (srv *Server) HandleUploadAsset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "failed to retrieve file parameter 'file'")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	fileBytes, err := io.ReadAll(file)
 	if err != nil {
@@ -342,4 +389,26 @@ func (srv *Server) HandleRevertArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, art)
+}
+
+// HandleDeleteTagGlobally removes a tag from all articles.
+func (srv *Server) HandleDeleteTagGlobally(w http.ResponseWriter, r *http.Request) {
+	tag := r.PathValue("tag")
+	if tag == "" {
+		writeError(w, http.StatusBadRequest, "tag parameter is required")
+		return
+	}
+
+	// Double-check permission
+	if strings.HasPrefix(strings.ToLower(tag), "aiagent-") {
+		writeError(w, http.StatusForbidden, "cannot delete protected AI agent tag")
+		return
+	}
+
+	if err := srv.Storage.DeleteTagGlobally(tag); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "tag deleted globally successfully"})
 }

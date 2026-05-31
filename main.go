@@ -67,6 +67,7 @@ func main() {
 	mux.HandleFunc("GET /api/articles/{slug}/history", srv.HandleGetArticleHistory)
 	mux.HandleFunc("GET /api/articles/{slug}/history/{version}", srv.HandleGetArticleVersion)
 	mux.HandleFunc("POST /api/articles/{slug}/revert", srv.HandleRevertArticle)
+	mux.HandleFunc("DELETE /api/tags/{tag}", srv.HandleDeleteTagGlobally)
 
 	// Create FS for React Frontend.
 	// We check if "frontend/dist" exists as a physical directory on disk for dev mode live-reloading.
@@ -124,7 +125,7 @@ func (h *SPAFrontendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Try to open the requested file on the frontend FS
 	file, err := h.staticFS.Open(filePath)
 	if err == nil {
-		file.Close()
+		_ = file.Close()
 		// If it exists, let the standard FileServer handle serving it with proper headers
 		http.FileServer(http.FS(h.staticFS)).ServeHTTP(w, r)
 		return
@@ -135,10 +136,10 @@ func (h *SPAFrontendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	indexFile, err := h.staticFS.Open("index.html")
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(w, "Error: index.html not found in static files. Please run 'npm run build' inside frontend directory first.")
+		_, _ = fmt.Fprintf(w, "Error: index.html not found in static files. Please run 'npm run build' inside frontend directory first.")
 		return
 	}
-	defer indexFile.Close()
+	defer func() { _ = indexFile.Close() }()
 
 	// Set content type header before writing the status code or body
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -153,5 +154,5 @@ func (h *SPAFrontendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Serve the index file
-	io.Copy(w, indexFile)
+	_, _ = io.Copy(w, indexFile)
 }

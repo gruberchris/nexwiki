@@ -25,6 +25,7 @@ type Article struct {
 	Content     string    `json:"content,omitempty"`
 	Version     int       `json:"version,omitempty"`      // Version number
 	EditSummary string    `json:"edit_summary,omitempty"` // Summary of edits
+	Tags        []string  `json:"tags,omitempty"`         // Tags list
 }
 
 // Storage manages persistent article files and uploaded assets on disk.
@@ -79,13 +80,13 @@ func NewStorage(dataDir string) (*Storage, error) {
 
 	// Seed standard 'home' page if no articles exist
 	if err := s.seedDefaultHome(); err != nil {
-		index.Close()
+		_ = index.Close()
 		return nil, err
 	}
 
 	// Sync/populate search index
 	if err := s.SyncSearchIndex(); err != nil {
-		index.Close()
+		_ = index.Close()
 		return nil, fmt.Errorf("failed to sync search index: %w", err)
 	}
 
@@ -107,7 +108,7 @@ func Slugify(title string) string {
 	return strings.Trim(slug, "-")
 }
 
-// ListArticles reads all markdown files and returns metadata sorted by updated time (newest first).
+// ListArticles reads all Markdown files and returns metadata sorted by updated time (newest first).
 func (s *Storage) ListArticles() ([]Article, error) {
 	var articles []Article
 
@@ -168,8 +169,8 @@ func (s *Storage) GetArticle(slug string) (*Article, error) {
 	return parseArticleFile(data, true)
 }
 
-// SaveArticle writes article markdown to disk, handling potential slug changes and compressing a copy in gzip version history.
-func (s *Storage) SaveArticle(oldSlug string, title string, content string, editSummary string) (*Article, error) {
+// SaveArticle writes article Markdown to disk, handling potential slug changes and compressing a copy in gzip version history.
+func (s *Storage) SaveArticle(oldSlug string, title string, content string, editSummary string, tags []string) (*Article, error) {
 	newSlug := Slugify(title)
 	if newSlug == "" {
 		return nil, fmt.Errorf("article title must contain valid characters to generate a slug")
@@ -194,6 +195,7 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 					CreatedAt: existingArt.CreatedAt,
 					UpdatedAt: now,
 					Content:   content,
+					Tags:      tags,
 				}
 			}
 		}
@@ -206,7 +208,7 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 				return nil, fmt.Errorf("an article with slug '%s' already exists", newSlug)
 			}
 
-			// Rename physical markdown file
+			// Rename physical Markdown file
 			if err := os.Rename(oldPath, newPath); err != nil && !os.IsNotExist(err) {
 				return nil, fmt.Errorf("failed to rename article file: %w", err)
 			}
@@ -274,7 +276,10 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 			CreatedAt: now,
 			UpdatedAt: now,
 			Content:   content,
+			Tags:      tags,
 		}
+	} else {
+		art.Tags = tags
 	}
 
 	// Set version and edit summary
@@ -298,20 +303,20 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 
 	// Add updated/new article to search index
 	if err := s.IndexArticle(art); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to index article '%s' in search engine: %v\n", newSlug, err)
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to index article '%s' in search engine: %v\n", newSlug, err)
 	}
 
 	return art, nil
 }
 
-// DeleteArticle deletes the article's markdown file, all its assets, and all version history on disk.
+// DeleteArticle deletes the article's Markdown file, all its assets, and all version history on disk.
 func (s *Storage) DeleteArticle(slug string) error {
 	cleanedSlug := Slugify(slug)
 	if cleanedSlug == "" {
 		return fmt.Errorf("invalid slug")
 	}
 
-	// 1. Delete markdown file
+	// 1. Delete the Markdown file
 	filePath := filepath.Join(s.ArticleDir, cleanedSlug+".md")
 	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to delete article file: %w", err)
@@ -419,11 +424,11 @@ This wiki is built using **Go** for the backend server and **React + TypeScript 
 *   Click the **New Page** button in the sidebar or search index to create a new page.
 *   Try inserting a link to a new page using the double-bracket syntax: ` + "`" + `[[My Draft Page]]` + "`" + `. Click it to create the article on the fly!
 `
-	_, err = s.SaveArticle("", "Home", defaultHomeContent, "Initial version")
+	_, err = s.SaveArticle("", "Home", defaultHomeContent, "Initial version", nil)
 	return err
 }
 
-// parseArticleFile parses front matter block and markdown body using standard Go libraries.
+// parseArticleFile parses front matter block and Markdown body using standard Go libraries.
 func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 	// Normalize Windows line endings
 	str := strings.ReplaceAll(string(fileContent), "\r\n", "\n")
@@ -454,7 +459,7 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 		key := strings.TrimSpace(partsLine[0])
 		val := strings.TrimSpace(partsLine[1])
 
-		// Strip quotes if they were added (e.g. title: "Home Page")
+		// Strip quotes if they were added (e.g., title: "Home Page")
 		val = strings.Trim(val, `"'`)
 
 		switch key {
@@ -478,6 +483,15 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 			}
 		case "edit_summary":
 			art.EditSummary = val
+		case "tags":
+			var tags []string
+			for _, t := range strings.Split(val, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" {
+					tags = append(tags, t)
+				}
+			}
+			art.Tags = tags
 		}
 	}
 
@@ -495,13 +509,18 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 
 // serializeFrontMatter converts article metadata into the front matter block.
 func serializeFrontMatter(art *Article) string {
-	return fmt.Sprintf("---\ntitle: %s\nslug: %s\ncreated_at: %s\nupdated_at: %s\nversion: %d\nedit_summary: %s\n---\n",
+	var tagsStr string
+	if len(art.Tags) > 0 {
+		tagsStr = fmt.Sprintf("\ntags: %s", strings.Join(art.Tags, ", "))
+	}
+	return fmt.Sprintf("---\ntitle: %s\nslug: %s\ncreated_at: %s\nupdated_at: %s\nversion: %d\nedit_summary: %s%s\n---\n",
 		art.Title,
 		art.Slug,
 		art.CreatedAt.Format(time.RFC3339),
 		art.UpdatedAt.Format(time.RFC3339),
 		art.Version,
 		art.EditSummary,
+		tagsStr,
 	)
 }
 
@@ -515,7 +534,7 @@ func (s *Storage) UnindexArticle(slug string) error {
 	return s.SearchIndex.Delete(slug)
 }
 
-// SyncSearchIndex populates the Bleve index with all existing markdown articles on startup if the index is brand new.
+// SyncSearchIndex populates the Bleve index with all existing Markdown articles on startup if the index is brand new.
 func (s *Storage) SyncSearchIndex() error {
 	count, err := s.SearchIndex.DocCount()
 	if err != nil {
@@ -524,7 +543,7 @@ func (s *Storage) SyncSearchIndex() error {
 
 	// If the index is empty, read all articles from disk and index them
 	if count == 0 {
-		fmt.Fprintf(os.Stderr, "Search index is empty. Commencing full boot synchronization...\n")
+		_, _ = fmt.Fprintf(os.Stderr, "Search index is empty. Commencing full boot synchronization...\n")
 		articles, err := s.ListArticles()
 		if err != nil {
 			return fmt.Errorf("failed to list articles for indexing: %w", err)
@@ -534,12 +553,12 @@ func (s *Storage) SyncSearchIndex() error {
 			art, err := s.GetArticle(item.Slug)
 			if err == nil {
 				if err := s.IndexArticle(art); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to index article '%s' on boot sync: %v\n", item.Slug, err)
+					_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to index article '%s' on boot sync: %v\n", item.Slug, err)
 				}
 			}
 		}
 		newCount, _ := s.SearchIndex.DocCount()
-		fmt.Fprintf(os.Stderr, "Boot synchronization complete. Successfully indexed %d articles.\n", newCount)
+		_, _ = fmt.Fprintf(os.Stderr, "Boot synchronization complete. Successfully indexed %d articles.\n", newCount)
 	}
 
 	return nil
@@ -552,6 +571,7 @@ type SearchResult struct {
 	Score     float64   `json:"score"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Snippets  []string  `json:"snippets"`
+	Tags      []string  `json:"tags,omitempty"`
 }
 
 // SearchArticles searches for keywords inside article titles and contents, returning HTML highlighted snippets.
@@ -577,12 +597,29 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 		return nil, fmt.Errorf("bleve search failed: %w", err)
 	}
 
-	results := []SearchResult{}
+	// Check if the query explicitly mentions "aiagent-" (case-insensitive)
+	allowAgentMemories := strings.Contains(strings.ToLower(queryStr), "aiagent-")
+
+	var results []SearchResult
 	for _, hit := range searchResults.Hits {
 		art, err := s.GetArticle(hit.ID)
 		if err != nil {
-			// Skip if the physical markdown file was deleted on disk but search index is slightly out of sync
+			// Skip if the physical Markdown file was deleted on disk but search index is slightly out of sync
 			continue
+		}
+
+		// Filter out articles with agent memory tags unless explicitly requested
+		if !allowAgentMemories {
+			hasAgentTag := false
+			for _, tag := range art.Tags {
+				if strings.HasPrefix(strings.ToLower(tag), "aiagent-") {
+					hasAgentTag = true
+					break
+				}
+			}
+			if hasAgentTag {
+				continue
+			}
 		}
 
 		var snippets []string
@@ -608,6 +645,7 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 			Score:     hit.Score,
 			UpdatedAt: art.UpdatedAt,
 			Snippets:  snippets,
+			Tags:      art.Tags,
 		})
 	}
 
@@ -621,10 +659,10 @@ func writeGzippedFile(filePath string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	gw := gzip.NewWriter(file)
-	defer gw.Close()
+	defer func() { _ = gw.Close() }()
 
 	_, err = gw.Write(data)
 	return err
@@ -635,13 +673,13 @@ func readGzippedFile(filePath string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	gr, err := gzip.NewReader(file)
 	if err != nil {
 		return nil, err
 	}
-	defer gr.Close()
+	defer func() { _ = gr.Close() }()
 
 	return io.ReadAll(gr)
 }
@@ -671,13 +709,13 @@ func (s *Storage) GetArticleHistory(slug string) ([]Article, error) {
 		filePath := filepath.Join(histFolder, file.Name())
 		data, err := readGzippedFile(filePath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to read history version file %s: %v\n", file.Name(), err)
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to read history version file %s: %v\n", file.Name(), err)
 			continue
 		}
 
 		art, err := parseArticleFile(data, false)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to parse history version file %s: %v\n", file.Name(), err)
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to parse history version file %s: %v\n", file.Name(), err)
 			continue
 		}
 
@@ -716,5 +754,47 @@ func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 	}
 
 	summary := fmt.Sprintf("Reverted to version %d", version)
-	return s.SaveArticle(slug, histArt.Title, histArt.Content, summary)
+	return s.SaveArticle(slug, histArt.Title, histArt.Content, summary, histArt.Tags)
+}
+
+// DeleteTagGlobally removes a tag from all articles in the wiki.
+// Enforces validation: it returns an error if the tag is protected (starts with "aiagent-").
+func (s *Storage) DeleteTagGlobally(tag string) error {
+	tagLower := strings.ToLower(tag)
+	if strings.HasPrefix(tagLower, "aiagent-") {
+		return fmt.Errorf("cannot delete protected AI agent tag: %s", tag)
+	}
+
+	articles, err := s.ListArticles()
+	if err != nil {
+		return err
+	}
+
+	for _, artMeta := range articles {
+		art, err := s.GetArticle(artMeta.Slug)
+		if err != nil {
+			continue
+		}
+
+		// Check if tag is present
+		tagIndex := -1
+		for i, t := range art.Tags {
+			if strings.ToLower(t) == tagLower {
+				tagIndex = i
+				break
+			}
+		}
+
+		if tagIndex != -1 {
+			// Remove the tag
+			newTags := append(art.Tags[:tagIndex], art.Tags[tagIndex+1:]...)
+			// Save the updated article
+			_, err = s.SaveArticle(art.Slug, art.Title, art.Content, fmt.Sprintf("Removed tag '%s' globally", tag), newTags)
+			if err != nil {
+				return fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
+			}
+		}
+	}
+
+	return nil
 }
