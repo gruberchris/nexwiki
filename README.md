@@ -2,7 +2,7 @@
 
 NexWiki is an elegant, lightning-fast personal and collaborative knowledge base written in **Go** with a modern embedded **React + TypeScript** frontend. It serves as a zero-dependency, self-contained wiki server that preserves your content as standard, human-readable Markdown files. 
 
-Beyond acting as a traditional wiki, NexWiki features an **always-on Model Context Protocol (MCP) server** supporting both standard Stdio and the SSE HTTP transport. This lets AI agents (like Claude, Cursor, and custom tools) instantly query, read, and explore your knowledge base using semantic tools, turning your personal wiki into an active AI second brain.
+Beyond acting as a traditional wiki, NexWiki features an **always-on Model Context Protocol (MCP) server** supporting both standard Stdio and the modern Streamable HTTP transport (2025 Spec). This lets AI agents (like Claude, Cursor, and custom tools) instantly query, read, and explore your knowledge base using semantic tools, turning your personal wiki into an active AI second brain.
 
 ---
 
@@ -12,7 +12,7 @@ Beyond acting as a traditional wiki, NexWiki features an **always-on Model Conte
 - **⚡ Modern Responsive UI**: A sleek, high-fidelity Single Page Application (SPA) built using React 19, TypeScript, Vite, Lucide Icons, and styled with Tailwind CSS (v3).
 - 🏷️ **Dynamic Tagging & Navigation**: Organize note files using custom tags. Filter documents instantly using the interactive sidebar Tag Cloud, add/remove tags in the split-editor, and perform global tag deletion with one click.
 - 🤖 **Isolated & Protected AI Memories**: Dedicated, secure support for AI-created memories (plans, troubleshooting guides, decisions, todos, rules) protected by `aiagent-` prefixed tags. These pages are isolated and auto-excluded from default searches by default. While standard users cannot manually create or add *new* `aiagent-` tags, they have full freedom to edit and delete the documents themselves, and remove existing `aiagent-` tags as they see fit.
-- **🤖 Built-in MCP Server**: Exposes twelve powerful Model Context Protocol tools (including dedicated tools for creating, appending, and listing AI memories) to AI clients via Stdio and HTTP/SSE.
+- **🤖 Built-in MCP Server**: Exposes twelve powerful Model Context Protocol tools (including dedicated tools for creating, appending, and listing AI memories) to AI clients via Stdio and Streamable HTTP.
 - **🔍 Blazing-Fast Full-Text Search**: Powered by the robust `github.com/blevesearch/bleve/v2` engine. Supports advanced query parsing, scoring, and text snippet highlighting.
 - **📂 Flat-File Markdown Storage**: Wiki pages are stored on disk as plain Markdown files with YAML-like front matter metadata. Your files remain completely portable and easily readable by external editors.
 - 🕒 **Gzipped Flat-File Versioning**: Built-in revision engine that saves highly efficient compressed `.md.gz` gzip snapshots of your article history. Review historical changes side-by-side using interactive **Split Pane** or **Unified Inline** diff modes, roll back changes instantly, and prevent session write conflicts with automatic optimistic locking guards.
@@ -214,8 +214,9 @@ To allow Claude Desktop to search and read your wiki pages, add the following to
 }
 ```
 
-### Connecting over HTTP/SSE
-NexWiki supports the streamable HTTP/SSE transport (2025 Spec) at `/api/mcp`. This allows modern MCP clients to connect over the network rather than stdio pipes.
+### Connecting over Streamable HTTP
+
+NexWiki supports the modern Streamable HTTP transport (2025 Spec, the official successor to the deprecated HTTP+SSE specification) at `/api/mcp`. This allows modern MCP clients to connect over the network rather than stdio pipes.
 
 ---
 

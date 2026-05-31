@@ -11,7 +11,7 @@ This protocol acts as a standardized bridge allowing AI agents (like Claude Desk
 The NexWiki MCP server supports two primary transport layers:
 
 1. **Stdio (Standard Input/Output) [JSON-RPC 2.0]**: Typically used for local server-agent processes. The agent runs the NexWiki binary or spins up the Docker container directly, piping JSON-RPC 2.0 messages via standard input/output.
-2. **HTTP / Server-Sent Events (SSE)**: Enables a networked connection over HTTP. It uses an SSE channel (`GET`) at `/api/mcp` to stream notifications and updates, combined with standard HTTP `POST` requests to execute synchronous JSON-RPC commands.
+2. **Streamable HTTP**: Enables a modern, secure networked connection over HTTP (2025 Spec, the official successor to the deprecated HTTP+SSE specification). It uses a streamable HTTP connection at `/api/mcp` supporting GET (initiating the stream) and POST (executing synchronous JSON-RPC commands) to execute tools.
 
 ### 🔒 Log Safety Guarantee
 In order to prevent stdio pipe corruption (which breaks JSON-RPC communication in tools like Claude Desktop), **NexWiki redirects all internal system and web application logs exclusively to standard error (`Stderr`)**. Only valid JSON-RPC envelopes are ever output to `Stdout`.
