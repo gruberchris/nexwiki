@@ -20,7 +20,8 @@ import {
   Share2,
   ChevronDown,
   FileText,
-  Printer
+  Printer,
+  FileDown
 } from 'lucide-react';
 
 // Simple check to identify new page creation urls
@@ -408,6 +409,29 @@ export const App: React.FC = () => {
     }
   };
 
+  // TXT file saving export trigger
+  const handleExportTxt = async () => {
+    if (!currentArticle) return;
+    setShareDropdownOpen(false);
+    
+    try {
+      const suggestedName = Slugify(currentArticle.title) || 'article';
+      const success = await saveFile(
+        currentArticle.content || '',
+        suggestedName,
+        'text/plain',
+        'txt'
+      );
+      
+      if (success) {
+        triggerAlert('success', 'Article exported as Text (TXT) successfully!');
+      }
+    } catch (err) {
+      console.error('Failed to export TXT:', err);
+      triggerAlert('error', 'Failed to export as Text document.');
+    }
+  };
+
   // Close dropdown on click outside
   useEffect(() => {
     if (!shareDropdownOpen) return;
@@ -544,7 +568,7 @@ export const App: React.FC = () => {
               <article className="max-w-2xl mx-auto space-y-6">
                 
                 {/* Article Header controls */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200/60 dark:border-slate-800/60 pb-6 select-none">
+                <div className="flex flex-col gap-4 border-b border-slate-200/60 dark:border-slate-800/60 pb-6 select-none no-print">
                   
                   {/* Title & Metadata */}
                   <div className="space-y-2">
@@ -565,7 +589,7 @@ export const App: React.FC = () => {
                     </div>
                   </div>
                   {/* Actions buttons */}
-                  <div className="flex items-center gap-2 self-start sm:self-center shrink-0 no-print">
+                  <div className="flex items-center justify-end gap-2 self-stretch no-print mt-1">
                     <button
                       onClick={handleTriggerEdit}
                       className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer"
@@ -628,6 +652,13 @@ export const App: React.FC = () => {
                           >
                             <FileText size={12} className="text-indigo-500" />
                             <span>Export as Word (DOCX)</span>
+                          </button>
+                          <button
+                            onClick={handleExportTxt}
+                            className="dropdown-item"
+                          >
+                            <FileDown size={12} className="text-indigo-500" />
+                            <span>Export as Text (TXT)</span>
                           </button>
                         </div>
                       )}
