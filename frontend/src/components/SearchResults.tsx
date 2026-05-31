@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Search, ArrowLeft, Clock, AlertCircle } from 'lucide-react';
-import { formatRelativeTime } from './Sidebar';
+import { formatRelativeTime } from '../utils';
 
 interface SearchResult {
   title: string;
@@ -23,15 +23,18 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
 }) => {
   const [query, setQuery] = useState(initialQuery);
   const [activeSearch, setActiveSearch] = useState(initialQuery);
+  const [prevInitialQuery, setPrevInitialQuery] = useState(initialQuery);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [timeTakenMs, setTimeTakenMs] = useState(0);
 
-  // Sync state if URL query changes
-  useEffect(() => {
+  // Sync state if URL query changes during rendering (avoids cascading render effect)
+  if (initialQuery !== prevInitialQuery) {
+    setPrevInitialQuery(initialQuery);
     setQuery(initialQuery);
     setActiveSearch(initialQuery);
-  }, [initialQuery]);
+    setIsLoading(true);
+  }
 
   // Execute full-text search against Go API
   useEffect(() => {
@@ -47,9 +50,13 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
 
       try {
         const response = await fetch(`/api/search?q=${encodeURIComponent(activeSearch.trim())}`);
-        if (!response.ok) throw new Error('Search request failed');
-        const data = await response.json();
-        setResults(data || []);
+        if (!response.ok) {
+          console.error('FTS Search error: Search request failed');
+          setResults([]);
+        } else {
+          const data = await response.json();
+          setResults(data || []);
+        }
       } catch (err) {
         console.error('FTS Search error:', err);
         setResults([]);
@@ -60,10 +67,10 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
       }
     };
 
-    runSearch();
+    void runSearch();
   }, [activeSearch]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.SyntheticEvent) => {
     e.preventDefault();
     if (query.trim()) {
       setActiveSearch(query.trim());
@@ -123,7 +130,7 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
               ))}
             </div>
           ) : results.length === 0 ? (
-            // No matches found display & tips sheet
+            // No matches found display & tip sheet
             <div className="p-8 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900/40 text-center space-y-4">
               <AlertCircle size={32} className="mx-auto text-slate-400 dark:text-slate-500" />
               <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">

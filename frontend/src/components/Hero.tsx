@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { Article } from '../types';
-import { formatRelativeTime } from './Sidebar';
+import { formatRelativeTime } from '../utils';
 import { 
   BookOpen, 
   Plus, 
@@ -30,7 +30,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
     art.slug.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleFtsSearch = (e: React.FormEvent) => {
+  const handleFtsSearch = (e: React.SyntheticEvent) => {
     e.preventDefault();
     if (ftsQuery.trim()) {
       onNavigate(`search?q=${encodeURIComponent(ftsQuery.trim())}`);
