@@ -61,6 +61,122 @@ var DefaultThemes = []Theme{
 			AccentBg:        "rgba(49, 46, 129, 0.2)",
 		},
 	},
+	{
+		Name:        "july-4th",
+		DefaultMode: "light",
+		Custom:      false,
+		Light: ThemeColors{
+			BgPrimary:       "#f8fafc", // soft slate white
+			BgSecondary:     "#ffffff", // white
+			TextPrimary:     "#0f172a", // navy
+			TextSecondary:   "#1e293b", // copy slate
+			TextMuted:       "#64748b", // muted
+			BorderColor:     "#cbd5e1", // blue gray border
+			AccentPrimary:   "#b91c1c", // patriotic red
+			AccentSecondary: "#1d4ed8", // patriotic blue
+			AccentHover:     "#991b1b",
+			AccentBg:        "#fee2e2", // red accent bg
+		},
+		Dark: ThemeColors{
+			BgPrimary:       "#0b0f19", // deep navy sky
+			BgSecondary:     "#111827", // dark navy crypt
+			TextPrimary:     "#f8fafc",
+			TextSecondary:   "#cbd5e1",
+			TextMuted:       "#6b7280",
+			BorderColor:     "#1f2937",
+			AccentPrimary:   "#ef4444", // bright holiday red
+			AccentSecondary: "#3b82f6", // bright holiday blue
+			AccentHover:     "#f87171",
+			AccentBg:        "rgba(239, 68, 68, 0.15)",
+		},
+	},
+	{
+		Name:        "halloween",
+		DefaultMode: "light",
+		Custom:      false,
+		Light: ThemeColors{
+			BgPrimary:       "#fffbeb", // warm amber cream
+			BgSecondary:     "#ffffff",
+			TextPrimary:     "#1c1917", // charcoal black
+			TextSecondary:   "#44403c",
+			TextMuted:       "#78716c",
+			BorderColor:     "#fed7aa", // pumpkin border
+			AccentPrimary:   "#ea580c", // pumpkin orange
+			AccentSecondary: "#7c3aed", // witch purple
+			AccentHover:     "#c2410c",
+			AccentBg:        "#ffedd5",
+		},
+		Dark: ThemeColors{
+			BgPrimary:       "#0c0a09", // haunted stone black
+			BgSecondary:     "#1c1917", // haunted stone gray
+			TextPrimary:     "#fafaf9", // ghostly white
+			TextSecondary:   "#d6d3d1", // skeleton gray
+			TextMuted:       "#78716c",
+			BorderColor:     "#44403c",
+			AccentPrimary:   "#f97316", // neon orange
+			AccentSecondary: "#a78bfa", // neon purple
+			AccentHover:     "#fb923c",
+			AccentBg:        "rgba(249, 115, 22, 0.15)",
+		},
+	},
+	{
+		Name:        "christmas",
+		DefaultMode: "light",
+		Custom:      false,
+		Light: ThemeColors{
+			BgPrimary:       "#f0fdf4", // minty white
+			BgSecondary:     "#ffffff",
+			TextPrimary:     "#14532d", // dark pine green
+			TextSecondary:   "#166534",
+			TextMuted:       "#71717a",
+			BorderColor:     "#bbf7d0", // holly green border
+			AccentPrimary:   "#b91c1c", // holiday crimson red
+			AccentSecondary: "#eab308", // star gold
+			AccentHover:     "#991b1b",
+			AccentBg:        "#dcfce7",
+		},
+		Dark: ThemeColors{
+			BgPrimary:       "#022c22", // deep evergreen pine
+			BgSecondary:     "#064e3b",
+			TextPrimary:     "#f0fdf4", // snow white
+			TextSecondary:   "#a7f3d0", // minty text
+			TextMuted:       "#6b7280",
+			BorderColor:     "#0f766e",
+			AccentPrimary:   "#ef4444", // bright holiday red
+			AccentSecondary: "#facc15", // bright star gold
+			AccentHover:     "#f87171",
+			AccentBg:        "rgba(239, 68, 68, 0.15)",
+		},
+	},
+	{
+		Name:        "new-years",
+		DefaultMode: "light",
+		Custom:      false,
+		Light: ThemeColors{
+			BgPrimary:       "#fafaf9", // champagne white
+			BgSecondary:     "#ffffff",
+			TextPrimary:     "#1c1917", // warm stone black
+			TextSecondary:   "#44403c",
+			TextMuted:       "#78716c",
+			BorderColor:     "#e7e5e4", // silver border
+			AccentPrimary:   "#ca8a04", // metallic dark gold
+			AccentSecondary: "#78716c", // slate silver
+			AccentHover:     "#a16207",
+			AccentBg:        "#fef9c3",
+		},
+		Dark: ThemeColors{
+			BgPrimary:       "#09090b", // midnight sky black
+			BgSecondary:     "#18181b",
+			TextPrimary:     "#fafafa", // glittering white
+			TextSecondary:   "#d4d4d8", // glittering silver
+			TextMuted:       "#71717a",
+			BorderColor:     "#27272a",
+			AccentPrimary:   "#eab308", // celebration gold
+			AccentSecondary: "#a1a1aa", // celebration silver
+			AccentHover:     "#facc15",
+			AccentBg:        "rgba(234, 179, 8, 0.15)",
+		},
+	},
 }
 
 // ThemeStore handles persistent custom theme files in the wiki's data directory.
