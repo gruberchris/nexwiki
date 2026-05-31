@@ -43,9 +43,30 @@ Click **Save Page** in the top right to commit your changes to disk, or **Cancel
 ### 3. Deleting Articles
 If an article is no longer needed:
 1. Open the article you wish to delete.
-2. Click the **Delete** (trash bin icon) button in the page header.
+2. Click the compact **Delete** (rose-tinted trash bin icon) button in the page header.
 3. Confirm the prompt to delete the page.
 *Note: This permanently deletes the Markdown file and its media folder from the server, and automatically de-indexes it from full-text search.*
+
+---
+
+### 4. Exporting, Sharing, and Copying Articles
+To easily distribute and work with your wiki articles, NexWiki provides an elegant, glassmorphic **"Share & Export"** dropdown in the article header. This combines clipboard operations and multi-format document exporting into a single, compact workspace tool:
+
+#### 📋 Clipboard Utilities
+* **Copy Markdown**: Copies the raw, frontmatter-free Markdown body content to your clipboard. All YAML metadata and page header templates are automatically stripped out, leaving only the clean document body text.
+* **Copy Share Link**: Instantly copies the current URL of the browser tab so you can share it with others.
+*Visual alerts will confirm when items are copied successfully.*
+
+#### 📄 Multi-Format Document Exporters
+* **Export as PDF**: Converts the article into a professional, vector-drawn, high-fidelity PDF. NexWiki uses custom print-styled stylesheets (`@media print`) that automatically hide the sidebars, header buttons, TOC columns, and alert messages, leaving a clean, beautifully formatted, publication-ready document layout. It triggers your browser's print dialog, letting you choose "Save as PDF" and choose the exact destination.
+* **Export as Word (DOCX)**: Compiles the rendered article HTML into a standard, CSS-styled Microsoft Word template block. Opening the downloaded `.docx` file in Microsoft Word or Apple Pages allows you to read and fully edit the formatted document.
+* **Export as Text (TXT)**: Instantly downloads a clean, unformatted plain text `.txt` file containing the raw Markdown body text.
+
+#### 📂 File System Save Selection
+To give you complete control over your filesystem:
+* NexWiki utilizes the modern browser **File System Access API (`showSaveFilePicker`)** where supported (Chrome, Edge, Safari, and Opera on macOS/Windows). 
+* When exporting `.docx` or `.txt` files, this triggers a **native macOS / Windows "Save As" file dialog**, letting you name the file and select the exact folder on your local filesystem to save it to.
+* In unsupported browsers (such as Firefox) or non-secure contexts, it gracefully falls back to a standard browser download trigger that places the file in your default Downloads folder.
 
 ---
 

@@ -13,8 +13,9 @@ Beyond acting as a traditional wiki, NexWiki features an **always-on Model Conte
 - **🤖 Built-in MCP Server**: Exposes standard Model Context Protocol tools (`search_wiki`, `read_article`, `list_articles`) to AI clients via Stdio and HTTP/SSE.
 - **🔍 Blazing-Fast Full-Text Search**: Powered by the robust `github.com/blevesearch/bleve/v2` engine. Supports advanced query parsing, scoring, and text snippet highlighting.
 - **📂 Flat-File Markdown Storage**: Wiki pages are stored on disk as plain Markdown files with YAML-like front matter metadata. Your files remain completely portable and easily readable by external editors.
-- **🕒 Gzipped Flat-File Versioning**: Built-in revision engine that saves highly efficient compressed `.md.gz` gzip snapshots of your article history. Review historical changes side-by-side using interactive **Split Pane** or **Unified Inline** diff modes, roll back changes instantly, and prevent session write conflicts with automatic optimistic locking guards.
-- **🖼️ Asset & Image Uploads**: Built-in support for uploading and referencing media assets (such as PNG, JPEG, GIF, SVG, and WebP) directly within articles.
+- 🕒 **Gzipped Flat-File Versioning**: Built-in revision engine that saves highly efficient compressed `.md.gz` gzip snapshots of your article history. Review historical changes side-by-side using interactive **Split Pane** or **Unified Inline** diff modes, roll back changes instantly, and prevent session write conflicts with automatic optimistic locking guards.
+- 📤 **Export, Share, and Copy Utilities**: Export any wiki article directly to a professional print-styled PDF (via a native vector-drawn printing engine), Microsoft Word (`.docx`), or plain Text (`.txt`). Instantly copy the raw, metadata-free Markdown body text or shareable page URL directly to the clipboard from a consolidated, glassmorphic dropdown menu.
+- 🖼️ **Asset & Image Uploads**: Built-in support for uploading and referencing media assets (such as PNG, JPEG, GIF, SVG, and WebP) directly within articles.
 - **⚙️ Dynamic Customization**: Easily personalize your wiki's name via environment variables (`WIKI_NAME`) or command-line flags.
 - **🔒 Development Safety**: System logs are directed exclusively to standard error (`Stderr`) to prevent stdout corruption, guaranteeing stable MCP JSON-RPC Stdio piping.
 
