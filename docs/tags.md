@@ -48,10 +48,11 @@ AI Agent Memories are special, protected notes created by connected AI assistant
 
 To keep your personal workspace tidy, these pages are marked with protected tags starting with the prefix `aiagent-`.
 
-### 🛡️ Protected Rules & Validation
-To preserve the integrity of AI memory systems, NexWiki enforces strict validation rules on `aiagent-` prefixed tags:
-1. **User Protection**: Standard users **cannot** manually add, apply, rename, or globally delete any tags starting with the `aiagent-` prefix. Any attempts to submit them via the editor or the REST API are automatically rejected or stripped by the server.
-2. **Tag Lock System**: If you edit a page that was created by an AI agent, any existing `aiagent-` tags are displayed as **locked, read-only badges** with a neon purple glow. You cannot delete or remove them from the article.
+### 🛡️ Secure Tag Rules & Validation
+To preserve the integrity of AI memory systems while maintaining absolute user control:
+1. **No Manual Creation**: Standard users **cannot manually create or add any new** tags starting with the `aiagent-` prefix. Any attempts to input or save new `aiagent-` tags are automatically blocked by the Editor input box and filtered out by the server.
+2. **Freedom to Edit & Delete**: Standard users **can fully edit and delete** `aiagent-` tagged memories and documents. In the Editor, they can also **delete/remove existing `aiagent-` tags** from an article, giving them total control over their notes.
+3. **Global Tag Deletion**: Globally deleting `aiagent-` tags remains restricted to prevent bulk AI data corruption.
 
 ### 🧹 Default Search & Sidebar Exclusion
 AI memories can grow large and clutter your daily personal wiki. NexWiki implements standard exclusion rules for AI agent pages:

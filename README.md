@@ -8,10 +8,10 @@ Beyond acting as a traditional wiki, NexWiki features an **always-on Model Conte
 
 ## ✨ Features
 
-- **📦 Zero-Dependency Single Binary**: Frontend compiled assets are embedded directly inside the Go web server executable using Go's `go:embed`. No external asset servers required.
+- **📦 Zero-Dependency Single Binary**: Frontend-compiled assets are embedded directly inside the Go web server executable using Go's `go:embed`. No external asset servers are required.
 - **⚡ Modern Responsive UI**: A sleek, high-fidelity Single Page Application (SPA) built using React 19, TypeScript, Vite, Lucide Icons, and styled with Tailwind CSS (v3).
 - 🏷️ **Dynamic Tagging & Navigation**: Organize note files using custom tags. Filter documents instantly using the interactive sidebar Tag Cloud, add/remove tags in the split-editor, and perform global tag deletion with one click.
-- 🤖 **Isolated & Protected AI Memories**: Dedicated, secure support for AI-created memories (plans, troubleshooting guides, decisions, todos, rules) protected by `aiagent-` prefixed tags. These pages are automatically isolated in a dedicated collapsible directory and auto-excluded from default searches and standard article lists. AI tags are locked as read-only for human users to prevent deletion.
+- 🤖 **Isolated & Protected AI Memories**: Dedicated, secure support for AI-created memories (plans, troubleshooting guides, decisions, todos, rules) protected by `aiagent-` prefixed tags. These pages are isolated and auto-excluded from default searches by default. While standard users cannot manually create or add *new* `aiagent-` tags, they have full freedom to edit and delete the documents themselves, and remove existing `aiagent-` tags as they see fit.
 - **🤖 Built-in MCP Server**: Exposes twelve powerful Model Context Protocol tools (including dedicated tools for creating, appending, and listing AI memories) to AI clients via Stdio and HTTP/SSE.
 - **🔍 Blazing-Fast Full-Text Search**: Powered by the robust `github.com/blevesearch/bleve/v2` engine. Supports advanced query parsing, scoring, and text snippet highlighting.
 - **📂 Flat-File Markdown Storage**: Wiki pages are stored on disk as plain Markdown files with YAML-like front matter metadata. Your files remain completely portable and easily readable by external editors.

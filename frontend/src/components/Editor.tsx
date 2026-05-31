@@ -232,15 +232,13 @@ export const Editor: React.FC<EditorProps> = ({
                         }`}
                       >
                         {tag}
-                        {!isAgentTag && (
-                          <button
-                            type="button"
-                            onClick={() => setTags(tags.filter(t => t !== tag))}
-                            className="text-slate-400 hover:text-rose-500 transition-colors ml-0.5 cursor-pointer font-bold"
-                          >
-                            &times;
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => setTags(tags.filter(t => t !== tag))}
+                          className="text-slate-400 hover:text-rose-500 transition-colors ml-0.5 cursor-pointer font-bold"
+                        >
+                          &times;
+                        </button>
                       </span>
                     );
                   })}

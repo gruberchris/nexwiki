@@ -87,26 +87,18 @@ type CreateArticleReq struct {
 	Tags          []string `json:"tags"`           // Tags list
 }
 
-// validateAndCleanUserTags handles stripping new aiagent- tags while preserving existing ones.
+// validateAndCleanUserTags handles stripping new "aiagent-" tags while allowing removal of existing ones.
 func validateAndCleanUserTags(incomingTags []string, existingTags []string) []string {
-	var preservedTags []string
+	existingAgentTags := make(map[string]bool)
 	for _, t := range existingTags {
 		tLower := strings.ToLower(t)
 		if strings.HasPrefix(tLower, "aiagent-") {
-			preservedTags = append(preservedTags, t)
+			existingAgentTags[tLower] = true
 		}
 	}
 
 	var result []string
 	seen := make(map[string]bool)
-
-	for _, t := range preservedTags {
-		tLower := strings.ToLower(t)
-		if !seen[tLower] {
-			seen[tLower] = true
-			result = append(result, t)
-		}
-	}
 
 	for _, t := range incomingTags {
 		tTrimmed := strings.TrimSpace(t)
@@ -114,7 +106,7 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string) []st
 			continue
 		}
 		tLower := strings.ToLower(tTrimmed)
-		if strings.HasPrefix(tLower, "aiagent-") {
+		if strings.HasPrefix(tLower, "aiagent-") && !existingAgentTags[tLower] {
 			continue
 		}
 		if !seen[tLower] {
