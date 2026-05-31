@@ -6,7 +6,7 @@ import { Editor } from './components/Editor';
 import { TOC } from './components/TOC';
 import { Hero } from './components/Hero';
 import { SearchResults } from './components/SearchResults';
-import { Slugify } from './utils';
+import { Slugify, saveFile, generateDocxContent } from './utils';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { 
   Edit, 
@@ -14,7 +14,13 @@ import {
   Loader2,
   Calendar,
   Clock,
-  BookOpen
+  BookOpen,
+  Copy,
+  Check,
+  Share2,
+  ChevronDown,
+  FileText,
+  Printer
 } from 'lucide-react';
 
 // Simple check to identify new page creation urls
@@ -37,6 +43,11 @@ export const App: React.FC = () => {
   const [editorTitle, setEditorTitle] = useState('');
   const [editorContent, setEditorContent] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
+  
+  // Dropdown & Copy utility states
+  const [shareDropdownOpen, setShareDropdownOpen] = useState(false);
+  const [copiedMd, setCopiedMd] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
 
   // UI state
   const [isLoading, setIsLoading] = useState(true);
@@ -311,6 +322,109 @@ export const App: React.FC = () => {
     setIsEditing(true);
   };
 
+  // Clipboard MD copying
+  const handleCopyMarkdown = async () => {
+    if (!currentArticle) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(currentArticle.content || '');
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = currentArticle.content || '';
+        textarea.style.position = 'fixed';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const cmd = 'execCommand';
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (document as any)[cmd]('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopiedMd(true);
+      triggerAlert('success', 'Article Markdown copied to clipboard!');
+      setTimeout(() => setCopiedMd(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy Markdown:', err);
+      triggerAlert('error', 'Failed to copy Markdown content.');
+    }
+  };
+
+  // Clipboard Link sharing
+  const handleShareLink = async () => {
+    try {
+      const currentUrl = window.location.href;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(currentUrl);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = currentUrl;
+        textarea.style.position = 'fixed';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const cmd = 'execCommand';
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (document as any)[cmd]('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopiedUrl(true);
+      triggerAlert('success', 'Article URL copied to clipboard!');
+      setTimeout(() => setCopiedUrl(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy URL:', err);
+      triggerAlert('error', 'Failed to copy URL to clipboard.');
+    }
+  };
+
+  // PDF print export trigger
+  const handleExportPDF = () => {
+    setShareDropdownOpen(false);
+    window.print();
+  };
+
+  // DOCX file saving export trigger
+  const handleExportDocx = async () => {
+    if (!currentArticle) return;
+    setShareDropdownOpen(false);
+    
+    try {
+      const viewerEl = document.querySelector('.wiki-content');
+      const bodyHtml = viewerEl ? viewerEl.innerHTML : '';
+      
+      const docxContent = generateDocxContent(currentArticle.title, bodyHtml);
+      const suggestedName = Slugify(currentArticle.title) || 'article';
+      
+      const success = await saveFile(
+        docxContent,
+        suggestedName,
+        'application/msword',
+        'docx'
+      );
+      
+      if (success) {
+        triggerAlert('success', 'Article exported as Word (DOCX) successfully!');
+      }
+    } catch (err) {
+      console.error('Failed to export DOCX:', err);
+      triggerAlert('error', 'Failed to export as Word document.');
+    }
+  };
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    if (!shareDropdownOpen) return;
+    
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.share-dropdown-container')) {
+        setShareDropdownOpen(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, [shareDropdownOpen]);
+
   // View renderer formatting dates
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '';
@@ -338,7 +452,7 @@ export const App: React.FC = () => {
       
       {/* Alert banner overlay */}
       {alertMsg && (
-        <div className={`fixed top-4 right-4 z-[99] px-6 py-4 rounded-2xl shadow-xl backdrop-blur-md border animate-fade-in text-sm font-semibold flex items-center gap-2 ${
+        <div className={`fixed top-4 right-4 z-[99] px-6 py-4 rounded-2xl shadow-xl backdrop-blur-md border animate-fade-in text-sm font-semibold flex items-center gap-2 no-print ${
           alertMsg.type === 'success'
             ? 'bg-emerald-50/90 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-600 dark:text-emerald-400'
             : 'bg-rose-50/90 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400'
@@ -348,15 +462,17 @@ export const App: React.FC = () => {
       )}
 
       {/* Sidebar Component */}
-      <Sidebar
-        articles={articles}
-        currentSlug={routeInfo.slug || (routeInfo.route === 'home' ? 'home' : '')}
-        darkMode={darkMode}
-        onToggleDarkMode={toggleDarkMode}
-        onNavigate={handleNavigate}
-        onCreateNew={() => navigate('/new')}
-        wikiName={wikiName}
-      />
+      <div className="no-print">
+        <Sidebar
+          articles={articles}
+          currentSlug={routeInfo.slug || (routeInfo.route === 'home' ? 'home' : '')}
+          darkMode={darkMode}
+          onToggleDarkMode={toggleDarkMode}
+          onNavigate={handleNavigate}
+          onCreateNew={() => navigate('/new')}
+          wikiName={wikiName}
+        />
+      </div>
 
       {/* Main Content Area */}
       {isEditing ? (
@@ -449,27 +565,81 @@ export const App: React.FC = () => {
                     </div>
                   </div>
                   {/* Actions buttons */}
-                  <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
+                  <div className="flex items-center gap-2 self-start sm:self-center shrink-0 no-print">
                     <button
                       onClick={handleTriggerEdit}
-                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-55 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-200"
+                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer"
                     >
                       <Edit size={12} />
                       <span>Edit Page</span>
                     </button>
                     <button
                       onClick={() => setHistoryOpen(true)}
-                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-55 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-200"
+                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer"
                     >
                       <Clock size={12} className="text-indigo-500" />
                       <span>History</span>
                     </button>
+
+                    {/* Share & Export Dropdown */}
+                    <div className="relative share-dropdown-container">
+                      <button
+                        onClick={() => setShareDropdownOpen(!shareDropdownOpen)}
+                        className={`flex items-center gap-1.5 py-2 px-3.5 rounded-xl border font-semibold text-xs shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer ${
+                          shareDropdownOpen
+                            ? 'border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/20 text-indigo-650 dark:text-indigo-400'
+                            : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300'
+                        }`}
+                      >
+                        <Share2 size={12} />
+                        <span>Share & Export</span>
+                        <ChevronDown size={10} className={`transition-transform duration-200 ${shareDropdownOpen ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {shareDropdownOpen && (
+                        <div className="dropdown-menu">
+                          <button
+                            onClick={handleCopyMarkdown}
+                            className="dropdown-item"
+                          >
+                            {copiedMd ? <Check size={12} className="text-emerald-500 animate-pulse" /> : <Copy size={12} className="text-indigo-500" />}
+                            <span>{copiedMd ? 'Copied Markdown!' : 'Copy Markdown'}</span>
+                          </button>
+                          <button
+                            onClick={handleShareLink}
+                            className="dropdown-item"
+                          >
+                            {copiedUrl ? <Check size={12} className="text-emerald-500 animate-pulse" /> : <Share2 size={12} className="text-indigo-500" />}
+                            <span>{copiedUrl ? 'Copied Link!' : 'Copy Share Link'}</span>
+                          </button>
+                          
+                          <div className="my-1 border-t border-slate-100 dark:border-slate-800/40" />
+                          
+                          <button
+                            onClick={handleExportPDF}
+                            className="dropdown-item"
+                          >
+                            <Printer size={12} className="text-indigo-500" />
+                            <span>Export as PDF</span>
+                          </button>
+                          <button
+                            onClick={handleExportDocx}
+                            className="dropdown-item"
+                          >
+                            <FileText size={12} className="text-indigo-500" />
+                            <span>Export as Word (DOCX)</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Compact Delete button */}
                     <button
                       onClick={handleDeleteArticle}
-                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-rose-200 dark:border-rose-950/60 bg-rose-50/50 dark:bg-rose-950/10 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-rose-600 dark:text-rose-400 font-semibold text-xs hover:scale-[1.02] active:scale-95 transition-all duration-200"
+                      title="Delete Article"
+                      className="flex items-center justify-center p-2 rounded-xl border border-rose-200 dark:border-rose-950/60 bg-rose-50/50 dark:bg-rose-950/10 hover:bg-rose-100 dark:hover:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer"
                     >
-                      <Trash2 size={12} />
-                      <span>Delete</span>
+                      <Trash2 size={13} />
                     </button>
                   </div>
                 </div>
@@ -500,7 +670,9 @@ export const App: React.FC = () => {
 
           {/* Sticky Table of Contents (TOC) Column */}
           {!isArticleLoading && currentArticle && currentArticle.content && (
-            <TOC content={currentArticle.content} />
+            <div className="no-print">
+              <TOC content={currentArticle.content} />
+            </div>
           )}
 
         </div>

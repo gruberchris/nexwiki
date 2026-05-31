@@ -111,3 +111,71 @@
   content: '?';
   @apply inline-flex items-center justify-center text-[10px] bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 font-bold w-4 h-4 ml-1 rounded-full align-middle;
 }
+
+/* Glassmorphic Dropdown & Share/Export menu styles */
+.dropdown-menu {
+  @apply absolute right-0 mt-2 w-52 rounded-2xl border border-slate-200/60 dark:border-slate-800/60 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl shadow-xl shadow-slate-100/10 dark:shadow-none p-1.5 z-50 origin-top-right transition-all duration-200 animate-fade-in select-none;
+}
+
+.dropdown-item {
+  @apply flex w-full items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-950 dark:hover:text-white transition-all cursor-pointer;
+}
+
+/* Print CSS Stylesheet */
+@media print {
+  .no-print,
+  .no-print * {
+    display: none !important;
+  }
+
+  html,
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 12pt !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Force top level containers to expand fully without layout flexing */
+  .w-screen,
+  .h-screen,
+  .flex,
+  .flex-1,
+  .overflow-hidden,
+  .overflow-y-auto {
+    display: block !important;
+    position: static !important;
+    height: auto !important;
+    width: 100% !important;
+    overflow: visible !important;
+    background: transparent !important;
+  }
+
+  /* Style main article reader column */
+  article {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    float: none !important;
+  }
+
+  /* Make links clean in print, avoid printing full URLs unless desired */
+  .wiki-content a {
+    color: #1a0dab !important;
+    text-decoration: underline !important;
+  }
+
+  /* Style page breaks for headers so they don't break awkwardly */
+  h1, h2, h3 {
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+  }
+  
+  pre, blockquote, img, table {
+    page-break-inside: avoid !important;
+  }
+}
+
