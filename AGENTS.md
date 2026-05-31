@@ -51,7 +51,7 @@ In order to prevent stdio pipe corruption (which breaks JSON-RPC communication i
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes three powerful, semantic tools for AI agents:
+The NexWiki MCP server registers and exposes nine powerful, semantic tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine. It supports advanced queries (wildcards, exact phrase quotes, and logical operators).
@@ -122,6 +122,72 @@ Lists all articles currently available in your knowledge base. This acts as a di
     "id": 3
   }
   ```
+
+---
+
+### 4. `create_wiki_article`
+Creates a brand new wiki article with a given title and raw Markdown content body. Automatically handles title slugification, checks for slug collision, and indexes the new article for search.
+
+* **Arguments**:
+  * `title` (string, **required**): The human-readable title of the new article (e.g. "React Hooks Guide").
+  * `content` (string, **required**): The raw Markdown content of the article body.
+  * `edit_summary` (string, **optional**): A summary describing the reason for creating the page.
+* **Output Format**:
+  A confirmation string detailing the title, generated URL slug, creation timestamp, and initial version number.
+
+---
+
+### 5. `edit_wiki_article`
+Modifies the title, Markdown content, or edit summary of an existing wiki article. Uses **optimistic locking** to prevent write collision conflicts.
+
+* **Arguments**:
+  * `slug` (string, **required**): The unique URL slug of the article to edit.
+  * `title` (string, **required**): The updated title of the article.
+  * `content` (string, **required**): The updated raw Markdown content of the article body.
+  * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
+  * `edit_summary` (string, **optional**): A summary detailing the modifications.
+* **Output Format**:
+  A success message containing the slug, new active version number, and last-edited timestamp.
+
+---
+
+### 6. `delete_wiki_article`
+Permanently deletes an existing wiki article, all its revision backups, and its uploaded media files from disk.
+
+* **Arguments**:
+  * `slug` (string, **required**): The URL-safe slug of the article to delete.
+* **Output Format**:
+  A success confirmation.
+
+---
+
+### 7. `get_article_history`
+Retrieves the full revision history log of a wiki page, showing version numbers, timestamps, and edit summaries.
+
+* **Arguments**:
+  * `slug` (string, **required**): The URL-safe slug of the target article.
+* **Output Format**:
+  A structured, bulleted plain text revision list.
+
+---
+
+### 8. `revert_article_version`
+Reverts the active state of an article back to a specific historical version number.
+
+* **Arguments**:
+  * `slug` (string, **required**): The URL slug of the target article.
+  * `version` (integer, **required**): The historical version number to restore.
+* **Output Format**:
+  A success message confirming the new active version.
+
+---
+
+### 9. `get_wiki_statistics`
+Scans the entire knowledge base to compile total page stats and **autonomously scan for dead or broken internal WikiLinks** (e.g., `[[Missing Page]]`).
+
+* **Arguments**: None (empty object `{}`).
+* **Output Format**:
+  A summary text listing total articles, total WikiLinks scanned, total dead links, and details on exactly which pages contain broken links so the AI agent can autonomously fix them!
 
 ---
 

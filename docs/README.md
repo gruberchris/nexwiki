@@ -22,6 +22,12 @@ An advanced technical and user guide covering the flat-file gzipped backup and c
 * **Instant Reversion**: Restoring past versions of articles safely.
 * **Optimistic Locking Guards**: Understanding version numbers and how NexWiki prevents multi-session write collisions.
 
+### 3. [NexWiki Model Context Protocol (MCP) Server Guide](./mcp_server.md)
+A comprehensive technical manual describing the always-on Go MCP engine:
+* **Transport Layers**: Connecting AI clients over standard input/output (Stdio) or Server-Sent Events (SSE) HTTP streams.
+* **Semantic Tools**: In-depth explanations of all nine exposed tools including read, search, optimistic locked writes, reverts, and dead WikiLink scanners.
+* **Client Configurations**: Step-by-step setup guides for Claude Desktop and Cursor IDE.
+
 ---
 
 ## 🏗️ Architecture Overview

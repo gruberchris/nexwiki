@@ -137,6 +137,112 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 						"properties": map[string]interface{}{},
 					},
 				},
+				{
+					"name":        "create_wiki_article",
+					"description": "Create a brand new wiki article with a given title, raw Markdown content body, and an optional revision edit summary. Automatically handles title slugification and checks for slug collision.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "The human-readable title of the new article (e.g. 'Advanced Go Syntax').",
+							},
+							"content": map[string]interface{}{
+								"type":        "string",
+								"description": "The raw Markdown content of the article body.",
+							},
+							"edit_summary": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional description summarizing the purpose of the creation (e.g. 'Initial seed guide').",
+							},
+						},
+						"required": []string{"title", "content"},
+					},
+				},
+				{
+					"name":        "edit_wiki_article",
+					"description": "Modify the title, markdown content, or edit summary of an existing article. Employs optimistic locking to prevent concurrent overwrite collisions.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"slug": map[string]interface{}{
+								"type":        "string",
+								"description": "The unique URL-safe identifier slug of the article to edit.",
+							},
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "The updated title of the article (can remain identical to original).",
+							},
+							"content": map[string]interface{}{
+								"type":        "string",
+								"description": "The updated raw Markdown content of the article body.",
+							},
+							"loaded_version": map[string]interface{}{
+								"type":        "integer",
+								"description": "The active version number of the article loaded by the client (helps detect multi-session edit collisions).",
+							},
+							"edit_summary": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional summary outlining what changed (e.g., 'Corrected spelling error').",
+							},
+						},
+						"required": []string{"slug", "title", "content", "loaded_version"},
+					},
+				},
+				{
+					"name":        "delete_wiki_article",
+					"description": "Permanently delete an existing wiki article and its historical backups from disk.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"slug": map[string]interface{}{
+								"type":        "string",
+								"description": "The unique URL-safe slug of the article to delete.",
+							},
+						},
+						"required": []string{"slug"},
+					},
+				},
+				{
+					"name":        "get_article_history",
+					"description": "Retrieve the full revision history log of a wiki page, including version numbers, timestamps, and edit summaries.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"slug": map[string]interface{}{
+								"type":        "string",
+								"description": "The URL-safe slug of the target article.",
+							},
+						},
+						"required": []string{"slug"},
+					},
+				},
+				{
+					"name":        "revert_article_version",
+					"description": "Revert the active state of an article back to a historical version number.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"slug": map[string]interface{}{
+								"type":        "string",
+								"description": "The URL-safe slug of the target article to roll back.",
+							},
+							"version": map[string]interface{}{
+								"type":        "integer",
+								"description": "The historical version number to restore.",
+							},
+						},
+						"required": []string{"slug", "version"},
+					},
+				},
+				{
+					"name":        "get_wiki_statistics",
+					"description": "Retrieve high-level wiki statistics, including total articles, storage footprint, and a list of dead or broken double-bracket internal WikiLinks.",
+					"inputSchema": map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
+					},
+				},
 			},
 		}
 
@@ -253,6 +359,210 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 		}
 
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+
+	case "create_wiki_article":
+		type CreateArgs struct {
+			Title       string `json:"title"`
+			Content     string `json:"content"`
+			EditSummary string `json:"edit_summary"`
+		}
+		var cArgs CreateArgs
+		if err := json.Unmarshal(args.Arguments, &cArgs); err != nil || cArgs.Title == "" || cArgs.Content == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'title' or 'content' arguments"}
+		}
+
+		slug := Slugify(cArgs.Title)
+		if _, err := srv.Storage.GetArticle(slug); err == nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: an article with title '%s' (slug: '%s') already exists", cArgs.Title, slug)}}}, nil
+		}
+
+		art, err := srv.Storage.SaveArticle("", cArgs.Title, cArgs.Content, cArgs.EditSummary)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating article: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! Article '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\n",
+			art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Version)
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "edit_wiki_article":
+		type EditArgs struct {
+			Slug          string `json:"slug"`
+			Title         string `json:"title"`
+			Content       string `json:"content"`
+			LoadedVersion int    `json:"loaded_version"`
+			EditSummary   string `json:"edit_summary"`
+		}
+		var eArgs EditArgs
+		if err := json.Unmarshal(args.Arguments, &eArgs); err != nil || eArgs.Slug == "" || eArgs.Title == "" || eArgs.Content == "" || eArgs.LoadedVersion <= 0 {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. Requires 'slug', 'title', 'content', and positive 'loaded_version'"}
+		}
+
+		existing, err := srv.Storage.GetArticle(eArgs.Slug)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", eArgs.Slug)}}}, nil
+		}
+
+		if existing.Version > 0 && existing.Version != eArgs.LoadedVersion {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: Version conflict! The article was updated by another session. Disk version is %d, but you loaded version %d. Re-fetch the article and try again.", existing.Version, eArgs.LoadedVersion)}}}, nil
+		}
+
+		art, err := srv.Storage.SaveArticle(eArgs.Slug, eArgs.Title, eArgs.Content, eArgs.EditSummary)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing article: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! Article '%s' (slug: %s) updated successfully.\nNew Version: %d\nLast Edited: %s\n",
+			art.Title, art.Slug, art.Version, art.UpdatedAt.Format(time.RFC3339))
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "delete_wiki_article":
+		type DelArgs struct {
+			Slug string `json:"slug"`
+		}
+		var dArgs DelArgs
+		if err := json.Unmarshal(args.Arguments, &dArgs); err != nil || dArgs.Slug == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'slug' argument"}
+		}
+
+		if _, err := srv.Storage.GetArticle(dArgs.Slug); err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", dArgs.Slug)}}}, nil
+		}
+
+		err := srv.Storage.DeleteArticle(dArgs.Slug)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error deleting article: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! Article with slug '%s' has been permanently deleted from disk along with all history backups and media assets.\n", dArgs.Slug)
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "get_article_history":
+		type HistArgs struct {
+			Slug string `json:"slug"`
+		}
+		var hArgs HistArgs
+		if err := json.Unmarshal(args.Arguments, &hArgs); err != nil || hArgs.Slug == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'slug' argument"}
+		}
+
+		history, err := srv.Storage.GetArticleHistory(hArgs.Slug)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error loading history for '%s': %v", hArgs.Slug, err)}}}, nil
+		}
+
+		var respText string
+		if len(history) == 0 {
+			respText = fmt.Sprintf("No historical versions found for article '%s'\n", hArgs.Slug)
+		} else {
+			respText = fmt.Sprintf("Revision History for '%s' (%d versions):\n\n", hArgs.Slug, len(history))
+			for _, ver := range history {
+				respText += fmt.Sprintf("Version: %d | Edited: %s\n", ver.Version, ver.UpdatedAt.Format(time.RFC3339))
+				if ver.EditSummary != "" {
+					respText += fmt.Sprintf("  Summary: %s\n", ver.EditSummary)
+				}
+				respText += "\n"
+			}
+		}
+
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "revert_article_version":
+		type RevArgs struct {
+			Slug    string `json:"slug"`
+			Version int    `json:"version"`
+		}
+		var rArgs RevArgs
+		if err := json.Unmarshal(args.Arguments, &rArgs); err != nil || rArgs.Slug == "" || rArgs.Version <= 0 {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. Requires 'slug' and positive 'version'"}
+		}
+
+		art, err := srv.Storage.RevertArticle(rArgs.Slug, rArgs.Version)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Revert failed: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! Article '%s' reverted successfully to version %d.\nNew active version: %d\nLast Edited: %s\n",
+			art.Title, rArgs.Version, art.Version, art.UpdatedAt.Format(time.RFC3339))
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "get_wiki_statistics":
+		articles, err := srv.Storage.ListArticles()
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+		}
+
+		var fullArticles []*Article
+		var activeSlugs = make(map[string]bool)
+		activeSlugs["home"] = true // Implicitly exists
+
+		for _, artMeta := range articles {
+			art, err := srv.Storage.GetArticle(artMeta.Slug)
+			if err == nil {
+				fullArticles = append(fullArticles, art)
+				activeSlugs[art.Slug] = true
+			}
+		}
+
+		type BrokenLink struct {
+			FromSlug   string
+			TargetLink string
+		}
+		var brokenLinks []BrokenLink
+		totalLinks := 0
+
+		for _, art := range fullArticles {
+			content := art.Content
+			for {
+				startIdx := strings.Index(content, "[[")
+				if startIdx == -1 {
+					break
+				}
+				endIdx := strings.Index(content[startIdx:], "]]")
+				if endIdx == -1 {
+					break
+				}
+				endIdx += startIdx
+
+				linkContent := content[startIdx+2 : endIdx]
+				content = content[endIdx+2:]
+
+				totalLinks++
+
+				target := linkContent
+				pipeIdx := strings.Index(linkContent, "|")
+				if pipeIdx != -1 {
+					target = linkContent[:pipeIdx]
+				}
+				target = strings.TrimSpace(target)
+
+				targetSlug := Slugify(target)
+				if !activeSlugs[targetSlug] {
+					brokenLinks = append(brokenLinks, BrokenLink{
+						FromSlug:   art.Slug,
+						TargetLink: target,
+					})
+				}
+			}
+		}
+
+		var respText string
+		respText = "NexWiki Knowledge Base Statistics:\n"
+		respText += fmt.Sprintf("- Total Articles: %d\n", len(articles))
+		respText += fmt.Sprintf("- Total WikiLinks Scanned: %d\n", totalLinks)
+		respText += fmt.Sprintf("- Total Broken/Dead WikiLinks: %d\n\n", len(brokenLinks))
+
+		if len(brokenLinks) == 0 {
+			respText += "Excellent! All double-bracket WikiLinks are healthy and fully connected! 🎉\n"
+		} else {
+			respText += "Broken/Dead WikiLinks Detected (AI suggestion: create these pages to heal the wiki!):\n"
+			for _, bl := range brokenLinks {
+				respText += fmt.Sprintf("  - Link '[[%s]]' inside article '/articles/%s' (Target slug: '%s' is missing)\n",
+					bl.TargetLink, bl.FromSlug, Slugify(bl.TargetLink))
+			}
+		}
+
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 
 	default:
 		return nil, &JSONRPCError{
