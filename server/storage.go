@@ -1,11 +1,15 @@
 package server
 
 import (
+	"compress/gzip"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,11 +18,13 @@ import (
 
 // Article represents a wiki article page, containing metadata in a front matter block and content body.
 type Article struct {
-	Title     string    `json:"title"`
-	Slug      string    `json:"slug"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Content   string    `json:"content,omitempty"`
+	Title       string    `json:"title"`
+	Slug        string    `json:"slug"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Content     string    `json:"content,omitempty"`
+	Version     int       `json:"version,omitempty"`      // Version number
+	EditSummary string    `json:"edit_summary,omitempty"` // Summary of edits
 }
 
 // Storage manages persistent article files and uploaded assets on disk.
@@ -26,6 +32,7 @@ type Storage struct {
 	DataDir     string
 	ArticleDir  string
 	AssetDir    string
+	HistoryDir  string
 	SearchIndex bleve.Index
 }
 
@@ -40,6 +47,10 @@ func NewStorage(dataDir string) (*Storage, error) {
 	}
 	if err := os.MkdirAll(assetDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create asset directory: %w", err)
+	}
+	historyDir := filepath.Join(dataDir, "history")
+	if err := os.MkdirAll(historyDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create history directory: %w", err)
 	}
 
 	// Open or create Bleve index
@@ -62,6 +73,7 @@ func NewStorage(dataDir string) (*Storage, error) {
 		DataDir:     dataDir,
 		ArticleDir:  articleDir,
 		AssetDir:    assetDir,
+		HistoryDir:  historyDir,
 		SearchIndex: index,
 	}
 
@@ -156,8 +168,8 @@ func (s *Storage) GetArticle(slug string) (*Article, error) {
 	return parseArticleFile(data, true)
 }
 
-// SaveArticle writes article markdown to disk, handling potential slug changes (renaming files and moving asset folders).
-func (s *Storage) SaveArticle(oldSlug string, title string, content string) (*Article, error) {
+// SaveArticle writes article markdown to disk, handling potential slug changes and compressing a copy in gzip version history.
+func (s *Storage) SaveArticle(oldSlug string, title string, content string, editSummary string) (*Article, error) {
 	newSlug := Slugify(title)
 	if newSlug == "" {
 		return nil, fmt.Errorf("article title must contain valid characters to generate a slug")
@@ -194,7 +206,7 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string) (*Ar
 				return nil, fmt.Errorf("an article with slug '%s' already exists", newSlug)
 			}
 
-			// Delete old markdown file later, or rename it first
+			// Rename physical markdown file
 			if err := os.Rename(oldPath, newPath); err != nil && !os.IsNotExist(err) {
 				return nil, fmt.Errorf("failed to rename article file: %w", err)
 			}
@@ -210,6 +222,47 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string) (*Ar
 					return nil, fmt.Errorf("failed to move assets: %w", err)
 				}
 			}
+
+			// Rename corresponding history directory if it exists
+			oldHistDir := filepath.Join(s.HistoryDir, oldSlug)
+			newHistDir := filepath.Join(s.HistoryDir, newSlug)
+			if _, err := os.Stat(oldHistDir); err == nil {
+				if err := os.Rename(oldHistDir, newHistDir); err != nil {
+					return nil, fmt.Errorf("failed to move history: %w", err)
+				}
+			}
+		}
+	}
+
+	// Determine the next version number by scanning current history files in newSlug folder
+	histFolder := filepath.Join(s.HistoryDir, newSlug)
+	_ = os.MkdirAll(histFolder, 0755)
+
+	nextVersion := 1
+	files, err := os.ReadDir(histFolder)
+	if err == nil {
+		for _, f := range files {
+			if !f.IsDir() && strings.HasSuffix(f.Name(), ".md.gz") {
+				name := strings.TrimSuffix(f.Name(), ".md.gz")
+				if v, err := strconv.Atoi(name); err == nil {
+					if v >= nextVersion {
+						nextVersion = v + 1
+					}
+				}
+			}
+		}
+	}
+
+	// Clean up newlines from edit summary to keep YAML parsing clean
+	editSummary = strings.ReplaceAll(editSummary, "\n", " ")
+	editSummary = strings.ReplaceAll(editSummary, "\r", "")
+	editSummary = strings.TrimSpace(editSummary)
+
+	if editSummary == "" {
+		if nextVersion == 1 {
+			editSummary = "Initial version"
+		} else {
+			editSummary = "Updated article"
 		}
 	}
 
@@ -224,11 +277,23 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string) (*Ar
 		}
 	}
 
-	// Serialize and write
-	filePath := filepath.Join(s.ArticleDir, newSlug+".md")
+	// Set version and edit summary
+	art.Version = nextVersion
+	art.EditSummary = editSummary
+
+	// Serialize front matter and content
 	serialized := serializeFrontMatter(art) + art.Content
+
+	// Write uncompressed active version to data/articles/
+	filePath := filepath.Join(s.ArticleDir, newSlug+".md")
 	if err := os.WriteFile(filePath, []byte(serialized), 0644); err != nil {
-		return nil, fmt.Errorf("failed to write article file: %w", err)
+		return nil, fmt.Errorf("failed to write active article file: %w", err)
+	}
+
+	// Write compressed history version to data/history/
+	histFilePath := filepath.Join(histFolder, fmt.Sprintf("%d.md.gz", nextVersion))
+	if err := writeGzippedFile(histFilePath, []byte(serialized)); err != nil {
+		return nil, fmt.Errorf("failed to write compressed version history file: %w", err)
 	}
 
 	// Add updated/new article to search index
@@ -239,7 +304,7 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string) (*Ar
 	return art, nil
 }
 
-// DeleteArticle deletes the article's markdown file and recursively deletes all its assets on disk.
+// DeleteArticle deletes the article's markdown file, all its assets, and all version history on disk.
 func (s *Storage) DeleteArticle(slug string) error {
 	cleanedSlug := Slugify(slug)
 	if cleanedSlug == "" {
@@ -259,6 +324,12 @@ func (s *Storage) DeleteArticle(slug string) error {
 	assetPath := filepath.Join(s.AssetDir, cleanedSlug)
 	if err := os.RemoveAll(assetPath); err != nil {
 		return fmt.Errorf("failed to delete asset directory: %w", err)
+	}
+
+	// 3. Recursively delete history folder
+	historyPath := filepath.Join(s.HistoryDir, cleanedSlug)
+	if err := os.RemoveAll(historyPath); err != nil {
+		return fmt.Errorf("failed to delete history directory: %w", err)
 	}
 
 	return nil
@@ -348,7 +419,7 @@ This wiki is built using **Go** for the backend server and **React + TypeScript 
 *   Click the **New Page** button in the sidebar or search index to create a new page.
 *   Try inserting a link to a new page using the double-bracket syntax: ` + "`" + `[[My Draft Page]]` + "`" + `. Click it to create the article on the fly!
 `
-	_, err = s.SaveArticle("", "Home", defaultHomeContent)
+	_, err = s.SaveArticle("", "Home", defaultHomeContent, "Initial version")
 	return err
 }
 
@@ -401,6 +472,12 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 			if err == nil {
 				art.UpdatedAt = t
 			}
+		case "version":
+			if v, err := strconv.Atoi(val); err == nil {
+				art.Version = v
+			}
+		case "edit_summary":
+			art.EditSummary = val
 		}
 	}
 
@@ -418,11 +495,13 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 
 // serializeFrontMatter converts article metadata into the front matter block.
 func serializeFrontMatter(art *Article) string {
-	return fmt.Sprintf("---\ntitle: %s\nslug: %s\ncreated_at: %s\nupdated_at: %s\n---\n",
+	return fmt.Sprintf("---\ntitle: %s\nslug: %s\ncreated_at: %s\nupdated_at: %s\nversion: %d\nedit_summary: %s\n---\n",
 		art.Title,
 		art.Slug,
 		art.CreatedAt.Format(time.RFC3339),
 		art.UpdatedAt.Format(time.RFC3339),
+		art.Version,
+		art.EditSummary,
 	)
 }
 
@@ -533,4 +612,109 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 	}
 
 	return results, nil
+}
+
+// Helpers for reading/writing Gzip files
+
+func writeGzippedFile(filePath string, data []byte) error {
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	gw := gzip.NewWriter(file)
+	defer gw.Close()
+
+	_, err = gw.Write(data)
+	return err
+}
+
+func readGzippedFile(filePath string) ([]byte, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	gr, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, err
+	}
+	defer gr.Close()
+
+	return io.ReadAll(gr)
+}
+
+// GetArticleHistory returns metadata for all historical versions of an article (newest first).
+func (s *Storage) GetArticleHistory(slug string) ([]Article, error) {
+	cleanedSlug := Slugify(slug)
+	if cleanedSlug == "" {
+		return nil, fmt.Errorf("invalid slug")
+	}
+
+	histFolder := filepath.Join(s.HistoryDir, cleanedSlug)
+	files, err := os.ReadDir(histFolder)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []Article{}, nil
+		}
+		return nil, fmt.Errorf("failed to read history directory: %w", err)
+	}
+
+	var history []Article
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".md.gz") {
+			continue
+		}
+
+		filePath := filepath.Join(histFolder, file.Name())
+		data, err := readGzippedFile(filePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to read history version file %s: %v\n", file.Name(), err)
+			continue
+		}
+
+		art, err := parseArticleFile(data, false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to parse history version file %s: %v\n", file.Name(), err)
+			continue
+		}
+
+		history = append(history, *art)
+	}
+
+	// Sort history by version descending
+	sort.Slice(history, func(i, j int) bool {
+		return history[i].Version > history[j].Version
+	})
+
+	return history, nil
+}
+
+// GetArticleVersion reads a single historical version of an article.
+func (s *Storage) GetArticleVersion(slug string, version int) (*Article, error) {
+	cleanedSlug := Slugify(slug)
+	if cleanedSlug == "" {
+		return nil, fmt.Errorf("invalid slug")
+	}
+
+	filePath := filepath.Join(s.HistoryDir, cleanedSlug, fmt.Sprintf("%d.md.gz", version))
+	data, err := readGzippedFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("version %d not found for article %s: %w", version, slug, err)
+	}
+
+	return parseArticleFile(data, true)
+}
+
+// RevertArticle rolls the current active document back to the content of a historical version.
+func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
+	histArt, err := s.GetArticleVersion(slug, version)
+	if err != nil {
+		return nil, err
+	}
+
+	summary := fmt.Sprintf("Reverted to version %d", version)
+	return s.SaveArticle(slug, histArt.Title, histArt.Content, summary)
 }

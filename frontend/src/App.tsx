@@ -7,6 +7,7 @@ import { TOC } from './components/TOC';
 import { Hero } from './components/Hero';
 import { SearchResults } from './components/SearchResults';
 import { Slugify } from './utils';
+import { HistoryDrawer } from './components/HistoryDrawer';
 import { 
   Edit, 
   Trash2, 
@@ -35,6 +36,7 @@ export const App: React.FC = () => {
   const [editorSlug, setEditorSlug] = useState('');
   const [editorTitle, setEditorTitle] = useState('');
   const [editorContent, setEditorContent] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   // UI state
   const [isLoading, setIsLoading] = useState(true);
@@ -236,12 +238,17 @@ export const App: React.FC = () => {
   };
 
   // CRUD: Saving Article edits/creates
-  const handleSaveArticle = async (title: string, content: string) => {
+  const handleSaveArticle = async (title: string, content: string, editSummary: string) => {
     const targetSlug = editorSlug; // empty if new
     const isNew = targetSlug === '';
     const newComputedSlug = Slugify(title);
 
-    const payload = { title, content };
+    const payload = { 
+      title, 
+      content,
+      edit_summary: editSummary,
+      loaded_version: currentArticle ? currentArticle.version : 0
+    };
     const url = isNew ? '/api/articles' : `/api/articles/${targetSlug}`;
     const method = isNew ? 'POST' : 'PUT';
 
@@ -441,15 +448,21 @@ export const App: React.FC = () => {
                       )}
                     </div>
                   </div>
-
                   {/* Actions buttons */}
                   <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
                     <button
                       onClick={handleTriggerEdit}
-                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-200"
+                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-55 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-200"
                     >
                       <Edit size={12} />
                       <span>Edit Page</span>
+                    </button>
+                    <button
+                      onClick={() => setHistoryOpen(true)}
+                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-55 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-200"
+                    >
+                      <Clock size={12} className="text-indigo-500" />
+                      <span>History</span>
                     </button>
                     <button
                       onClick={handleDeleteArticle}
@@ -491,6 +504,21 @@ export const App: React.FC = () => {
           )}
 
         </div>
+      )}
+
+      {historyOpen && currentArticle && (
+        <HistoryDrawer
+          slug={currentArticle.slug}
+          currentContent={currentArticle.content || ''}
+          currentTitle={currentArticle.title}
+          onClose={() => setHistoryOpen(false)}
+          onRevertComplete={async () => {
+            setHistoryOpen(false);
+            triggerAlert('success', `Article "${currentArticle.title}" reverted successfully!`);
+            await fetchArticleContent(currentArticle.slug);
+            await fetchArticles();
+          }}
+        />
       )}
     </div>
   );

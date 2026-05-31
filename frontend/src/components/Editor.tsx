@@ -23,7 +23,7 @@ interface EditorProps {
   initialTitle: string;
   initialContent: string;
   slug: string; // empty if new page
-  onSave: (title: string, content: string) => Promise<void>;
+  onSave: (title: string, content: string, editSummary: string) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -40,6 +40,7 @@ export const Editor: React.FC<EditorProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [editSummary, setEditSummary] = useState('');
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -117,14 +118,17 @@ export const Editor: React.FC<EditorProps> = ({
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to upload image');
+        setErrorMsg(errorData.error || 'Failed to upload image');
+        setIsUploading(false);
+        return;
       }
 
       const data = await response.json();
       // Insert Markdown image syntax at current position
       insertMarkdown(`![${file.name.split('.')[0]}](${data.url})`, '', '');
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Image upload failed. Is it a valid image file?');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Image upload failed. Is it a valid image file?';
+      setErrorMsg(msg);
     } finally {
       setIsUploading(false);
     }
@@ -132,7 +136,7 @@ export const Editor: React.FC<EditorProps> = ({
 
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      handleImageUpload(e.target.files[0]);
+      void handleImageUpload(e.target.files[0]);
     }
   };
 
@@ -142,7 +146,7 @@ export const Editor: React.FC<EditorProps> = ({
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
       if (file.type.startsWith('image/')) {
-        handleImageUpload(file);
+        void handleImageUpload(file);
       }
     }
   };
@@ -152,7 +156,7 @@ export const Editor: React.FC<EditorProps> = ({
   };
 
   // Form submit saving
-  const handleSave = async (e: React.FormEvent) => {
+  const handleSave = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     if (!title.trim()) {
       setErrorMsg('Article Title is required.');
@@ -163,9 +167,10 @@ export const Editor: React.FC<EditorProps> = ({
     setErrorMsg('');
 
     try {
-      await onSave(title.trim(), content);
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to save article.');
+      await onSave(title.trim(), content, editSummary);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to save article.';
+      setErrorMsg(msg);
       setIsSaving(false);
     }
   };
@@ -206,6 +211,16 @@ export const Editor: React.FC<EditorProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {slug && (
+              <input
+                type="text"
+                placeholder="What did you change? (e.g. Fixed typo)"
+                value={editSummary}
+                onChange={(e) => setEditSummary(e.target.value)}
+                className="py-1.5 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs bg-slate-50 dark:bg-slate-900 outline-none text-slate-800 dark:text-slate-200 w-56 focus:ring-1 focus:ring-indigo-500 font-medium transition-all"
+                disabled={isSaving}
+              />
+            )}
             <button
               type="button"
               onClick={onCancel}

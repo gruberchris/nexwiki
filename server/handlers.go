@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 )
 
 // Server coordinates the API handlers with the persistence storage layer.
@@ -78,8 +79,10 @@ func (srv *Server) HandleGetArticle(w http.ResponseWriter, r *http.Request) {
 
 // HandleCreateArticle payload body
 type CreateArticleReq struct {
-	Title   string `json:"title"`
-	Content string `json:"content"`
+	Title         string `json:"title"`
+	Content       string `json:"content"`
+	EditSummary   string `json:"edit_summary"`   // Summary for revision history
+	LoadedVersion int    `json:"loaded_version"` // Version loaded by client for conflict validation
 }
 
 // HandleCreateArticle parses details and creates a new article file.
@@ -102,7 +105,7 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	art, err := srv.Storage.SaveArticle("", req.Title, req.Content)
+	art, err := srv.Storage.SaveArticle("", req.Title, req.Content, req.EditSummary)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -131,12 +134,19 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify that the article actually exists first
-	if _, err := srv.Storage.GetArticle(slug); err != nil {
+	existing, err := srv.Storage.GetArticle(slug)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "article not found")
 		return
 	}
 
-	art, err := srv.Storage.SaveArticle(slug, req.Title, req.Content)
+	// Optimistic locking verification to prevent concurrent edit collision
+	if req.LoadedVersion > 0 && existing.Version > 0 && existing.Version != req.LoadedVersion {
+		writeError(w, http.StatusConflict, "this article has been updated in another session. Please copy your edits, reload the page, and try again.")
+		return
+	}
+
+	art, err := srv.Storage.SaveArticle(slug, req.Title, req.Content, req.EditSummary)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -263,4 +273,73 @@ func (srv *Server) HandleSearchArticles(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, results)
+}
+
+// HandleGetArticleHistory retrieves metadata for all historical versions of an article.
+func (srv *Server) HandleGetArticleHistory(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeError(w, http.StatusBadRequest, "article slug is required")
+		return
+	}
+
+	history, err := srv.Storage.GetArticleHistory(slug)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, history)
+}
+
+// HandleGetArticleVersion retrieves a single historical version details including content body.
+func (srv *Server) HandleGetArticleVersion(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeError(w, http.StatusBadRequest, "article slug is required")
+		return
+	}
+
+	versionStr := r.PathValue("version")
+	version, err := strconv.Atoi(versionStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid version parameter")
+		return
+	}
+
+	art, err := srv.Storage.GetArticleVersion(slug, version)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, art)
+}
+
+// HandleRevertArticle rolls back the active article content to a historical version.
+func (srv *Server) HandleRevertArticle(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeError(w, http.StatusBadRequest, "article slug is required")
+		return
+	}
+
+	var req struct {
+		Version int `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request payload")
+		return
+	}
+
+	if req.Version <= 0 {
+		writeError(w, http.StatusBadRequest, "valid version number is required")
+		return
+	}
+
+	art, err := srv.Storage.RevertArticle(slug, req.Version)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, art)
 }
