@@ -42,7 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [aiMemoriesOpen, setAiMemoriesOpen] = useState(true);
 
-  // Parse all unique user tags (excluding aiagent- tags)
+  // Parse all unique user tags (excluding "aiagent-" tags)
   const allUserTags = useMemo(() => {
     const tags = new Set<string>();
     articles.forEach(art => {
