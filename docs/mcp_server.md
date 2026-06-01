@@ -279,7 +279,7 @@ Anthropic's terminal agent **Claude Code** (`claude` CLI) can dynamically connec
 #### Option A: Streamable HTTP (Recommended)
 Run this command in your shell to register the running server:
 ```bash
-claude mcp add nexwiki http://localhost:8080/api/mcp
+claude mcp add --transport http nexwiki http://localhost:8080/api/mcp
 ```
 
 #### Option B: Stdio Process Fallback

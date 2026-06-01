@@ -48,6 +48,12 @@ A comprehensive technical and user guide covering the customizable, dual-variant
 * **Dual-Variant Designing**: Building themes with specific Light and Dark mode variants, along with dynamic custom color pickers in the UI.
 * **Theme Persistence**: Understanding how custom themes are stored in `custom_themes.json` inside the wiki's data directory.
 
+### 7. [NexWiki AI Agent Integration & SOP Guide](./agent_integration_guide.md)
+An advanced governance and integration manual designed to help you configure external AI agents (Cursor, Claude Desktop, Copilot):
+* **Three Layers of Governance**: Custom tool schemas, workspace rules, and MCP Prompts.
+* **Standard Operating Procedures (SOPs)**: Enforcing style checks, format rule lookups, and auto-saving project plans.
+* **Configuration Blueprints**: Setup guidelines and step-by-step examples.
+
 ---
 
 ## 🏗️ Architecture Overview

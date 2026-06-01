@@ -59,6 +59,7 @@ dev-data/
 *.sln
 *.sw?
 .antigravitycli/
+.claude/
 
 # OS files
 .DS_Store

@@ -90,7 +90,8 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 		result = map[string]interface{}{
 			"protocolVersion": "2024-11-05",
 			"capabilities": map[string]interface{}{
-				"tools": map[string]interface{}{},
+				"tools":   map[string]interface{}{},
+				"prompts": map[string]interface{}{},
 			},
 			"serverInfo": map[string]interface{}{
 				"name":    "NexWiki MCP Server",
@@ -139,7 +140,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_wiki_article",
-					"description": "Create a brand new wiki article with a given title, raw Markdown content body, and an optional revision edit summary. Automatically handles title slugification and checks for slug collision.",
+					"description": "Create a brand new wiki article. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand formatting and style guide check requirements before executing this tool.)",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -245,7 +246,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_memory",
-					"description": "Create a brand new protected AI Agent Memory document (like a troubleshooting log, architecture decision, or custom rules). Automatically categorizes the page using special protected 'aiagent-memory-' tags. (Use create_agent_plan for plans and create_agent_skill for skills)",
+					"description": "Create a brand new protected AI Agent Memory document. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to align on memory formats and preservation standards before executing this tool.)",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -310,7 +311,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_plan",
-					"description": "Create a brand new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Automatically tags the page with 'aiagent-plan'.",
+					"description": "Create a brand new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Automatically tags the page with 'aiagent-plan'. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand how plans must be saved and structured before executing this tool.)",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -411,6 +412,120 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 
 	case "tools/call":
 		result, rpcErr = srv.executeToolCall(req.Params)
+
+	case "prompts/list":
+		result = map[string]interface{}{
+			"prompts": []map[string]interface{}{
+				{
+					"name":        "article_creation_workflow",
+					"description": "Guides the agent on how to correctly search for styling/formatting guidelines and custom memories before writing a new Wiki article, to avoid inconsistencies.",
+					"arguments": []map[string]interface{}{
+						{
+							"name":        "title",
+							"description": "The title of the article to be created.",
+							"required":    true,
+						},
+						{
+							"name":        "description",
+							"description": "Brief summary of what the article should cover.",
+							"required":    false,
+						},
+					},
+				},
+				{
+					"name":        "project_planning_workflow",
+					"description": "Guides the agent on how to collaboratively plan a new development task, outline subtasks, and ensure the plan is saved and updated in NexWiki.",
+					"arguments": []map[string]interface{}{
+						{
+							"name":        "title",
+							"description": "The title of the Collaborative Plan (e.g. Go 1.22 Migration Plan).",
+							"required":    true,
+						},
+						{
+							"name":        "project",
+							"description": "The name of the project this plan belongs to (e.g. nexwiki).",
+							"required":    true,
+						},
+					},
+				},
+			},
+		}
+
+	case "prompts/get":
+		type GetPromptArgs struct {
+			Name      string            `json:"name"`
+			Arguments map[string]string `json:"arguments"`
+		}
+		var promptArgs GetPromptArgs
+		if err := json.Unmarshal(req.Params, &promptArgs); err != nil {
+			rpcErr = &JSONRPCError{Code: -32602, Message: "Invalid prompt parameters"}
+			break
+		}
+
+		switch promptArgs.Name {
+		case "article_creation_workflow":
+			title := promptArgs.Arguments["title"]
+			desc := promptArgs.Arguments["description"]
+
+			promptText := fmt.Sprintf(`You are an AI assistant tasked with creating a new article titled "%s" in the user's NexWiki knowledge base.
+
+Before you begin writing the article, you MUST follow these steps to ensure format consistency and align with the user's rules:
+1. Call 'list_agent_memories' or search for memory articles using 'search_wiki' specifically looking for "rules", "formatting", or "style guide" memories regarding this type of article (e.g., programming language guides, system architecture templates, etc.).
+2. If any formatting guidelines or style memories are found, read their contents using 'read_article'.
+3. Incorporate those styles, sections, structure, and constraints strictly into the new article's content.
+4. Write the article content in clean, semantic Markdown.
+5. Save the article using 'create_wiki_article'. Include a helpful edit summary detailing the style guidelines you incorporated.
+6. Let the user know you successfully incorporated the specific style rules you found.`, title)
+
+			if desc != "" {
+				promptText += fmt.Sprintf("\n\nArticle Outline/Description: %s", desc)
+			}
+
+			result = map[string]interface{}{
+				"description": "Guides the agent on how to correctly search for styling/formatting guidelines and custom memories before writing a new Wiki article.",
+				"messages": []map[string]interface{}{
+					{
+						"role": "user",
+						"content": map[string]interface{}{
+							"type": "text",
+							"text": promptText,
+						},
+					},
+				},
+			}
+
+		case "project_planning_workflow":
+			title := promptArgs.Arguments["title"]
+			project := promptArgs.Arguments["project"]
+
+			promptText := fmt.Sprintf(`You are an AI assistant tasked with creating a new Collaborative AI Plan for the project "%s" titled "%s".
+
+Please follow these strict steps:
+1. Collaboratively outline the plan with the user, dividing it into clear objectives, architectural details, technical requirements, and task checklists.
+2. Format the plan using rich, clean Markdown.
+3. Save the initial plan in NexWiki immediately using the 'create_agent_plan' tool. Make sure to specify the project_context as "%s".
+4. Inform the user that the plan is saved in NexWiki, provide the article slug, and ask for their feedback or approval on the plan.
+5. As tasks are completed or updated, use 'append_agent_plan' to log the progress and update the checklists.`, project, title, project)
+
+			result = map[string]interface{}{
+				"description": "Guides the agent on how to collaboratively plan a new development task, outline subtasks, and ensure the plan is saved and updated in NexWiki.",
+				"messages": []map[string]interface{}{
+					{
+						"role": "user",
+						"content": map[string]interface{}{
+							"type": "text",
+							"text": promptText,
+						},
+					},
+				},
+			}
+
+		default:
+			rpcErr = &JSONRPCError{
+				Code:    -32601,
+				Message: fmt.Sprintf("Prompt not found: %s", promptArgs.Name),
+			}
+		}
 
 	default:
 		rpcErr = &JSONRPCError{
