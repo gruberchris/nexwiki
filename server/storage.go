@@ -610,42 +610,52 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 			continue
 		}
 
-		// Filter out articles with agent memory tags unless explicitly requested
+		// Filter out articles with agent tags (starting with "aiagent-") unless explicitly requested
 		if !allowAgentMemories {
 			hasAgentTag := false
 			isSkill := false
+			isMemory := false
+			var agentTags []string
+
 			for _, tag := range art.Tags {
 				tagLower := strings.ToLower(tag)
 				if strings.HasPrefix(tagLower, "aiagent-") {
 					hasAgentTag = true
+					agentTags = append(agentTags, tagLower)
 					if tagLower == "aiagent-skill" {
 						isSkill = true
+					} else if strings.HasPrefix(tagLower, "aiagent-memory") {
+						isMemory = true
 					}
 				}
 			}
+
 			if hasAgentTag {
-				// Skills are hidden by default UNLESS the user is explicitly searching for the skill or its associated tags
-				includeSkill := false
-				if isSkill {
-					queryLower := strings.ToLower(queryStr)
-					// 1. Explicitly searching for "skill" or "aiagent-skill"
-					if strings.Contains(queryLower, "skill") || strings.Contains(queryLower, "aiagent-skill") {
-						includeSkill = true
-					} else if strings.Contains(strings.ToLower(art.Title), queryLower) || strings.Contains(strings.ToLower(art.Slug), queryLower) {
-						// 2. Or matching the skill's title/slug
-						includeSkill = true
-					} else {
-						// 3. Or matching any of its associated tags exactly (case-insensitive)
-						for _, tag := range art.Tags {
-							if strings.EqualFold(tag, queryStr) {
-								includeSkill = true
-								break
-							}
+				bypass := false
+				queryLower := strings.ToLower(queryStr)
+
+				// 1. Explicitly searching for them by slug/title name (exact match)
+				if strings.EqualFold(art.Slug, queryStr) || strings.EqualFold(art.Title, queryStr) {
+					bypass = true
+				} else {
+					// 2. Or searching by explicit aiagent- tag names
+					for _, aTag := range agentTags {
+						if strings.Contains(queryLower, aTag) {
+							bypass = true
+							break
+						}
+					}
+					// 3. Or if the query includes "aiagent-skill" for skills, or "aiagent-memory" for memories
+					if !bypass {
+						if isSkill && (strings.Contains(queryLower, "aiagent-skill") || strings.Contains(queryLower, "skill")) {
+							bypass = true
+						} else if isMemory && strings.Contains(queryLower, "aiagent-memory") {
+							bypass = true
 						}
 					}
 				}
 
-				if !includeSkill {
+				if !bypass {
 					continue
 				}
 			}

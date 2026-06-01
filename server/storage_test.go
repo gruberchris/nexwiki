@@ -65,7 +65,7 @@ func TestStorageVersioning(t *testing.T) {
 		t.Errorf("Expected sorted history descending (2, 1), got (%d, %d)", history[0].Version, history[1].Version)
 	}
 
-	// 4. Test reading single version
+	// 4. Test reading a single version
 	v1, err := storage.GetArticleVersion("test-page", 1)
 	if err != nil {
 		t.Fatalf("GetArticleVersion failed: %v", err)
@@ -128,13 +128,13 @@ func TestStorageVersioning(t *testing.T) {
 	}
 
 	// Verify that protected tags cannot be deleted
-	err = storage.DeleteTagGlobally("aiagent-plan")
+	err = storage.DeleteTagGlobally("aiagent-memory-plan")
 	if err == nil {
 		t.Errorf("Expected error deleting protected AI tag, got nil")
 	}
 
 	// Verify search filtering of agent tags by default
-	_, err = storage.SaveArticle("", "AI Plan Page", "# Content", "Summary", []string{"aiagent-plan"})
+	_, err = storage.SaveArticle("", "AI Plan Page", "# Content", "Summary", []string{"aiagent-memory-plan"})
 	if err != nil {
 		t.Fatalf("SaveArticle for AI plan failed: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestStorageVersioning(t *testing.T) {
 	}
 
 	// Search explicitly containing 'aiagent-' should find it
-	resultsExplicit, err := storage.SearchArticles("aiagent-plan")
+	resultsExplicit, err := storage.SearchArticles("aiagent-memory-plan")
 	if err != nil {
 		t.Fatalf("SearchArticles explicit failed: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestStorageVersioning(t *testing.T) {
 	_ = storage.DeleteArticle("ai-plan-page")
 	_ = storage.DeleteArticle("tag-delete-test")
 
-	// 8. Test deleting article clears history folder
+	// 8. Test deleting an article clears the history folder
 	err = storage.DeleteArticle("renamed-page")
 	if err != nil {
 		t.Fatalf("DeleteArticle failed: %v", err)

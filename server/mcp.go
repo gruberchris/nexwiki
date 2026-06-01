@@ -542,16 +542,20 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: invalid memory_type '%s'. Valid types are: plan, troubleshooting, memory, decision, todo, rules", mArgs.MemoryType)}}}, nil
 		}
 
-		primaryTag := "aiagent-" + mType
+		title := mArgs.Title
+		slug := Slugify(title)
+
+		primaryTag := "aiagent-memory-" + mType
 		tags := []string{primaryTag}
 
 		projCtx := strings.TrimSpace(mArgs.ProjectContext)
 		if projCtx != "" {
-			contextTag := fmt.Sprintf("aiagent-%s-%s", mType, Slugify(projCtx))
-			tags = append(tags, contextTag)
+			contextTag := Slugify(projCtx)
+			if contextTag != "" && contextTag != primaryTag {
+				tags = append(tags, contextTag)
+			}
 		}
 
-		slug := Slugify(mArgs.Title)
 		if _, err := srv.Storage.GetArticle(slug); err == nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: an article with slug '%s' already exists", slug)}}}, nil
 		}
@@ -561,7 +565,7 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 			summary = fmt.Sprintf("Created AI Agent %s Memory", mType)
 		}
 
-		art, err := srv.Storage.SaveArticle("", mArgs.Title, mArgs.Content, summary, tags)
+		art, err := srv.Storage.SaveArticle("", title, mArgs.Content, summary, tags)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent memory: %v", err)}}}, nil
 		}
@@ -644,7 +648,7 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 				if strings.HasPrefix(tagLower, "aiagent-") {
 					isAgentMemory = true
 					agentTags = append(agentTags, tag)
-					if filterType != "" && strings.HasPrefix(tagLower, "aiagent-"+filterType) {
+					if filterType != "" && (strings.HasPrefix(tagLower, "aiagent-memory-"+filterType) || strings.HasPrefix(tagLower, "aiagent-"+filterType)) {
 						matchFilter = true
 					}
 				}
