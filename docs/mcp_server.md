@@ -317,34 +317,3 @@ GitHub Copilot's CLI environment supports connecting to custom HTTP/SSE servers.
   }
 }
 ```
-
----
-
-### 5. Google's `agy` CLI / Antigravity CLI (Preferred: Streamable HTTP)
-Google's advanced agentic developer tool **`agy` CLI** supports direct connection to active HTTP/SSE MCP endpoints.
-
-To register NexWiki inside your Antigravity pipeline:
-
-#### Option A: Streamable HTTP (Recommended)
-* **Via CLI**:
-  ```bash
-  agy mcp add nexwiki http://localhost:8080/api/mcp
-  ```
-* **Via Config File** (`/Users/chris/.gemini/antigravity-cli/config.json`):
-  ```json
-  {
-    "mcpServers": {
-      "nexwiki": {
-        "url": "http://localhost:8080/api/mcp"
-      }
-    }
-  }
-  ```
-
-#### Option B: Stdio Process Fallback
-* **Via CLI**:
-  ```bash
-  agy mcp add nexwiki -- /path/to/your/compiled/nexwiki -data /path/to/your/wiki-data -name "My Personal Brain"
-  ```
-
-
