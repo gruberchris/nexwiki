@@ -1,8 +1,10 @@
 # NexWiki 🚀
 
-NexWiki is an elegant, lightning-fast personal and collaborative knowledge base written in **Go** with a modern embedded **React + TypeScript** frontend. It serves as a zero-dependency, self-contained wiki server that preserves your content as standard, human-readable Markdown files. 
+NexWiki is an elegant, lightning-fast personal and collaborative knowledge base written in **Go** with a modern embedded **React + TypeScript** frontend. It serves as a zero-dependency, self-contained wiki server that preserves your content as standard, human-readable Markdown files.
 
-Beyond acting as a traditional wiki, NexWiki features an **always-on Model Context Protocol (MCP) server** supporting both standard Stdio and the modern Streamable HTTP transport (2025 Spec). This lets AI agents (like Claude, Cursor, and custom tools) instantly query, read, and explore your knowledge base using semantic tools, turning your personal wiki into an active AI second brain.
+Designed as an **AI-ready second brain**, NexWiki bridges the gap between human notes and artificial intelligence. Beyond serving as a traditional wiki, it runs an always-on Model Context Protocol (MCP) server supporting standard Stdio and the modern Streamable HTTP transport (2025 Spec). This lets AI agents (like Claude, Cursor, and custom tools) instantly query, read, and explore your knowledge base using seventeen built-in semantic tools. With first-class workflows for secure AI memories, collaborative plans, and a dynamic custom AI skills registry, NexWiki transforms your personal wiki into an active, collaborative environment where AI assistants can reason, learn, and work directly with you.
+
+<img src="images/home-view.png" alt="NexWiki Home View" width="800" />
 
 ---
 
