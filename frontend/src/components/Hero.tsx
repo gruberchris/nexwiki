@@ -54,7 +54,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
               Welcome to <span className="bg-gradient-to-r from-themeAccent via-themeAccentSecondary to-themeAccent bg-clip-text text-transparent">{wikiName}</span>
             </h1>
             <p className="text-themeTextMuted max-w-xl text-sm leading-relaxed font-medium">
-              A minimalist, high-fidelity, single-user workspace backed by local Markdown files. Serious enough to organize your projects, fun enough to enjoy writing.
+              An elegant, high-fidelity Markdown knowledge base and collaborative AI second brain. Backed by local files with a built-in MCP server. Serious enough to │ organize your projects, intelligent enough to co-author with AI.
             </p>
           </div>
           
