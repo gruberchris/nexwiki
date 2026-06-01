@@ -16,7 +16,8 @@ import {
   Sparkles,
   Link2,
   Tag,
-  Wrench
+  Wrench,
+  ClipboardList
 } from 'lucide-react';
 import { Slugify } from '../utils'; // We will create this simple utility next
 import { Viewer } from './Viewer';
@@ -49,6 +50,7 @@ export const Editor: React.FC<EditorProps> = ({
   const [editSummary, setEditSummary] = useState('');
 
   const isSkill = tags.some(tag => tag.toLowerCase() === 'aiagent-skill');
+  const isPlan = tags.some(tag => tag.toLowerCase() === 'aiagent-plan');
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -238,6 +240,27 @@ export const Editor: React.FC<EditorProps> = ({
                     />
                     <Wrench size={10} className={isSkill ? 'animate-pulse text-indigo-500' : 'text-slate-400'} />
                     <span>Register as AI Skill</span>
+                  </label>
+
+                  {/* Register as AI Agent Plan Toggle */}
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer text-[10px] font-bold text-indigo-650 dark:text-indigo-400 select-none bg-indigo-500/10 dark:bg-indigo-950/20 border border-indigo-550/25 dark:border-indigo-900/50 px-2.5 py-0.5 rounded-full hover:bg-indigo-500/15 dark:hover:bg-indigo-900/35 transition-colors mr-2">
+                    <input
+                      type="checkbox"
+                      checked={isPlan}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        if (checked) {
+                          if (!tags.some(t => t.toLowerCase() === 'aiagent-plan')) {
+                            setTags([...tags, 'aiagent-plan']);
+                          }
+                        } else {
+                          setTags(tags.filter(t => t.toLowerCase() !== 'aiagent-plan'));
+                        }
+                      }}
+                      className="rounded border-indigo-300 dark:border-indigo-900 text-indigo-650 focus:ring-indigo-500 w-3 h-3 cursor-pointer"
+                    />
+                    <ClipboardList size={10} className={isPlan ? 'animate-pulse text-indigo-500' : 'text-slate-400'} />
+                    <span>Register as AI Plan</span>
                   </label>
 
                   <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-1">

@@ -24,7 +24,8 @@ import {
   FileText,
   Printer,
   FileDown,
-  Wrench
+  Wrench,
+  ClipboardList
 } from 'lucide-react';
 
 // Simple check to identify new page creation urls
@@ -728,6 +729,20 @@ export const App: React.FC = () => {
                             );
                           }
 
+                          const isPlanTag = tagLower === 'aiagent-plan';
+                          if (isPlanTag) {
+                            return (
+                              <span 
+                                key={tag}
+                                title="Registered AI Agent Plan Tag"
+                                className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/10 dark:bg-emerald-400/10 border border-emerald-500/30 dark:border-emerald-400/30 text-emerald-650 dark:text-emerald-450 shadow-sm shadow-emerald-100/30 dark:shadow-none animate-pulse-subtle"
+                              >
+                                <ClipboardList size={10} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                {tag}
+                              </span>
+                            );
+                          }
+
                           return isAgentTag ? (
                             <span 
                               key={tag}
@@ -871,6 +886,24 @@ export const App: React.FC = () => {
                         >
                           Raw SKILL.md
                         </a>
+                      </div>
+                    </div>
+                  )}
+
+                  {currentArticle.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan') && (
+                    <div className="p-5 rounded-2xl bg-gradient-to-tr from-emerald-500/5 to-teal-500/5 border border-emerald-500/25 dark:border-emerald-500/15 text-slate-700 dark:text-slate-300 shadow-sm flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between no-print select-none backdrop-blur-sm animate-fade-in">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-emerald-500/10 dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-400 animate-pulse shrink-0">
+                          <ClipboardList size={18} />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5 uppercase tracking-wide">
+                            Collaborative AI Plan Active
+                          </h4>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                            This page is registered as an active AI Plan. You and your connected AI agent can collaboratively manage and execute this roadmap.
+                          </p>
+                        </div>
                       </div>
                     </div>
                   )}

@@ -614,6 +614,7 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 		if !allowAgentMemories {
 			hasAgentTag := false
 			isSkill := false
+			isPlan := false
 			isMemory := false
 			var agentTags []string
 
@@ -624,6 +625,8 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 					agentTags = append(agentTags, tagLower)
 					if tagLower == "aiagent-skill" {
 						isSkill = true
+					} else if tagLower == "aiagent-plan" {
+						isPlan = true
 					} else if strings.HasPrefix(tagLower, "aiagent-memory") {
 						isMemory = true
 					}
@@ -645,9 +648,11 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 							break
 						}
 					}
-					// 3. Or if the query includes "aiagent-skill" for skills, or "aiagent-memory" for memories
+					// 3. Or if the query includes "aiagent-skill" for skills, "aiagent-plan" for plans, or "aiagent-memory" for memories
 					if !bypass {
 						if isSkill && (strings.Contains(queryLower, "aiagent-skill") || strings.Contains(queryLower, "skill")) {
+							bypass = true
+						} else if isPlan && (strings.Contains(queryLower, "aiagent-plan") || strings.Contains(queryLower, "plan")) {
 							bypass = true
 						} else if isMemory && strings.Contains(queryLower, "aiagent-memory") {
 							bypass = true

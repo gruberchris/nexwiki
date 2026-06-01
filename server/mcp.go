@@ -245,13 +245,13 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_memory",
-					"description": "Create a brand new protected AI Agent Memory document (like a plan, troubleshooting log, or architecture decision). Automatically categorizes the page using special protected 'aiagent-' tags.",
+					"description": "Create a brand new protected AI Agent Memory document (like a troubleshooting log, architecture decision, or custom rules). Automatically categorizes the page using special protected 'aiagent-memory-' tags. (Use create_agent_plan for plans and create_agent_skill for skills)",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"title": map[string]interface{}{
 								"type":        "string",
-								"description": "The human-readable title of the memory article (e.g. 'Project X Implementation Plan').",
+								"description": "The human-readable title of the memory article (e.g. 'Build Server Outage Resolution').",
 							},
 							"content": map[string]interface{}{
 								"type":        "string",
@@ -259,11 +259,11 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 							},
 							"memory_type": map[string]interface{}{
 								"type":        "string",
-								"description": "The classification type of memory. Must be one of: plan, troubleshooting, memory, decision, todo, rules.",
+								"description": "The classification type of memory. Must be one of: troubleshooting, memory, decision, todo, rules.",
 							},
 							"project_context": map[string]interface{}{
 								"type":        "string",
-								"description": "Optional project identifier to apply a secondary contextual tag (e.g. 'project-x' generates 'aiagent-<type>-project-x').",
+								"description": "Optional project identifier to apply a secondary contextual tag (e.g. 'project-x' generates the tag 'project-x').",
 							},
 							"edit_summary": map[string]interface{}{
 								"type":        "string",
@@ -275,7 +275,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "append_agent_memory",
-					"description": "Append logs, subtask completions, or troubleshooting observations to the end of an existing protected AI Agent Memory document.",
+					"description": "Append logs, subtask completions, or troubleshooting observations to the end of an existing protected AI Agent Memory document (must have an 'aiagent-memory-' prefixed tag).",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -289,7 +289,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 							},
 							"edit_summary": map[string]interface{}{
 								"type":        "string",
-								"description": "Optional summary outlining what details were appended (e.g. 'Logged milestone 1 completion').",
+								"description": "Optional summary outlining what details were appended.",
 							},
 						},
 						"required": []string{"slug", "content_to_append"},
@@ -297,15 +297,113 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "list_agent_memories",
-					"description": "List all protected AI Agent Memory documents currently saved inside the knowledge base.",
+					"description": "List all protected AI Agent Memory documents (tagged with 'aiagent-memory-' prefixes) currently saved inside the knowledge base.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"memory_type": map[string]interface{}{
 								"type":        "string",
-								"description": "Optional memory type to filter the list (e.g., plan, troubleshooting, memory, decision, todo, rules).",
+								"description": "Optional memory type to filter the list (e.g., troubleshooting, memory, decision, todo, rules).",
 							},
 						},
+					},
+				},
+				{
+					"name":        "create_agent_plan",
+					"description": "Create a brand new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Automatically tags the page with 'aiagent-plan'.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "The human-readable title of the plan (e.g., 'Go 1.22 Migration Plan').",
+							},
+							"content": map[string]interface{}{
+								"type":        "string",
+								"description": "The raw Markdown content of the plan document.",
+							},
+							"project_context": map[string]interface{}{
+								"type":        "string",
+								"description": "The name of the project this plan is for. Generates a custom project tag.",
+							},
+							"edit_summary": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional summary detailing the creation.",
+							},
+						},
+						"required": []string{"title", "content", "project_context"},
+					},
+				},
+				{
+					"name":        "append_agent_plan",
+					"description": "Append task status, observations, or checklists to an existing Collaborative AI Plan (must possess the 'aiagent-plan' tag).",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"slug": map[string]interface{}{
+								"type":        "string",
+								"description": "The unique URL-safe slug of the plan to append to.",
+							},
+							"content_to_append": map[string]interface{}{
+								"type":        "string",
+								"description": "The raw Markdown text to append to the end of the plan.",
+							},
+							"edit_summary": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional summary outlining the updates.",
+							},
+						},
+						"required": []string{"slug", "content_to_append"},
+					},
+				},
+				{
+					"name":        "list_agent_plans",
+					"description": "List all Collaborative AI Plans (tagged with 'aiagent-plan') saved inside the knowledge base.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"project_context": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional project context name to filter plans by.",
+							},
+						},
+					},
+				},
+				{
+					"name":        "create_agent_skill",
+					"description": "Create a brand new Custom AI Skill. Automatically tags the page with 'aiagent-skill', making it part of the custom skills registry.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "The title of the skill (e.g. 'Docker Container Pruning').",
+							},
+							"content": map[string]interface{}{
+								"type":        "string",
+								"description": "The raw Markdown content of the skill instructions (SKILL.md format).",
+							},
+							"tags": map[string]interface{}{
+								"type": "array",
+								"items": map[string]interface{}{
+									"type": "string",
+								},
+								"description": "Optional user tags to apply to the skill.",
+							},
+							"edit_summary": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional summary describing the creation of the skill.",
+							},
+						},
+						"required": []string{"title", "content"},
+					},
+				},
+				{
+					"name":        "list_agent_skills",
+					"description": "List all Custom AI Skills (tagged with 'aiagent-skill') currently saved in the knowledge base.",
+					"inputSchema": map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
 					},
 				},
 			},
@@ -531,7 +629,6 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 
 		mType := strings.ToLower(strings.TrimSpace(mArgs.MemoryType))
 		validTypes := map[string]bool{
-			"plan":            true,
 			"troubleshooting": true,
 			"memory":          true,
 			"decision":        true,
@@ -539,7 +636,7 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 			"rules":           true,
 		}
 		if !validTypes[mType] {
-			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: invalid memory_type '%s'. Valid types are: plan, troubleshooting, memory, decision, todo, rules", mArgs.MemoryType)}}}, nil
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: invalid memory_type '%s'. Valid types are: troubleshooting, memory, decision, todo, rules", mArgs.MemoryType)}}}, nil
 		}
 
 		title := mArgs.Title
@@ -590,15 +687,15 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", aArgs.Slug)}}}, nil
 		}
 
-		hasAgentTag := false
+		hasAgentMemoryTag := false
 		for _, tag := range existing.Tags {
-			if strings.HasPrefix(strings.ToLower(tag), "aiagent-") {
-				hasAgentTag = true
+			if strings.HasPrefix(strings.ToLower(tag), "aiagent-memory-") {
+				hasAgentMemoryTag = true
 				break
 			}
 		}
-		if !hasAgentTag {
-			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: cannot append memory to a standard non-agent article."}}}, nil
+		if !hasAgentMemoryTag {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a protected AI agent memory (must be tagged with an 'aiagent-memory-' prefix)."}}}, nil
 		}
 
 		newContent := existing.Content + "\n\n" + aArgs.ContentToAppend
@@ -613,7 +710,7 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent memory: %v", err)}}}, nil
 		}
 
-		respText := fmt.Sprintf("Success! Appended memory to '%s' (version: %d, edited: %s).\n",
+		respText := fmt.Sprintf("Success! Appended memory details to '%s' (version: %d, edited: %s).\n",
 			art.Title, art.Version, art.UpdatedAt.Format(time.RFC3339))
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 
@@ -641,14 +738,14 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 
 			isAgentMemory := false
 			matchFilter := filterType == ""
-			var agentTags []string
+			var memoryTags []string
 
 			for _, tag := range art.Tags {
 				tagLower := strings.ToLower(tag)
-				if strings.HasPrefix(tagLower, "aiagent-") {
+				if strings.HasPrefix(tagLower, "aiagent-memory-") {
 					isAgentMemory = true
-					agentTags = append(agentTags, tag)
-					if filterType != "" && (strings.HasPrefix(tagLower, "aiagent-memory-"+filterType) || strings.HasPrefix(tagLower, "aiagent-"+filterType)) {
+					memoryTags = append(memoryTags, tag)
+					if filterType != "" && strings.HasPrefix(tagLower, "aiagent-memory-"+filterType) {
 						matchFilter = true
 					}
 				}
@@ -661,7 +758,7 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 				}
 				text += fmt.Sprintf("[%d] %s (Slug: %s, Edited: %s)\n",
 					count, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"))
-				text += fmt.Sprintf("    Tags: %s\n\n", strings.Join(agentTags, ", "))
+				text += fmt.Sprintf("    Tags: %s\n\n", strings.Join(memoryTags, ", "))
 			}
 		}
 
@@ -671,6 +768,230 @@ func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRP
 			} else {
 				text = "No AI Agent memories found inside the knowledge base.\n"
 			}
+		}
+
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+
+	case "create_agent_plan":
+		type CreatePlanArgs struct {
+			Title          string `json:"title"`
+			Content        string `json:"content"`
+			ProjectContext string `json:"project_context"`
+			EditSummary    string `json:"edit_summary"`
+		}
+		var pArgs CreatePlanArgs
+		if err := json.Unmarshal(args.Arguments, &pArgs); err != nil || pArgs.Title == "" || pArgs.Content == "" || pArgs.ProjectContext == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title', 'content', and 'project_context' are required."}
+		}
+
+		title := pArgs.Title
+		slug := Slugify(title)
+
+		tags := []string{"aiagent-plan"}
+		projCtx := strings.TrimSpace(pArgs.ProjectContext)
+		if projCtx != "" {
+			contextTag := Slugify(projCtx)
+			if contextTag != "" && contextTag != "aiagent-plan" {
+				tags = append(tags, contextTag)
+			}
+		}
+
+		if _, err := srv.Storage.GetArticle(slug); err == nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: a plan with slug '%s' already exists", slug)}}}, nil
+		}
+
+		summary := pArgs.EditSummary
+		if summary == "" {
+			summary = "Created Collaborative AI Plan"
+		}
+
+		art, err := srv.Storage.SaveArticle("", title, pArgs.Content, summary, tags)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent plan: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! Collaborative AI Plan '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\nTags: %s\n",
+			art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Version, strings.Join(art.Tags, ", "))
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "append_agent_plan":
+		type AppendPlanArgs struct {
+			Slug            string `json:"slug"`
+			ContentToAppend string `json:"content_to_append"`
+			EditSummary     string `json:"edit_summary"`
+		}
+		var aArgs AppendPlanArgs
+		if err := json.Unmarshal(args.Arguments, &aArgs); err != nil || aArgs.Slug == "" || aArgs.ContentToAppend == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'slug' and 'content_to_append' are required."}
+		}
+
+		existing, err := srv.Storage.GetArticle(aArgs.Slug)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: plan with slug '%s' not found", aArgs.Slug)}}}, nil
+		}
+
+		hasPlanTag := false
+		for _, tag := range existing.Tags {
+			if strings.ToLower(tag) == "aiagent-plan" {
+				hasPlanTag = true
+				break
+			}
+		}
+		if !hasPlanTag {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a Collaborative AI Plan (must possess the 'aiagent-plan' tag)."}}}, nil
+		}
+
+		newContent := existing.Content + "\n\n" + aArgs.ContentToAppend
+
+		summary := aArgs.EditSummary
+		if summary == "" {
+			summary = "Appended Collaborative AI Plan details"
+		}
+
+		art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, summary, existing.Tags)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent plan: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! Appended plan details to '%s' (version: %d, edited: %s).\n",
+			art.Title, art.Version, art.UpdatedAt.Format(time.RFC3339))
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "list_agent_plans":
+		type ListPlansArgs struct {
+			ProjectContext string `json:"project_context"`
+		}
+		var lArgs ListPlansArgs
+		_ = json.Unmarshal(args.Arguments, &lArgs) // ignore err, it is optional
+
+		articles, err := srv.Storage.ListArticles()
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+		}
+
+		filterProj := Slugify(strings.TrimSpace(lArgs.ProjectContext))
+
+		var text string
+		count := 0
+		for _, artMeta := range articles {
+			art, err := srv.Storage.GetArticle(artMeta.Slug)
+			if err != nil {
+				continue
+			}
+
+			isPlan := false
+			matchFilter := filterProj == ""
+
+			for _, tag := range art.Tags {
+				tagLower := strings.ToLower(tag)
+				if tagLower == "aiagent-plan" {
+					isPlan = true
+				}
+				if filterProj != "" && tagLower == filterProj {
+					matchFilter = true
+				}
+			}
+
+			if isPlan && matchFilter {
+				count++
+				if count == 1 {
+					text = "Collaborative AI Plans Index:\n\n"
+				}
+				text += fmt.Sprintf("[%d] %s (Slug: %s, Edited: %s)\n",
+					count, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"))
+				text += fmt.Sprintf("    Tags: %s\n\n", strings.Join(art.Tags, ", "))
+			}
+		}
+
+		if count == 0 {
+			if filterProj != "" {
+				text = fmt.Sprintf("No Collaborative AI Plans found for project '%s'.\n", lArgs.ProjectContext)
+			} else {
+				text = "No Collaborative AI Plans found inside the knowledge base.\n"
+			}
+		}
+
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+
+	case "create_agent_skill":
+		type CreateSkillArgs struct {
+			Title       string   `json:"title"`
+			Content     string   `json:"content"`
+			Tags        []string `json:"tags"`
+			EditSummary string   `json:"edit_summary"`
+		}
+		var sArgs CreateSkillArgs
+		if err := json.Unmarshal(args.Arguments, &sArgs); err != nil || sArgs.Title == "" || sArgs.Content == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title' and 'content' are required."}
+		}
+
+		title := sArgs.Title
+		slug := Slugify(title)
+
+		tags := []string{"aiagent-skill"}
+		for _, t := range sArgs.Tags {
+			tTrimmed := strings.TrimSpace(t)
+			if tTrimmed != "" {
+				tagLower := strings.ToLower(tTrimmed)
+				if tagLower != "aiagent-skill" && !strings.HasPrefix(tagLower, "aiagent-") {
+					tags = append(tags, tTrimmed)
+				}
+			}
+		}
+
+		if _, err := srv.Storage.GetArticle(slug); err == nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: a skill with slug '%s' already exists", slug)}}}, nil
+		}
+
+		summary := sArgs.EditSummary
+		if summary == "" {
+			summary = "Created Custom AI Agent Skill"
+		}
+
+		art, err := srv.Storage.SaveArticle("", title, sArgs.Content, summary, tags)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent skill: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! Custom AI Skill '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\nTags: %s\n",
+			art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Version, strings.Join(art.Tags, ", "))
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "list_agent_skills":
+		articles, err := srv.Storage.ListArticles()
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+		}
+
+		var text string
+		count := 0
+		for _, artMeta := range articles {
+			art, err := srv.Storage.GetArticle(artMeta.Slug)
+			if err != nil {
+				continue
+			}
+
+			isSkill := false
+			for _, tag := range art.Tags {
+				if strings.ToLower(tag) == "aiagent-skill" {
+					isSkill = true
+					break
+				}
+			}
+
+			if isSkill {
+				count++
+				if count == 1 {
+					text = "Custom AI Agent Skills Index:\n\n"
+				}
+				text += fmt.Sprintf("[%d] %s (Slug: %s, Edited: %s)\n",
+					count, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"))
+				text += fmt.Sprintf("    Tags: %s\n\n", strings.Join(art.Tags, ", "))
+			}
+		}
+
+		if count == 0 {
+			text = "No Custom AI Agent Skills found inside the knowledge base.\n"
 		}
 
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil

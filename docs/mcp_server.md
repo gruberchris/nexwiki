@@ -20,7 +20,7 @@ To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools l
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes twelve powerful, semantic tools for AI agents:
+The NexWiki MCP server registers and exposes seventeen powerful, semantic tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine.
@@ -118,12 +118,12 @@ Scans the entire knowledge base to compile total page stats and **autonomously s
 ---
 
 ### 10. `create_agent_memory`
-Creates a brand new protected AI Agent Memory document (such as a plan, troubleshooting note, or general memory block).
+Creates a brand new protected AI Agent Memory document (such as a troubleshooting note, architecture decision, or custom rules).
 
 * **Arguments**:
-  * `title` (string, **required**): The human-readable title of the memory article (e.g. "React Migration Plan", which generates the clean slug "react-migration-plan").
+  * `title` (string, **required**): The human-readable title of the memory article (e.g. "Build Server Outage Resolution").
   * `content` (string, **required**): The raw Markdown content of the memory document body.
-  * `memory_type` (string, **required**): The type of memory to log. Must be one of: `plan`, `troubleshooting`, `memory`, `decision`, `todo`, `rules`.
+  * `memory_type` (string, **required**): The type of memory to log. Must be one of: `troubleshooting`, `memory`, `decision`, `todo`, `rules`.
   * `project_context` (string, **optional**): A context string (like a project ID) to generate a secondary custom tag (e.g. `"project-x"` tags the document with `"project-x"`).
   * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
 * **Behavior**:
@@ -137,19 +137,76 @@ Appends observations, subtask completions, or updates to the end of an existing 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target memory article.
   * `content_to_append` (string, **required**): The raw Markdown text to append.
-  * `edit_summary` (string, **optional**): Optional summary outlining what was appended (e.g. "Logged database migration success").
+  * `edit_summary` (string, **optional**): Optional summary outlining what was appended.
 * **Behavior**:
-  Verifies that the target article is a protected agent memory (possesses at least one tag starting with `aiagent-`), appends the new text cleanly with double newlines, creates a gzipped history backup snapshot, and saves the updated active file.
+  Verifies that the target article is a protected agent memory (possesses at least one tag starting with `aiagent-memory-`), appends the new text cleanly with double newlines, creates a gzipped history backup snapshot, and saves the updated active file.
 
 ---
 
 ### 12. `list_agent_memories`
-Lists all protected AI Agent Memory articles saved in your wiki.
+Lists all protected AI Agent Memory articles (tagged with `aiagent-memory-` prefix) saved in your wiki.
 
 * **Arguments**:
-  * `memory_type` (string, **optional**): An optional memory type to filter the listing (e.g., plan, troubleshooting, memory, decision, todo, rules).
+  * `memory_type` (string, **optional**): An optional memory type to filter the listing (e.g., `troubleshooting`, `memory`, `decision`, `todo`, `rules`).
 * **Behavior**:
-  Scans all active articles, isolates pages that possess tags starting with `"aiagent-"`, filters them to those matching the specified memory type (supporting both standard `aiagent-memory-<type>` and legacy `aiagent-<type>` tags), and returns a bulleted index of matches including titles, slugs, and active tags.
+  Scans all active articles, isolates pages that possess tags starting with `"aiagent-memory-"`, filters them to those matching the specified memory type, and returns a bulleted index of matches including titles, slugs, and active tags.
+
+---
+
+### 13. `create_agent_plan`
+Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent.
+
+* **Arguments**:
+  * `title` (string, **required**): The human-readable title of the plan (e.g., "Go 1.22 Migration Plan").
+  * `content` (string, **required**): The raw Markdown content of the plan document.
+  * `project_context` (string, **required**): The name of the project this plan is for (e.g. "nexwiki"). Generates a custom project tag.
+  * `edit_summary` (string, **optional**): Optional summary detailing the creation of the plan.
+* **Behavior**:
+  Checks for slug collision, automatically attaches the whitelisted `aiagent-plan` tag, applies a custom tag for the project name, saves the flat Markdown file, commits the first version snapshot, and indexes the plan in Bleve for search.
+
+---
+
+### 14. `append_agent_plan`
+Appends task status, observations, or checklists to an existing Collaborative AI Plan (must possess the `aiagent-plan` tag).
+
+* **Arguments**:
+  * `slug` (string, **required**): The unique URL-safe slug of the target plan.
+  * `content_to_append` (string, **required**): The raw Markdown text to append to the end of the plan.
+  * `edit_summary` (string, **optional**): Optional summary outlining the updates.
+* **Behavior**:
+  Verifies that the target article possesses the `aiagent-plan` tag, appends the new text cleanly with double newlines, creates a gzipped history backup snapshot, and saves the updated plan.
+
+---
+
+### 15. `list_agent_plans`
+Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved inside the knowledge base.
+
+* **Arguments**:
+  * `project_context` (string, **optional**): An optional project context name to filter plans by.
+* **Behavior**:
+  Scans all active articles, isolates pages that possess the `aiagent-plan` tag, filters them by project context tag if provided, and returns a bulleted index of matching plans.
+
+---
+
+### 16. `create_agent_skill`
+Creates a new Custom AI Skill, automatically making it part of the custom skills registry.
+
+* **Arguments**:
+  * `title` (string, **required**): The title of the skill (e.g., "Docker Container Pruning").
+  * `content` (string, **required**): The raw Markdown content of the skill instructions (procedural SKILL.md format).
+  * `tags` (array of strings, **optional**): Optional user tags to apply to the skill.
+  * `edit_summary` (string, **optional**): Optional summary describing why the skill was created.
+* **Behavior**:
+  Checks for slug collision, automatically attaches the `aiagent-skill` tag, applies any additional user tags, saves the flat Markdown file, commits the first version snapshot, and indexes the skill in Bleve.
+
+---
+
+### 17. `list_agent_skills`
+Lists all Custom AI Skills (tagged with `aiagent-skill`) currently saved in the knowledge base.
+
+* **Arguments**: None (empty object `{}`).
+* **Behavior**:
+  Scans all active articles, isolates pages possessing the `aiagent-skill` tag, and returns a bulleted index of matching skills.
 
 ---
 

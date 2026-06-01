@@ -13,6 +13,7 @@ import {
   BookOpen,
   Cpu,
   Wrench,
+  ClipboardList,
   Tag,
   ChevronDown,
   X,
@@ -44,6 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [aiMemoriesOpen, setAiMemoriesOpen] = useState(true);
   const [aiSkillsOpen, setAiSkillsOpen] = useState(true);
+  const [aiPlansOpen, setAiPlansOpen] = useState(true);
 
   // Parse all unique user tags (excluding "aiagent-" tags)
   const allUserTags = useMemo(() => {
@@ -73,13 +75,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
   }, [articles, filterQuery, selectedTag]);
 
-  // AI Agent memories filter (starts with aiagent- but is NOT aiagent-skill)
+  // AI Agent memories filter (starts with aiagent- but is NOT aiagent-skill and NOT aiagent-plan)
   const aiMemories = useMemo(() => {
     return articles.filter(art => {
       const isAgent = art.tags?.some(tag => tag.toLowerCase().startsWith('aiagent-'));
       if (!isAgent) return false;
       const isSkill = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill');
-      if (isSkill) return false;
+      const isPlan = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan');
+      if (isSkill || isPlan) return false;
 
       return art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
         art.slug.toLowerCase().includes(filterQuery.toLowerCase());
@@ -91,6 +94,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return articles.filter(art => {
       const isSkill = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill');
       if (!isSkill) return false;
+
+      return art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
+        art.slug.toLowerCase().includes(filterQuery.toLowerCase());
+    });
+  }, [articles, filterQuery]);
+
+  // AI Agent plans filter (possesses aiagent-plan tag)
+  const aiPlans = useMemo(() => {
+    return articles.filter(art => {
+      const isPlan = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan');
+      if (!isPlan) return false;
 
       return art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
         art.slug.toLowerCase().includes(filterQuery.toLowerCase());
@@ -292,6 +306,68 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     >
                       <div className="flex items-center gap-3 overflow-hidden">
                         <Cpu 
+                          size={14} 
+                          className={`shrink-0 ${
+                            isActive 
+                              ? 'text-themeAccent' 
+                              : 'text-themeTextMuted group-hover:text-themeAccent'
+                          }`} 
+                        />
+                        <span className="truncate text-sm text-left">{art.title}</span>
+                      </div>
+                      
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isActive ? (
+                          <ChevronRight size={14} className="animate-pulse text-themeAccent" />
+                        ) : (
+                          <div className="flex items-center gap-1 text-[9px] text-themeTextMuted opacity-85 group-hover:opacity-100">
+                            <Clock size={9} />
+                            <span>{formatRelativeTime(art.updated_at)}</span>
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Navigation Section: AI Plans */}
+        <div className="space-y-2">
+          <button
+            onClick={() => setAiPlansOpen(!aiPlansOpen)}
+            className="w-full flex items-center justify-between text-[10px] font-bold text-themeAccent uppercase tracking-widest px-3 py-1.5 bg-themeAccentBg/40 rounded-lg group cursor-pointer hover:bg-themeAccentBg/65"
+          >
+            <span className="flex items-center gap-1.5">
+              <ClipboardList size={10} className="animate-pulse text-themeAccent" />
+              AI plans ({aiPlans.length})
+            </span>
+            <ChevronDown size={12} className={`transition-transform duration-200 text-themeTextMuted ${aiPlansOpen ? 'rotate-0' : '-rotate-90'}`} />
+          </button>
+          
+          {aiPlansOpen && (
+            <div className="space-y-0.5">
+              {aiPlans.length === 0 ? (
+                <div className="p-4 text-center text-[10px] text-themeTextMuted border border-dashed border-themeBorder rounded-xl">
+                  No plans registered
+                </div>
+              ) : (
+                aiPlans.map((art) => {
+                  const isActive = currentSlug === art.slug;
+                  return (
+                    <button
+                      key={art.slug}
+                      onClick={() => onNavigate(art.slug)}
+                      className={`w-full group flex items-center justify-between p-3 rounded-xl transition-all duration-150 border ${
+                        isActive
+                          ? 'bg-themeAccentBg border-themeBorder/40 text-themeAccent font-semibold shadow-inner'
+                          : 'text-themeTextSecondary hover:bg-themeBgPrimary hover:text-themeTextPrimary border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 overflow-hidden">
+                        <ClipboardList 
                           size={14} 
                           className={`shrink-0 ${
                             isActive 

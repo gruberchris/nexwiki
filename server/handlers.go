@@ -116,7 +116,7 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string) []st
 			continue
 		}
 		tLower := strings.ToLower(tTrimmed)
-		if strings.HasPrefix(tLower, "aiagent-") && !existingAgentTags[tLower] && tLower != "aiagent-skill" {
+		if strings.HasPrefix(tLower, "aiagent-") && !existingAgentTags[tLower] && tLower != "aiagent-skill" && tLower != "aiagent-plan" {
 			continue
 		}
 		if !seen[tLower] {

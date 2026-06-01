@@ -128,13 +128,13 @@ func TestStorageVersioning(t *testing.T) {
 	}
 
 	// Verify that protected tags cannot be deleted
-	err = storage.DeleteTagGlobally("aiagent-memory-plan")
+	err = storage.DeleteTagGlobally("aiagent-plan")
 	if err == nil {
 		t.Errorf("Expected error deleting protected AI tag, got nil")
 	}
 
 	// Verify search filtering of agent tags by default
-	_, err = storage.SaveArticle("", "AI Plan Page", "# Content", "Summary", []string{"aiagent-memory-plan"})
+	_, err = storage.SaveArticle("", "AI Plan Page", "# Content", "Summary", []string{"aiagent-plan"})
 	if err != nil {
 		t.Fatalf("SaveArticle for AI plan failed: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestStorageVersioning(t *testing.T) {
 	}
 
 	// Search explicitly containing 'aiagent-' should find it
-	resultsExplicit, err := storage.SearchArticles("aiagent-memory-plan")
+	resultsExplicit, err := storage.SearchArticles("aiagent-plan")
 	if err != nil {
 		t.Fatalf("SearchArticles explicit failed: %v", err)
 	}
