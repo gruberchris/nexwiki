@@ -15,7 +15,8 @@ import {
   Columns,
   Sparkles,
   Link2,
-  Tag
+  Tag,
+  Wrench
 } from 'lucide-react';
 import { Slugify } from '../utils'; // We will create this simple utility next
 import { Viewer } from './Viewer';
@@ -46,6 +47,8 @@ export const Editor: React.FC<EditorProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [editSummary, setEditSummary] = useState('');
+
+  const isSkill = tags.some(tag => tag.toLowerCase() === 'aiagent-skill');
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -80,7 +83,7 @@ export const Editor: React.FC<EditorProps> = ({
     }
   };
 
-  // Helper to insert markdown tags at cursor selection
+  // Helper to insert Markdown tags at cursor selection
   const insertMarkdown = (before: string, after: string = '', defaultText: string = '') => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -215,7 +218,28 @@ export const Editor: React.FC<EditorProps> = ({
                 </div>
 
                 {/* Visual Tag Manager */}
-                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                <div className="flex flex-wrap items-center gap-1.5 mt-2 select-none">
+                  {/* Register as AI Agent Skill Toggle */}
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer text-[10px] font-bold text-indigo-650 dark:text-indigo-400 select-none bg-indigo-500/10 dark:bg-indigo-950/20 border border-indigo-550/25 dark:border-indigo-900/50 px-2.5 py-0.5 rounded-full hover:bg-indigo-500/15 dark:hover:bg-indigo-900/35 transition-colors mr-2">
+                    <input
+                      type="checkbox"
+                      checked={isSkill}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        if (checked) {
+                          if (!tags.some(t => t.toLowerCase() === 'aiagent-skill')) {
+                            setTags([...tags, 'aiagent-skill']);
+                          }
+                        } else {
+                          setTags(tags.filter(t => t.toLowerCase() !== 'aiagent-skill'));
+                        }
+                      }}
+                      className="rounded border-indigo-300 dark:border-indigo-900 text-indigo-650 focus:ring-indigo-500 w-3 h-3 cursor-pointer"
+                    />
+                    <Wrench size={10} className={isSkill ? 'animate-pulse text-indigo-500' : 'text-slate-400'} />
+                    <span>Register as AI Skill</span>
+                  </label>
+
                   <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-1">
                     <Tag size={9} />
                     Tags:

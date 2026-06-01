@@ -12,14 +12,15 @@ Beyond acting as a traditional wiki, NexWiki features an **always-on Model Conte
 - **⚡ Modern Responsive UI**: A sleek, high-fidelity Single Page Application (SPA) built using React 19, TypeScript, Vite, Lucide Icons, and styled with Tailwind CSS (v3).
 - 🏷️ **Dynamic Tagging & Navigation**: Organize note files using custom tags. Filter documents instantly using the interactive sidebar Tag Cloud, add/remove tags in the split-editor, and perform global tag deletion with one click.
 - 🤖 **Isolated & Protected AI Memories**: Dedicated, secure support for AI-created memories (plans, troubleshooting guides, decisions, todos, rules) protected by `aiagent-` prefixed tags. These pages are isolated and auto-excluded from default searches by default. While standard users cannot manually create or add *new* `aiagent-` tags, they have full freedom to edit and delete the documents themselves, and remove existing `aiagent-` tags as they see fit.
+- 🛠️ **AI Agent Skills & Custom Registry**: Create, edit, delete, and manage custom AI Agent skills (procedural instructions) inside the wiki. Skills are auto-tagged with `aiagent-skill` and isolated inside a dedicated **Collapsible Sidebar Folder** to keep your wiki clean. It registers dedicated REST API routes (`GET /api/skills`, `GET /api/skills/{slug}`, and `GET /api/skills/{slug}/raw`) allowing third-party tools (like JetBrains AI Assistant, custom agents, or Claude Code) to easily consume the wiki as a custom, dynamic skills registry.
 - **🤖 Built-in MCP Server**: Exposes twelve powerful Model Context Protocol tools (including dedicated tools for creating, appending, and listing AI memories) to AI clients via Stdio and Streamable HTTP.
 - **🔍 Blazing-Fast Full-Text Search**: Powered by the robust `github.com/blevesearch/bleve/v2` engine. Supports advanced query parsing, scoring, and text snippet highlighting.
 - **📂 Flat-File Markdown Storage**: Wiki pages are stored on disk as plain Markdown files with YAML-like front matter metadata. Your files remain completely portable and easily readable by external editors.
 - 🕒 **Gzipped Flat-File Versioning**: Built-in revision engine that saves highly efficient compressed `.md.gz` gzip snapshots of your article history. Review historical changes side-by-side using interactive **Split Pane** or **Unified Inline** diff modes, roll back changes instantly, and prevent session write conflicts with automatic optimistic locking guards.
 - 📤 **Export, Share, and Copy Utilities**: Export any wiki article directly to a professional print-styled PDF (via a native vector-drawn printing engine), Microsoft Word (`.docx`), or plain Text (`.txt`). Instantly copy the raw, metadata-free Markdown body text or shareable page URL directly to the clipboard from a consolidated, glassmorphic dropdown menu.
 - 🖼️ **Asset & Image Uploads**: Built-in support for uploading and referencing media assets (such as PNG, JPEG, GIF, SVG, and WebP) directly within articles.
-- **⚙️ Dynamic Customization**: Easily personalize your wiki's name via environment variables (`NEXWIKI_NAME`) or command-line flags.
-- 🎨 **Multi-Mode Customizable Themes**: Configure your default theme on startup using flags (`-theme`) or environment variables (`NEXWIKI_THEME`), and design, preview, and persist customized dual-variant (Light + Dark modes) themes directly in the browser with interactive HTML5 color pickers.
+- **⚙️ Dynamic Customization**: Personalize your wiki's name via environment variables (`NEXWIKI_NAME`) or command-line flags.
+- 🎨 **Multi-Mode Customizable Themes**: Configure your default theme on startup using flags (`-theme`) or environment variables (`NEXWIKI_THEME`), and design, preview, and persist customized dual-variant (Light and Dark modes) themes directly in the browser with interactive HTML5 color pickers.
 - **🔒 Development Safety**: System logs are directed exclusively to standard error (`Stderr`) to prevent stdout corruption, guaranteeing stable MCP JSON-RPC Stdio piping.
 
 ---
@@ -48,7 +49,7 @@ We provide a standard `docker-compose.yml` that mounts a persistent local data v
 4. You will see your newly initialized wiki with a default seeded homepage ready to edit!
 
 ### 3. Run with Docker CLI (Manual)
-If you prefer running the container manually without compose:
+If you prefer running the container manually without Docker Compose:
 
 1. **Build the Docker Image**:
    ```bash
@@ -146,7 +147,7 @@ We provide a robust `Makefile` to simplify frontend compilation, local builds, D
   ```
 
 ### Docker Compose Automation
-* **Build and Spin Up Containers in background**:
+* **Build and Spin Up Containers in the background**:
   ```bash
   make docker-up
   ```
@@ -177,7 +178,7 @@ All cross-compiled binaries are saved inside the `./bin/` directory:
   ```bash
   make build-macos-arm64
   ```
-* **Compile for All Platforms Simultaneously**: Builds binaries for all of the above operating systems and architectures in one go:
+* **Compile for All Platforms Simultaneously**: Builds binaries for all the above operating systems and architectures in one go:
   ```bash
   make build-all-platforms
   ```

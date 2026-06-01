@@ -613,14 +613,41 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 		// Filter out articles with agent memory tags unless explicitly requested
 		if !allowAgentMemories {
 			hasAgentTag := false
+			isSkill := false
 			for _, tag := range art.Tags {
-				if strings.HasPrefix(strings.ToLower(tag), "aiagent-") {
+				tagLower := strings.ToLower(tag)
+				if strings.HasPrefix(tagLower, "aiagent-") {
 					hasAgentTag = true
-					break
+					if tagLower == "aiagent-skill" {
+						isSkill = true
+					}
 				}
 			}
 			if hasAgentTag {
-				continue
+				// Skills are hidden by default UNLESS the user is explicitly searching for the skill or its associated tags
+				includeSkill := false
+				if isSkill {
+					queryLower := strings.ToLower(queryStr)
+					// 1. Explicitly searching for "skill" or "aiagent-skill"
+					if strings.Contains(queryLower, "skill") || strings.Contains(queryLower, "aiagent-skill") {
+						includeSkill = true
+					} else if strings.Contains(strings.ToLower(art.Title), queryLower) || strings.Contains(strings.ToLower(art.Slug), queryLower) {
+						// 2. Or matching the skill's title/slug
+						includeSkill = true
+					} else {
+						// 3. Or matching any of its associated tags exactly (case-insensitive)
+						for _, tag := range art.Tags {
+							if strings.EqualFold(tag, queryStr) {
+								includeSkill = true
+								break
+							}
+						}
+					}
+				}
+
+				if !includeSkill {
+					continue
+				}
 			}
 		}
 

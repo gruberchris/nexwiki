@@ -35,7 +35,14 @@ An advanced user and developer manual designed to help you organize content and 
 * **AI Agent Memory System**: Protected `aiagent-` prefixed tags and the dedicated collapsible sidebar directory.
 * **Search & Index Isolation**: How NexWiki auto-excludes agent-created memories from standard browsing/searches by default, keeping your workspace clean.
 
-### 5. [NexWiki Customizable Themes Engine Guide](./theme_guide.md)
+### 5. [NexWiki AI Agent Skills & Custom Registry Guide](./aiagent_skills.md)
+A comprehensive technical manual describing the custom AI skills registry and management engine:
+* **UI Management & Tags**: Toggling pages as skills and understanding the `aiagent-skill` tag.
+* **Registry REST APIs**: Details on the `/api/skills`, `/api/skills/{slug}`, and raw `SKILL.md` endpoints.
+* **Search Isolation**: How skills are isolated in search by default, and how to trigger explicit search bypass.
+* **Integrations**: Connecting JetBrains editors and other custom AI agent systems to NexWiki as a custom skills registry.
+
+### 6. [NexWiki Customizable Themes Engine Guide](./theme_guide.md)
 A comprehensive technical and user guide covering the customizable, dual-variant themes engine:
 * **Startup Configurations**: Setting default active themes via CLI flags or environment variables.
 * **Dual-Variant Designing**: Building themes with specific Light and Dark mode variants, along with dynamic custom color pickers in the UI.

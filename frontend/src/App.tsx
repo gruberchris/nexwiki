@@ -23,7 +23,8 @@ import {
   ChevronDown,
   FileText,
   Printer,
-  FileDown
+  FileDown,
+  Wrench
 } from 'lucide-react';
 
 // Simple check to identify new page creation urls
@@ -326,7 +327,7 @@ export const App: React.FC = () => {
         console.error('Failed to fetch themes during boot:', err);
       }
 
-      // 3. Set active theme based on localStorage, falling back to server default config
+      // 3. Set the active theme based on localStorage, falling back to server default config
       const savedTheme = localStorage.getItem('active-theme');
       const finalThemeName = savedTheme || defaultTheme;
       setActiveThemeName(finalThemeName);
@@ -710,7 +711,23 @@ export const App: React.FC = () => {
                     {currentArticle.tags && currentArticle.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 mt-3 select-none">
                         {currentArticle.tags.map(tag => {
-                          const isAgentTag = tag.toLowerCase().startsWith('aiagent-');
+                          const tagLower = tag.toLowerCase();
+                          const isSkillTag = tagLower === 'aiagent-skill';
+                          const isAgentTag = tagLower.startsWith('aiagent-');
+                          
+                          if (isSkillTag) {
+                            return (
+                              <span 
+                                key={tag}
+                                title="Registered AI Agent Skill Tag"
+                                className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 dark:bg-indigo-400/10 border border-indigo-500/30 dark:border-indigo-400/30 text-indigo-650 dark:text-indigo-450 shadow-sm shadow-indigo-100/30 dark:shadow-none animate-pulse-subtle"
+                              >
+                                <Wrench size={10} className="text-indigo-550 dark:text-indigo-400 shrink-0" />
+                                {tag}
+                              </span>
+                            );
+                          }
+
                           return isAgentTag ? (
                             <span 
                               key={tag}
@@ -821,7 +838,43 @@ export const App: React.FC = () => {
                 </div>
 
                 {/* Rendered Markdown Body Content */}
-                <div className="pb-16 animate-fade-in">
+                <div className="pb-16 animate-fade-in space-y-6">
+                  {currentArticle.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill') && (
+                    <div className="p-5 rounded-2xl bg-gradient-to-tr from-indigo-500/5 to-purple-500/5 border border-indigo-500/25 dark:border-indigo-500/15 text-slate-700 dark:text-slate-300 shadow-sm flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between no-print select-none backdrop-blur-sm">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-indigo-500/10 dark:bg-indigo-400/10 text-indigo-600 dark:text-indigo-400 animate-pulse shrink-0">
+                          <Wrench size={18} />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5 uppercase tracking-wide">
+                            AI Agent Skill Active
+                          </h4>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                            Exposed as a custom AI Agent skill registry. Agents can fetch and parse this skill page dynamically.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 self-stretch sm:self-auto justify-end shrink-0">
+                        <a
+                          href={`/api/skills/${currentArticle.slug}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-[10px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-655 dark:text-slate-400 transition-all shadow-inner cursor-pointer"
+                        >
+                          JSON Schema
+                        </a>
+                        <a
+                          href={`/api/skills/${currentArticle.slug}/raw`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold transition-all shadow-md shadow-indigo-500/15 cursor-pointer"
+                        >
+                          Raw SKILL.md
+                        </a>
+                      </div>
+                    </div>
+                  )}
+
                   <Viewer
                     content={currentArticle.content || ''}
                     onNavigate={handleNavigate}

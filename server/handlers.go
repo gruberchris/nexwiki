@@ -2,10 +2,14 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Server coordinates the API handlers with the persistence storage layer.
@@ -112,7 +116,7 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string) []st
 			continue
 		}
 		tLower := strings.ToLower(tTrimmed)
-		if strings.HasPrefix(tLower, "aiagent-") && !existingAgentTags[tLower] {
+		if strings.HasPrefix(tLower, "aiagent-") && !existingAgentTags[tLower] && tLower != "aiagent-skill" {
 			continue
 		}
 		if !seen[tLower] {
@@ -520,4 +524,181 @@ func (srv *Server) HandleDeleteTheme(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "theme deleted successfully"})
+}
+
+// SkillResp represents the structured metadata format returned to AI agents for skills discovery.
+type SkillResp struct {
+	Name        string    `json:"name"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Tags        []string  `json:"tags"`
+	Version     int       `json:"version"`
+	RawURL      string    `json:"raw_url"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// extractDescription isolates the first non-heading, non-empty paragraph of a Markdown page,
+// strips double bracket WikiLinks, and limits it to 200 characters to form a clean description snippet.
+func extractDescription(content string) string {
+	paragraphs := strings.Split(content, "\n\n")
+	for _, p := range paragraphs {
+		p = strings.TrimSpace(p)
+		if p == "" || strings.HasPrefix(p, "#") {
+			continue
+		}
+		// Clean double brackets
+		p = strings.ReplaceAll(p, "[[", "")
+		p = strings.ReplaceAll(p, "]]", "")
+
+		runes := []rune(p)
+		if len(runes) > 200 {
+			return string(runes[:200]) + "..."
+		}
+		return p
+	}
+	return ""
+}
+
+// HandleListSkills queries all pages, isolates skills possessing the 'aiagent-skill' tag,
+// parses their descriptions, and exposes them as a JSON registry with fully qualified raw URLs.
+func (srv *Server) HandleListSkills(w http.ResponseWriter, r *http.Request) {
+	articles, err := srv.Storage.ListArticles()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var skills []SkillResp
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+
+	for _, art := range articles {
+		isSkill := false
+		var cleanTags []string
+		for _, tag := range art.Tags {
+			tagLower := strings.ToLower(tag)
+			if tagLower == "aiagent-skill" {
+				isSkill = true
+			} else if !strings.HasPrefix(tagLower, "aiagent-") {
+				cleanTags = append(cleanTags, tag)
+			}
+		}
+
+		if isSkill {
+			// Load full article to parse description from content body
+			fullArt, err := srv.Storage.GetArticle(art.Slug)
+			desc := ""
+			if err == nil {
+				desc = extractDescription(fullArt.Content)
+			}
+
+			rawURL := fmt.Sprintf("%s://%s/api/skills/%s/raw", scheme, r.Host, art.Slug)
+			skills = append(skills, SkillResp{
+				Name:        art.Slug,
+				Title:       art.Title,
+				Description: desc,
+				Tags:        cleanTags,
+				Version:     art.Version,
+				RawURL:      rawURL,
+				UpdatedAt:   art.UpdatedAt,
+			})
+		}
+	}
+
+	writeJSON(w, http.StatusOK, skills)
+}
+
+// HandleGetSkill retrieves a single registered AI agent skill in JSON format.
+func (srv *Server) HandleGetSkill(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeError(w, http.StatusBadRequest, "skill slug is required")
+		return
+	}
+
+	art, err := srv.Storage.GetArticle(slug)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	isSkill := false
+	var cleanTags []string
+	for _, tag := range art.Tags {
+		tagLower := strings.ToLower(tag)
+		if tagLower == "aiagent-skill" {
+			isSkill = true
+		} else if !strings.HasPrefix(tagLower, "aiagent-") {
+			cleanTags = append(cleanTags, tag)
+		}
+	}
+
+	if !isSkill {
+		writeError(w, http.StatusNotFound, "requested article is not registered as an AI skill")
+		return
+	}
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	rawURL := fmt.Sprintf("%s://%s/api/skills/%s/raw", scheme, r.Host, art.Slug)
+
+	writeJSON(w, http.StatusOK, SkillResp{
+		Name:        art.Slug,
+		Title:       art.Title,
+		Description: extractDescription(art.Content),
+		Tags:        cleanTags,
+		Version:     art.Version,
+		RawURL:      rawURL,
+		UpdatedAt:   art.UpdatedAt,
+	})
+}
+
+// HandleGetSkillRaw serves the exact raw SKILL.md file with YAML frontmatter as plain text.
+func (srv *Server) HandleGetSkillRaw(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeError(w, http.StatusBadRequest, "skill slug is required")
+		return
+	}
+
+	cleanedSlug := Slugify(slug)
+	if cleanedSlug == "" {
+		writeError(w, http.StatusBadRequest, "invalid slug")
+		return
+	}
+
+	art, err := srv.Storage.GetArticle(cleanedSlug)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	isSkill := false
+	for _, tag := range art.Tags {
+		if strings.ToLower(tag) == "aiagent-skill" {
+			isSkill = true
+			break
+		}
+	}
+
+	if !isSkill {
+		writeError(w, http.StatusNotFound, "requested article is not registered as an AI skill")
+		return
+	}
+
+	filePath := filepath.Join(srv.Storage.ArticleDir, cleanedSlug+".md")
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read raw skill file")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%s.md", cleanedSlug))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
