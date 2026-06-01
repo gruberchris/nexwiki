@@ -10,13 +10,15 @@ import {
   ArrowRight,
   Terminal,
   Grid,
-  Heart
+  Heart,
+  ClipboardList,
+  Wrench
 } from 'lucide-react';
 
 interface HeroProps {
   articles: Article[];
   onNavigate: (slug: string) => void;
-  onCreateNew: () => void;
+  onCreateNew: (type: 'article' | 'plan' | 'skill') => void;
   wikiName: string;
 }
 
@@ -102,31 +104,16 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
         </div>
 
         {/* Dashboard Quick Action Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 select-none">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6 select-none">
           <div 
-            onClick={() => onNavigate('home')}
+            onClick={() => onCreateNew('article')}
             className="p-6 rounded-2xl glass-panel hover:border-themeAccent/30 hover:scale-[1.02] cursor-pointer group transition-all duration-300"
           >
             <div className="w-10 h-10 rounded-xl bg-themeAccentBg text-themeAccent flex items-center justify-center group-hover:scale-110 transition-transform duration-200 shadow-inner">
               <BookOpen size={20} />
             </div>
             <h3 className="text-base font-bold text-themeTextSecondary mt-4 group-hover:text-themeAccent transition-colors">
-              Read Home Page
-            </h3>
-            <p className="text-xs text-themeTextMuted mt-1.5 leading-relaxed font-medium">
-              Return to the main welcoming entry index of your wiki workspace.
-            </p>
-          </div>
-
-          <div 
-            onClick={onCreateNew}
-            className="p-6 rounded-2xl glass-panel hover:border-themeAccentSecondary/30 hover:scale-[1.02] cursor-pointer group transition-all duration-300"
-          >
-            <div className="w-10 h-10 rounded-xl bg-themeAccentBg text-themeAccentSecondary flex items-center justify-center group-hover:scale-110 transition-transform duration-200 shadow-inner">
-              <Plus size={20} />
-            </div>
-            <h3 className="text-base font-bold text-themeTextSecondary mt-4 group-hover:text-themeAccentSecondary transition-colors">
-              Create New Article
+              Create Wiki Article
             </h3>
             <p className="text-xs text-themeTextMuted mt-1.5 leading-relaxed font-medium">
               Start writing a clean, markdown-backed wiki page right now.
@@ -134,14 +121,44 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
           </div>
 
           <div 
-            onClick={() => onNavigate('new?title=Markdown%20Playground')}
-            className="p-6 rounded-2xl glass-panel hover:border-themeAccent/30 hover:scale-[1.02] cursor-pointer group transition-all duration-300 sm:col-span-2 md:col-span-1"
+            onClick={() => onCreateNew('plan')}
+            className="p-6 rounded-2xl glass-panel hover:border-themeAccentSecondary/30 hover:scale-[1.02] cursor-pointer group transition-all duration-300"
+          >
+            <div className="w-10 h-10 rounded-xl bg-themeAccentBg text-themeAccentSecondary flex items-center justify-center group-hover:scale-110 transition-transform duration-200 shadow-inner">
+              <ClipboardList size={20} />
+            </div>
+            <h3 className="text-base font-bold text-themeTextSecondary mt-4 group-hover:text-themeAccentSecondary transition-colors">
+              Create AI Plan
+            </h3>
+            <p className="text-xs text-themeTextMuted mt-1.5 leading-relaxed font-medium">
+              Create a Collaborative AI Plan to coordinate roadmaps and milestones.
+            </p>
+          </div>
+
+          <div 
+            onClick={() => onCreateNew('skill')}
+            className="p-6 rounded-2xl glass-panel hover:border-themeAccent/30 hover:scale-[1.02] cursor-pointer group transition-all duration-300"
           >
             <div className="w-10 h-10 rounded-xl bg-themeAccentBg text-themeAccent flex items-center justify-center group-hover:scale-110 transition-transform duration-200 shadow-inner">
-              <Terminal size={20} />
+              <Wrench size={20} />
             </div>
             <h3 className="text-base font-bold text-themeTextSecondary mt-4 group-hover:text-themeAccent transition-colors">
-              Draft Playground
+              Create Custom Skill
+            </h3>
+            <p className="text-xs text-themeTextMuted mt-1.5 leading-relaxed font-medium">
+              Author procedural instructions and rules (SKILL.md) for AI agents.
+            </p>
+          </div>
+
+          <div 
+            onClick={() => onNavigate('new?title=Markdown%20Playground')}
+            className="p-6 rounded-2xl glass-panel hover:border-themeAccentSecondary/30 hover:scale-[1.02] cursor-pointer group transition-all duration-300"
+          >
+            <div className="w-10 h-10 rounded-xl bg-themeAccentBg text-themeAccentSecondary flex items-center justify-center group-hover:scale-110 transition-transform duration-200 shadow-inner">
+              <Terminal size={20} />
+            </div>
+            <h3 className="text-base font-bold text-themeTextSecondary mt-4 group-hover:text-themeAccentSecondary transition-colors">
+              Draft Sandbox
             </h3>
             <p className="text-xs text-themeTextMuted mt-1.5 leading-relaxed font-medium">
               Open a dynamic, split-pane markdown sandbox to test images and layouts.
@@ -178,7 +195,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                 <h3 className="text-sm font-bold text-themeTextSecondary mt-3">No articles match your search</h3>
                 <p className="text-xs text-themeTextMuted mt-1">Try clearing your filters or create a new wiki page!</p>
                 <button
-                  onClick={onCreateNew}
+                  onClick={() => onCreateNew('article')}
                   className="mt-4 inline-flex items-center gap-1.5 py-2 px-4 rounded-xl bg-themeAccent hover:opacity-90 text-white font-semibold text-xs transition-colors"
                 >
                   <Plus size={12} />

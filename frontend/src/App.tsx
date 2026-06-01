@@ -23,7 +23,9 @@ import {
   ChevronDown,
   FileText,
   Printer,
-  FileDown
+  FileDown,
+  Wrench,
+  ClipboardList
 } from 'lucide-react';
 
 // Simple check to identify new page creation urls
@@ -45,6 +47,7 @@ export const App: React.FC = () => {
   const [editorSlug, setEditorSlug] = useState('');
   const [editorTitle, setEditorTitle] = useState('');
   const [editorContent, setEditorContent] = useState('');
+  const [editorTags, setEditorTags] = useState<string[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   
   // Dropdown & Copy utility states
@@ -88,7 +91,12 @@ export const App: React.FC = () => {
     }
     if (currentPath === '/new') {
       const params = new URLSearchParams(currentSearch);
-      return { route: 'new', slug: '', prefillTitle: params.get('title') || '' };
+      return { 
+        route: 'new', 
+        slug: '', 
+        prefillTitle: params.get('title') || '',
+        prefillType: params.get('type') || 'article'
+      };
     }
     if (currentPath === '/search') {
       const params = new URLSearchParams(currentSearch);
@@ -117,8 +125,28 @@ export const App: React.FC = () => {
     }
     if (routeInfo.route === 'new') {
       setEditorSlug('');
-      setEditorTitle(routeInfo.prefillTitle || '');
-      setEditorContent('# ' + (routeInfo.prefillTitle || 'New Page') + '\n\nStart typing content here...');
+      
+      let initialTags: string[];
+      let defaultContent: string;
+      let defaultTitle = routeInfo.prefillTitle || '';
+      
+      if (routeInfo.prefillType === 'plan') {
+        initialTags = ['aiagent-plan'];
+        defaultContent = `# New Collaborative Plan\n\n## Overview\nProvide a description of the goal and milestones.\n\n## Tasks\n- [ ] Task 1: Audit codebase\n- [ ] Task 2: Implement core logic\n- [ ] Task 3: Run validation tests`;
+        if (!defaultTitle) defaultTitle = 'New Collaborative Plan';
+      } else if (routeInfo.prefillType === 'skill') {
+        initialTags = ['aiagent-skill'];
+        defaultContent = `# New Custom AI Skill\n\n## Overview\nGuides the agent on how to perform a specialized task.\n\n## When to Use\nDescribe the triggers for this skill.\n\n## Instructions\n1. Step 1\n2. Step 2`;
+        if (!defaultTitle) defaultTitle = 'New Custom AI Skill';
+      } else {
+        initialTags = [];
+        if (!defaultTitle) defaultTitle = 'New Page';
+        defaultContent = '# ' + defaultTitle + '\n\nStart typing content here...';
+      }
+
+      setEditorTitle(defaultTitle);
+      setEditorContent(defaultContent);
+      setEditorTags(initialTags);
       setIsEditing(true);
     }
   }
@@ -326,7 +354,7 @@ export const App: React.FC = () => {
         console.error('Failed to fetch themes during boot:', err);
       }
 
-      // 3. Set active theme based on localStorage, falling back to server default config
+      // 3. Set the active theme based on localStorage, falling back to server default config
       const savedTheme = localStorage.getItem('active-theme');
       const finalThemeName = savedTheme || defaultTheme;
       setActiveThemeName(finalThemeName);
@@ -611,7 +639,7 @@ export const App: React.FC = () => {
           onToggleDarkMode={toggleDarkMode}
           onOpenThemeManager={() => setThemeModalOpen(true)}
           onNavigate={handleNavigate}
-          onCreateNew={() => navigate('/new')}
+          onCreateNew={(type: 'article' | 'plan' | 'skill') => navigate(`/new?type=${type}`)}
           wikiName={wikiName}
         />
       </div>
@@ -620,9 +648,10 @@ export const App: React.FC = () => {
       {isEditing ? (
         // Premium Markdown Split Editor Pane
         <Editor
+          key={editorSlug || currentPath + currentSearch}
           initialTitle={editorTitle}
           initialContent={editorContent}
-          initialTags={currentArticle ? currentArticle.tags : []}
+          initialTags={editorSlug === '' ? editorTags : (currentArticle ? currentArticle.tags : [])}
           slug={editorSlug}
           onSave={handleSaveArticle}
           onCancel={() => {
@@ -637,7 +666,7 @@ export const App: React.FC = () => {
         <Hero
           articles={articles}
           onNavigate={handleNavigate}
-          onCreateNew={() => navigate('/new')}
+          onCreateNew={(type: 'article' | 'plan' | 'skill') => navigate(`/new?type=${type}`)}
           wikiName={wikiName}
         />
       ) : routeInfo.route === 'search' ? (
@@ -710,7 +739,37 @@ export const App: React.FC = () => {
                     {currentArticle.tags && currentArticle.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 mt-3 select-none">
                         {currentArticle.tags.map(tag => {
-                          const isAgentTag = tag.toLowerCase().startsWith('aiagent-');
+                          const tagLower = tag.toLowerCase();
+                          const isSkillTag = tagLower === 'aiagent-skill';
+                          const isAgentTag = tagLower.startsWith('aiagent-');
+                          
+                          if (isSkillTag) {
+                            return (
+                              <span 
+                                key={tag}
+                                title="Registered AI Agent Skill Tag"
+                                className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 dark:bg-indigo-400/10 border border-indigo-500/30 dark:border-indigo-400/30 text-indigo-650 dark:text-indigo-450 shadow-sm shadow-indigo-100/30 dark:shadow-none animate-pulse-subtle"
+                              >
+                                <Wrench size={10} className="text-indigo-550 dark:text-indigo-400 shrink-0" />
+                                {tag}
+                              </span>
+                            );
+                          }
+
+                          const isPlanTag = tagLower === 'aiagent-plan';
+                          if (isPlanTag) {
+                            return (
+                              <span 
+                                key={tag}
+                                title="Registered AI Agent Plan Tag"
+                                className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/10 dark:bg-emerald-400/10 border border-emerald-500/30 dark:border-emerald-400/30 text-emerald-650 dark:text-emerald-450 shadow-sm shadow-emerald-100/30 dark:shadow-none animate-pulse-subtle"
+                              >
+                                <ClipboardList size={10} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                {tag}
+                              </span>
+                            );
+                          }
+
                           return isAgentTag ? (
                             <span 
                               key={tag}
@@ -821,7 +880,61 @@ export const App: React.FC = () => {
                 </div>
 
                 {/* Rendered Markdown Body Content */}
-                <div className="pb-16 animate-fade-in">
+                <div className="pb-16 animate-fade-in space-y-6">
+                  {currentArticle.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill') && (
+                    <div className="p-5 rounded-2xl bg-gradient-to-tr from-indigo-500/5 to-purple-500/5 border border-indigo-500/25 dark:border-indigo-500/15 text-slate-700 dark:text-slate-300 shadow-sm flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between no-print select-none backdrop-blur-sm">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-indigo-500/10 dark:bg-indigo-400/10 text-indigo-600 dark:text-indigo-400 animate-pulse shrink-0">
+                          <Wrench size={18} />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5 uppercase tracking-wide">
+                            AI Agent Skill Active
+                          </h4>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                            Exposed as a custom AI Agent skill registry. Agents can fetch and parse this skill page dynamically.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 self-stretch sm:self-auto justify-end shrink-0">
+                        <a
+                          href={`/api/skills/${currentArticle.slug}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-[10px] font-bold hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-655 dark:text-slate-400 transition-all shadow-inner cursor-pointer"
+                        >
+                          JSON Schema
+                        </a>
+                        <a
+                          href={`/api/skills/${currentArticle.slug}/raw`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold transition-all shadow-md shadow-indigo-500/15 cursor-pointer"
+                        >
+                          Raw SKILL.md
+                        </a>
+                      </div>
+                    </div>
+                  )}
+
+                  {currentArticle.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan') && (
+                    <div className="p-5 rounded-2xl bg-gradient-to-tr from-emerald-500/5 to-teal-500/5 border border-emerald-500/25 dark:border-emerald-500/15 text-slate-700 dark:text-slate-300 shadow-sm flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between no-print select-none backdrop-blur-sm animate-fade-in">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-emerald-500/10 dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-400 animate-pulse shrink-0">
+                          <ClipboardList size={18} />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5 uppercase tracking-wide">
+                            Collaborative AI Plan Active
+                          </h4>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                            This page is registered as an active AI Plan. You and your connected AI agent can collaboratively manage and execute this roadmap.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <Viewer
                     content={currentArticle.content || ''}
                     onNavigate={handleNavigate}

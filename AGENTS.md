@@ -58,7 +58,7 @@ To prevent name collisions, improve system modularity, and establish unified sys
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes nine powerful, semantic tools for AI agents:
+The NexWiki MCP server registers and exposes seventeen powerful, semantic tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine. It supports advanced queries (wildcards, exact phrase quotes, and logical operators).
@@ -66,7 +66,7 @@ Performs a high-speed, full-text search across all wiki articles using the built
 * **Arguments**:
   * `query` (string, **required**): The search keywords or query string.
 * **Output Format**:
-  A structured, human-readable summary containing scored matches, slug identifiers, and content snippets. To optimize LLM context usage, all HTML `<mark>` search highlight tags are automatically converted to clean markdown bold formatting (`**`).
+  A structured, human-readable summary containing scored matches, slug identifiers, and content snippets. To optimize LLM context usage, all HTML `<mark>` search highlight tags are automatically converted to clean Markdown bold formatting (`**`).
 
 * **Example Call (JSON-RPC)**:
   ```json
@@ -133,7 +133,7 @@ Lists all articles currently available in your knowledge base. This acts as a di
 ---
 
 ### 4. `create_wiki_article`
-Creates a brand new wiki article with a given title and raw Markdown content body. Automatically handles title slugification, checks for slug collision, and indexes the new article for search.
+Creates a brand-new wiki article with a given title and raw Markdown content body. Automatically handles title slugification, checks for slug collision, and indexes the new article for search.
 
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the new article (e.g. "React Hooks Guide").
@@ -145,7 +145,7 @@ Creates a brand new wiki article with a given title and raw Markdown content bod
 ---
 
 ### 5. `edit_wiki_article`
-Modifies the title, Markdown content, or edit summary of an existing wiki article. Uses **optimistic locking** to prevent write collision conflicts.
+Modifies the title, Markdown content, or edit a summary of an existing wiki article. Uses **optimistic locking** to prevent write collision conflicts.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the article to edit.
@@ -179,7 +179,7 @@ Retrieves the full revision history log of a wiki page, showing version numbers,
 ---
 
 ### 8. `revert_article_version`
-Reverts the active state of an article back to a specific historical version number.
+Reverts the active state of an article to a specific historical version number.
 
 * **Arguments**:
   * `slug` (string, **required**): The URL slug of the target article.
@@ -195,6 +195,99 @@ Scans the entire knowledge base to compile total page stats and **autonomously s
 * **Arguments**: None (empty object `{}`).
 * **Output Format**:
   A summary text listing total articles, total WikiLinks scanned, total dead links, and details on exactly which pages contain broken links so the AI agent can autonomously fix them!
+
+---
+
+### 10. `create_agent_memory`
+Creates a brand new protected AI Agent Memory document (such as a troubleshooting note, architecture decision, or custom rules).
+
+* **Arguments**:
+  * `title` (string, **required**): The human-readable title of the memory article (e.g. "Build Server Outage Resolution").
+  * `content` (string, **required**): The raw Markdown content of the memory document body.
+  * `memory_type` (string, **required**): The type of memory to log. Must be one of: `troubleshooting`, `memory`, `decision`, `todo`, `rules`.
+  * `project_context` (string, **optional**): A context string (like a project ID) to generate a secondary custom tag (e.g. `"project-x"` tags the document with `"project-x"`).
+  * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
+* **Output Format**:
+  A structured, human-readable success message with slug, creation timestamp, version, and applied tags. All memory types automatically receive the protected tag `aiagent-memory-<type>`.
+
+---
+
+### 11. `append_agent_memory`
+Appends observations, subtask completions, or updates to the end of an existing protected AI Agent Memory page (must be tagged with an `aiagent-memory-` prefix).
+
+* **Arguments**:
+  * `slug` (string, **required**): The unique URL-safe slug of the target memory article.
+  * `content_to_append` (string, **required**): The raw Markdown text to append.
+  * `edit_summary` (string, **optional**): Optional summary outlining what was appended.
+* **Output Format**:
+  A success message with the new version and update timestamp.
+
+---
+
+### 12. `list_agent_memories`
+Lists all protected AI Agent Memory articles (tagged with `aiagent-memory-` prefix) saved in your wiki.
+
+* **Arguments**:
+  * `memory_type` (string, **optional**): An optional memory type to filter the listing (e.g., `troubleshooting`, `memory`, `decision`, `todo`, `rules`).
+* **Output Format**:
+  A bulleted plain text index containing the titles, URL-safe slugs, active tags, and edit summaries of matching memory documents.
+
+---
+
+### 13. `create_agent_plan`
+Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent.
+
+* **Arguments**:
+  * `title` (string, **required**): The human-readable title of the plan (e.g., "Go 1.22 Migration Plan").
+  * `content` (string, **required**): The raw Markdown content of the plan document.
+  * `project_context` (string, **required**): The name of the project this plan is for (e.g. "nexwiki"). Generates a custom project tag.
+  * `edit_summary` (string, **optional**): Optional summary detailing the creation of the plan.
+* **Output Format**:
+  A success message containing the title, slug, version, creation timestamp, and all applied tags (including the auto-applied `aiagent-plan` tag).
+
+---
+
+### 14. `append_agent_plan`
+Appends task status, observations, or checklists to an existing Collaborative AI Plan (must possess the `aiagent-plan` tag).
+
+* **Arguments**:
+  * `slug` (string, **required**): The unique URL-safe slug of the target plan.
+  * `content_to_append` (string, **required**): The raw Markdown text to append to the end of the plan.
+  * `edit_summary` (string, **optional**): Optional summary outlining the updates.
+* **Output Format**:
+  A success message confirming the new plan version and update timestamp.
+
+---
+
+### 15. `list_agent_plans`
+Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved inside the knowledge base.
+
+* **Arguments**:
+  * `project_context` (string, **optional**): An optional project context name to filter plans by.
+* **Output Format**:
+  A bulleted index of all collaborative plans with titles, slugs, and active tags.
+
+---
+
+### 16. `create_agent_skill`
+Creates a new Custom AI Skill, automatically making it part of the custom skills registry.
+
+* **Arguments**:
+  * `title` (string, **required**): The title of the skill (e.g., "Docker Container Pruning").
+  * `content` (string, **required**): The raw Markdown content of the skill instructions (procedural SKILL.md format).
+  * `tags` (array of strings, **optional**): Optional user tags to apply to the skill.
+  * `edit_summary` (string, **optional**): Optional summary describing why the skill was created.
+* **Output Format**:
+  A success message containing the title, slug, version, creation timestamp, and all applied tags (including the auto-applied `aiagent-skill` tag).
+
+---
+
+### 17. `list_agent_skills`
+Lists all Custom AI Skills (tagged with `aiagent-skill`) currently saved in the knowledge base.
+
+* **Arguments**: None (empty object `{}`).
+* **Output Format**:
+  A bulleted plain text index containing the titles, slugs, and tags of all registered skills.
 
 ---
 
@@ -244,7 +337,7 @@ Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat wi
 Cursor supports connecting to MCP servers over the network using the HTTP/SSE transport.
 
 1. Open **Cursor Settings** (Gear icon in top right).
-2. Go to **Features** -> **MCP**.
+2. Go to **Features** → **MCP**.
 3. Click **+ Add New MCP Server**.
 4. Configure the server with the following settings:
    * **Name**: `nexwiki`

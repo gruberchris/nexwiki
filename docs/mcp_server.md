@@ -14,13 +14,13 @@ The NexWiki MCP server supports two primary transport layers:
 2. **Streamable HTTP**: Enables a modern, secure networked connection over HTTP (2025 Spec, the official successor to the deprecated HTTP+SSE specification). It uses a streamable HTTP connection at `/api/mcp` supporting GET (initiating the stream) and POST (executing synchronous JSON-RPC commands) to execute tools.
 
 ### 🔒 Log Safety Guarantee
-In order to prevent stdio pipe corruption (which breaks JSON-RPC communication in tools like Claude Desktop), **NexWiki redirects all internal system and web application logs exclusively to standard error (`Stderr`)**. Only valid JSON-RPC envelopes are ever output to `Stdout`.
+To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools like Claude Desktop), **NexWiki redirects all internal system and web application logs exclusively to standard error (`Stderr`)**. Only valid JSON-RPC envelopes are ever output to `Stdout`.
 
 ---
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes twelve powerful, semantic tools for AI agents:
+The NexWiki MCP server registers and exposes seventeen powerful, semantic tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine.
@@ -28,7 +28,7 @@ Performs a high-speed, full-text search across all wiki articles using the built
 * **Arguments**:
   * `query` (string, **required**): The search keywords or query string. Supports wildcards, quotes for exact matches, and boolean terms.
 * **Behavior**:
-  Executes the search query against the local Bleve index. It converts scored matches into a human-readable text block. To optimize LLM context usage, all HTML `<mark>` search highlight tags are automatically converted to clean markdown bold formatting (`**`).
+  Executes the search query against the local Bleve index. It converts scored matches into a human-readable text block. To optimize LLM context usage, all HTML `<mark>` search highlight tags are automatically converted to clean Markdown bold formatting (`**`).
 
 ---
 
@@ -52,7 +52,7 @@ Lists all articles currently available in your knowledge base. This acts as a di
 ---
 
 ### 4. `create_wiki_article`
-Creates a brand new wiki article with a given title and raw Markdown content body.
+Creates a new wiki article with a given title and raw Markdown content body.
 
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the new article (e.g. "React Hooks Guide").
@@ -64,7 +64,7 @@ Creates a brand new wiki article with a given title and raw Markdown content bod
 ---
 
 ### 5. `edit_wiki_article`
-Modifies the title, Markdown content, or edit summary of an existing wiki article.
+Modifies the title, Markdown content, or edit the summary of an existing wiki article.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the article to edit.
@@ -73,7 +73,7 @@ Modifies the title, Markdown content, or edit summary of an existing wiki articl
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
   * `edit_summary` (string, **optional**): A summary detailing the modifications.
 * **Behavior**:
-  Employs **optimistic locking** to prevent write collision conflicts. If the `loaded_version` does not match the active version on disk, it aborts the write with a conflict message (notifying the agent to re-fetch and try again). On success, it creates a new gzipped history backup snapshot (`.md.gz`), writes the updated flat Markdown file, and refreshes the search index.
+  Employs **optimistic locking** to prevent write collision conflicts. If the `loaded_version` does not match the active version on disk, it aborts the writing with a conflict message (notifying the agent to re-fetch and try again). On success, it creates a new gzipped history backup snapshot (`.md.gz`), writes the updated flat Markdown file, and refreshes the search index.
 
 ---
 
@@ -98,7 +98,7 @@ Retrieves the full revision history log of a wiki page, showing version numbers,
 ---
 
 ### 8. `revert_article_version`
-Reverts the active state of an article back to a specific historical version number.
+Reverts the active state of an article to a specific historical version number.
 
 * **Arguments**:
   * `slug` (string, **required**): The URL slug of the target article.
@@ -118,16 +118,16 @@ Scans the entire knowledge base to compile total page stats and **autonomously s
 ---
 
 ### 10. `create_agent_memory`
-Creates a brand new protected AI Agent Memory document (such as a plan, troubleshooting note, or general memory block).
+Creates a brand new protected AI Agent Memory document (such as a troubleshooting note, architecture decision, or custom rules).
 
 * **Arguments**:
-  * `title` (string, **required**): The human-readable title of the memory article (e.g. "React Migration Plan").
+  * `title` (string, **required**): The human-readable title of the memory article (e.g. "Build Server Outage Resolution").
   * `content` (string, **required**): The raw Markdown content of the memory document body.
-  * `memory_type` (string, **required**): The type of memory to log. Must be one of: `plan`, `troubleshooting`, `memory`, `decision`, `todo`, `rules`.
-  * `project_context` (string, **optional**): A context string (like a project ID) to generate a secondary contextual tag (e.g. `"project-x"` tags the document with `aiagent-<type>-project-x`).
+  * `memory_type` (string, **required**): The type of memory to log. Must be one of: `troubleshooting`, `memory`, `decision`, `todo`, `rules`.
+  * `project_context` (string, **optional**): A context string (like a project ID) to generate a secondary custom tag (e.g. `"project-x"` tags the document with `"project-x"`).
   * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
 * **Behavior**:
-  Checks for slug collision, automatically attaches protected `aiagent-` prefixed tags based on memory type, saves the flat Markdown file, commits the first version snapshot, and indexes the document in the search engine.
+  Checks for slug collision, automatically attaches the protected `aiagent-memory-<type>` tag, applies a custom tag for the project name (if `project_context` is provided), saves the flat Markdown file, commits the first version snapshot, and indexes the document in the search engine.
 
 ---
 
@@ -137,19 +137,76 @@ Appends observations, subtask completions, or updates to the end of an existing 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target memory article.
   * `content_to_append` (string, **required**): The raw Markdown text to append.
-  * `edit_summary` (string, **optional**): Optional summary outlining what was appended (e.g. "Logged database migration success").
+  * `edit_summary` (string, **optional**): Optional summary outlining what was appended.
 * **Behavior**:
-  Verifies that the target article is a protected agent memory (possesses at least one `aiagent-` prefixed tag), appends the new text cleanly with double newlines, creates a gzipped history backup snapshot, and saves the updated active file.
+  Verifies that the target article is a protected agent memory (possesses at least one tag starting with `aiagent-memory-`), appends the new text cleanly with double newlines, creates a gzipped history backup snapshot, and saves the updated active file.
 
 ---
 
 ### 12. `list_agent_memories`
-Lists all protected AI Agent Memory articles saved in your wiki.
+Lists all protected AI Agent Memory articles (tagged with `aiagent-memory-` prefix) saved in your wiki.
 
 * **Arguments**:
-  * `memory_type` (string, **optional**): An optional memory type to filter the listing (e.g., plan, troubleshooting, memory, decision, todo, rules).
+  * `memory_type` (string, **optional**): An optional memory type to filter the listing (e.g., `troubleshooting`, `memory`, `decision`, `todo`, `rules`).
 * **Behavior**:
-  Scans all active articles, isolates pages that possess tags starting with `"aiagent-"`, optionally filters them by the specified memory type, and returns a bulleted index of matches including titles, slugs, and active tags.
+  Scans all active articles, isolates pages that possess tags starting with `"aiagent-memory-"`, filters them to those matching the specified memory type, and returns a bulleted index of matches including titles, slugs, and active tags.
+
+---
+
+### 13. `create_agent_plan`
+Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent.
+
+* **Arguments**:
+  * `title` (string, **required**): The human-readable title of the plan (e.g., "Go 1.22 Migration Plan").
+  * `content` (string, **required**): The raw Markdown content of the plan document.
+  * `project_context` (string, **required**): The name of the project this plan is for (e.g. "nexwiki"). Generates a custom project tag.
+  * `edit_summary` (string, **optional**): Optional summary detailing the creation of the plan.
+* **Behavior**:
+  Checks for slug collision, automatically attaches the whitelisted `aiagent-plan` tag, applies a custom tag for the project name, saves the flat Markdown file, commits the first version snapshot, and indexes the plan in Bleve for search.
+
+---
+
+### 14. `append_agent_plan`
+Appends task status, observations, or checklists to an existing Collaborative AI Plan (must possess the `aiagent-plan` tag).
+
+* **Arguments**:
+  * `slug` (string, **required**): The unique URL-safe slug of the target plan.
+  * `content_to_append` (string, **required**): The raw Markdown text to append to the end of the plan.
+  * `edit_summary` (string, **optional**): Optional summary outlining the updates.
+* **Behavior**:
+  Verifies that the target article possesses the `aiagent-plan` tag, appends the new text cleanly with double newlines, creates a gzipped history backup snapshot, and saves the updated plan.
+
+---
+
+### 15. `list_agent_plans`
+Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved inside the knowledge base.
+
+* **Arguments**:
+  * `project_context` (string, **optional**): An optional project context name to filter plans by.
+* **Behavior**:
+  Scans all active articles, isolates pages that possess the `aiagent-plan` tag, filters them by project context tag if provided, and returns a bulleted index of matching plans.
+
+---
+
+### 16. `create_agent_skill`
+Creates a new Custom AI Skill, automatically making it part of the custom skills registry.
+
+* **Arguments**:
+  * `title` (string, **required**): The title of the skill (e.g., "Docker Container Pruning").
+  * `content` (string, **required**): The raw Markdown content of the skill instructions (procedural SKILL.md format).
+  * `tags` (array of strings, **optional**): Optional user tags to apply to the skill.
+  * `edit_summary` (string, **optional**): Optional summary describing why the skill was created.
+* **Behavior**:
+  Checks for slug collision, automatically attaches the `aiagent-skill` tag, applies any additional user tags, saves the flat Markdown file, commits the first version snapshot, and indexes the skill in Bleve.
+
+---
+
+### 17. `list_agent_skills`
+Lists all Custom AI Skills (tagged with `aiagent-skill`) currently saved in the knowledge base.
+
+* **Arguments**: None (empty object `{}`).
+* **Behavior**:
+  Scans all active articles, isolates pages possessing the `aiagent-skill` tag, and returns a bulleted index of matching skills.
 
 ---
 
@@ -166,12 +223,12 @@ To connect your AI agents (Claude Desktop, Cursor, Copilot CLI, Claude Code, or 
 
 ---
 
-### 1. Cursor IDE (Streamable HTTP Connection - Preferred)
+### 1. Cursor IDE (Streamable HTTP Connection – Preferred)
 NexWiki implements the modern **Streamable HTTP** transport (2025 Spec) at `/api/mcp`.
 
 To connect Cursor:
 1. Open **Cursor Settings** (gear icon in the top-right corner).
-2. Go to **Features** -> **MCP**.
+2. Go to **Features** → **MCP**.
 3. Click **+ Add New MCP Server**.
 4. Configure the server:
    * **Name**: `nexwiki`

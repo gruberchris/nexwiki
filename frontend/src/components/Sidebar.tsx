@@ -3,7 +3,6 @@ import type { Article } from '../types';
 import { formatRelativeTime } from '../utils';
 import { 
   FileText, 
-  Plus, 
   Search, 
   Moon, 
   Sun, 
@@ -12,6 +11,8 @@ import {
   ChevronRight,
   BookOpen,
   Cpu,
+  Wrench,
+  ClipboardList,
   Tag,
   ChevronDown,
   X,
@@ -25,7 +26,7 @@ interface SidebarProps {
   onToggleDarkMode: () => void;
   onOpenThemeManager: () => void;
   onNavigate: (slug: string) => void;
-  onCreateNew: () => void;
+  onCreateNew: (type: 'article' | 'plan' | 'skill') => void;
   wikiName: string;
 }
 
@@ -42,6 +43,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [filterQuery, setFilterQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [aiMemoriesOpen, setAiMemoriesOpen] = useState(true);
+  const [aiSkillsOpen, setAiSkillsOpen] = useState(true);
+  const [aiPlansOpen, setAiPlansOpen] = useState(true);
 
   // Parse all unique user tags (excluding "aiagent-" tags)
   const allUserTags = useMemo(() => {
@@ -71,11 +74,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
   }, [articles, filterQuery, selectedTag]);
 
-  // AI Agent memories filter
-  const aiArticles = useMemo(() => {
+  // AI Agent memories filter (starts with aiagent- but is NOT aiagent-skill and NOT aiagent-plan)
+  const aiMemories = useMemo(() => {
     return articles.filter(art => {
       const isAgent = art.tags?.some(tag => tag.toLowerCase().startsWith('aiagent-'));
       if (!isAgent) return false;
+      const isSkill = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill');
+      const isPlan = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan');
+      if (isSkill || isPlan) return false;
+
+      return art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
+        art.slug.toLowerCase().includes(filterQuery.toLowerCase());
+    });
+  }, [articles, filterQuery]);
+
+  // AI Agent skills filter (possesses aiagent-skill tag)
+  const aiSkills = useMemo(() => {
+    return articles.filter(art => {
+      const isSkill = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill');
+      if (!isSkill) return false;
+
+      return art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
+        art.slug.toLowerCase().includes(filterQuery.toLowerCase());
+    });
+  }, [articles, filterQuery]);
+
+  // AI Agent plans filter (possesses aiagent-plan tag)
+  const aiPlans = useMemo(() => {
+    return articles.filter(art => {
+      const isPlan = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan');
+      if (!isPlan) return false;
 
       return art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
         art.slug.toLowerCase().includes(filterQuery.toLowerCase());
@@ -88,31 +116,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="p-6 pb-4 flex items-center justify-between">
         <div 
           onClick={() => onNavigate('home')} 
-          className="flex items-center gap-3 cursor-pointer group"
+          className="flex items-center gap-2.5 cursor-pointer group"
         >
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-themeAccent to-themeAccentSecondary flex items-center justify-center text-white font-bold shadow-md group-hover:scale-105 transition-transform duration-200">
-            <BookOpen size={18} />
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-themeAccent to-themeAccentSecondary flex items-center justify-center text-white shadow-md shadow-themeAccent/10 group-hover:scale-105 transition-all duration-200">
+            <Layers size={18} className="group-hover:rotate-6 transition-transform duration-200" />
           </div>
-          <div className="overflow-hidden">
-            <h1 className="text-base font-black text-themeTextPrimary tracking-tight leading-none truncate max-w-[120px]" title={wikiName}>
+          <div className="flex flex-col">
+            <h1 className="text-base font-black tracking-tight text-themeTextPrimary leading-tight group-hover:text-themeAccent transition-colors">
               {wikiName}
             </h1>
-            <span className="text-[10px] text-themeTextMuted font-semibold tracking-widest uppercase">Personal Hub</span>
+            <span className="text-[9px] font-bold text-themeTextMuted uppercase tracking-widest leading-none mt-0.5">
+              Knowledge Engine
+            </span>
           </div>
         </div>
 
-        {/* Appearance Controls */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {/* Theme manager palette button */}
+        <div className="flex items-center gap-2">
+          {/* Theme Palette Customizer Button */}
           <button
             onClick={onOpenThemeManager}
             className="p-2 rounded-xl text-themeTextMuted hover:bg-themeBgPrimary hover:text-themeTextPrimary border border-themeBorder hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer"
-            title="Theme Palette"
-            aria-label="Theme Palette"
+            title="Configure Theme Palette"
+            aria-label="Configure Theme Palette"
           >
-            <Palette size={14} />
+            <Palette size={14} className="text-themeAccent" />
           </button>
-          
+
           {/* Light/Dark Toggle Button */}
           <button
             onClick={onToggleDarkMode}
@@ -125,14 +154,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Action: Create New Page Button */}
-      <div className="px-6 py-2">
+      {/* Action: Create New Page buttons */}
+      <div className="px-6 py-2 grid grid-cols-3 gap-2">
         <button
-          onClick={onCreateNew}
-          className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-gradient-to-r from-themeAccent to-themeAccentSecondary hover:opacity-95 active:scale-[0.98] text-white font-semibold text-sm shadow-md transition-all duration-200 group"
+          onClick={() => onCreateNew('article')}
+          className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-themeBgPrimary border border-themeBorder hover:bg-themeBgSecondary hover:border-themeAccent/30 hover:scale-[1.02] text-themeTextSecondary active:scale-[0.98] transition-all select-none cursor-pointer"
+          title="Create standard Wiki Article"
         >
-          <Plus size={16} className="group-hover:rotate-90 transition-transform duration-200" />
-          <span>New Wiki Page</span>
+          <BookOpen size={14} className="text-themeAccent" />
+          <span className="text-[10px] font-bold">Article</span>
+        </button>
+        <button
+          onClick={() => onCreateNew('plan')}
+          className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-themeBgPrimary border border-themeBorder hover:bg-themeBgSecondary hover:border-themeAccentSecondary/30 hover:scale-[1.02] text-themeTextSecondary active:scale-[0.98] transition-all select-none cursor-pointer"
+          title="Create Collaborative AI Plan"
+        >
+          <ClipboardList size={14} className="text-themeAccentSecondary" />
+          <span className="text-[10px] font-bold">AI Plan</span>
+        </button>
+        <button
+          onClick={() => onCreateNew('skill')}
+          className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-themeBgPrimary border border-themeBorder hover:bg-themeBgSecondary hover:border-themeAccent/30 hover:scale-[1.02] text-themeTextSecondary active:scale-[0.98] transition-all select-none cursor-pointer"
+          title="Create Custom AI Skill"
+        >
+          <Cpu size={14} className="text-themeAccent" />
+          <span className="text-[10px] font-bold">AI Skill</span>
         </button>
       </div>
 
@@ -251,19 +297,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <span className="flex items-center gap-1.5">
               <Cpu size={10} className="animate-pulse text-themeAccent" />
-              AI memories ({aiArticles.length})
+              AI memories ({aiMemories.length})
             </span>
             <ChevronDown size={12} className={`transition-transform duration-200 text-themeTextMuted ${aiMemoriesOpen ? 'rotate-0' : '-rotate-90'}`} />
           </button>
           
           {aiMemoriesOpen && (
             <div className="space-y-0.5">
-              {aiArticles.length === 0 ? (
+              {aiMemories.length === 0 ? (
                 <div className="p-4 text-center text-[10px] text-themeTextMuted border border-dashed border-themeBorder rounded-xl">
                   No memories logged
                 </div>
               ) : (
-                aiArticles.map((art) => {
+                aiMemories.map((art) => {
                   const isActive = currentSlug === art.slug;
                   return (
                     <button
@@ -277,6 +323,130 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     >
                       <div className="flex items-center gap-3 overflow-hidden">
                         <Cpu 
+                          size={14} 
+                          className={`shrink-0 ${
+                            isActive 
+                              ? 'text-themeAccent' 
+                              : 'text-themeTextMuted group-hover:text-themeAccent'
+                          }`} 
+                        />
+                        <span className="truncate text-sm text-left">{art.title}</span>
+                      </div>
+                      
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isActive ? (
+                          <ChevronRight size={14} className="animate-pulse text-themeAccent" />
+                        ) : (
+                          <div className="flex items-center gap-1 text-[9px] text-themeTextMuted opacity-85 group-hover:opacity-100">
+                            <Clock size={9} />
+                            <span>{formatRelativeTime(art.updated_at)}</span>
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Navigation Section: AI Plans */}
+        <div className="space-y-2">
+          <button
+            onClick={() => setAiPlansOpen(!aiPlansOpen)}
+            className="w-full flex items-center justify-between text-[10px] font-bold text-themeAccent uppercase tracking-widest px-3 py-1.5 bg-themeAccentBg/40 rounded-lg group cursor-pointer hover:bg-themeAccentBg/65"
+          >
+            <span className="flex items-center gap-1.5">
+              <ClipboardList size={10} className="animate-pulse text-themeAccent" />
+              AI plans ({aiPlans.length})
+            </span>
+            <ChevronDown size={12} className={`transition-transform duration-200 text-themeTextMuted ${aiPlansOpen ? 'rotate-0' : '-rotate-90'}`} />
+          </button>
+          
+          {aiPlansOpen && (
+            <div className="space-y-0.5">
+              {aiPlans.length === 0 ? (
+                <div className="p-4 text-center text-[10px] text-themeTextMuted border border-dashed border-themeBorder rounded-xl">
+                  No plans registered
+                </div>
+              ) : (
+                aiPlans.map((art) => {
+                  const isActive = currentSlug === art.slug;
+                  return (
+                    <button
+                      key={art.slug}
+                      onClick={() => onNavigate(art.slug)}
+                      className={`w-full group flex items-center justify-between p-3 rounded-xl transition-all duration-150 border ${
+                        isActive
+                          ? 'bg-themeAccentBg border-themeBorder/40 text-themeAccent font-semibold shadow-inner'
+                          : 'text-themeTextSecondary hover:bg-themeBgPrimary hover:text-themeTextPrimary border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 overflow-hidden">
+                        <ClipboardList 
+                          size={14} 
+                          className={`shrink-0 ${
+                            isActive 
+                              ? 'text-themeAccent' 
+                              : 'text-themeTextMuted group-hover:text-themeAccent'
+                          }`} 
+                        />
+                        <span className="truncate text-sm text-left">{art.title}</span>
+                      </div>
+                      
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isActive ? (
+                          <ChevronRight size={14} className="animate-pulse text-themeAccent" />
+                        ) : (
+                          <div className="flex items-center gap-1 text-[9px] text-themeTextMuted opacity-85 group-hover:opacity-100">
+                            <Clock size={9} />
+                            <span>{formatRelativeTime(art.updated_at)}</span>
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Navigation Section: AI Skills */}
+        <div className="space-y-2">
+          <button
+            onClick={() => setAiSkillsOpen(!aiSkillsOpen)}
+            className="w-full flex items-center justify-between text-[10px] font-bold text-themeAccent uppercase tracking-widest px-3 py-1.5 bg-themeAccentBg/40 rounded-lg group cursor-pointer hover:bg-themeAccentBg/65"
+          >
+            <span className="flex items-center gap-1.5">
+              <Wrench size={10} className="animate-pulse text-themeAccent" />
+              AI skills ({aiSkills.length})
+            </span>
+            <ChevronDown size={12} className={`transition-transform duration-200 text-themeTextMuted ${aiSkillsOpen ? 'rotate-0' : '-rotate-90'}`} />
+          </button>
+          
+          {aiSkillsOpen && (
+            <div className="space-y-0.5">
+              {aiSkills.length === 0 ? (
+                <div className="p-4 text-center text-[10px] text-themeTextMuted border border-dashed border-themeBorder rounded-xl">
+                  No skills registered
+                </div>
+              ) : (
+                aiSkills.map((art) => {
+                  const isActive = currentSlug === art.slug;
+                  return (
+                    <button
+                      key={art.slug}
+                      onClick={() => onNavigate(art.slug)}
+                      className={`w-full group flex items-center justify-between p-3 rounded-xl transition-all duration-150 border ${
+                        isActive
+                          ? 'bg-themeAccentBg border-themeBorder/40 text-themeAccent font-semibold shadow-inner'
+                          : 'text-themeTextSecondary hover:bg-themeBgPrimary hover:text-themeTextPrimary border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 overflow-hidden">
+                        <Wrench 
                           size={14} 
                           className={`shrink-0 ${
                             isActive 

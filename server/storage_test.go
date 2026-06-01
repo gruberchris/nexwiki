@@ -65,7 +65,7 @@ func TestStorageVersioning(t *testing.T) {
 		t.Errorf("Expected sorted history descending (2, 1), got (%d, %d)", history[0].Version, history[1].Version)
 	}
 
-	// 4. Test reading single version
+	// 4. Test reading a single version
 	v1, err := storage.GetArticleVersion("test-page", 1)
 	if err != nil {
 		t.Fatalf("GetArticleVersion failed: %v", err)
@@ -171,7 +171,7 @@ func TestStorageVersioning(t *testing.T) {
 	_ = storage.DeleteArticle("ai-plan-page")
 	_ = storage.DeleteArticle("tag-delete-test")
 
-	// 8. Test deleting article clears history folder
+	// 8. Test deleting an article clears the history folder
 	err = storage.DeleteArticle("renamed-page")
 	if err != nil {
 		t.Fatalf("DeleteArticle failed: %v", err)

@@ -86,6 +86,11 @@ func main() {
 	mux.HandleFunc("POST /api/articles/{slug}/revert", srv.HandleRevertArticle)
 	mux.HandleFunc("DELETE /api/tags/{tag}", srv.HandleDeleteTagGlobally)
 
+	// Register AI Skills registry endpoints
+	mux.HandleFunc("GET /api/skills", srv.HandleListSkills)
+	mux.HandleFunc("GET /api/skills/{slug}", srv.HandleGetSkill)
+	mux.HandleFunc("GET /api/skills/{slug}/raw", srv.HandleGetSkillRaw)
+
 	// Create FS for React Frontend.
 	// We check if "frontend/dist" exists as a physical directory on disk for dev mode live-reloading.
 	// If it doesn't exist, we fall back to the embedded binary filesystem.

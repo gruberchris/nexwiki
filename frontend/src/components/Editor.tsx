@@ -15,7 +15,10 @@ import {
   Columns,
   Sparkles,
   Link2,
-  Tag
+  Tag,
+  Wrench,
+  ClipboardList,
+  BookOpen
 } from 'lucide-react';
 import { Slugify } from '../utils'; // We will create this simple utility next
 import { Viewer } from './Viewer';
@@ -46,6 +49,9 @@ export const Editor: React.FC<EditorProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [editSummary, setEditSummary] = useState('');
+
+  const isSkill = tags.some(tag => tag.toLowerCase() === 'aiagent-skill');
+  const isPlan = tags.some(tag => tag.toLowerCase() === 'aiagent-plan');
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -80,7 +86,7 @@ export const Editor: React.FC<EditorProps> = ({
     }
   };
 
-  // Helper to insert markdown tags at cursor selection
+  // Helper to insert Markdown tags at cursor selection
   const insertMarkdown = (before: string, after: string = '', defaultText: string = '') => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -215,13 +221,34 @@ export const Editor: React.FC<EditorProps> = ({
                 </div>
 
                 {/* Visual Tag Manager */}
-                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                <div className="flex flex-wrap items-center gap-1.5 mt-2 select-none">
+                  {/* Premium Page Type Indicator */}
+                  {isSkill && (
+                    <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-indigo-650 dark:text-indigo-400 bg-indigo-500/10 dark:bg-indigo-950/20 border border-indigo-550/25 dark:border-indigo-900/50 px-2.5 py-0.5 rounded-full mr-2">
+                      <Wrench size={10} className="animate-pulse text-indigo-500" />
+                      <span>Custom AI Skill Mode</span>
+                    </div>
+                  )}
+                  {isPlan && (
+                    <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-550/25 dark:border-emerald-900/50 px-2.5 py-0.5 rounded-full mr-2">
+                      <ClipboardList size={10} className="animate-pulse text-emerald-505" />
+                      <span>Collaborative AI Plan Mode</span>
+                    </div>
+                  )}
+                  {!isSkill && !isPlan && (
+                    <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-slate-650 dark:text-slate-400 bg-slate-500/10 dark:bg-slate-950/20 border border-slate-550/25 dark:border-slate-900/50 px-2.5 py-0.5 rounded-full mr-2">
+                      <BookOpen size={10} className="text-slate-400" />
+                      <span>Wiki Article Mode</span>
+                    </div>
+                  )}
+
                   <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-1">
                     <Tag size={9} />
                     Tags:
                   </span>
                   {tags.map(tag => {
                     const isAgentTag = tag.toLowerCase().startsWith('aiagent-');
+                    const isLockedTypeTag = tag.toLowerCase() === 'aiagent-skill' || tag.toLowerCase() === 'aiagent-plan';
                     return (
                       <span
                         key={tag}
@@ -232,13 +259,15 @@ export const Editor: React.FC<EditorProps> = ({
                         }`}
                       >
                         {tag}
-                        <button
-                          type="button"
-                          onClick={() => setTags(tags.filter(t => t !== tag))}
-                          className="text-slate-400 hover:text-rose-500 transition-colors ml-0.5 cursor-pointer font-bold"
-                        >
-                          &times;
-                        </button>
+                        {!isLockedTypeTag && (
+                          <button
+                            type="button"
+                            onClick={() => setTags(tags.filter(t => t !== tag))}
+                            className="text-slate-400 hover:text-rose-500 transition-colors ml-0.5 cursor-pointer font-bold"
+                          >
+                            &times;
+                          </button>
+                        )}
                       </span>
                     );
                   })}
