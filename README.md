@@ -220,7 +220,7 @@ To allow Claude Desktop to search and read your wiki pages, add the following to
 
 ### Connecting over Streamable HTTP
 
-NexWiki supports the modern Streamable HTTP transport (2025 Spec, the official successor to the deprecated HTTP+SSE specification) at `/api/mcp`. This allows modern MCP clients to connect over the network rather than stdio pipes.
+NexWiki supports Streamable HTTP transport ([2025 Spec](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http)) at `/api/mcp`. This allows modern MCP clients to connect over the network rather than stdio pipes.
 
 ---
 
