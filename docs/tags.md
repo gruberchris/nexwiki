@@ -52,7 +52,7 @@ NexWiki separates AI-driven note-taking into three distinct, structured models:
 ### 🛡️ Secure Tag Rules & Validation
 To preserve the integrity of AI memory systems while maintaining collaborative flexibility:
 1. **Protected Memories**: Standard users **cannot manually create or add any new** tags starting with `aiagent-memory-`. These are reserved for agents.
-2. **Whitelisted Collaborative Tags**: Standard users **can fully add, edit, and delete** both `aiagent-skill` and `aiagent-plan` tags in the Editor, enabling direct UI-driven creation of AI Skills and AI Plans.
+2. **Locked Mode-Defining Tags**: Standard users create Custom Skills and AI Plans explicitly using the dedicated creation interface, which automatically applies and locks the corresponding `aiagent-skill` or `aiagent-plan` tag. These core type tags cannot be removed in the tag editor, protecting the integrity of the document type.
 3. **Freedom to Edit & Delete**: Standard users **can fully edit, append, and delete** any AI-created memory or plan document, along with removing existing tags as they see fit.
 
 ### 🧹 Default Search & Sidebar Exclusion

@@ -47,6 +47,7 @@ export const App: React.FC = () => {
   const [editorSlug, setEditorSlug] = useState('');
   const [editorTitle, setEditorTitle] = useState('');
   const [editorContent, setEditorContent] = useState('');
+  const [editorTags, setEditorTags] = useState<string[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   
   // Dropdown & Copy utility states
@@ -90,7 +91,12 @@ export const App: React.FC = () => {
     }
     if (currentPath === '/new') {
       const params = new URLSearchParams(currentSearch);
-      return { route: 'new', slug: '', prefillTitle: params.get('title') || '' };
+      return { 
+        route: 'new', 
+        slug: '', 
+        prefillTitle: params.get('title') || '',
+        prefillType: params.get('type') || 'article'
+      };
     }
     if (currentPath === '/search') {
       const params = new URLSearchParams(currentSearch);
@@ -119,8 +125,28 @@ export const App: React.FC = () => {
     }
     if (routeInfo.route === 'new') {
       setEditorSlug('');
-      setEditorTitle(routeInfo.prefillTitle || '');
-      setEditorContent('# ' + (routeInfo.prefillTitle || 'New Page') + '\n\nStart typing content here...');
+      
+      let initialTags: string[];
+      let defaultContent: string;
+      let defaultTitle = routeInfo.prefillTitle || '';
+      
+      if (routeInfo.prefillType === 'plan') {
+        initialTags = ['aiagent-plan'];
+        defaultContent = `# New Collaborative Plan\n\n## Overview\nProvide a description of the goal and milestones.\n\n## Tasks\n- [ ] Task 1: Audit codebase\n- [ ] Task 2: Implement core logic\n- [ ] Task 3: Run validation tests`;
+        if (!defaultTitle) defaultTitle = 'New Collaborative Plan';
+      } else if (routeInfo.prefillType === 'skill') {
+        initialTags = ['aiagent-skill'];
+        defaultContent = `# New Custom AI Skill\n\n## Overview\nGuides the agent on how to perform a specialized task.\n\n## When to Use\nDescribe the triggers for this skill.\n\n## Instructions\n1. Step 1\n2. Step 2`;
+        if (!defaultTitle) defaultTitle = 'New Custom AI Skill';
+      } else {
+        initialTags = [];
+        if (!defaultTitle) defaultTitle = 'New Page';
+        defaultContent = '# ' + defaultTitle + '\n\nStart typing content here...';
+      }
+
+      setEditorTitle(defaultTitle);
+      setEditorContent(defaultContent);
+      setEditorTags(initialTags);
       setIsEditing(true);
     }
   }
@@ -613,7 +639,7 @@ export const App: React.FC = () => {
           onToggleDarkMode={toggleDarkMode}
           onOpenThemeManager={() => setThemeModalOpen(true)}
           onNavigate={handleNavigate}
-          onCreateNew={() => navigate('/new')}
+          onCreateNew={(type: 'article' | 'plan' | 'skill') => navigate(`/new?type=${type}`)}
           wikiName={wikiName}
         />
       </div>
@@ -622,9 +648,10 @@ export const App: React.FC = () => {
       {isEditing ? (
         // Premium Markdown Split Editor Pane
         <Editor
+          key={editorSlug || currentPath + currentSearch}
           initialTitle={editorTitle}
           initialContent={editorContent}
-          initialTags={currentArticle ? currentArticle.tags : []}
+          initialTags={editorSlug === '' ? editorTags : (currentArticle ? currentArticle.tags : [])}
           slug={editorSlug}
           onSave={handleSaveArticle}
           onCancel={() => {
@@ -639,7 +666,7 @@ export const App: React.FC = () => {
         <Hero
           articles={articles}
           onNavigate={handleNavigate}
-          onCreateNew={() => navigate('/new')}
+          onCreateNew={(type: 'article' | 'plan' | 'skill') => navigate(`/new?type=${type}`)}
           wikiName={wikiName}
         />
       ) : routeInfo.route === 'search' ? (

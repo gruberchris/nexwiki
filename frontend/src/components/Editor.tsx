@@ -17,7 +17,8 @@ import {
   Link2,
   Tag,
   Wrench,
-  ClipboardList
+  ClipboardList,
+  BookOpen
 } from 'lucide-react';
 import { Slugify } from '../utils'; // We will create this simple utility next
 import { Viewer } from './Viewer';
@@ -221,47 +222,25 @@ export const Editor: React.FC<EditorProps> = ({
 
                 {/* Visual Tag Manager */}
                 <div className="flex flex-wrap items-center gap-1.5 mt-2 select-none">
-                  {/* Register as AI Agent Skill Toggle */}
-                  <label className="inline-flex items-center gap-1.5 cursor-pointer text-[10px] font-bold text-indigo-650 dark:text-indigo-400 select-none bg-indigo-500/10 dark:bg-indigo-950/20 border border-indigo-550/25 dark:border-indigo-900/50 px-2.5 py-0.5 rounded-full hover:bg-indigo-500/15 dark:hover:bg-indigo-900/35 transition-colors mr-2">
-                    <input
-                      type="checkbox"
-                      checked={isSkill}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        if (checked) {
-                          if (!tags.some(t => t.toLowerCase() === 'aiagent-skill')) {
-                            setTags([...tags, 'aiagent-skill']);
-                          }
-                        } else {
-                          setTags(tags.filter(t => t.toLowerCase() !== 'aiagent-skill'));
-                        }
-                      }}
-                      className="rounded border-indigo-300 dark:border-indigo-900 text-indigo-650 focus:ring-indigo-500 w-3 h-3 cursor-pointer"
-                    />
-                    <Wrench size={10} className={isSkill ? 'animate-pulse text-indigo-500' : 'text-slate-400'} />
-                    <span>Register as AI Skill</span>
-                  </label>
-
-                  {/* Register as AI Agent Plan Toggle */}
-                  <label className="inline-flex items-center gap-1.5 cursor-pointer text-[10px] font-bold text-indigo-650 dark:text-indigo-400 select-none bg-indigo-500/10 dark:bg-indigo-950/20 border border-indigo-550/25 dark:border-indigo-900/50 px-2.5 py-0.5 rounded-full hover:bg-indigo-500/15 dark:hover:bg-indigo-900/35 transition-colors mr-2">
-                    <input
-                      type="checkbox"
-                      checked={isPlan}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        if (checked) {
-                          if (!tags.some(t => t.toLowerCase() === 'aiagent-plan')) {
-                            setTags([...tags, 'aiagent-plan']);
-                          }
-                        } else {
-                          setTags(tags.filter(t => t.toLowerCase() !== 'aiagent-plan'));
-                        }
-                      }}
-                      className="rounded border-indigo-300 dark:border-indigo-900 text-indigo-650 focus:ring-indigo-500 w-3 h-3 cursor-pointer"
-                    />
-                    <ClipboardList size={10} className={isPlan ? 'animate-pulse text-indigo-500' : 'text-slate-400'} />
-                    <span>Register as AI Plan</span>
-                  </label>
+                  {/* Premium Page Type Indicator */}
+                  {isSkill && (
+                    <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-indigo-650 dark:text-indigo-400 bg-indigo-500/10 dark:bg-indigo-950/20 border border-indigo-550/25 dark:border-indigo-900/50 px-2.5 py-0.5 rounded-full mr-2">
+                      <Wrench size={10} className="animate-pulse text-indigo-500" />
+                      <span>Custom AI Skill Mode</span>
+                    </div>
+                  )}
+                  {isPlan && (
+                    <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-550/25 dark:border-emerald-900/50 px-2.5 py-0.5 rounded-full mr-2">
+                      <ClipboardList size={10} className="animate-pulse text-emerald-505" />
+                      <span>Collaborative AI Plan Mode</span>
+                    </div>
+                  )}
+                  {!isSkill && !isPlan && (
+                    <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-slate-650 dark:text-slate-400 bg-slate-500/10 dark:bg-slate-950/20 border border-slate-550/25 dark:border-slate-900/50 px-2.5 py-0.5 rounded-full mr-2">
+                      <BookOpen size={10} className="text-slate-400" />
+                      <span>Wiki Article Mode</span>
+                    </div>
+                  )}
 
                   <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-1">
                     <Tag size={9} />
@@ -269,6 +248,7 @@ export const Editor: React.FC<EditorProps> = ({
                   </span>
                   {tags.map(tag => {
                     const isAgentTag = tag.toLowerCase().startsWith('aiagent-');
+                    const isLockedTypeTag = tag.toLowerCase() === 'aiagent-skill' || tag.toLowerCase() === 'aiagent-plan';
                     return (
                       <span
                         key={tag}
@@ -279,13 +259,15 @@ export const Editor: React.FC<EditorProps> = ({
                         }`}
                       >
                         {tag}
-                        <button
-                          type="button"
-                          onClick={() => setTags(tags.filter(t => t !== tag))}
-                          className="text-slate-400 hover:text-rose-500 transition-colors ml-0.5 cursor-pointer font-bold"
-                        >
-                          &times;
-                        </button>
+                        {!isLockedTypeTag && (
+                          <button
+                            type="button"
+                            onClick={() => setTags(tags.filter(t => t !== tag))}
+                            className="text-slate-400 hover:text-rose-500 transition-colors ml-0.5 cursor-pointer font-bold"
+                          >
+                            &times;
+                          </button>
+                        )}
                       </span>
                     );
                   })}

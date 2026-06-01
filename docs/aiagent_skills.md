@@ -22,19 +22,17 @@ NexWiki replicates this structure seamlessly. By tagging any wiki page with `aia
 
 NexWiki makes creating and managing AI Skills extremely easy:
 
-### 1. Registering a Skill
-To turn any standard wiki article into an AI skill:
-- Click **Edit Page** (or click **New Wiki Page** to start fresh).
-- In the Tag Editor section (at the top, under the title), toggle the checkbox **Register as AI Skill**.
-- NexWiki will automatically append the `aiagent-skill` tag to your article.
-- Add additional tags (like `git`, `docker`, or `javascript`) and write your instructions in the editor.
-- Click **Save Article**.
+### 1. Creating a Skill
+To create a Custom AI Skill inside NexWiki:
+- Click the **AI Skill** button in the sidebar (under the Create New Page buttons), or click the **Create Custom Skill** card on the dashboard homepage.
+- This opens the editor in **Custom AI Skill Mode** (marked by a premium indigo Wrench badge). The `aiagent-skill` tag is automatically pre-filled and locked for the document.
+- Write your skill instructions (in standard `SKILL.md` format) and click **Save Page**.
 
 ### 2. Collapsible Sidebar Folder
 Once saved, skill pages are instantly moved out of your main **Articles** section and grouped under the dedicated **🛠️ AI skills** collapsible sidebar folder. This keeps your standard personal notes and wiki index clean.
 
 ### 3. Glassmorphic Registry Dashboard
-When viewing any page registered as an AI skill, NexWiki renders a beautiful, glassmorphic **AI Agent Skill Active** banner right above your markdown content.
+When viewing any page registered as an AI skill, NexWiki renders a beautiful, glassmorphic **AI Agent Skill Active** banner right above your Markdown content.
 * This banner confirms that the page is currently being served on your local custom skills registry.
 * It provides direct click-to-open links to inspect the **JSON Schema** metadata or view the **Raw SKILL.md** representation served to agents.
 
@@ -48,7 +46,7 @@ However, NexWiki includes a smart **Explicit Search Bypass** rule:
 If you are explicitly looking for a skill, it will appear in your search results *only* if:
 1. Your search query contains `"skill"` or `"aiagent-skill"`.
 2. Your search query matches the skill's **title** or **slug** (e.g. `docker-clean`).
-3. Your search query matches one of the skill's **associated tags** exactly (e.g. searching for the `git` tag will show your git skills).
+3. Your search query matches one of the skill's **associated tags** exactly (e.g., searching for the `git` tag will show your git skills).
 
 ---
 
@@ -88,7 +86,7 @@ NexWiki registers three lightweight REST API endpoints, allowing any AI agent, C
 Here is a practical example of a skill that you can write inside NexWiki to guide your AI assistant on how you prefer git commits to be structured.
 
 ### 1. Frontmatter and Content
-Write this in the editor and check **Register as AI Skill**:
+Click **AI Skill** to start a new skill page and write this content in the editor:
 
 ```markdown
 # Git Commit Standardizer

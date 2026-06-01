@@ -3,7 +3,6 @@ import type { Article } from '../types';
 import { formatRelativeTime } from '../utils';
 import { 
   FileText, 
-  Plus, 
   Search, 
   Moon, 
   Sun, 
@@ -27,7 +26,7 @@ interface SidebarProps {
   onToggleDarkMode: () => void;
   onOpenThemeManager: () => void;
   onNavigate: (slug: string) => void;
-  onCreateNew: () => void;
+  onCreateNew: (type: 'article' | 'plan' | 'skill') => void;
   wikiName: string;
 }
 
@@ -117,31 +116,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="p-6 pb-4 flex items-center justify-between">
         <div 
           onClick={() => onNavigate('home')} 
-          className="flex items-center gap-3 cursor-pointer group"
+          className="flex items-center gap-2.5 cursor-pointer group"
         >
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-themeAccent to-themeAccentSecondary flex items-center justify-center text-white font-bold shadow-md group-hover:scale-105 transition-transform duration-200">
-            <BookOpen size={18} />
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-themeAccent to-themeAccentSecondary flex items-center justify-center text-white shadow-md shadow-themeAccent/10 group-hover:scale-105 transition-all duration-200">
+            <Layers size={18} className="group-hover:rotate-6 transition-transform duration-200" />
           </div>
-          <div className="overflow-hidden">
-            <h1 className="text-base font-black text-themeTextPrimary tracking-tight leading-none truncate max-w-[120px]" title={wikiName}>
+          <div className="flex flex-col">
+            <h1 className="text-base font-black tracking-tight text-themeTextPrimary leading-tight group-hover:text-themeAccent transition-colors">
               {wikiName}
             </h1>
-            <span className="text-[10px] text-themeTextMuted font-semibold tracking-widest uppercase">Personal Hub</span>
+            <span className="text-[9px] font-bold text-themeTextMuted uppercase tracking-widest leading-none mt-0.5">
+              Knowledge Engine
+            </span>
           </div>
         </div>
 
-        {/* Appearance Controls */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {/* Theme manager palette button */}
+        <div className="flex items-center gap-2">
+          {/* Theme Palette Customizer Button */}
           <button
             onClick={onOpenThemeManager}
             className="p-2 rounded-xl text-themeTextMuted hover:bg-themeBgPrimary hover:text-themeTextPrimary border border-themeBorder hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer"
-            title="Theme Palette"
-            aria-label="Theme Palette"
+            title="Configure Theme Palette"
+            aria-label="Configure Theme Palette"
           >
-            <Palette size={14} />
+            <Palette size={14} className="text-themeAccent" />
           </button>
-          
+
           {/* Light/Dark Toggle Button */}
           <button
             onClick={onToggleDarkMode}
@@ -154,14 +154,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Action: Create New Page Button */}
-      <div className="px-6 py-2">
+      {/* Action: Create New Page buttons */}
+      <div className="px-6 py-2 grid grid-cols-3 gap-2">
         <button
-          onClick={onCreateNew}
-          className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-gradient-to-r from-themeAccent to-themeAccentSecondary hover:opacity-95 active:scale-[0.98] text-white font-semibold text-sm shadow-md transition-all duration-200 group"
+          onClick={() => onCreateNew('article')}
+          className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-themeBgPrimary border border-themeBorder hover:bg-themeBgSecondary hover:border-themeAccent/30 hover:scale-[1.02] text-themeTextSecondary active:scale-[0.98] transition-all select-none cursor-pointer"
+          title="Create standard Wiki Article"
         >
-          <Plus size={16} className="group-hover:rotate-90 transition-transform duration-200" />
-          <span>New Wiki Page</span>
+          <BookOpen size={14} className="text-themeAccent" />
+          <span className="text-[10px] font-bold">Article</span>
+        </button>
+        <button
+          onClick={() => onCreateNew('plan')}
+          className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-themeBgPrimary border border-themeBorder hover:bg-themeBgSecondary hover:border-themeAccentSecondary/30 hover:scale-[1.02] text-themeTextSecondary active:scale-[0.98] transition-all select-none cursor-pointer"
+          title="Create Collaborative AI Plan"
+        >
+          <ClipboardList size={14} className="text-themeAccentSecondary" />
+          <span className="text-[10px] font-bold">AI Plan</span>
+        </button>
+        <button
+          onClick={() => onCreateNew('skill')}
+          className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-themeBgPrimary border border-themeBorder hover:bg-themeBgSecondary hover:border-themeAccent/30 hover:scale-[1.02] text-themeTextSecondary active:scale-[0.98] transition-all select-none cursor-pointer"
+          title="Create Custom AI Skill"
+        >
+          <Cpu size={14} className="text-themeAccent" />
+          <span className="text-[10px] font-bold">AI Skill</span>
         </button>
       </div>
 
