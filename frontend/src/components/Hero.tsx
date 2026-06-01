@@ -34,7 +34,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
   const [skillsSearchQuery, setSkillsSearchQuery] = useState('');
 
   // Expansion states
-  const [wikiExpanded, setWikiExpanded] = useState(true);
+  const [wikiExpanded, setWikiExpanded] = useState(false);
   const [memoriesExpanded, setMemoriesExpanded] = useState(false);
   const [plansExpanded, setPlansExpanded] = useState(false);
   const [skillsExpanded, setSkillsExpanded] = useState(false);
