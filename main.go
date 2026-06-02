@@ -27,6 +27,7 @@ func main() {
 	dataDir := flag.String("data", "./data", "Directory to persist wiki markdown files and assets")
 	wikiName := flag.String("name", "NexWiki", "The custom name/title of your wiki displayed in the UI")
 	theme := flag.String("theme", "default", "The default theme of your wiki")
+	themeScheduling := flag.Bool("theme-scheduling", false, "Enable opt-in seasonal theme scheduling auto-swaps")
 	flag.Parse()
 
 	// Environment variable NEXWIKI_NAME (or fallback WIKI_NAME) takes precedence over command line flag
@@ -47,10 +48,20 @@ func main() {
 		defaultTheme = envTheme
 	}
 
+	themeSchedulingEnabled := *themeScheduling
+	if envSched := os.Getenv("NEXWIKI_THEME_SCHEDULING"); envSched != "" {
+		themeSchedulingEnabled = envSched == "true"
+	} else if envSched := os.Getenv("WIKI_THEME_SCHEDULING"); envSched != "" {
+		themeSchedulingEnabled = envSched == "true"
+	} else if envSched := os.Getenv("THEME_SCHEDULING"); envSched != "" {
+		themeSchedulingEnabled = envSched == "true"
+	}
+
 	log.Printf("Starting NexWiki backend...")
 	log.Printf("Data directory: %s", *dataDir)
 	log.Printf("Wiki Name/Title: %s", name)
 	log.Printf("Default Theme: %s", defaultTheme)
+	log.Printf("Theme Scheduling Enabled: %t", themeSchedulingEnabled)
 
 	// Ensure storage is initialized
 	storage, err := server.NewStorage(*dataDir)
@@ -58,8 +69,11 @@ func main() {
 		log.Fatalf("Fatal: failed to initialize storage: %v", err)
 	}
 
-	// Initialize server instance with configured name and theme
-	srv := server.NewServer(storage, name, defaultTheme)
+	// Initialize EventBus for real-time pub-sub sync
+	eventBus := server.NewEventBus()
+
+	// Initialize server instance with configured name, theme, event bus, and scheduling settings
+	srv := server.NewServer(storage, name, defaultTheme, themeSchedulingEnabled, eventBus)
 
 	// Spin up the stdio MCP JSON-RPC server in a background goroutine!
 	go srv.StartMCPServer()
@@ -85,6 +99,8 @@ func main() {
 	mux.HandleFunc("GET /api/articles/{slug}/history/{version}", srv.HandleGetArticleVersion)
 	mux.HandleFunc("POST /api/articles/{slug}/revert", srv.HandleRevertArticle)
 	mux.HandleFunc("DELETE /api/tags/{tag}", srv.HandleDeleteTagGlobally)
+	mux.HandleFunc("GET /api/activity/stream", srv.HandleActivityStream)
+	mux.HandleFunc("GET /api/wiki/stats", srv.HandleGetWikiStats)
 
 	// Register AI Skills registry endpoints
 	mux.HandleFunc("GET /api/skills", srv.HandleListSkills)

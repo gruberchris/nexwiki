@@ -59,13 +59,13 @@ To easily distribute and work with your wiki articles, NexWiki provides an elega
 
 #### 📄 Multi-Format Document Exporters
 * **Export as PDF**: Converts the article into a professional, vector-drawn, high-fidelity PDF. NexWiki uses custom print-styled stylesheets (`@media print`) that automatically hide the sidebars, header buttons, TOC columns, and alert messages, leaving a clean, beautifully formatted, publication-ready document layout. It triggers your browser's print dialog, letting you choose "Save as PDF" and choose the exact destination.
-* **Export as Word (DOCX)**: Compiles the rendered article HTML into a standard, CSS-styled Microsoft Word template block. Opening the downloaded `.docx` file in Microsoft Word or Apple Pages allows you to read and fully edit the formatted document.
-* **Export as Text (TXT)**: Instantly downloads a clean, unformatted plain text `.txt` file containing the raw Markdown body text.
+* **Export as Word**: Compiles the rendered article HTML into a standard, CSS-styled Microsoft Word template block. Opening the downloaded `.docx` file in Microsoft Word or Apple Pages allows you to read and fully edit the formatted document.
+* **Export as Markdown**: Instantly downloads a clean, formatted Markdown `.md` file containing the raw Markdown body text.
 
 #### 📂 File System Save Selection
 To give you complete control over your filesystem:
 * NexWiki utilizes the modern browser **File System Access API (`showSaveFilePicker`)** where supported (Chrome, Edge, Safari, and Opera on macOS/Windows). 
-* When exporting `.docx` or `.txt` files, this triggers a **native macOS / Windows "Save As" file dialog**, letting you name the file and select the exact folder on your local filesystem to save it to.
+* When exporting `.docx` or `.md` files, this triggers a **native macOS / Windows "Save As" file dialog**, letting you name the file and select the exact folder on your local filesystem to save it to.
 * In unsupported browsers (such as Firefox) or non-secure contexts, it gracefully falls back to a standard browser download trigger that places the file in your default Downloads folder.
 
 ---

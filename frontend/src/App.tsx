@@ -6,10 +6,13 @@ import { Editor } from './components/Editor';
 import { TOC } from './components/TOC';
 import { Hero } from './components/Hero';
 import { SearchResults } from './components/SearchResults';
-import { Slugify, saveFile, generateDocxContent } from './utils';
+import { Slugify, saveFile, generateDocxContent, exportAllContent } from './utils';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { ThemeManagerModal } from './components/ThemeManagerModal';
 import type { Theme } from './components/ThemeManagerModal';
+import { useSSE } from './hooks/useSSE';
+import { useWikiUpdates } from './hooks/useWikiUpdates';
+import { ActivityLogDrawer } from './components/ActivityLogDrawer';
 import { 
   Edit, 
   Trash2, 
@@ -71,6 +74,9 @@ export const App: React.FC = () => {
   const [activeThemeName, setActiveThemeName] = useState('default');
   const [themeModalOpen, setThemeModalOpen] = useState(false);
 
+  // Activity Log states
+  const [isActivityOpen, setIsActivityOpen] = useState(false);
+
   // Alert notifier triggers
   const triggerAlert = (type: 'success' | 'error', text: string) => {
     setAlertMsg({ type, text });
@@ -78,6 +84,8 @@ export const App: React.FC = () => {
       setAlertMsg(null);
     }, 4000);
   };
+
+	const { resetUnreadCount } = useSSE();
 
   // Synchronize browser tab document title with configured wiki name
   useEffect(() => {
@@ -238,6 +246,18 @@ export const App: React.FC = () => {
     }
   };
 
+  // Synchronize list/stats reactively over SSE (Phase 6)
+  useWikiUpdates((update) => {
+    console.log('SSE Update received:', update);
+    // Refresh articles listing dynamically
+    void fetchArticles();
+
+    // If currently reading the updated article, refresh its body content
+    if (routeInfo.route === 'article' && routeInfo.slug === update.slug && update.type === 'article-edited') {
+      void fetchArticleContent(update.slug);
+    }
+  });
+
   // Synchronize CSS custom properties for active theme and variant
   useEffect(() => {
     if (themes.length === 0) return;
@@ -327,6 +347,8 @@ export const App: React.FC = () => {
     const bootApp = async () => {
       // 1. Fetch dynamic custom name/title and theme configuration
       let defaultTheme = 'default';
+      let scheduledTheme = '';
+      let themeSchedulingEnabled = false;
       try {
         const configRes = await fetch('/api/config');
         if (configRes.ok) {
@@ -336,6 +358,12 @@ export const App: React.FC = () => {
           }
           if (configData.default_theme) {
             defaultTheme = configData.default_theme;
+          }
+          if (configData.theme_scheduling_enabled) {
+            themeSchedulingEnabled = configData.theme_scheduling_enabled;
+          }
+          if (configData.scheduled_theme) {
+            scheduledTheme = configData.scheduled_theme;
           }
         }
       } catch (err) {
@@ -354,9 +382,16 @@ export const App: React.FC = () => {
         console.error('Failed to fetch themes during boot:', err);
       }
 
-      // 3. Set the active theme based on localStorage, falling back to server default config
-      const savedTheme = localStorage.getItem('active-theme');
-      const finalThemeName = savedTheme || defaultTheme;
+      // 3. Set the active theme based on scheduling (if active), localStorage, or default fallback
+      let finalThemeName = defaultTheme;
+      if (themeSchedulingEnabled && scheduledTheme) {
+        finalThemeName = scheduledTheme;
+      } else {
+        const savedTheme = localStorage.getItem('active-theme');
+        if (savedTheme) {
+          finalThemeName = savedTheme;
+        }
+      }
       setActiveThemeName(finalThemeName);
 
       // 4. Set initial dark/light variant mode
@@ -425,6 +460,7 @@ export const App: React.FC = () => {
     
     // Refresh index list and automatically redirect to the saved article
     await fetchArticles(newComputedSlug);
+    await fetchArticleContent(newComputedSlug);
   };
 
   // CRUD: Delete active article
@@ -546,7 +582,7 @@ export const App: React.FC = () => {
       );
       
       if (success) {
-        triggerAlert('success', 'Article exported as Word (DOCX) successfully!');
+        triggerAlert('success', 'Article exported as Word successfully!');
       }
     } catch (err) {
       console.error('Failed to export DOCX:', err);
@@ -554,8 +590,8 @@ export const App: React.FC = () => {
     }
   };
 
-  // TXT file saving export trigger
-  const handleExportTxt = async () => {
+  // MD file saving export trigger
+  const handleExportMd = async () => {
     if (!currentArticle) return;
     setShareDropdownOpen(false);
     
@@ -564,16 +600,27 @@ export const App: React.FC = () => {
       const success = await saveFile(
         currentArticle.content || '',
         suggestedName,
-        'text/plain',
-        'txt'
+        'text/markdown',
+        'md'
       );
       
       if (success) {
-        triggerAlert('success', 'Article exported as Text (TXT) successfully!');
+        triggerAlert('success', 'Article exported as Markdown successfully!');
       }
     } catch (err) {
-      console.error('Failed to export TXT:', err);
-      triggerAlert('error', 'Failed to export as Text document.');
+      console.error('Failed to export MD:', err);
+      triggerAlert('error', 'Failed to export as Markdown file.');
+    }
+  };
+
+  // ZIP bulk export trigger
+  const handleExportAll = async () => {
+    try {
+      triggerAlert('success', 'Preparing bulk export... downloading ZIP archive.');
+      await exportAllContent(articles);
+    } catch (err) {
+      console.error('Failed to bulk export:', err);
+      triggerAlert('error', 'Failed to export all content to ZIP.');
     }
   };
 
@@ -641,6 +688,8 @@ export const App: React.FC = () => {
           onNavigate={handleNavigate}
           onCreateNew={(type: 'article' | 'plan' | 'skill') => navigate(`/new?type=${type}`)}
           wikiName={wikiName}
+          onExportAll={handleExportAll}
+          onOpenActivityLog={() => setIsActivityOpen(true)}
         />
       </div>
 
@@ -660,6 +709,7 @@ export const App: React.FC = () => {
               navigate('/');
             }
           }}
+          articles={articles}
         />
       ) : routeInfo.route === 'home' ? (
         // Homepage welcoming Dashboard Hero
@@ -691,7 +741,7 @@ export const App: React.FC = () => {
         </div>
       ) : (
         // Standard Wiki Article View Pane
-        <div className="flex-1 h-screen flex overflow-hidden">
+        <div className="flex-1 h-screen flex overflow-hidden min-w-0">
           
           {/* Main article reader column */}
           <div className="flex-1 overflow-y-auto h-full px-8 py-10 sm:px-12 md:px-16 bg-white dark:bg-slate-950/20">
@@ -855,14 +905,14 @@ export const App: React.FC = () => {
                             className="dropdown-item"
                           >
                             <FileText size={12} className="text-indigo-500" />
-                            <span>Export as Word (DOCX)</span>
+                            <span>Export as Word</span>
                           </button>
                           <button
-                            onClick={handleExportTxt}
+                            onClick={handleExportMd}
                             className="dropdown-item"
                           >
                             <FileDown size={12} className="text-indigo-500" />
-                            <span>Export as Text (TXT)</span>
+                            <span>Export as Markdown</span>
                           </button>
                         </div>
                       )}
@@ -993,6 +1043,15 @@ export const App: React.FC = () => {
           onDeleteTheme={handleDeleteTheme}
         />
       )}
+
+      <ActivityLogDrawer
+        isOpen={isActivityOpen}
+        onClose={() => {
+          setIsActivityOpen(false);
+          resetUnreadCount();
+        }}
+        onNavigate={handleNavigate}
+      />
     </div>
   );
 };

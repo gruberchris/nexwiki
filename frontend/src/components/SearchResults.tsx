@@ -81,7 +81,7 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
   };
 
   return (
-    <div className="flex-1 h-screen flex flex-col bg-slate-50 dark:bg-slate-950/40">
+    <div className="flex-1 h-screen flex flex-col bg-slate-50 dark:bg-slate-950/40 min-w-0">
       
       {/* Search Bar Top Header Panel */}
       <div className="p-4 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex items-center gap-4 select-none">

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Save, 
   X, 
@@ -18,10 +18,23 @@ import {
   Tag,
   Wrench,
   ClipboardList,
-  BookOpen
+  BookOpen,
+  Info,
+  AlertCircle
 } from 'lucide-react';
-import { Slugify } from '../utils'; // We will create this simple utility next
+import CodeMirror from '@uiw/react-codemirror';
+import type { ReactCodeMirrorRef } from '@uiw/react-codemirror';
+import { markdown } from '@codemirror/lang-markdown';
+import { EditorView, keymap } from '@codemirror/view';
+import { linter } from '@codemirror/lint';
+
+import { Slugify } from '../utils';
 import { Viewer } from './Viewer';
+import { lintMarkdown } from '../utils/markdownLinter';
+import type { LintDiagnostic } from '../utils/markdownLinter';
+import { MarkdownSyntaxModal } from './MarkdownSyntaxModal';
+import { MarkdownLintErrorModal } from './MarkdownLintErrorModal';
+import type { Article } from '../types';
 
 interface EditorProps {
   initialTitle: string;
@@ -30,6 +43,7 @@ interface EditorProps {
   slug: string; // empty if new page
   onSave: (title: string, content: string, editSummary: string, tags: string[]) => Promise<void>;
   onCancel: () => void;
+  articles: Article[];
 }
 
 export const Editor: React.FC<EditorProps> = ({
@@ -38,7 +52,8 @@ export const Editor: React.FC<EditorProps> = ({
   initialTags,
   slug,
   onSave,
-  onCancel
+  onCancel,
+  articles
 }) => {
   const [title, setTitle] = useState(initialTitle);
   const [content, setContent] = useState(initialContent);
@@ -50,69 +65,149 @@ export const Editor: React.FC<EditorProps> = ({
   const [errorMsg, setErrorMsg] = useState('');
   const [editSummary, setEditSummary] = useState('');
 
+  // Modals state
+  const [syntaxModalOpen, setSyntaxModalOpen] = useState(false);
+  const [lintModalOpen, setLintModalOpen] = useState(false);
+
+  // Right-click context menu state
+  interface ContextMenuState {
+    x: number;
+    y: number;
+    diagnostic: LintDiagnostic;
+  }
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
   const isSkill = tags.some(tag => tag.toLowerCase() === 'aiagent-skill');
   const isPlan = tags.some(tag => tag.toLowerCase() === 'aiagent-plan');
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<ReactCodeMirrorRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-resize textarea
+  // Close context menu on window clicks
   useEffect(() => {
-    const textarea = textareaRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = `${textarea.scrollHeight}px`;
-    }
-  }, [content]);
+    const closeMenu = () => setContextMenu(null);
+    window.addEventListener('click', closeMenu);
+    return () => window.removeEventListener('click', closeMenu);
+  }, []);
 
-  // Handle Tab key insertion (standard indentation)
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const textarea = textareaRef.current;
-      if (!textarea) return;
+  // Compute diagnostics reactively on change
+  const diagnostics = useMemo(() => {
+    return lintMarkdown(content, articles);
+  }, [content, articles]);
 
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const value = textarea.value;
-
-      const newContent = value.substring(0, start) + "    " + value.substring(end);
-      setContent(newContent);
-
-      // Reset selection position after state batch render
-      setTimeout(() => {
-        textarea.selectionStart = textarea.selectionEnd = start + 4;
-      }, 0);
-    }
-  };
+  const errorCount = useMemo(() => diagnostics.filter(d => d.severity === 'error').length, [diagnostics]);
+  const warningCount = useMemo(() => diagnostics.filter(d => d.severity === 'warning').length, [diagnostics]);
 
   // Helper to insert Markdown tags at cursor selection
   const insertMarkdown = (before: string, after: string = '', defaultText: string = '') => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
+    const view = editorRef.current?.view;
+    if (!view) return;
 
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const value = textarea.value;
-    const selectedText = value.substring(start, end) || defaultText;
-
+    const selection = view.state.selection.main;
+    const selectedText = view.state.sliceDoc(selection.from, selection.to) || defaultText;
     const inserted = before + selectedText + after;
-    const newContent = value.substring(0, start) + inserted + value.substring(end);
-    setContent(newContent);
 
-    // Focus and select the newly wrapped text
-    setTimeout(() => {
-      textarea.focus();
-      textarea.selectionStart = start + before.length;
-      textarea.selectionEnd = start + before.length + selectedText.length;
-    }, 0);
+    view.dispatch({
+      changes: { from: selection.from, to: selection.to, insert: inserted },
+      selection: {
+        anchor: selection.from + before.length,
+        head: selection.from + before.length + selectedText.length
+      }
+    });
+    view.focus();
   };
+
+  // Keyboard shortcut Ctrl+/ or Cmd+/ to toggle syntax reference modal
+  const shortcutKeymap = useMemo(() => {
+    return keymap.of([
+      {
+        key: 'Mod-/',
+        run: () => {
+          setSyntaxModalOpen(prev => !prev);
+          return true;
+        }
+      }
+    ]);
+  }, []);
+
+  // Custom adaptive theme wrapping Option B (using CSS variables under the hood)
+  const editorTheme = useMemo(() => {
+    return EditorView.theme({
+      "&": {
+        color: "var(--text-secondary)",
+        backgroundColor: "var(--bg-secondary)",
+        fontSize: "14px",
+        height: "100%",
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+      },
+      ".cm-scroller": { overflow: "auto" },
+      ".cm-content": {
+        caretColor: "var(--accent-primary)",
+        padding: "24px 0",
+      },
+      ".cm-cursor": {
+        borderLeftColor: "var(--accent-primary)",
+      },
+      "&.cm-focused .cm-cursor": {
+        borderLeftColor: "var(--accent-primary)",
+      },
+      ".cm-selectionBackground, ::selection": {
+        backgroundColor: "color-mix(in srgb, var(--accent-primary) 20%, transparent) !important",
+      },
+      "&.cm-focused .cm-selectionBackground": {
+        backgroundColor: "color-mix(in srgb, var(--accent-primary) 30%, transparent) !important",
+      },
+      ".cm-gutters": {
+        backgroundColor: "var(--bg-primary)",
+        color: "var(--text-muted)",
+        borderRight: "1px solid var(--border-color)",
+        paddingTop: "24px",
+      },
+      ".cm-activeLine": {
+        backgroundColor: "color-mix(in srgb, var(--border-color) 15%, transparent)",
+      },
+      ".cm-activeLineGutter": {
+        backgroundColor: "color-mix(in srgb, var(--border-color) 30%, transparent)",
+      },
+    });
+  }, []);
+
+  // Dynamic linter extension integrating with CodeMirror lint layer
+  const codeMirrorLinter = useMemo(() => {
+    return linter((view) => {
+      const docText = view.state.doc.toString();
+      const rawDiags = lintMarkdown(docText, articles);
+      return rawDiags.map((d) => ({
+        from: d.from,
+        to: d.to,
+        severity: d.severity,
+        message: d.message,
+        actions: d.suggestion ? [{
+          name: `Fix: ${d.suggestion}`,
+          apply: (view, from, to) => {
+            view.dispatch({
+              changes: { from, to, insert: d.suggestion! }
+            });
+          }
+        }] : []
+      }));
+    });
+  }, [articles]);
+
+  // CodeMirror Extensions array
+  const extensions = useMemo(() => {
+    return [
+      markdown(),
+      editorTheme,
+      shortcutKeymap,
+      codeMirrorLinter
+    ];
+  }, [editorTheme, shortcutKeymap, codeMirrorLinter]);
 
   // Handle Image uploads
   const handleImageUpload = async (file: File) => {
     if (!file) return;
 
-    // Determine current slug target (fallback to temporary slug if title is blank)
     const targetSlug = slug || Slugify(title) || 'draft-page';
 
     setIsUploading(true);
@@ -135,7 +230,6 @@ export const Editor: React.FC<EditorProps> = ({
       }
 
       const data = await response.json();
-      // Insert Markdown image syntax at current position
       insertMarkdown(`![${file.name.split('.')[0]}](${data.url})`, '', '');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Image upload failed. Is it a valid image file?';
@@ -152,7 +246,7 @@ export const Editor: React.FC<EditorProps> = ({
   };
 
   // Drag and drop image uploads
-  const handleDrop = (e: React.DragEvent<HTMLTextAreaElement>) => {
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
@@ -162,8 +256,45 @@ export const Editor: React.FC<EditorProps> = ({
     }
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLTextAreaElement>) => {
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
+  };
+
+  // Custom context menu right-click detection
+  const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    const view = editorRef.current?.view;
+    if (!view) return;
+
+    // Resolve click coords to doc position
+    const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+    if (pos === null) return;
+
+    // Search diagnostics for matches covering these cursor pos
+    const activeDiag = diagnostics.find(d => pos >= d.from && pos <= d.to);
+    if (activeDiag) {
+      e.preventDefault();
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        diagnostic: activeDiag
+      });
+    } else {
+      setContextMenu(null);
+    }
+  };
+
+  // Selection Jump callback from Linter Modal
+  const handleSelectDiagnostic = (diag: LintDiagnostic) => {
+    const view = editorRef.current?.view;
+    if (view) {
+      view.focus();
+      view.dispatch({
+        selection: { anchor: diag.from, head: diag.to },
+        effects: [
+          EditorView.scrollIntoView(diag.from, { y: 'center' })
+        ]
+      });
+    }
   };
 
   // Form submit saving
@@ -186,11 +317,10 @@ export const Editor: React.FC<EditorProps> = ({
     }
   };
 
-  // Computed slug for live UI preview
   const liveSlug = Slugify(title);
 
   return (
-    <div className="flex-1 h-screen flex flex-col bg-slate-50 dark:bg-slate-950/40">
+    <div className="flex-1 h-screen flex flex-col bg-slate-50 dark:bg-slate-950/40 min-w-0">
       <form onSubmit={handleSave} className="flex-1 flex flex-col h-full overflow-hidden">
         
         {/* Editor Top Control Bar */}
@@ -222,7 +352,6 @@ export const Editor: React.FC<EditorProps> = ({
 
                 {/* Visual Tag Manager */}
                 <div className="flex flex-wrap items-center gap-1.5 mt-2 select-none">
-                  {/* Premium Page Type Indicator */}
                   {isSkill && (
                     <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-indigo-650 dark:text-indigo-400 bg-indigo-500/10 dark:bg-indigo-950/20 border border-indigo-550/25 dark:border-indigo-900/50 px-2.5 py-0.5 rounded-full mr-2">
                       <Wrench size={10} className="animate-pulse text-indigo-500" />
@@ -308,14 +437,14 @@ export const Editor: React.FC<EditorProps> = ({
                 placeholder="What did you change? (e.g. Fixed typo)"
                 value={editSummary}
                 onChange={(e) => setEditSummary(e.target.value)}
-                className="py-1.5 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs bg-slate-50 dark:bg-slate-900 outline-none text-slate-800 dark:text-slate-200 w-56 focus:ring-1 focus:ring-indigo-500 font-medium transition-all"
+                className="py-1.5 px-3.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60 text-xs bg-slate-50 dark:bg-slate-900 outline-none text-slate-800 dark:text-slate-200 w-56 focus:ring-1 focus:ring-indigo-500 font-medium transition-all"
                 disabled={isSaving}
               />
             )}
             <button
               type="button"
               onClick={onCancel}
-              className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-sm active:scale-95 transition-all"
+              className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60 text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-sm active:scale-95 transition-all cursor-pointer"
               disabled={isSaving}
             >
               <X size={14} />
@@ -323,7 +452,7 @@ export const Editor: React.FC<EditorProps> = ({
             </button>
             <button
               type="submit"
-              className="flex items-center gap-1.5 py-2 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-95 text-white font-semibold text-sm shadow-md shadow-indigo-100 dark:shadow-none transition-all"
+              className="flex items-center gap-1.5 py-2 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-95 text-white font-semibold text-sm shadow-md shadow-indigo-100 dark:shadow-none transition-all cursor-pointer"
               disabled={isSaving}
             >
               <Save size={14} className={isSaving ? 'animate-spin' : ''} />
@@ -339,7 +468,7 @@ export const Editor: React.FC<EditorProps> = ({
             <button
               type="button"
               onClick={() => insertMarkdown('# ', '', 'Header 1')}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors"
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
               title="Header 1"
             >
               <Heading1 size={15} />
@@ -347,7 +476,7 @@ export const Editor: React.FC<EditorProps> = ({
             <button
               type="button"
               onClick={() => insertMarkdown('## ', '', 'Header 2')}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors"
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
               title="Header 2"
             >
               <Heading2 size={15} />
@@ -355,7 +484,7 @@ export const Editor: React.FC<EditorProps> = ({
             <button
               type="button"
               onClick={() => insertMarkdown('### ', '', 'Header 3')}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors"
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
               title="Header 3"
             >
               <Heading3 size={15} />
@@ -366,7 +495,7 @@ export const Editor: React.FC<EditorProps> = ({
             <button
               type="button"
               onClick={() => insertMarkdown('**', '**', 'bold text')}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors"
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
               title="Bold"
             >
               <Bold size={15} />
@@ -374,7 +503,7 @@ export const Editor: React.FC<EditorProps> = ({
             <button
               type="button"
               onClick={() => insertMarkdown('*', '*', 'italic text')}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors"
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
               title="Italic"
             >
               <Italic size={15} />
@@ -382,7 +511,7 @@ export const Editor: React.FC<EditorProps> = ({
             <button
               type="button"
               onClick={() => insertMarkdown('`', '`', 'code')}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors"
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
               title="Inline Code"
             >
               <Code size={15} />
@@ -393,7 +522,7 @@ export const Editor: React.FC<EditorProps> = ({
             <button
               type="button"
               onClick={() => insertMarkdown('[', '](https://url)', 'Link Text')}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors"
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
               title="Standard URL Link"
             >
               <Link size={15} />
@@ -401,7 +530,7 @@ export const Editor: React.FC<EditorProps> = ({
             <button
               type="button"
               onClick={() => insertMarkdown('[[', ']]', 'Wiki Link')}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors"
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
               title="Internal Wiki Link"
             >
               <Link2 size={15} />
@@ -409,7 +538,7 @@ export const Editor: React.FC<EditorProps> = ({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors flex items-center gap-1.5"
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer font-semibold text-[10px]"
               title="Upload and Embed Image"
               disabled={isUploading}
             >
@@ -423,6 +552,33 @@ export const Editor: React.FC<EditorProps> = ({
               accept="image/*"
               className="hidden"
             />
+
+            <div className="w-[1px] h-4 bg-slate-300 dark:bg-slate-800 mx-2"></div>
+
+            {/* Quick Reference Button */}
+            <button
+              type="button"
+              onClick={() => setSyntaxModalOpen(true)}
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors flex items-center gap-1 cursor-pointer"
+              title="Markdown Syntax Cheatsheet (Ctrl+/)"
+            >
+              <Info size={15} />
+            </button>
+
+            {/* Linter Count Badge */}
+            {diagnostics.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setLintModalOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-500/10 dark:bg-rose-950/20 border border-rose-500/20 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 transition-all font-bold text-[10px] select-none cursor-pointer"
+                title="View Markdown Linting Diagnostics"
+              >
+                <AlertCircle size={12} className={errorCount > 0 ? "animate-pulse text-rose-500" : "text-amber-500"} />
+                <span>{errorCount} E</span>
+                <span className="text-slate-400">|</span>
+                <span>{warningCount} W</span>
+              </button>
+            )}
           </div>
 
           {/* Toggle Screen Layout */}
@@ -430,7 +586,7 @@ export const Editor: React.FC<EditorProps> = ({
             <button
               type="button"
               onClick={() => setViewMode('edit')}
-              className={`p-1.5 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all ${
+              className={`p-1.5 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all cursor-pointer ${
                 viewMode === 'edit'
                   ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-sm'
                   : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
@@ -442,7 +598,7 @@ export const Editor: React.FC<EditorProps> = ({
             <button
               type="button"
               onClick={() => setViewMode('split')}
-              className={`p-1.5 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all ${
+              className={`p-1.5 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all cursor-pointer ${
                 viewMode === 'split'
                   ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-sm'
                   : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
@@ -454,7 +610,7 @@ export const Editor: React.FC<EditorProps> = ({
             <button
               type="button"
               onClick={() => setViewMode('preview')}
-              className={`p-1.5 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all ${
+              className={`p-1.5 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all cursor-pointer ${
                 viewMode === 'preview'
                   ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-sm'
                   : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
@@ -467,7 +623,7 @@ export const Editor: React.FC<EditorProps> = ({
         </div>
 
         {/* Main Work Area */}
-        <div className="flex-1 flex overflow-hidden relative">
+        <div className="flex-1 flex overflow-hidden relative min-w-0">
           
           {/* Error Banner */}
           {errorMsg && (
@@ -476,20 +632,46 @@ export const Editor: React.FC<EditorProps> = ({
             </div>
           )}
 
-          {/* Left Column (Raw Markdown Editor Pane) */}
+          {/* Left Column (CodeMirror Editor Pane) */}
           {(viewMode === 'edit' || viewMode === 'split') && (
-            <div className="flex-1 h-full overflow-y-auto bg-white dark:bg-slate-900 p-6 flex flex-col font-mono text-slate-800 dark:text-slate-200">
-              <textarea
-                ref={textareaRef}
+            <div 
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onContextMenu={handleContextMenu}
+              className="flex-1 h-full overflow-hidden bg-white dark:bg-slate-900 flex flex-col font-mono text-slate-800 dark:text-slate-200 min-w-0"
+            >
+              <CodeMirror
+                ref={editorRef}
                 value={content}
-                onChange={(e) => setContent(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
+                onChange={(value) => setContent(value)}
+                extensions={extensions}
+                basicSetup={{
+                  lineNumbers: true,
+                  highlightActiveLineGutter: true,
+                  highlightSpecialChars: true,
+                  history: true,
+                  drawSelection: true,
+                  dropCursor: true,
+                  allowMultipleSelections: false,
+                  indentOnInput: true,
+                  syntaxHighlighting: true,
+                  bracketMatching: true,
+                  closeBrackets: true,
+                  autocompletion: true,
+                  rectangularSelection: false,
+                  highlightActiveLine: true,
+                  highlightSelectionMatches: true,
+                  searchKeymap: true,
+                  lintKeymap: true,
+                }}
+                className="flex-1 h-full outline-none focus:ring-0 leading-relaxed text-sm"
                 placeholder="Write your markdown here... Drag & Drop images directly into this pane!"
-                className="w-full flex-1 bg-transparent resize-none border-none outline-none focus:ring-0 leading-relaxed text-sm font-mono placeholder:text-slate-400"
-                disabled={isSaving}
+                editable={!isSaving}
               />
+              <div className="px-4 py-1.5 border-t border-slate-200/50 dark:border-slate-800/40 bg-slate-50 dark:bg-slate-900/30 text-[10px] text-slate-400 dark:text-slate-500 font-sans flex items-center justify-between select-none">
+                <span>Press <span className="font-mono bg-slate-200 dark:bg-slate-800 px-1 py-0.2 rounded font-bold">Ctrl+/</span> for markdown reference</span>
+                <span>{content.length} characters</span>
+              </div>
             </div>
           )}
 
@@ -500,7 +682,7 @@ export const Editor: React.FC<EditorProps> = ({
 
           {/* Right Column (Visual Rendered Preview Pane) */}
           {(viewMode === 'preview' || viewMode === 'split') && (
-            <div className="flex-1 h-full overflow-y-auto bg-slate-50 dark:bg-slate-950/20 p-8">
+            <div className="flex-1 h-full overflow-y-auto bg-slate-50 dark:bg-slate-950/20 p-8 min-w-0">
               <div className="max-w-2xl mx-auto py-2 bg-white dark:bg-slate-900 border border-slate-200/50 dark:border-slate-800/60 p-8 shadow-sm rounded-2xl min-h-full">
                 {title.trim() && (
                   <h1 className="text-4xl font-extrabold text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-800 pb-3 mb-6 tracking-tight">
@@ -511,7 +693,7 @@ export const Editor: React.FC<EditorProps> = ({
                   <Viewer 
                     content={content} 
                     onNavigate={() => {}} // No navigation triggered in preview mode
-                    articles={[]} // Pass empty list to preview
+                    articles={articles}
                   />
                 ) : (
                   <div className="text-slate-400 italic text-sm">
@@ -523,6 +705,66 @@ export const Editor: React.FC<EditorProps> = ({
           )}
         </div>
       </form>
+
+      {/* Cheatsheet Modal */}
+      <MarkdownSyntaxModal 
+        isOpen={syntaxModalOpen}
+        onClose={() => setSyntaxModalOpen(false)}
+      />
+
+      {/* Linter Modal */}
+      <MarkdownLintErrorModal
+        isOpen={lintModalOpen}
+        onClose={() => setLintModalOpen(false)}
+        diagnostics={diagnostics}
+        onSelectDiagnostic={handleSelectDiagnostic}
+        markdownContent={content}
+      />
+
+      {/* Custom Context Menu */}
+      {contextMenu && (
+        <div
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          className="fixed z-50 rounded-xl glass-panel bg-white/95 dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-800/50 shadow-xl p-1.5 min-w-[185px] select-none text-xs animate-fade-in"
+        >
+          {contextMenu.diagnostic.suggestion && (
+            <button
+              onClick={() => {
+                const view = editorRef.current?.view;
+                if (view) {
+                  view.dispatch({
+                    changes: {
+                      from: contextMenu.diagnostic.from,
+                      to: contextMenu.diagnostic.to,
+                      insert: contextMenu.diagnostic.suggestion!
+                    }
+                  });
+                }
+                setContextMenu(null);
+              }}
+              className="w-full text-left px-3 py-2 rounded-lg font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 text-indigo-600 dark:text-indigo-400 cursor-pointer"
+            >
+              Fix: {contextMenu.diagnostic.suggestion}
+            </button>
+          )}
+          <button
+            onClick={() => {
+              setLintModalOpen(true);
+              setContextMenu(null);
+            }}
+            className="w-full text-left px-3 py-2 rounded-lg font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-350 cursor-pointer"
+          >
+            Show in Error Panel
+          </button>
+          <div className="h-[1px] bg-slate-200/50 dark:bg-slate-800/50 my-1"></div>
+          <button
+            onClick={() => setContextMenu(null)}
+            className="w-full text-left px-3 py-2 rounded-lg font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 text-rose-500 hover:text-rose-600 cursor-pointer"
+          >
+            Close Menu
+          </button>
+        </div>
+      )}
     </div>
   );
 };

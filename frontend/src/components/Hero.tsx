@@ -90,7 +90,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
   };
 
   return (
-    <div className="flex-1 overflow-y-auto h-screen bg-themeBgPrimary p-8 sm:p-12 md:p-16 selection:bg-themeAccent selection:text-white transition-colors">
+    <div className="flex-1 overflow-y-auto h-screen bg-themeBgPrimary p-8 sm:p-12 md:p-16 selection:bg-themeAccent selection:text-white transition-colors min-w-0">
       <div className="max-w-4xl mx-auto space-y-12 animate-slide-up">
         
         {/* Sleek Serious-yet-Fun Branding Hero Header */}

@@ -552,8 +552,109 @@ Please follow these strict steps:
 	}
 }
 
-// executeToolCall parses parameters and executes requested MCP tools.
+// logMCPToolCall logs a successfully executed MCP tool call and publishes it.
+func (srv *Server) logMCPToolCall(params json.RawMessage) {
+	if srv.EventBus == nil {
+		return
+	}
+
+	type ToolCallParams struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+
+	var args ToolCallParams
+	if err := json.Unmarshal(params, &args); err != nil {
+		return
+	}
+
+	// Unmarshal common arguments like slug and title
+	var common struct {
+		Slug  string `json:"slug"`
+		Title string `json:"title"`
+	}
+	_ = json.Unmarshal(args.Arguments, &common)
+
+	action := "read"
+	tool := args.Name
+	if strings.HasPrefix(tool, "create_") {
+		action = "create"
+	} else if strings.HasPrefix(tool, "edit_") || strings.HasPrefix(tool, "append_") || strings.HasPrefix(tool, "revert_") {
+		action = "edit"
+	} else if strings.HasPrefix(tool, "delete_") {
+		action = "delete"
+	}
+
+	slug := common.Slug
+	if slug == "" && common.Title != "" {
+		slug = Slugify(common.Title)
+	}
+
+	// Determine category and title if it's a mutation
+	title := common.Title
+	if title == "" && slug != "" {
+		if art, err := srv.Storage.GetArticle(slug); err == nil {
+			title = art.Title
+		}
+	}
+
+	agent := "AI Agent"
+	if srvName := os.Getenv("NEXWIKI_NAME"); srvName != "" {
+		agent = srvName
+	}
+
+	srv.EventBus.PublishActivity("mcp", action, tool, slug, title, agent)
+
+	// If it's a mutation, broadcast a WikiUpdate to sync all clients!
+	if action != "read" {
+		articles, err := srv.Storage.ListArticles()
+		if err == nil {
+			var targetTags []string
+			if slug != "" {
+				if art, err := srv.Storage.GetArticle(slug); err == nil {
+					targetTags = art.Tags
+				}
+			}
+
+			dir := getArticleDirectory(targetTags)
+			dirCount := 0
+			for _, a := range articles {
+				if getArticleDirectory(a.Tags) == dir {
+					dirCount++
+				}
+			}
+
+			updateType := "article-edited"
+			if action == "create" {
+				updateType = "article-added"
+			} else if action == "delete" {
+				updateType = "article-removed"
+			}
+
+			srv.EventBus.PublishWikiUpdate(WikiUpdate{
+				Type:           updateType,
+				Slug:           slug,
+				Title:          title,
+				Tags:           targetTags,
+				Directory:      dir,
+				TotalCount:     len(articles),
+				DirectoryCount: dirCount,
+			})
+		}
+	}
+}
+
+// executeToolCall parses parameters and executes requested MCP tools, with automatic logging hooks.
 func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRPCError) {
+	result, rpcErr := srv.executeToolCallInternal(params)
+	if rpcErr == nil {
+		srv.logMCPToolCall(params)
+	}
+	return result, rpcErr
+}
+
+// executeToolCallInternal parses parameters and executes requested MCP tools.
+func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{}, *JSONRPCError) {
 	type ToolCallArgs struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`

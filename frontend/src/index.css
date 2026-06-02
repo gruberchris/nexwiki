@@ -188,11 +188,6 @@
 
 /* Print CSS Stylesheet */
 @media print {
-  .no-print,
-  .no-print * {
-    display: none !important;
-  }
-
   html,
   body {
     background: white !important;
@@ -241,6 +236,12 @@
   
   pre, blockquote, img, table {
     page-break-inside: avoid !important;
+  }
+
+  /* Ensure no-print items and their children are fully hidden, placed at the end to win cascade */
+  .no-print,
+  .no-print * {
+    display: none !important;
   }
 }
 

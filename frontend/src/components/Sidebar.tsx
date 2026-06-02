@@ -16,8 +16,11 @@ import {
   Tag,
   ChevronDown,
   X,
-  Palette
+  Palette,
+  Archive,
+  Activity
 } from 'lucide-react';
+import { useSSE } from '../hooks/useSSE';
 
 interface SidebarProps {
   articles: Article[];
@@ -28,6 +31,8 @@ interface SidebarProps {
   onNavigate: (slug: string) => void;
   onCreateNew: (type: 'article' | 'plan' | 'skill') => void;
   wikiName: string;
+  onExportAll: () => void;
+  onOpenActivityLog: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -38,8 +43,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenThemeManager,
   onNavigate,
   onCreateNew,
-  wikiName
+  wikiName,
+  onExportAll,
+  onOpenActivityLog
 }) => {
+  const { unreadCount } = useSSE();
   const [filterQuery, setFilterQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [aiMemoriesOpen, setAiMemoriesOpen] = useState(true);
@@ -132,6 +140,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Activity Log Drawer Button */}
+          <button
+            onClick={onOpenActivityLog}
+            className="p-2 rounded-xl text-themeTextMuted hover:bg-themeBgPrimary hover:text-themeTextPrimary border border-themeBorder hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer relative"
+            title="Open Live Activity Log"
+            aria-label="Open Live Activity Log"
+          >
+            <Activity size={14} className="text-indigo-500" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-500 text-[8px] font-extrabold text-white animate-pulse shadow-sm">
+                +{unreadCount}
+              </span>
+            )}
+          </button>
+
           {/* Theme Palette Customizer Button */}
           <button
             onClick={onOpenThemeManager}
@@ -473,6 +496,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </div>
           )}
+        </div>
+
+        {/* Bulk Export Button */}
+        <div className="pt-4 border-t border-themeBorder/40">
+          <button
+            onClick={onExportAll}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 text-xs font-bold text-themeTextSecondary bg-themeBgPrimary/40 border border-themeBorder/60 rounded-xl hover:bg-themeAccentBg/40 hover:text-themeAccent hover:border-themeAccent/30 active:scale-[0.98] transition-all select-none cursor-pointer"
+            title="Download all Wiki pages as a structured ZIP"
+          >
+            <Archive size={14} className="text-themeAccent shrink-0" />
+            <span>Download All Content (.zip)</span>
+          </button>
         </div>
 
       </div>

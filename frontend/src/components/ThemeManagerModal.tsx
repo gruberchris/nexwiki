@@ -14,12 +14,20 @@ export interface ThemeColors {
   accent_bg: string;
 }
 
+export interface ThemeSchedule {
+  start_month: number;
+  start_day: number;
+  end_month: number;
+  end_day: number;
+}
+
 export interface Theme {
   name: string;
   default_mode: 'light' | 'dark';
   light: ThemeColors;
   dark: ThemeColors;
   custom: boolean;
+  schedule?: ThemeSchedule;
 }
 
 interface ThemeManagerModalProps {
@@ -31,6 +39,11 @@ interface ThemeManagerModalProps {
   onSaveTheme: (theme: Theme) => Promise<void>;
   onDeleteTheme: (name: string) => Promise<void>;
 }
+
+const formatMonthName = (month: number): string => {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return months[month - 1] || '';
+};
 
 const colorFields: { key: keyof ThemeColors; label: string; desc: string }[] = [
   { key: 'bg_primary', label: 'Primary Background', desc: 'Main window backdrop background' },
@@ -70,6 +83,11 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
   const [isCreating, setIsCreating] = useState(false);
   const [editThemeName, setEditThemeName] = useState('');
   const [editDefaultMode, setEditDefaultMode] = useState<'light' | 'dark'>('light');
+  const [schedStartMonth, setSchedStartMonth] = useState('1');
+  const [schedStartDay, setSchedStartDay] = useState('1');
+  const [schedEndMonth, setSchedEndMonth] = useState('12');
+  const [schedEndDay, setSchedEndDay] = useState('31');
+  const [schedEnabled, setSchedEnabled] = useState(false);
   const [editLightColors, setEditLightColors] = useState<ThemeColors>(emptyColors());
   const [editDarkColors, setEditDarkColors] = useState<ThemeColors>({
     bg_primary: '#020617',
@@ -107,6 +125,11 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
     });
     setActiveEditorTab('light');
     setErrorMsg('');
+    setSchedEnabled(false);
+    setSchedStartMonth('1');
+    setSchedStartDay('1');
+    setSchedEndMonth('12');
+    setSchedEndDay('31');
   };
 
   const handleColorChange = (tab: 'light' | 'dark', key: keyof ThemeColors, value: string) => {
@@ -139,6 +162,15 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
       dark: editDarkColors,
       custom: true,
     };
+
+    if (schedEnabled) {
+      themeToSave.schedule = {
+        start_month: parseInt(schedStartMonth, 10) || 1,
+        start_day: parseInt(schedStartDay, 10) || 1,
+        end_month: parseInt(schedEndMonth, 10) || 12,
+        end_day: parseInt(schedEndDay, 10) || 31,
+      };
+    }
 
     try {
       await onSaveTheme(themeToSave);
@@ -202,6 +234,16 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                       <span className="text-[10px] opacity-80 font-normal">
                         Default: {theme.default_mode} mode
                       </span>
+                      {theme.schedule && (
+                        <span className="inline-flex items-center gap-1 mt-1.5 text-[9px] font-bold px-2 py-0.5 rounded-full bg-themeAccentBg/40 border border-themeAccent/20 text-themeAccent max-w-fit select-none">
+                          {theme.name === 'halloween' && '🎃 '}
+                          {theme.name === 'christmas' && '🎄 '}
+                          {theme.name === 'july-4th' && '🎆 '}
+                          {theme.name === 'new-years' && '✨ '}
+                          {!['halloween', 'christmas', 'july-4th', 'new-years'].includes(theme.name) && '📅 '}
+                          {formatMonthName(theme.schedule.start_month)} {theme.schedule.start_day} - {formatMonthName(theme.schedule.end_month)} {theme.schedule.end_day}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       {isActive && <Check size={14} className="text-themeAccent shrink-0" />}
@@ -289,6 +331,78 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                         Dark Mode Default
                       </button>
                     </div>
+                  </div>
+
+                  {/* Theme Schedule (Optional) */}
+                  <div className="p-4 bg-themeBgPrimary/30 rounded-2xl border border-themeBorder/40 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-themeTextPrimary">Enable Theme Schedule</span>
+                        <span className="text-[10px] text-themeTextMuted">Auto-apply this theme during a specific date range</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={schedEnabled}
+                        onChange={(e) => setSchedEnabled(e.target.checked)}
+                        className="w-4 h-4 text-themeAccent bg-themeBgPrimary border-themeBorder rounded focus:ring-themeAccent cursor-pointer"
+                      />
+                    </div>
+
+                    {schedEnabled && (
+                      <div className="grid grid-cols-2 gap-4 animate-fade-in">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-themeTextMuted">Start Window</label>
+                          <div className="flex gap-1.5">
+                            <select
+                              value={schedStartMonth}
+                              onChange={(e) => setSchedStartMonth(e.target.value)}
+                              className="flex-1 p-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary"
+                            >
+                              {Array.from({ length: 12 }, (_, i) => (
+                                <option key={i + 1} value={i + 1}>
+                                  {formatMonthName(i + 1)}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="number"
+                              min="1"
+                              max="31"
+                              value={schedStartDay}
+                              onChange={(e) => setSchedStartDay(e.target.value)}
+                              className="w-16 p-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary text-center"
+                              placeholder="Day"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-themeTextMuted">End Window (Inclusive)</label>
+                          <div className="flex gap-1.5">
+                            <select
+                              value={schedEndMonth}
+                              onChange={(e) => setSchedEndMonth(e.target.value)}
+                              className="flex-1 p-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary"
+                            >
+                              {Array.from({ length: 12 }, (_, i) => (
+                                <option key={i + 1} value={i + 1}>
+                                  {formatMonthName(i + 1)}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="number"
+                              min="1"
+                              max="31"
+                              value={schedEndDay}
+                              onChange={(e) => setSchedEndDay(e.target.value)}
+                              className="w-16 p-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary text-center"
+                              placeholder="Day"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Color Customizers Tabs */}

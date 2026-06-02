@@ -1,3 +1,6 @@
+import JSZip from 'jszip';
+import type { Article } from './types';
+
 /**
  * Slugify standardizes any title string into a clean, URL-safe, file-safe slug.
  * Matches the backend Go Slugify logic exactly.
@@ -230,5 +233,74 @@ export function formatRelativeTime(dateStr: string): string {
   if (diffDays === 1) return 'Yesterday';
   if (diffDays < 7) return `${diffDays}d ago`;
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
+ * Packs all articles into a zip archive and triggers browser download.
+ */
+export async function exportAllContent(articles: Article[]): Promise<void> {
+  const zip = new JSZip();
+  const dateStr = new Date().toISOString().split('T')[0];
+  
+  let readme = '# NexWiki Content Export - ' + dateStr + '\n\n';
+  readme += 'Total Articles: ' + articles.length + '\n\n';
+  readme += '## Export Directory Map\n\n';
+  
+  const folders = {
+    wiki: zip.folder('wiki'),
+    aiplans: zip.folder('aiplans'),
+    aimemories: zip.folder('aimemories'),
+    aiskills: zip.folder('aiskills')
+  };
+
+  readme += '- `wiki/` - Standard articles with no `aiagent-*` tags\n';
+  readme += '- `aiplans/` - Collaborative AI plans (`aiagent-plan`)\n';
+  readme += '- `aimemories/` - AI agent memories (`aiagent-memory`, etc.)\n';
+  readme += '- `aiskills/` - Custom AI skills (`aiagent-skill`)\n\n';
+  readme += '## Exported Files\n\n';
+
+  for (const art of articles) {
+    const tags = art.tags || [];
+    let folderName: keyof typeof folders = 'wiki';
+    let folderDesc = 'Standard Article';
+
+    const isSkill = tags.some(t => t.toLowerCase() === 'aiagent-skill');
+    const isPlan = tags.some(t => t.toLowerCase() === 'aiagent-plan');
+    const isAgent = tags.some(t => t.toLowerCase().startsWith('aiagent-'));
+
+    if (isSkill) {
+      folderName = 'aiskills';
+      folderDesc = 'AI Skill';
+    } else if (isPlan) {
+      folderName = 'aiplans';
+      folderDesc = 'AI Plan';
+    } else if (isAgent) {
+      folderName = 'aimemories';
+      folderDesc = 'AI Memory';
+    }
+
+    try {
+      const response = await fetch(`/api/articles/${art.slug}`);
+      if (response.ok) {
+        const fullArt = await response.json() as Article;
+        folders[folderName]?.file(`${art.slug}.md`, fullArt.content || '');
+        readme += '- [' + folderDesc + '] `' + folderName + '/' + art.slug + '.md` - ' + art.title + ' (Last edited: ' + formatRelativeTime(art.updated_at) + ')\n';
+      }
+    } catch (err) {
+      console.error(`Failed to fetch and pack ${art.slug}:`, err);
+    }
+  }
+
+  zip.file('README.md', readme);
+
+  const content = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(content);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `nexwiki-export-${dateStr}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 

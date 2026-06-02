@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github-dark-dimmed.css';
 import type { Article } from '../types';
 import { Slugify } from '../utils';
 
@@ -12,13 +14,13 @@ interface ViewerProps {
 
 /**
  * Preprocesses markdown string to transform double bracket [[WikiLinks]]
- * into standard markdown links using a custom "wikilink:" protocol.
+ * into standard Markdown links using a custom "wikilink:" protocol.
  * E.g., [[Learning Go]] -> [Learning Go](wikilink:learning-go)
  * E.g., [[learning-go|My Guide]] -> [My Guide](wikilink:learning-go)
  */
-export function preprocessWikiLinks(markdown: string): string {
+function preprocessWikiLinks(markdown: string): string {
   if (!markdown) return '';
-  return markdown.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, display) => {
+  return markdown.replace(/\[\[([^]|]+)(?:\|([^]]+))?]]/g, (_, target, display) => {
     const text = display ? display.trim() : target.trim();
     const slug = Slugify(target.trim());
     return `[${text}](wikilink:${slug})`;
@@ -32,6 +34,7 @@ export const Viewer: React.FC<ViewerProps> = ({ content, onNavigate, articles })
     <div className="wiki-content">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
         components={{
           h1: ({ children }) => {
             const id = Slugify(String(children));

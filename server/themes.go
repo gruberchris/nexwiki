@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // ThemeColors defines the color palette mapping for a single mode (light or dark).
@@ -21,13 +22,22 @@ type ThemeColors struct {
 	AccentBg        string `json:"accent_bg"`
 }
 
+// ThemeSchedule defines an annual recurrence window (month/day, inclusive).
+type ThemeSchedule struct {
+	StartMonth int `json:"start_month"`
+	StartDay   int `json:"start_day"`
+	EndMonth   int `json:"end_month"`
+	EndDay     int `json:"end_day"`
+}
+
 // Theme represents a custom or predefined theme, containing light and dark variants.
 type Theme struct {
-	Name        string      `json:"name"`
-	DefaultMode string      `json:"default_mode"` // "light" or "dark"
-	Light       ThemeColors `json:"light"`
-	Dark        ThemeColors `json:"dark"`
-	Custom      bool        `json:"custom"` // true if user-created
+	Name        string         `json:"name"`
+	DefaultMode string         `json:"default_mode"` // "light" or "dark"
+	Light       ThemeColors    `json:"light"`
+	Dark        ThemeColors    `json:"dark"`
+	Custom      bool           `json:"custom"`             // true if user-created
+	Schedule    *ThemeSchedule `json:"schedule,omitempty"` // nil = no schedule
 }
 
 // DefaultThemes defines the predefined themes available in NexWiki.
@@ -65,13 +75,14 @@ var DefaultThemes = []Theme{
 		Name:        "july-4th",
 		DefaultMode: "light",
 		Custom:      false,
+		Schedule:    &ThemeSchedule{StartMonth: 6, StartDay: 28, EndMonth: 7, EndDay: 6},
 		Light: ThemeColors{
 			BgPrimary:       "#f8fafc", // soft slate white
 			BgSecondary:     "#ffffff", // white
 			TextPrimary:     "#0f172a", // navy
 			TextSecondary:   "#1e293b", // copy slate
 			TextMuted:       "#64748b", // muted
-			BorderColor:     "#cbd5e1", // blue gray border
+			BorderColor:     "#cbd5e1", // blue-gray border
 			AccentPrimary:   "#b91c1c", // patriotic red
 			AccentSecondary: "#1d4ed8", // patriotic blue
 			AccentHover:     "#991b1b",
@@ -94,6 +105,7 @@ var DefaultThemes = []Theme{
 		Name:        "halloween",
 		DefaultMode: "light",
 		Custom:      false,
+		Schedule:    &ThemeSchedule{StartMonth: 10, StartDay: 15, EndMonth: 11, EndDay: 1},
 		Light: ThemeColors{
 			BgPrimary:       "#fffbeb", // warm amber cream
 			BgSecondary:     "#ffffff",
@@ -123,6 +135,7 @@ var DefaultThemes = []Theme{
 		Name:        "christmas",
 		DefaultMode: "light",
 		Custom:      false,
+		Schedule:    &ThemeSchedule{StartMonth: 12, StartDay: 1, EndMonth: 12, EndDay: 25},
 		Light: ThemeColors{
 			BgPrimary:       "#f0fdf4", // minty white
 			BgSecondary:     "#ffffff",
@@ -138,7 +151,7 @@ var DefaultThemes = []Theme{
 		Dark: ThemeColors{
 			BgPrimary:       "#022c22", // deep evergreen pine
 			BgSecondary:     "#064e3b",
-			TextPrimary:     "#f0fdf4", // snow white
+			TextPrimary:     "#f0fdf4", // snow-white
 			TextSecondary:   "#a7f3d0", // minty text
 			TextMuted:       "#6b7280",
 			BorderColor:     "#0f766e",
@@ -152,6 +165,7 @@ var DefaultThemes = []Theme{
 		Name:        "new-years",
 		DefaultMode: "light",
 		Custom:      false,
+		Schedule:    &ThemeSchedule{StartMonth: 12, StartDay: 26, EndMonth: 1, EndDay: 7},
 		Light: ThemeColors{
 			BgPrimary:       "#fafaf9", // champagne white
 			BgSecondary:     "#ffffff",
@@ -231,4 +245,55 @@ func (ts *ThemeStore) SaveCustomThemes(themes []Theme) error {
 	}
 
 	return os.WriteFile(ts.filePath, data, 0644)
+}
+
+// themeActiveToday checks if the given time falls inside the theme's annual date range.
+func themeActiveToday(schedule *ThemeSchedule, now time.Time) bool {
+	if schedule == nil {
+		return false
+	}
+
+	month := int(now.Month())
+	day := now.Day()
+
+	current := month*100 + day
+	start := schedule.StartMonth*100 + schedule.StartDay
+	end := schedule.EndMonth*100 + schedule.EndDay
+
+	if start <= end {
+		return current >= start && current <= end
+	}
+
+	// Wrapping range (wraps over Dec 31 / Jan 1)
+	return current >= start || current <= end
+}
+
+// ResolveScheduledTheme deterministically selects the active theme from the candidates.
+func ResolveScheduledTheme(themes []Theme, now time.Time) string {
+	var candidates []Theme
+	for _, theme := range themes {
+		if theme.Schedule != nil && themeActiveToday(theme.Schedule, now) {
+			candidates = append(candidates, theme)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return ""
+	}
+	if len(candidates) == 1 {
+		return candidates[0].Name
+	}
+
+	// Overlap: deterministic date-based seed
+	dateStr := now.Format("20060102")
+	var hash int64
+	for _, c := range dateStr {
+		hash = 31*hash + int64(c)
+	}
+
+	index := hash % int64(len(candidates))
+	if index < 0 {
+		index = -index
+	}
+	return candidates[index].Name
 }

@@ -14,17 +14,21 @@ import (
 
 // Server coordinates the API handlers with the persistence storage layer.
 type Server struct {
-	Storage      *Storage
-	WikiName     string
-	DefaultTheme string
+	Storage                *Storage
+	WikiName               string
+	DefaultTheme           string
+	ThemeSchedulingEnabled bool
+	EventBus               *EventBus
 }
 
 // NewServer builds a new API controller.
-func NewServer(storage *Storage, wikiName string, defaultTheme string) *Server {
+func NewServer(storage *Storage, wikiName string, defaultTheme string, themeSchedulingEnabled bool, eventBus *EventBus) *Server {
 	return &Server{
-		Storage:      storage,
-		WikiName:     wikiName,
-		DefaultTheme: defaultTheme,
+		Storage:                storage,
+		WikiName:               wikiName,
+		DefaultTheme:           defaultTheme,
+		ThemeSchedulingEnabled: themeSchedulingEnabled,
+		EventBus:               eventBus,
 	}
 }
 
@@ -50,15 +54,30 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 
 // ConfigResp represents the public deployment settings exposed to the frontend.
 type ConfigResp struct {
-	WikiName     string `json:"wiki_name"`
-	DefaultTheme string `json:"default_theme"`
+	WikiName               string `json:"wiki_name"`
+	DefaultTheme           string `json:"default_theme"`
+	ThemeSchedulingEnabled bool   `json:"theme_scheduling_enabled"`
+	ScheduledTheme         string `json:"scheduled_theme,omitempty"`
 }
 
 // HandleGetConfig serves the custom title configuration settings to the client.
 func (srv *Server) HandleGetConfig(w http.ResponseWriter, _ *http.Request) {
+	var scheduledTheme string
+	if srv.ThemeSchedulingEnabled {
+		customThemes, err := srv.Storage.ThemeStore.LoadCustomThemes()
+		if err == nil {
+			allThemes := make([]Theme, 0, len(DefaultThemes)+len(customThemes))
+			allThemes = append(allThemes, DefaultThemes...)
+			allThemes = append(allThemes, customThemes...)
+			scheduledTheme = ResolveScheduledTheme(allThemes, time.Now())
+		}
+	}
+
 	writeJSON(w, http.StatusOK, ConfigResp{
-		WikiName:     srv.WikiName,
-		DefaultTheme: srv.DefaultTheme,
+		WikiName:               srv.WikiName,
+		DefaultTheme:           srv.DefaultTheme,
+		ThemeSchedulingEnabled: srv.ThemeSchedulingEnabled,
+		ScheduledTheme:         scheduledTheme,
 	})
 }
 
@@ -157,6 +176,29 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if srv.EventBus != nil {
+		srv.EventBus.PublishActivity("api", "create", "", art.Slug, art.Title, "User")
+		articles, err := srv.Storage.ListArticles()
+		if err == nil {
+			dir := getArticleDirectory(art.Tags)
+			dirCount := 0
+			for _, a := range articles {
+				if getArticleDirectory(a.Tags) == dir {
+					dirCount++
+				}
+			}
+			srv.EventBus.PublishWikiUpdate(WikiUpdate{
+				Type:           "article-added",
+				Slug:           art.Slug,
+				Title:          art.Title,
+				Tags:           art.Tags,
+				Directory:      dir,
+				TotalCount:     len(articles),
+				DirectoryCount: dirCount,
+			})
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, art)
 }
 
@@ -201,6 +243,29 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if srv.EventBus != nil {
+		srv.EventBus.PublishActivity("api", "edit", "", art.Slug, art.Title, "User")
+		articles, err := srv.Storage.ListArticles()
+		if err == nil {
+			dir := getArticleDirectory(art.Tags)
+			dirCount := 0
+			for _, a := range articles {
+				if getArticleDirectory(a.Tags) == dir {
+					dirCount++
+				}
+			}
+			srv.EventBus.PublishWikiUpdate(WikiUpdate{
+				Type:           "article-edited",
+				Slug:           art.Slug,
+				Title:          art.Title,
+				Tags:           art.Tags,
+				Directory:      dir,
+				TotalCount:     len(articles),
+				DirectoryCount: dirCount,
+			})
+		}
+	}
+
 	writeJSON(w, http.StatusOK, art)
 }
 
@@ -212,8 +277,9 @@ func (srv *Server) HandleDeleteArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify existence
-	if _, err := srv.Storage.GetArticle(slug); err != nil {
+	// Verify existence and save tags/title
+	existing, err := srv.Storage.GetArticle(slug)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "article not found")
 		return
 	}
@@ -221,6 +287,29 @@ func (srv *Server) HandleDeleteArticle(w http.ResponseWriter, r *http.Request) {
 	if err := srv.Storage.DeleteArticle(slug); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	if srv.EventBus != nil {
+		srv.EventBus.PublishActivity("api", "delete", "", slug, existing.Title, "User")
+		articles, err := srv.Storage.ListArticles()
+		if err == nil {
+			dir := getArticleDirectory(existing.Tags)
+			dirCount := 0
+			for _, a := range articles {
+				if getArticleDirectory(a.Tags) == dir {
+					dirCount++
+				}
+			}
+			srv.EventBus.PublishWikiUpdate(WikiUpdate{
+				Type:           "article-removed",
+				Slug:           slug,
+				Title:          existing.Title,
+				Tags:           existing.Tags,
+				Directory:      dir,
+				TotalCount:     len(articles),
+				DirectoryCount: dirCount,
+			})
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "article and assets deleted successfully"})
@@ -388,6 +477,29 @@ func (srv *Server) HandleRevertArticle(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	if srv.EventBus != nil {
+		srv.EventBus.PublishActivity("api", "revert", "", art.Slug, art.Title, "User")
+		articles, err := srv.Storage.ListArticles()
+		if err == nil {
+			dir := getArticleDirectory(art.Tags)
+			dirCount := 0
+			for _, a := range articles {
+				if getArticleDirectory(a.Tags) == dir {
+					dirCount++
+				}
+			}
+			srv.EventBus.PublishWikiUpdate(WikiUpdate{
+				Type:           "article-edited",
+				Slug:           art.Slug,
+				Title:          art.Title,
+				Tags:           art.Tags,
+				Directory:      dir,
+				TotalCount:     len(articles),
+				DirectoryCount: dirCount,
+			})
+		}
 	}
 
 	writeJSON(w, http.StatusOK, art)
@@ -701,4 +813,87 @@ func (srv *Server) HandleGetSkillRaw(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%s.md", cleanedSlug))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// WikiStats represents article metadata counts.
+type WikiStats struct {
+	TotalCount      int            `json:"total_count"`
+	DirectoryCounts map[string]int `json:"directory_counts"`
+}
+
+// HandleGetWikiStats returns counts of wiki, memories, plans, and skills.
+func (srv *Server) HandleGetWikiStats(w http.ResponseWriter, _ *http.Request) {
+	articles, err := srv.Storage.ListArticles()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	stats := WikiStats{
+		TotalCount: len(articles),
+		DirectoryCounts: map[string]int{
+			"wiki":       0,
+			"aimemories": 0,
+			"aiplans":    0,
+			"aiskills":   0,
+		},
+	}
+
+	for _, art := range articles {
+		dir := getArticleDirectory(art.Tags)
+		stats.DirectoryCounts[dir]++
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// HandleActivityStream establishes the SSE connection for real-time syncing.
+func (srv *Server) HandleActivityStream(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Subscribe to the event bus
+	ch := srv.EventBus.Subscribe()
+	defer srv.EventBus.Unsubscribe(ch)
+
+	// Stream historical buffer first
+	history := srv.EventBus.GetHistory()
+	for _, ev := range history {
+		data, err := json.Marshal(ev)
+		if err == nil {
+			_, _ = fmt.Fprintf(w, "event: activity\ndata: %s\n\n", string(data))
+		}
+	}
+	flusher.Flush()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	notify := r.Context().Done()
+
+	for {
+		select {
+		case msg, open := <-ch:
+			if !open {
+				return
+			}
+			_, _ = fmt.Fprint(w, msg)
+			flusher.Flush()
+
+		case <-ticker.C:
+			_, _ = fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
+
+		case <-notify:
+			return
+		}
+	}
 }

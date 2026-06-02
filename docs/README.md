@@ -13,7 +13,7 @@ A comprehensive manual designed to help you create, format, link, share, upload,
 * **Managing Articles**: Creating, editing in different view layouts, and deleting wiki articles.
 * **WikiLinks & Linking**: Creating double-bracket internal WikiLinks (`[[WikiLink]]`), custom display tags, and secure external links.
 * **Media & Uploads**: Backed by a drag-and-drop file uploader and embedded image assets.
-* **Exporting & Sharing**: Sharing page URLs, copying Markdown body text, and exporting articles directly to PDF, Microsoft Word (`.docx`), and plain Text (`.txt`) files using the native File System Access API.
+* **Exporting & Sharing**: Sharing page URLs, copying Markdown body text, and exporting articles directly to PDF, Microsoft Word (`.docx`), and Markdown (`.md`) files using the native File System Access API.
 
 ### 2. [NexWiki Article Versioning & Revision Guide](./version_control.md)
 An advanced technical and user guide covering the flat-file gzipped backup and conflict prevention systems:
@@ -53,6 +53,14 @@ An advanced governance and integration manual designed to help you configure ext
 * **Three Layers of Governance**: Custom tool schemas, workspace rules, and MCP Prompts.
 * **Standard Operating Procedures (SOPs)**: Enforcing style checks, format rule lookups, and auto-saving project plans.
 * **Configuration Blueprints**: Setup guidelines and step-by-step examples.
+
+### 8. [NexWiki Advanced Editor, Linter, Scheduling & SSE Activity Guide](./editor_activity_linter_guide.md)
+A comprehensive technical manual describing the upgraded CodeMirror 6 composing editor, real-time custom linter, syntax cheat guide, seasonal theme scheduling, SSE live activity stream, and ZIP export tools:
+* **Built-in seasonal themes**: Date-based seasonal themes, environment flags, and custom dates scheduling.
+* **Composing editor**: CodeMirror 6 integration, custom toolbar transactions, and Option B runtime adaptive color wraps.
+* **Syntax validation checks**: Inline wavy underline highlights, hover quick fixes, right-click custom context menus, and the linter dashboard modal.
+* **Real-time syncing**: Thread-safe EventBus circular queue logs, SSE network streams, cumulative unread badges, and zero-refresh dashboard count syncing.
+* **Bulk exporter**: Creating category-specific packaged ZIP archives of the database.
 
 ---
 
