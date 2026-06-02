@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, AlertCircle, AlertTriangle, Info, Copy, Sparkles, ArrowUpDown, Check } from 'lucide-react';
+import { X, AlertCircle, AlertTriangle, Info, Copy, ArrowUpDown, Check } from 'lucide-react';
 import type { LintDiagnostic } from '../utils/markdownLinter';
 
 interface MarkdownLintErrorModalProps {
@@ -7,7 +7,6 @@ interface MarkdownLintErrorModalProps {
   onClose: () => void;
   diagnostics: LintDiagnostic[];
   onSelectDiagnostic: (diag: LintDiagnostic) => void;
-  markdownContent: string;
 }
 
 export const MarkdownLintErrorModal: React.FC<MarkdownLintErrorModalProps> = ({
@@ -15,13 +14,11 @@ export const MarkdownLintErrorModal: React.FC<MarkdownLintErrorModalProps> = ({
   onClose,
   diagnostics,
   onSelectDiagnostic,
-  markdownContent,
 }) => {
   const [filter, setFilter] = useState<'all' | 'error' | 'warning' | 'info'>('all');
   const [sortBy, setSortBy] = useState<'line' | 'severity'>('line');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [copiedAll, setCopiedAll] = useState(false);
-  const [copiedAiPrompt, setCopiedAiPrompt] = useState(false);
 
   if (!isOpen) return null;
 
@@ -62,28 +59,7 @@ export const MarkdownLintErrorModal: React.FC<MarkdownLintErrorModalProps> = ({
     setTimeout(() => setCopiedAll(false), 2000);
   };
 
-  // Generate AI Correction Prompt
-  const handleCopyAiPrompt = async () => {
-    const errorsText = diagnostics
-      .map((d, index) => `${index + 1}. Line ${d.line} [${d.severity}]: ${d.message}${d.suggestion ? ` (Try: ${d.suggestion})` : ''}`)
-      .join('\n');
 
-    const prompt = `You are a meticulous technical documentation editor. I have a draft markdown document with some syntax linter errors and formatting warnings. Please review the markdown and correct the identified issues perfectly, preserving all other text content, headers, and WikiLink structures.
-
-## Linter Diagnostics to Fix:
-${errorsText}
-
-## Markdown Document Draft:
-\`\`\`markdown
-${markdownContent}
-\`\`\`
-
-Please output ONLY the updated markdown code block, with all warnings and errors resolved. Do not wrap it in external conversations.`;
-
-    await navigator.clipboard.writeText(prompt);
-    setCopiedAiPrompt(true);
-    setTimeout(() => setCopiedAiPrompt(false), 2000);
-  };
 
   const getSeverityStyles = (severity: 'error' | 'warning' | 'info') => {
     switch (severity) {
@@ -244,19 +220,10 @@ Please output ONLY the updated markdown code block, with all warnings and errors
             <button
               onClick={handleCopyAll}
               disabled={diagnostics.length === 0}
-              className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-850 text-slate-700 dark:text-slate-350 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-xs active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-            >
-              {copiedAll ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
-              <span>{copiedAll ? 'Copied!' : 'Copy All'}</span>
-            </button>
-
-            <button
-              onClick={handleCopyAiPrompt}
-              disabled={diagnostics.length === 0}
               className="flex items-center gap-1.5 py-2 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold text-xs shadow-md shadow-indigo-100 dark:shadow-none active:scale-95 transition-all cursor-pointer disabled:opacity-50"
             >
-              {copiedAiPrompt ? <Check size={13} className="text-emerald-300" /> : <Sparkles size={13} />}
-              <span>{copiedAiPrompt ? 'Prompt Copied!' : 'Send to AI Agent'}</span>
+              {copiedAll ? <Check size={13} className="text-emerald-300" /> : <Copy size={13} />}
+              <span>{copiedAll ? 'Copied!' : 'Copy All'}</span>
             </button>
           </div>
         </div>

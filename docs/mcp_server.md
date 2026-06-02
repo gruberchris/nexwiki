@@ -20,7 +20,7 @@ To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools l
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes seventeen powerful, semantic tools for AI agents:
+The NexWiki MCP server registers and exposes eighteen powerful, semantic tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine.
@@ -178,7 +178,21 @@ Appends task status, observations, or checklists to an existing Collaborative AI
 
 ---
 
-### 15. `list_agent_plans`
+### 15. `edit_agent_plan`
+Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts and automatically preserves/prepends the protected `aiagent-plan` tag.
+
+* **Arguments**:
+  * `slug` (string, **required**): The unique URL slug of the plan to edit.
+  * `title` (string, **optional**): The updated title of the plan (preserves existing title if omitted).
+  * `tags` (array of strings, **optional**): Array of tags to set (replaces existing tags; 'aiagent-plan' is always auto-applied and preserved).
+  * `loaded_version` (integer, **required**): The current version number loaded by the AI agent for optimistic locking checks.
+  * `edit_summary` (string, **optional**): Description summarizing what changed.
+* **Behavior**:
+  Verifies that the target article possesses the `aiagent-plan` tag, checks `loaded_version` against the disk version for optimistic locking, updates title/tags while preserving `aiagent-plan`, increments the version number, creates a gzipped history backup snapshot, and updates the Bleve search index.
+
+---
+
+### 16. `list_agent_plans`
 Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved inside the knowledge base.
 
 * **Arguments**:
@@ -188,8 +202,8 @@ Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved in
 
 ---
 
-### 16. `create_agent_skill`
-Creates a new Custom AI Skill, automatically making it part of the custom skills registry.
+### 17. `create_agent_skill`
+Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry.
 
 * **Arguments**:
   * `title` (string, **required**): The title of the skill (e.g., "Docker Container Pruning").
@@ -201,7 +215,7 @@ Creates a new Custom AI Skill, automatically making it part of the custom skills
 
 ---
 
-### 17. `list_agent_skills`
+### 18. `list_agent_skills`
 Lists all Custom AI Skills (tagged with `aiagent-skill`) currently saved in the knowledge base.
 
 * **Arguments**: None (empty object `{}`).

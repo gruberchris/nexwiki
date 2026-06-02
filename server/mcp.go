@@ -358,6 +358,39 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 					},
 				},
 				{
+					"name":        "edit_agent_plan",
+					"description": "Modify the title, tags, or edit summary of an existing Collaborative AI Plan. Employs optimistic locking to prevent concurrent overwrite collisions, and strictly preserves the 'aiagent-plan' tag.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"slug": map[string]interface{}{
+								"type":        "string",
+								"description": "The unique URL-safe slug of the plan to edit.",
+							},
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional new plan title (preserves existing title if omitted).",
+							},
+							"tags": map[string]interface{}{
+								"type": "array",
+								"items": map[string]interface{}{
+									"type": "string",
+								},
+								"description": "Optional array of tags to set (replaces existing tags; 'aiagent-plan' tag is always preserved).",
+							},
+							"loaded_version": map[string]interface{}{
+								"type":        "integer",
+								"description": "The active version number of the plan loaded by the client (helps detect multi-session edit collisions).",
+							},
+							"edit_summary": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional summary outlining what details changed.",
+							},
+						},
+						"required": []string{"slug", "loaded_version"},
+					},
+				},
+				{
 					"name":        "list_agent_plans",
 					"description": "List all Collaborative AI Plans (tagged with 'aiagent-plan') saved inside the knowledge base.",
 					"inputSchema": map[string]interface{}{
@@ -1071,6 +1104,80 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 		respText := fmt.Sprintf("Success! Appended plan details to '%s' (version: %d, edited: %s).\n",
 			art.Title, art.Version, art.UpdatedAt.Format(time.RFC3339))
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "edit_agent_plan":
+		type EditPlanArgs struct {
+			Slug          string    `json:"slug"`
+			Title         *string   `json:"title,omitempty"`
+			Tags          *[]string `json:"tags,omitempty"`
+			LoadedVersion int       `json:"loaded_version"`
+			EditSummary   string    `json:"edit_summary"`
+		}
+		var eArgs EditPlanArgs
+		if err := json.Unmarshal(args.Arguments, &eArgs); err != nil || eArgs.Slug == "" || eArgs.LoadedVersion <= 0 {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'slug' and positive 'loaded_version' are required."}
+		}
+
+		existing, err := srv.Storage.GetArticle(eArgs.Slug)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: plan with slug '%s' not found", eArgs.Slug)}}}, nil
+		}
+
+		hasPlanTag := false
+		for _, tag := range existing.Tags {
+			if strings.ToLower(tag) == "aiagent-plan" {
+				hasPlanTag = true
+				break
+			}
+		}
+		if !hasPlanTag {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a Collaborative AI Plan (must possess the 'aiagent-plan' tag)."}}}, nil
+		}
+
+		if existing.Version > 0 && existing.Version != eArgs.LoadedVersion {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: Version conflict! The plan was updated by another session. Disk version is %d, but you loaded version %d. Re-fetch the plan and try again.", existing.Version, eArgs.LoadedVersion)}}}, nil
+		}
+
+		newTitle := existing.Title
+		if eArgs.Title != nil {
+			newTitle = strings.TrimSpace(*eArgs.Title)
+			if newTitle == "" {
+				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: title cannot be empty"}}}, nil
+			}
+		}
+
+		newTags := existing.Tags
+		if eArgs.Tags != nil {
+			var parsedTags []string
+			hasPlanTagInNew := false
+			for _, tag := range *eArgs.Tags {
+				cleanTag := Slugify(tag)
+				if cleanTag != "" {
+					if cleanTag == "aiagent-plan" {
+						hasPlanTagInNew = true
+					}
+					parsedTags = append(parsedTags, cleanTag)
+				}
+			}
+			if !hasPlanTagInNew {
+				parsedTags = append([]string{"aiagent-plan"}, parsedTags...)
+			}
+			newTags = parsedTags
+		}
+
+		summary := eArgs.EditSummary
+		if summary == "" {
+			summary = "Updated Collaborative AI Plan metadata"
+		}
+
+		art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, existing.Content, summary, newTags)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent plan: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! Collaborative AI Plan '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nTags: %s\n",
+			art.Title, art.Slug, art.Version, art.UpdatedAt.Format(time.RFC3339), strings.Join(art.Tags, ", "))
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 
 	case "list_agent_plans":

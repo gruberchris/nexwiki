@@ -62,6 +62,12 @@ A comprehensive technical manual describing the upgraded CodeMirror 6 composing 
 * **Real-time syncing**: Thread-safe EventBus circular queue logs, SSE network streams, cumulative unread badges, and zero-refresh dashboard count syncing.
 * **Bulk exporter**: Creating category-specific packaged ZIP archives of the database.
 
+### 9. [NexWiki Collaborative Plans Metadata & Version Displays Guide](./plan_metadata_version_display.md)
+A detailed guide explaining how to programmatically manage plan metadata and view document version tracking in the UI:
+* **Programmatic Metadata Updates**: Modifying plan titles, adjusting tag classifications, and preserving critical protected tags with the `edit_agent_plan` MCP tool.
+* **Version Display**: Displaying document version tracking dynamically in both view and edit header modes.
+* **Version suffix for Edited Dates**: Displaying version numbers dynamically prepended to absolute edited timestamps, leaving creation dates fully untouched.
+
 ---
 
 ## 🏗️ Architecture Overview

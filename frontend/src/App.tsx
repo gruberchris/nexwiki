@@ -715,6 +715,7 @@ export const App: React.FC = () => {
             }
           }}
           articles={articles}
+          version={currentArticle ? currentArticle.version : undefined}
         />
       ) : routeInfo.route === 'home' ? (
         // Homepage welcoming Dashboard Hero
@@ -786,7 +787,7 @@ export const App: React.FC = () => {
                       {currentArticle.updated_at && currentArticle.updated_at !== currentArticle.created_at && (
                         <span className="flex items-center gap-1">
                           <Clock size={11} className="text-emerald-400" />
-                          Edited {formatDate(currentArticle.updated_at)}
+                          V{currentArticle.version || 1} Edited {formatDate(currentArticle.updated_at)}
                         </span>
                       )}
                     </div>

@@ -20,7 +20,9 @@ import {
   ClipboardList,
   BookOpen,
   Info,
-  AlertCircle
+  AlertCircle,
+  Copy,
+  Check
 } from 'lucide-react';
 import CodeMirror from '@uiw/react-codemirror';
 import type { ReactCodeMirrorRef } from '@uiw/react-codemirror';
@@ -44,6 +46,7 @@ interface EditorProps {
   onSave: (title: string, content: string, editSummary: string, tags: string[]) => Promise<void>;
   onCancel: () => void;
   articles: Article[];
+  version?: number;
 }
 
 export const Editor: React.FC<EditorProps> = ({
@@ -53,7 +56,8 @@ export const Editor: React.FC<EditorProps> = ({
   slug,
   onSave,
   onCancel,
-  articles
+  articles,
+  version
 }) => {
   const [title, setTitle] = useState(initialTitle);
   const [content, setContent] = useState(initialContent);
@@ -68,6 +72,13 @@ export const Editor: React.FC<EditorProps> = ({
   // Modals state
   const [syntaxModalOpen, setSyntaxModalOpen] = useState(false);
   const [lintModalOpen, setLintModalOpen] = useState(false);
+  const [copiedMarkdown, setCopiedMarkdown] = useState(false);
+
+  const handleCopyMarkdown = async () => {
+    await navigator.clipboard.writeText(content);
+    setCopiedMarkdown(true);
+    setTimeout(() => setCopiedMarkdown(false), 2000);
+  };
 
   // Right-click context menu state
   interface ContextMenuState {
@@ -355,19 +366,19 @@ export const Editor: React.FC<EditorProps> = ({
                   {isSkill && (
                     <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-indigo-650 dark:text-indigo-400 bg-indigo-500/10 dark:bg-indigo-950/20 border border-indigo-550/25 dark:border-indigo-900/50 px-2.5 py-0.5 rounded-full mr-2">
                       <Wrench size={10} className="animate-pulse text-indigo-500" />
-                      <span>Custom AI Skill Mode</span>
+                      <span>Custom AI Skill Mode{version ? ` (V${version})` : ''}</span>
                     </div>
                   )}
                   {isPlan && (
                     <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-550/25 dark:border-emerald-900/50 px-2.5 py-0.5 rounded-full mr-2">
                       <ClipboardList size={10} className="animate-pulse text-emerald-505" />
-                      <span>Collaborative AI Plan Mode</span>
+                      <span>Collaborative AI Plan Mode{version ? ` (V${version})` : ''}</span>
                     </div>
                   )}
                   {!isSkill && !isPlan && (
                     <div className="inline-flex items-center gap-1.5 text-[10px] font-bold text-slate-650 dark:text-slate-400 bg-slate-500/10 dark:bg-slate-950/20 border border-slate-550/25 dark:border-slate-900/50 px-2.5 py-0.5 rounded-full mr-2">
                       <BookOpen size={10} className="text-slate-400" />
-                      <span>Wiki Article Mode</span>
+                      <span>Wiki Article Mode{version ? ` (V${version})` : ''}</span>
                     </div>
                   )}
 
@@ -565,6 +576,16 @@ export const Editor: React.FC<EditorProps> = ({
               <Info size={15} />
             </button>
 
+            {/* Copy Raw Markdown Button */}
+            <button
+              type="button"
+              onClick={handleCopyMarkdown}
+              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-colors flex items-center gap-1 cursor-pointer"
+              title="Copy Raw Markdown Content"
+            >
+              {copiedMarkdown ? <Check size={15} className="text-emerald-500" /> : <Copy size={15} />}
+            </button>
+
             {/* Linter Count Badge */}
             {diagnostics.length > 0 && (
               <button
@@ -718,7 +739,6 @@ export const Editor: React.FC<EditorProps> = ({
         onClose={() => setLintModalOpen(false)}
         diagnostics={diagnostics}
         onSelectDiagnostic={handleSelectDiagnostic}
-        markdownContent={content}
       />
 
       {/* Custom Context Menu */}
