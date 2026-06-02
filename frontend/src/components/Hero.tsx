@@ -144,28 +144,24 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
   const filteredWikiArticles = wikiArticles.filter(art => {
     const q = wikiSearchQuery.toLowerCase();
     return art.title.toLowerCase().includes(q) ||
-      art.slug.toLowerCase().includes(q) ||
       art.tags?.some(t => t.toLowerCase().includes(q));
   });
 
   const filteredAiMemories = aiMemories.filter(art => {
     const q = memoriesSearchQuery.toLowerCase();
     return art.title.toLowerCase().includes(q) ||
-      art.slug.toLowerCase().includes(q) ||
       art.tags?.some(t => t.toLowerCase().includes(q));
   });
 
   const filteredAiPlans = aiPlans.filter(art => {
     const q = plansSearchQuery.toLowerCase();
     return art.title.toLowerCase().includes(q) ||
-      art.slug.toLowerCase().includes(q) ||
       art.tags?.some(t => t.toLowerCase().includes(q));
   });
 
   const filteredAiSkills = aiSkills.filter(art => {
     const q = skillsSearchQuery.toLowerCase();
     return art.title.toLowerCase().includes(q) ||
-      art.slug.toLowerCase().includes(q) ||
       art.tags?.some(t => t.toLowerCase().includes(q));
   });
 
