@@ -93,10 +93,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const isPlan = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan');
       if (isSkill || isPlan) return false;
 
-      return art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
+      const matchesQuery = art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
         art.slug.toLowerCase().includes(filterQuery.toLowerCase());
+      const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
+      return matchesQuery && matchesTag;
     });
-  }, [articles, filterQuery]);
+  }, [articles, filterQuery, selectedTag]);
 
   // AI Agent skills filter (possesses aiagent-skill tag)
   const aiSkills = useMemo(() => {
@@ -104,10 +106,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const isSkill = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill');
       if (!isSkill) return false;
 
-      return art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
+      const matchesQuery = art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
         art.slug.toLowerCase().includes(filterQuery.toLowerCase());
+      const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
+      return matchesQuery && matchesTag;
     });
-  }, [articles, filterQuery]);
+  }, [articles, filterQuery, selectedTag]);
 
   // AI Agent plans filter (possesses aiagent-plan tag)
   const aiPlans = useMemo(() => {
@@ -115,10 +119,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const isPlan = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan');
       if (!isPlan) return false;
 
-      return art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
+      const matchesQuery = art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
         art.slug.toLowerCase().includes(filterQuery.toLowerCase());
+      const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
+      return matchesQuery && matchesTag;
     });
-  }, [articles, filterQuery]);
+  }, [articles, filterQuery, selectedTag]);
 
   return (
     <aside className="w-80 h-screen flex flex-col theme-sidebar backdrop-blur-md transition-all select-none">
@@ -192,18 +198,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           onClick={() => onCreateNew('plan')}
           className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-themeBgPrimary border border-themeBorder hover:bg-themeBgSecondary hover:border-themeAccentSecondary/30 hover:scale-[1.02] text-themeTextSecondary active:scale-[0.98] transition-all select-none cursor-pointer"
-          title="Create Collaborative AI Plan"
+          title="Create Collaborative Agent Plan"
         >
           <ClipboardList size={14} className="text-themeAccentSecondary" />
-          <span className="text-[10px] font-bold">AI Plan</span>
+          <span className="text-[10px] font-bold">Agent Plan</span>
         </button>
         <button
           onClick={() => onCreateNew('skill')}
           className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-themeBgPrimary border border-themeBorder hover:bg-themeBgSecondary hover:border-themeAccent/30 hover:scale-[1.02] text-themeTextSecondary active:scale-[0.98] transition-all select-none cursor-pointer"
-          title="Create Custom AI Skill"
+          title="Create Custom Agent Skill"
         >
           <Cpu size={14} className="text-themeAccent" />
-          <span className="text-[10px] font-bold">AI Skill</span>
+          <span className="text-[10px] font-bold">Agent Skill</span>
         </button>
       </div>
 
@@ -213,7 +219,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
           <input
             type="text"
-            placeholder="Quick search articles..."
+            placeholder="Filter sidebar..."
             value={filterQuery}
             onChange={(e) => setFilterQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgPrimary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent focus:bg-themeBgSecondary text-themeTextSecondary transition-all placeholder:text-themeTextMuted"
@@ -322,7 +328,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <span className="flex items-center gap-1.5">
               <Cpu size={10} className="animate-pulse text-themeAccent" />
-              AI memories ({aiMemories.length})
+              Agent Memories ({aiMemories.length})
             </span>
             <ChevronDown size={12} className={`transition-transform duration-200 text-themeTextMuted ${aiMemoriesOpen ? 'rotate-0' : '-rotate-90'}`} />
           </button>
@@ -384,7 +390,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <span className="flex items-center gap-1.5">
               <ClipboardList size={10} className="animate-pulse text-themeAccent" />
-              AI plans ({aiPlans.length})
+              Agent Plans ({aiPlans.length})
             </span>
             <ChevronDown size={12} className={`transition-transform duration-200 text-themeTextMuted ${aiPlansOpen ? 'rotate-0' : '-rotate-90'}`} />
           </button>
@@ -446,7 +452,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <span className="flex items-center gap-1.5">
               <Wrench size={10} className="animate-pulse text-themeAccent" />
-              AI skills ({aiSkills.length})
+              Agent Skills ({aiSkills.length})
             </span>
             <ChevronDown size={12} className={`transition-transform duration-200 text-themeTextMuted ${aiSkillsOpen ? 'rotate-0' : '-rotate-90'}`} />
           </button>

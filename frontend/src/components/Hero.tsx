@@ -257,7 +257,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
               <ClipboardList size={20} />
             </div>
             <h3 className="text-base font-bold text-themeTextSecondary mt-4 group-hover:text-themeAccentSecondary transition-colors">
-              Create AI Plan
+              Create Agent Plan
             </h3>
             <p className="text-xs text-themeTextMuted mt-1.5 leading-relaxed font-medium">
               Create a Collaborative AI Plan to coordinate roadmaps and milestones.
@@ -272,7 +272,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
               <Wrench size={20} />
             </div>
             <h3 className="text-base font-bold text-themeTextSecondary mt-4 group-hover:text-themeAccent transition-colors">
-              Create Custom Skill
+              Create Agent Skill
             </h3>
             <p className="text-xs text-themeTextMuted mt-1.5 leading-relaxed font-medium">
               Author procedural instructions and rules (SKILL.md) for AI agents.
@@ -310,7 +310,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   className={`transition-transform duration-200 text-themeTextMuted group-hover:text-themeAccent ${wikiExpanded ? 'rotate-0' : '-rotate-90'}`} 
                 />
                 <Grid size={16} className="text-themeAccent" />
-                <span>Wiki Index Directory</span>
+                <span>Wiki Index</span>
                 <span className="text-xs bg-themeAccentBg text-themeAccent font-bold px-2.5 py-0.5 rounded-full select-none">
                   {filteredWikiArticles.length}
                 </span>
@@ -321,7 +321,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
                   <input
                     type="text"
-                    placeholder="Filter articles by title or slug..."
+                    placeholder="Filter articles by title or tag..."
                     value={wikiSearchQuery}
                     onChange={(e) => setWikiSearchQuery(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary shadow-sm transition-all"
@@ -366,7 +366,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   className={`transition-transform duration-200 text-themeTextMuted group-hover:text-themeAccent ${memoriesExpanded ? 'rotate-0' : '-rotate-90'}`} 
                 />
                 <Cpu size={16} className="text-themeAccent" />
-                <span>AI Memories Directory</span>
+                <span>Agent Memories</span>
                 <span className="text-xs bg-themeAccentBg text-themeAccent font-bold px-2.5 py-0.5 rounded-full select-none">
                   {filteredAiMemories.length}
                 </span>
@@ -377,7 +377,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
                   <input
                     type="text"
-                    placeholder="Filter memories by title or slug..."
+                    placeholder="Filter memories by title or tag..."
                     value={memoriesSearchQuery}
                     onChange={(e) => setMemoriesSearchQuery(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary shadow-sm transition-all"
@@ -415,7 +415,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   className={`transition-transform duration-200 text-themeTextMuted group-hover:text-themeAccentSecondary ${plansExpanded ? 'rotate-0' : '-rotate-90'}`} 
                 />
                 <ClipboardList size={16} className="text-themeAccentSecondary" />
-                <span>AI Plans Directory</span>
+                <span>Agent Plans</span>
                 <span className="text-xs bg-themeAccentBg text-themeAccentSecondary font-bold px-2.5 py-0.5 rounded-full select-none">
                   {filteredAiPlans.length}
                 </span>
@@ -426,7 +426,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
                   <input
                     type="text"
-                    placeholder="Filter plans by title or slug..."
+                    placeholder="Filter plans by title or tag..."
                     value={plansSearchQuery}
                     onChange={(e) => setPlansSearchQuery(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccentSecondary text-themeTextSecondary shadow-sm transition-all"
@@ -447,7 +447,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                       className="mt-4 inline-flex items-center gap-1.5 py-2 px-4 rounded-xl bg-themeAccentSecondary hover:opacity-90 text-white font-semibold text-xs transition-colors cursor-pointer"
                     >
                       <Plus size={12} />
-                      <span>Create AI Plan</span>
+                      <span>Create Agent Plan</span>
                     </button>
                   </div>
                 ) : (
@@ -471,7 +471,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   className={`transition-transform duration-200 text-themeTextMuted group-hover:text-themeAccent ${skillsExpanded ? 'rotate-0' : '-rotate-90'}`} 
                 />
                 <Wrench size={16} className="text-themeAccent" />
-                <span>AI Skills Directory</span>
+                <span>Agent Skills</span>
                 <span className="text-xs bg-themeAccentBg text-themeAccent font-bold px-2.5 py-0.5 rounded-full select-none">
                   {filteredAiSkills.length}
                 </span>
@@ -482,7 +482,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
                   <input
                     type="text"
-                    placeholder="Filter skills by title or slug..."
+                    placeholder="Filter skills by title or tag..."
                     value={skillsSearchQuery}
                     onChange={(e) => setSkillsSearchQuery(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary shadow-sm transition-all"
@@ -503,7 +503,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                       className="mt-4 inline-flex items-center gap-1.5 py-2 px-4 rounded-xl bg-themeAccent hover:opacity-90 text-white font-semibold text-xs transition-colors cursor-pointer"
                     >
                       <Plus size={12} />
-                      <span>Create Custom Skill</span>
+                      <span>Create Agent Skill</span>
                     </button>
                   </div>
                 ) : (
