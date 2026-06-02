@@ -20,7 +20,7 @@ To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools l
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes eighteen powerful, semantic tools for AI agents:
+The NexWiki MCP server registers and exposes nineteen powerful, semantic tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine.
@@ -57,6 +57,7 @@ Creates a new wiki article with a given title and raw Markdown content body.
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the new article (e.g. "React Hooks Guide").
   * `content` (string, **required**): The raw Markdown content of the article body.
+  * `tags` (array of strings, **optional**): Status or user tags to apply to the article. Call `get_status_tags` to see the recognized status values (e.g. `draft`, `wip`). System `aiagent-*` tags are reserved and will be ignored if provided.
   * `edit_summary` (string, **optional**): A summary describing the reason for creating the page.
 * **Behavior**:
   Automatically handles title slugification, checks for slug collisions, serializes the metadata block, commits the first version backup snapshot, saves the flat Markdown file on disk, and indexes the new article in Bleve for search.
@@ -64,12 +65,13 @@ Creates a new wiki article with a given title and raw Markdown content body.
 ---
 
 ### 5. `edit_wiki_article`
-Modifies the title, Markdown content, or edit the summary of an existing wiki article.
+Modifies the title, Markdown content, tags, or edit summary of an existing wiki article.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the article to edit.
   * `title` (string, **required**): The updated title of the article.
   * `content` (string, **required**): The updated raw Markdown content of the article body.
+  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see the recognized status values (e.g. `completed`, `review`). Omit to leave existing tags unchanged.
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
   * `edit_summary` (string, **optional**): A summary detailing the modifications.
 * **Behavior**:
@@ -184,7 +186,7 @@ Modifies the title, tags, or edit the summary of an existing Collaborative AI Pl
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the plan to edit.
   * `title` (string, **optional**): The updated title of the plan (preserves existing title if omitted).
-  * `tags` (array of strings, **optional**): Array of tags to set (replaces existing tags; 'aiagent-plan' is always auto-applied and preserved).
+  * `tags` (array of strings, **optional**): Tags to set on the plan (replaces existing tags; `aiagent-plan` is always preserved). Use status tags to signal plan state — call `get_status_tags` to see recognized values (e.g. `completed`, `wip`, `blocked`).
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent for optimistic locking checks.
   * `edit_summary` (string, **optional**): Description summarizing what changed.
 * **Behavior**:
@@ -197,7 +199,7 @@ Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved in
 
 * **Arguments**:
   * `project_context` (string, **optional**): An optional project context name to filter plans by.
-  * `tag` (string, **optional**): An optional tag name to filter plans by (e.g., `completed`). Only plans with this tag will be returned.
+  * `tag` (string, **optional**): An optional tag to filter plans by. Use a status tag to find plans in a specific state (e.g. `completed`, `wip`). Call `get_status_tags` to see all recognized status values.
 * **Behavior**:
   Scans all active articles, isolates pages that possess the `aiagent-plan` tag, filters them by project context tag and/or additional tags if provided, and returns a bulleted index of matching plans.
 
@@ -209,7 +211,7 @@ Creates a new Custom AI Skill, automatically making it part of the custom Skills
 * **Arguments**:
   * `title` (string, **required**): The title of the skill (e.g., "Docker Container Pruning").
   * `content` (string, **required**): The raw Markdown content of the skill instructions (procedural SKILL.md format).
-  * `tags` (array of strings, **optional**): Optional user tags to apply to the skill.
+  * `tags` (array of strings, **optional**): Optional tags to apply to the skill. Use status tags to signal the skill's state — call `get_status_tags` to see recognized values (e.g. `draft`, `ready`).
   * `edit_summary` (string, **optional**): Optional summary describing why the skill was created.
 * **Behavior**:
   Checks for slug collision, automatically attaches the `aiagent-skill` tag, applies any additional user tags, saves the flat Markdown file, commits the first version snapshot, and indexes the skill in Bleve.
@@ -222,6 +224,17 @@ Lists all Custom AI Skills (tagged with `aiagent-skill`) currently saved in the 
 * **Arguments**: None (empty object `{}`).
 * **Behavior**:
   Scans all active articles, isolates pages possessing the `aiagent-skill` tag, and returns a bulleted index of matching skills.
+
+---
+
+### 19. `get_status_tags`
+Returns the canonical list of recognized status tags used to indicate the lifecycle state of wiki articles and AI plans.
+
+* **Arguments**: None (empty object `{}`).
+* **Behavior**:
+  Returns the server-authoritative list of status tag values. Call this before tagging articles, plans, or skills to ensure you use a recognized value. Status tags are displayed with highest visual priority on the home dashboard, ahead of regular user tags and system `aiagent-*` tags. They can also be used with `list_agent_plans` to filter plans by state.
+
+* **Recognized values**: `completed`, `done`, `wip`, `draft`, `in-progress`, `archived`, `active`, `todo`, `pending`, `review`, `blocked`, `ready`
 
 ---
 

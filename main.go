@@ -79,6 +79,7 @@ func main() {
 	// Register API endpoints
 	mux.HandleFunc("/api/mcp", srv.HandleStreamableHTTP)
 	mux.HandleFunc("GET /api/config", srv.HandleGetConfig)
+	mux.HandleFunc("GET /api/status-tags", srv.HandleGetStatusTags)
 	mux.HandleFunc("GET /api/themes", srv.HandleGetThemes)
 	mux.HandleFunc("POST /api/themes", srv.HandleSaveTheme)
 	mux.HandleFunc("DELETE /api/themes/{name}", srv.HandleDeleteTheme)

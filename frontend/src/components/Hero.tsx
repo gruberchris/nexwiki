@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Article } from '../types';
 import { formatRelativeTime } from '../utils';
 import { 
@@ -17,31 +17,27 @@ import {
   Cpu
 } from 'lucide-react';
 
-const STATUS_TAGS = new Set([
-  'completed', 'done', 'wip', 'draft', 'in-progress', 'archived',
-  'active', 'todo', 'pending', 'review', 'blocked', 'ready',
-]);
-
 const MAX_VISIBLE_TAGS = 3;
 
-function getTagPriority(tag: string): number {
+function getTagPriority(tag: string, statusTags: Set<string>): number {
   const lower = tag.toLowerCase();
-  if (STATUS_TAGS.has(lower)) return 0;
+  if (statusTags.has(lower)) return 0;
   if (lower.startsWith('aiagent-')) return 2;
   return 1;
 }
 
-function sortCardTags(tags: string[]): string[] {
-  return [...tags].sort((a, b) => getTagPriority(a) - getTagPriority(b));
+function sortCardTags(tags: string[], statusTags: Set<string>): string[] {
+  return [...tags].sort((a, b) => getTagPriority(a, statusTags) - getTagPriority(b, statusTags));
 }
 
 interface ArticleCardProps {
   art: Article;
   onNavigate: (slug: string) => void;
   secondary?: boolean;
+  statusTags: Set<string>;
 }
 
-function ArticleCard({ art, onNavigate, secondary = false }: ArticleCardProps) {
+function ArticleCard({ art, onNavigate, secondary = false, statusTags }: ArticleCardProps) {
   const accentText = secondary ? 'text-themeAccentSecondary' : 'text-themeAccent';
   const accentHover = secondary ? 'group-hover:text-themeAccentSecondary' : 'group-hover:text-themeAccent';
 
@@ -56,7 +52,7 @@ function ArticleCard({ art, onNavigate, secondary = false }: ArticleCardProps) {
         </h3>
         {art.tags && art.tags.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {sortCardTags(art.tags).slice(0, MAX_VISIBLE_TAGS).map((tag) => {
+            {sortCardTags(art.tags, statusTags).slice(0, MAX_VISIBLE_TAGS).map((tag) => {
               const isSystem = tag.toLowerCase().startsWith('aiagent-');
               return (
                 <span
@@ -101,6 +97,14 @@ interface HeroProps {
 
 export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, wikiName }) => {
   const [ftsQuery, setFtsQuery] = useState('');
+  const [statusTags, setStatusTags] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    fetch('/api/status-tags')
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data.tags)) setStatusTags(new Set(data.tags)); })
+      .catch(() => {});
+  }, []);
 
   // Individual search input states
   const [wikiSearchQuery, setWikiSearchQuery] = useState('');
@@ -343,7 +347,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   </div>
                 ) : (
                   filteredWikiArticles.map((art) => (
-                    <ArticleCard key={art.slug} art={art} onNavigate={onNavigate} />
+                    <ArticleCard key={art.slug} art={art} onNavigate={onNavigate} statusTags={statusTags} />
                   ))
                 )}
               </div>
@@ -392,7 +396,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   </div>
                 ) : (
                   filteredAiMemories.map((art) => (
-                    <ArticleCard key={art.slug} art={art} onNavigate={onNavigate} />
+                    <ArticleCard key={art.slug} art={art} onNavigate={onNavigate} statusTags={statusTags} />
                   ))
                 )}
               </div>
@@ -448,7 +452,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   </div>
                 ) : (
                   filteredAiPlans.map((art) => (
-                    <ArticleCard key={art.slug} art={art} onNavigate={onNavigate} secondary />
+                    <ArticleCard key={art.slug} art={art} onNavigate={onNavigate} secondary statusTags={statusTags} />
                   ))
                 )}
               </div>
@@ -504,7 +508,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   </div>
                 ) : (
                   filteredAiSkills.map((art) => (
-                    <ArticleCard key={art.slug} art={art} onNavigate={onNavigate} />
+                    <ArticleCard key={art.slug} art={art} onNavigate={onNavigate} statusTags={statusTags} />
                   ))
                 )}
               </div>

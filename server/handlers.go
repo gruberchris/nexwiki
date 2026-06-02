@@ -63,6 +63,14 @@ type ConfigResp struct {
 	Version                string `json:"version"`
 }
 
+// HandleGetStatusTags returns the canonical list of recognized status tags.
+func (srv *Server) HandleGetStatusTags(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"tags":        StatusTags,
+		"description": "Status tags indicate the current lifecycle state of a wiki article or collaborative AI plan. These tags are displayed with priority on the home dashboard.",
+	})
+}
+
 // HandleGetConfig serves the custom title configuration settings to the client.
 func (srv *Server) HandleGetConfig(w http.ResponseWriter, _ *http.Request) {
 	var scheduledTheme string

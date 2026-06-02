@@ -152,6 +152,13 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 								"type":        "string",
 								"description": "The raw Markdown content of the article body.",
 							},
+							"tags": map[string]interface{}{
+								"type": "array",
+								"items": map[string]interface{}{
+									"type": "string",
+								},
+								"description": "Optional status or user tags to apply to the article. Call get_status_tags to see the recognized status values (e.g. 'draft', 'wip'). System 'aiagent-*' tags are reserved and will be ignored if provided.",
+							},
 							"edit_summary": map[string]interface{}{
 								"type":        "string",
 								"description": "Optional description summarizing the purpose of the creation (e.g. 'Initial seed guide').",
@@ -162,7 +169,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "edit_wiki_article",
-					"description": "Modify the title, markdown content, or edit summary of an existing article. Employs optimistic locking to prevent concurrent overwrite collisions.",
+					"description": "Modify the title, markdown content, tags, or edit summary of an existing article. Employs optimistic locking to prevent concurrent overwrite collisions.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -177,6 +184,13 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 							"content": map[string]interface{}{
 								"type":        "string",
 								"description": "The updated raw Markdown content of the article body.",
+							},
+							"tags": map[string]interface{}{
+								"type": "array",
+								"items": map[string]interface{}{
+									"type": "string",
+								},
+								"description": "Optional tags to set on the article (replaces existing user tags; existing system 'aiagent-*' tags are always preserved). Call get_status_tags to see the recognized status values (e.g. 'completed', 'review').",
 							},
 							"loaded_version": map[string]interface{}{
 								"type":        "integer",
@@ -376,7 +390,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 								"items": map[string]interface{}{
 									"type": "string",
 								},
-								"description": "Optional array of tags to set (replaces existing tags; 'aiagent-plan' tag is always preserved).",
+								"description": "Optional tags to set on the plan (replaces existing tags; 'aiagent-plan' is always preserved). Use status tags to signal plan state — call get_status_tags to see recognized values (e.g. 'completed', 'wip', 'blocked').",
 							},
 							"loaded_version": map[string]interface{}{
 								"type":        "integer",
@@ -402,7 +416,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 							},
 							"tag": map[string]interface{}{
 								"type":        "string",
-								"description": "Optional tag name to filter plans by (e.g., 'completed'). Only plans with this tag will be returned.",
+								"description": "Optional tag to filter plans by. Use a status tag to find plans in a specific state (e.g. 'completed', 'wip'). Call get_status_tags to see all recognized status values.",
 							},
 						},
 					},
@@ -426,7 +440,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 								"items": map[string]interface{}{
 									"type": "string",
 								},
-								"description": "Optional user tags to apply to the skill.",
+								"description": "Optional tags to apply to the skill. Use status tags to signal the skill's state — call get_status_tags to see recognized values (e.g. 'draft', 'ready').",
 							},
 							"edit_summary": map[string]interface{}{
 								"type":        "string",
@@ -439,6 +453,14 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				{
 					"name":        "list_agent_skills",
 					"description": "List all Custom AI Skills (tagged with 'aiagent-skill') currently saved in the knowledge base.",
+					"inputSchema": map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
+					},
+				},
+				{
+					"name":        "get_status_tags",
+					"description": "Returns the canonical list of recognized status tags used in NexWiki to indicate the lifecycle state of wiki articles and AI plans. Use these tags when creating or editing articles and plans to signal their current status. Status tags are displayed with highest priority on the home dashboard.",
 					"inputSchema": map[string]interface{}{
 						"type":       "object",
 						"properties": map[string]interface{}{},
@@ -792,9 +814,10 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 	case "create_wiki_article":
 		type CreateArgs struct {
-			Title       string `json:"title"`
-			Content     string `json:"content"`
-			EditSummary string `json:"edit_summary"`
+			Title       string   `json:"title"`
+			Content     string   `json:"content"`
+			Tags        []string `json:"tags"`
+			EditSummary string   `json:"edit_summary"`
 		}
 		var cArgs CreateArgs
 		if err := json.Unmarshal(args.Arguments, &cArgs); err != nil || cArgs.Title == "" || cArgs.Content == "" {
@@ -806,7 +829,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: an article with title '%s' (slug: '%s') already exists", cArgs.Title, slug)}}}, nil
 		}
 
-		art, err := srv.Storage.SaveArticle("", cArgs.Title, cArgs.Content, cArgs.EditSummary, nil)
+		tags := validateAndCleanUserTags(cArgs.Tags, nil)
+		art, err := srv.Storage.SaveArticle("", cArgs.Title, cArgs.Content, cArgs.EditSummary, tags)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating article: %v", err)}}}, nil
 		}
@@ -817,11 +841,12 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 	case "edit_wiki_article":
 		type EditArgs struct {
-			Slug          string `json:"slug"`
-			Title         string `json:"title"`
-			Content       string `json:"content"`
-			LoadedVersion int    `json:"loaded_version"`
-			EditSummary   string `json:"edit_summary"`
+			Slug          string   `json:"slug"`
+			Title         string   `json:"title"`
+			Content       string   `json:"content"`
+			Tags          []string `json:"tags"`
+			LoadedVersion int      `json:"loaded_version"`
+			EditSummary   string   `json:"edit_summary"`
 		}
 		var eArgs EditArgs
 		if err := json.Unmarshal(args.Arguments, &eArgs); err != nil || eArgs.Slug == "" || eArgs.Title == "" || eArgs.Content == "" || eArgs.LoadedVersion <= 0 {
@@ -837,7 +862,11 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: Version conflict! The article was updated by another session. Disk version is %d, but you loaded version %d. Re-fetch the article and try again.", existing.Version, eArgs.LoadedVersion)}}}, nil
 		}
 
-		art, err := srv.Storage.SaveArticle(eArgs.Slug, eArgs.Title, eArgs.Content, eArgs.EditSummary, existing.Tags)
+		tags := existing.Tags
+		if eArgs.Tags != nil {
+			tags = validateAndCleanUserTags(eArgs.Tags, existing.Tags)
+		}
+		art, err := srv.Storage.SaveArticle(eArgs.Slug, eArgs.Title, eArgs.Content, eArgs.EditSummary, tags)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing article: %v", err)}}}, nil
 		}
@@ -1331,6 +1360,14 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			text = "No Custom AI Agent Skills found inside the knowledge base.\n"
 		}
 
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+
+	case "get_status_tags":
+		text := "NexWiki Status Tags\n\nThe following tags indicate the lifecycle state of a wiki article or AI plan.\nApply them when creating or editing content to signal its current status.\nStatus tags are displayed with highest priority on the home dashboard.\n\nRecognized status tags:\n"
+		for _, tag := range StatusTags {
+			text += fmt.Sprintf("  • %s\n", tag)
+		}
+		text += "\nTip: use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"completed\").\n"
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
 
 	case "get_article_history":
