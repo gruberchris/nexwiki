@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import type { Article } from '../types';
 import { formatRelativeTime } from '../utils';
-import { 
-  BookOpen, 
-  Plus, 
-  Search, 
-  FileText, 
-  Clock, 
+import {
+  BookOpen,
+  Plus,
+  Search,
+  FileText,
+  Clock,
   ArrowRight,
   Terminal,
   Grid,
@@ -14,7 +14,9 @@ import {
   ClipboardList,
   Wrench,
   ChevronDown,
-  Cpu
+  Cpu,
+  HelpCircle,
+  X
 } from 'lucide-react';
 
 const MAX_VISIBLE_TAGS = 3;
@@ -28,6 +30,58 @@ function getTagPriority(tag: string, statusTags: Set<string>): number {
 
 function sortCardTags(tags: string[], statusTags: Set<string>): string[] {
   return [...tags].sort((a, b) => getTagPriority(a, statusTags) - getTagPriority(b, statusTags));
+}
+
+// Evaluates a filter query against an article's title and tags.
+//
+// Syntax:
+//   space / OR / ||  →  OR between positive terms (bare space is implicit OR)
+//   AND / &&         →  AND within a group (higher precedence than OR)
+//   !term            →  global exclusion — always ANDed; position/operators ignored
+//
+// Examples:
+//   "nex wiki"           → nex OR wiki
+//   "nex AND wiki"       → nex AND wiki
+//   "!completed !wip"    → exclude completed AND exclude wip
+//   "!completed OR !wip" → same (negations are always AND-excluded)
+//   "nex !completed"     → contains nex AND not completed
+function matchesFilter(art: Article, query: string): boolean {
+  if (!query.trim()) return true;
+
+  const fields = [art.title.toLowerCase(), ...(art.tags?.map(t => t.toLowerCase()) ?? [])];
+  const contains = (term: string) => fields.some(f => f.includes(term));
+
+  const normalized = query.trim().replace(/&&/g, ' AND ').replace(/\|\|/g, ' OR ');
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+
+  const mustNot: string[] = [];
+  const positiveTokens: string[] = [];
+  for (const token of tokens) {
+    const lower = token.toLowerCase();
+    if (lower.startsWith('!') && lower.length > 1) mustNot.push(lower.slice(1));
+    else positiveTokens.push(lower);
+  }
+
+  if (mustNot.some(contains)) return false;
+  if (positiveTokens.length === 0) return true;
+
+  // Build OR-groups: space or explicit OR starts a new group; AND appends to current group.
+  const orGroups: string[][] = [[]];
+  let nextIsAnd = false;
+  for (const token of positiveTokens) {
+    if (token === 'or') {
+      orGroups.push([]);
+      nextIsAnd = false;
+    } else if (token === 'and') {
+      nextIsAnd = true;
+    } else {
+      if (!nextIsAnd && orGroups[orGroups.length - 1].length > 0) orGroups.push([]);
+      orGroups[orGroups.length - 1].push(token);
+      nextIsAnd = false;
+    }
+  }
+
+  return orGroups.filter(g => g.length > 0).some(group => group.every(contains));
 }
 
 interface ArticleCardProps {
@@ -88,6 +142,15 @@ function ArticleCard({ art, onNavigate, secondary = false, statusTags }: Article
   );
 }
 
+function Row({ code, desc }: { code: string; desc: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <code className="shrink-0 px-2 py-0.5 rounded-md bg-themeBgSecondary border border-themeBorder text-themeAccent font-mono text-[11px]">{code}</code>
+      <span className="text-themeTextMuted leading-relaxed">{desc}</span>
+    </div>
+  );
+}
+
 interface HeroProps {
   articles: Article[];
   onNavigate: (slug: string) => void;
@@ -111,6 +174,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
   const [memoriesSearchQuery, setMemoriesSearchQuery] = useState('');
   const [plansSearchQuery, setPlansSearchQuery] = useState('');
   const [skillsSearchQuery, setSkillsSearchQuery] = useState('');
+  const [showFilterHelp, setShowFilterHelp] = useState(false);
 
   // Expansion states
   const [wikiExpanded, setWikiExpanded] = useState(false);
@@ -141,29 +205,10 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
   });
 
   // Filtered lists based on category-specific queries
-  const filteredWikiArticles = wikiArticles.filter(art => {
-    const q = wikiSearchQuery.toLowerCase();
-    return art.title.toLowerCase().includes(q) ||
-      art.tags?.some(t => t.toLowerCase().includes(q));
-  });
-
-  const filteredAiMemories = aiMemories.filter(art => {
-    const q = memoriesSearchQuery.toLowerCase();
-    return art.title.toLowerCase().includes(q) ||
-      art.tags?.some(t => t.toLowerCase().includes(q));
-  });
-
-  const filteredAiPlans = aiPlans.filter(art => {
-    const q = plansSearchQuery.toLowerCase();
-    return art.title.toLowerCase().includes(q) ||
-      art.tags?.some(t => t.toLowerCase().includes(q));
-  });
-
-  const filteredAiSkills = aiSkills.filter(art => {
-    const q = skillsSearchQuery.toLowerCase();
-    return art.title.toLowerCase().includes(q) ||
-      art.tags?.some(t => t.toLowerCase().includes(q));
-  });
+  const filteredWikiArticles = wikiArticles.filter(art => matchesFilter(art, wikiSearchQuery));
+  const filteredAiMemories = aiMemories.filter(art => matchesFilter(art, memoriesSearchQuery));
+  const filteredAiPlans = aiPlans.filter(art => matchesFilter(art, plansSearchQuery));
+  const filteredAiSkills = aiSkills.filter(art => matchesFilter(art, skillsSearchQuery));
 
   const handleFtsSearch = (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -321,15 +366,18 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
               </button>
 
               {wikiExpanded && (
-                <div className="relative w-full sm:w-80 animate-fade-in">
-                  <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
-                  <input
-                    type="text"
-                    placeholder="Filter articles by title or tag..."
-                    value={wikiSearchQuery}
-                    onChange={(e) => setWikiSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary shadow-sm transition-all"
-                  />
+                <div className="flex items-center gap-1.5 w-full sm:w-80 animate-fade-in">
+                  <div className="relative flex-1">
+                    <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
+                    <input
+                      type="text"
+                      placeholder="Filter articles by title or tag..."
+                      value={wikiSearchQuery}
+                      onChange={(e) => setWikiSearchQuery(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary shadow-sm transition-all"
+                    />
+                  </div>
+                  <button onClick={() => setShowFilterHelp(true)} className="shrink-0 p-1.5 rounded-lg text-themeTextMuted hover:text-themeAccent hover:bg-themeAccentBg transition-colors" title="Filter syntax help"><HelpCircle size={14} /></button>
                 </div>
               )}
             </div>
@@ -377,15 +425,18 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
               </button>
 
               {memoriesExpanded && (
-                <div className="relative w-full sm:w-80 animate-fade-in">
-                  <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
-                  <input
-                    type="text"
-                    placeholder="Filter memories by title or tag..."
-                    value={memoriesSearchQuery}
-                    onChange={(e) => setMemoriesSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary shadow-sm transition-all"
-                  />
+                <div className="flex items-center gap-1.5 w-full sm:w-80 animate-fade-in">
+                  <div className="relative flex-1">
+                    <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
+                    <input
+                      type="text"
+                      placeholder="Filter memories by title or tag..."
+                      value={memoriesSearchQuery}
+                      onChange={(e) => setMemoriesSearchQuery(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary shadow-sm transition-all"
+                    />
+                  </div>
+                  <button onClick={() => setShowFilterHelp(true)} className="shrink-0 p-1.5 rounded-lg text-themeTextMuted hover:text-themeAccent hover:bg-themeAccentBg transition-colors" title="Filter syntax help"><HelpCircle size={14} /></button>
                 </div>
               )}
             </div>
@@ -426,15 +477,18 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
               </button>
 
               {plansExpanded && (
-                <div className="relative w-full sm:w-80 animate-fade-in">
-                  <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
-                  <input
-                    type="text"
-                    placeholder="Filter plans by title or tag..."
-                    value={plansSearchQuery}
-                    onChange={(e) => setPlansSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccentSecondary text-themeTextSecondary shadow-sm transition-all"
-                  />
+                <div className="flex items-center gap-1.5 w-full sm:w-80 animate-fade-in">
+                  <div className="relative flex-1">
+                    <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
+                    <input
+                      type="text"
+                      placeholder="Filter plans by title or tag..."
+                      value={plansSearchQuery}
+                      onChange={(e) => setPlansSearchQuery(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccentSecondary text-themeTextSecondary shadow-sm transition-all"
+                    />
+                  </div>
+                  <button onClick={() => setShowFilterHelp(true)} className="shrink-0 p-1.5 rounded-lg text-themeTextMuted hover:text-themeAccentSecondary hover:bg-themeAccentBg transition-colors" title="Filter syntax help"><HelpCircle size={14} /></button>
                 </div>
               )}
             </div>
@@ -482,15 +536,18 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
               </button>
 
               {skillsExpanded && (
-                <div className="relative w-full sm:w-80 animate-fade-in">
-                  <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
-                  <input
-                    type="text"
-                    placeholder="Filter skills by title or tag..."
-                    value={skillsSearchQuery}
-                    onChange={(e) => setSkillsSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary shadow-sm transition-all"
-                  />
+                <div className="flex items-center gap-1.5 w-full sm:w-80 animate-fade-in">
+                  <div className="relative flex-1">
+                    <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
+                    <input
+                      type="text"
+                      placeholder="Filter skills by title or tag..."
+                      value={skillsSearchQuery}
+                      onChange={(e) => setSkillsSearchQuery(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary shadow-sm transition-all"
+                    />
+                  </div>
+                  <button onClick={() => setShowFilterHelp(true)} className="shrink-0 p-1.5 rounded-lg text-themeTextMuted hover:text-themeAccent hover:bg-themeAccentBg transition-colors" title="Filter syntax help"><HelpCircle size={14} /></button>
                 </div>
               )}
             </div>
@@ -528,6 +585,69 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
         </div>
 
       </div>
+
+      {/* Filter Syntax Help Modal */}
+      {showFilterHelp && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in"
+          onClick={() => setShowFilterHelp(false)}
+        >
+          <div
+            className="relative w-full max-w-md bg-themeBgPrimary border border-themeBorder rounded-2xl shadow-2xl p-6 space-y-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <HelpCircle size={16} className="text-themeAccent" />
+                <h2 className="text-sm font-bold text-themeTextPrimary">Filter Syntax</h2>
+              </div>
+              <button onClick={() => setShowFilterHelp(false)} className="p-1.5 rounded-lg text-themeTextMuted hover:text-themeTextPrimary hover:bg-themeBgSecondary transition-colors"><X size={14} /></button>
+            </div>
+
+            <div className="space-y-4 text-xs text-themeTextSecondary">
+              <div className="space-y-2">
+                <p className="font-semibold text-themeTextPrimary">Basic</p>
+                <div className="space-y-1.5">
+                  <Row code="nexwiki" desc='Match title or any tag containing "nexwiki"' />
+                  <Row code="!completed" desc='Exclude items where title or any tag contains "completed"' />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="font-semibold text-themeTextPrimary">Combining terms</p>
+                <div className="space-y-1.5">
+                  <Row code="nex wiki" desc="OR — show items matching either term (space = OR)" />
+                  <Row code="nex OR wiki" desc="OR — explicit, same as space" />
+                  <Row code="nex || wiki" desc="OR — symbol alias" />
+                  <Row code="nex AND wiki" desc="AND — both terms must match" />
+                  <Row code="nex && wiki" desc="AND — symbol alias" />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="font-semibold text-themeTextPrimary">Negations</p>
+                <div className="space-y-1.5">
+                  <Row code="!completed !wip" desc="Exclude both — negations are always ANDed" />
+                  <Row code="!completed OR !wip" desc="Same result — OR between negations still excludes both" />
+                  <Row code="nex !completed" desc='Matches "nex" and excludes "completed"' />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="font-semibold text-themeTextPrimary">Complex</p>
+                <div className="space-y-1.5">
+                  <Row code="nex AND wiki || nexwiki" desc="(nex AND wiki) OR nexwiki — AND binds tighter" />
+                  <Row code="draft OR wip !archived" desc="(draft OR wip) and not archived" />
+                </div>
+              </div>
+            </div>
+
+            <p className="text-[10px] text-themeTextMuted pt-1 border-t border-themeBorder">
+              Filters match against article titles and all assigned tags. Operators are case-insensitive.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
