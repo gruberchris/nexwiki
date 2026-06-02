@@ -111,6 +111,7 @@ func Slugify(title string) string {
 }
 
 // ListArticles reads all Markdown files and returns metadata sorted by updated time (newest first).
+// The "home" article is excluded from listings (reserved for the Hero dashboard).
 func (s *Storage) ListArticles() ([]Article, error) {
 	var articles []Article
 
@@ -132,6 +133,12 @@ func (s *Storage) ListArticles() ([]Article, error) {
 			// Skip malformed files silently or log in a production app
 			return nil
 		}
+
+		// Exclude "home" from listings (reserved for Hero dashboard)
+		if art.Slug == "home" {
+			return nil
+		}
+
 		articles = append(articles, *art)
 		return nil
 	})
@@ -607,6 +614,11 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 		art, err := s.GetArticle(hit.ID)
 		if err != nil {
 			// Skip if the physical Markdown file was deleted on disk but search index is slightly out of sync
+			continue
+		}
+
+		// Exclude "home" from search results (reserved for Hero dashboard)
+		if art.Slug == "home" {
 			continue
 		}
 
