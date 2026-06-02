@@ -24,7 +24,7 @@ If you are a developer or an AI agent interacting with this repository, please o
 NexWiki's MCP implementation is lightweight, robust, and supports two primary transport layers:
 
 1. **Stdio (Standard Input/Output)**: Typically used for local server-agent processes. The agent runs the NexWiki binary or spins up the Docker container directly, piping JSON-RPC 2.0 messages via standard input/output.
-2. **HTTP / Server-Sent Events (SSE)**: Enables networked connection over HTTP at the `/api/mcp` endpoint. It uses an SSE channel (`GET`) to stream notifications and updates, combined with standard HTTP `POST` requests to execute synchronous JSON-RPC commands.
+2. **Streamable HTTP**: Enables a modern, secure networked connection over HTTP (2025 Spec, the official successor to the deprecated HTTP+SSE specification). It uses a streamable HTTP connection at `/api/mcp` supporting GET (initiating the stream) and POST (executing synchronous JSON-RPC commands) to execute tools.
 
 ```mermaid
 graph TD
@@ -41,8 +41,8 @@ graph TD
     end
 
     Claude <-->|Stdio / JSON-RPC| MCPEngine
-    Cursor <-->|HTTP/SSE /api/mcp| MCPEngine
-    Custom <-->|Stdio or SSE| MCPEngine
+    Cursor <-->|Streamable HTTP /api/mcp| MCPEngine
+    Custom <-->|Stdio or Streamable HTTP| MCPEngine
 
     MCPEngine <-->|Full-Text Search| Bleve
     MCPEngine <-->|Read/Write Files| FlatFiles
@@ -333,15 +333,15 @@ Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat wi
 
 ---
 
-### 2. Cursor IDE (HTTP/SSE Connection)
-Cursor supports connecting to MCP servers over the network using the HTTP/SSE transport.
+### 2. Cursor IDE (Streamable HTTP Connection - Preferred)
+NexWiki implements the modern **Streamable HTTP** transport (2025 Spec) at `/api/mcp`.
 
 1. Open **Cursor Settings** (Gear icon in top right).
 2. Go to **Features** → **MCP**.
 3. Click **+ Add New MCP Server**.
 4. Configure the server with the following settings:
    * **Name**: `nexwiki`
-   * **Type**: `SSE`
+   * **Type**: `Streamable HTTP` *(Note: select `SSE` as a fallback if your Cursor version does not list the new 2025 Streamable HTTP type yet)*
    * **URL**: `http://localhost:8080/api/mcp` (or your production domain e.g. `https://wiki.yourdomain.com/api/mcp`)
 5. Click **Save**.
 
@@ -383,7 +383,7 @@ asyncio.run(query_wiki())
 ```
 
 ### Direct HTTP Request (Minimal JSON-RPC POST)
-If you don't want to use an MCP SDK and prefer standard HTTP requests, you can interact with the server's SSE HTTP endpoint. For execution, issue standard HTTP `POST` requests to `/api/mcp`:
+If you don't want to use an MCP SDK and prefer standard HTTP requests, you can interact with the server's Streamable HTTP endpoint. For execution, issue standard HTTP `POST` requests to `/api/mcp`:
 
 ```bash
 curl -X POST http://localhost:8080/api/mcp \
