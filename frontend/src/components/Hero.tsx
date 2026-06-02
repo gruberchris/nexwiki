@@ -17,6 +17,81 @@ import {
   Cpu
 } from 'lucide-react';
 
+const STATUS_TAGS = new Set([
+  'completed', 'done', 'wip', 'draft', 'in-progress', 'archived',
+  'active', 'todo', 'pending', 'review', 'blocked', 'ready',
+]);
+
+const MAX_VISIBLE_TAGS = 3;
+
+function getTagPriority(tag: string): number {
+  const lower = tag.toLowerCase();
+  if (STATUS_TAGS.has(lower)) return 0;
+  if (lower.startsWith('aiagent-')) return 2;
+  return 1;
+}
+
+function sortCardTags(tags: string[]): string[] {
+  return [...tags].sort((a, b) => getTagPriority(a) - getTagPriority(b));
+}
+
+interface ArticleCardProps {
+  art: Article;
+  onNavigate: (slug: string) => void;
+  secondary?: boolean;
+}
+
+function ArticleCard({ art, onNavigate, secondary = false }: ArticleCardProps) {
+  const accentText = secondary ? 'text-themeAccentSecondary' : 'text-themeAccent';
+  const accentHover = secondary ? 'group-hover:text-themeAccentSecondary' : 'group-hover:text-themeAccent';
+
+  return (
+    <div
+      onClick={() => onNavigate(art.slug)}
+      className="p-5 rounded-2xl border border-themeBorder bg-themeBgSecondary/40 hover:bg-themeBgSecondary hover:border-themeBorder shadow-sm hover:shadow-md cursor-pointer group flex flex-col justify-between min-h-[120px] transition-all duration-200"
+    >
+      <div className="space-y-1.5">
+        <h3 className={`text-sm font-bold text-themeTextSecondary ${accentHover} truncate transition-colors`}>
+          {art.title}
+        </h3>
+        {art.tags && art.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {sortCardTags(art.tags).slice(0, MAX_VISIBLE_TAGS).map((tag) => {
+              const isSystem = tag.toLowerCase().startsWith('aiagent-');
+              return (
+                <span
+                  key={tag}
+                  className={isSystem
+                    ? "text-[10px] px-1.5 py-0.5 rounded-full bg-themeBgSecondary text-themeTextMuted border border-themeBorder"
+                    : "text-[10px] px-1.5 py-0.5 rounded-full bg-themeAccentBg text-themeAccent font-medium"
+                  }
+                >
+                  {tag}
+                </span>
+              );
+            })}
+            {art.tags.length > MAX_VISIBLE_TAGS && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-themeBgSecondary text-themeTextMuted border border-themeBorder">
+                +{art.tags.length - MAX_VISIBLE_TAGS} more
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between border-t border-themeBorder pt-3 mt-4 text-[10px] text-themeTextMuted select-none">
+        <div className="flex items-center gap-1">
+          <Clock size={11} />
+          <span>Updated {formatRelativeTime(art.updated_at)}</span>
+        </div>
+        <span className={`flex items-center gap-0.5 ${accentText} font-semibold group-hover:translate-x-1 transition-transform`}>
+          Open <ArrowRight size={10} />
+        </span>
+      </div>
+    </div>
+  );
+}
+
 interface HeroProps {
   articles: Article[];
   onNavigate: (slug: string) => void;
@@ -268,30 +343,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   </div>
                 ) : (
                   filteredWikiArticles.map((art) => (
-                    <div
-                      key={art.slug}
-                      onClick={() => onNavigate(art.slug)}
-                      className="p-5 rounded-2xl border border-themeBorder bg-themeBgSecondary/40 hover:bg-themeBgSecondary hover:border-themeBorder shadow-sm hover:shadow-md cursor-pointer group flex flex-col justify-between min-h-[120px] transition-all duration-200"
-                    >
-                      <div className="space-y-1.5">
-                        <h3 className="text-sm font-bold text-themeTextSecondary group-hover:text-themeAccent truncate transition-colors">
-                          {art.title}
-                        </h3>
-                        <div className="font-mono text-[10px] text-themeTextMuted truncate">
-                          /articles/{art.slug}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between border-t border-themeBorder pt-3 mt-4 text-[10px] text-themeTextMuted select-none">
-                        <div className="flex items-center gap-1">
-                          <Clock size={11} />
-                          <span>Updated {formatRelativeTime(art.updated_at)}</span>
-                        </div>
-                        <span className="flex items-center gap-0.5 text-themeAccent font-semibold group-hover:translate-x-1 transition-transform">
-                          Open <ArrowRight size={10} />
-                        </span>
-                      </div>
-                    </div>
+                    <ArticleCard key={art.slug} art={art} onNavigate={onNavigate} />
                   ))
                 )}
               </div>
@@ -340,30 +392,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   </div>
                 ) : (
                   filteredAiMemories.map((art) => (
-                    <div
-                      key={art.slug}
-                      onClick={() => onNavigate(art.slug)}
-                      className="p-5 rounded-2xl border border-themeBorder bg-themeBgSecondary/40 hover:bg-themeBgSecondary hover:border-themeBorder shadow-sm hover:shadow-md cursor-pointer group flex flex-col justify-between min-h-[120px] transition-all duration-200"
-                    >
-                      <div className="space-y-1.5">
-                        <h3 className="text-sm font-bold text-themeTextSecondary group-hover:text-themeAccent truncate transition-colors">
-                          {art.title}
-                        </h3>
-                        <div className="font-mono text-[10px] text-themeTextMuted truncate">
-                          /articles/{art.slug}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between border-t border-themeBorder pt-3 mt-4 text-[10px] text-themeTextMuted select-none">
-                        <div className="flex items-center gap-1">
-                          <Clock size={11} />
-                          <span>Updated {formatRelativeTime(art.updated_at)}</span>
-                        </div>
-                        <span className="flex items-center gap-0.5 text-themeAccent font-semibold group-hover:translate-x-1 transition-transform">
-                          Open <ArrowRight size={10} />
-                        </span>
-                      </div>
-                    </div>
+                    <ArticleCard key={art.slug} art={art} onNavigate={onNavigate} />
                   ))
                 )}
               </div>
@@ -419,30 +448,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   </div>
                 ) : (
                   filteredAiPlans.map((art) => (
-                    <div
-                      key={art.slug}
-                      onClick={() => onNavigate(art.slug)}
-                      className="p-5 rounded-2xl border border-themeBorder bg-themeBgSecondary/40 hover:bg-themeBgSecondary hover:border-themeBorder shadow-sm hover:shadow-md cursor-pointer group flex flex-col justify-between min-h-[120px] transition-all duration-200"
-                    >
-                      <div className="space-y-1.5">
-                        <h3 className="text-sm font-bold text-themeTextSecondary group-hover:text-themeAccentSecondary truncate transition-colors">
-                          {art.title}
-                        </h3>
-                        <div className="font-mono text-[10px] text-themeTextMuted truncate">
-                          /articles/{art.slug}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between border-t border-themeBorder pt-3 mt-4 text-[10px] text-themeTextMuted select-none">
-                        <div className="flex items-center gap-1">
-                          <Clock size={11} />
-                          <span>Updated {formatRelativeTime(art.updated_at)}</span>
-                        </div>
-                        <span className="flex items-center gap-0.5 text-themeAccentSecondary font-semibold group-hover:translate-x-1 transition-transform">
-                          Open <ArrowRight size={10} />
-                        </span>
-                      </div>
-                    </div>
+                    <ArticleCard key={art.slug} art={art} onNavigate={onNavigate} secondary />
                   ))
                 )}
               </div>
@@ -498,30 +504,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   </div>
                 ) : (
                   filteredAiSkills.map((art) => (
-                    <div
-                      key={art.slug}
-                      onClick={() => onNavigate(art.slug)}
-                      className="p-5 rounded-2xl border border-themeBorder bg-themeBgSecondary/40 hover:bg-themeBgSecondary hover:border-themeBorder shadow-sm hover:shadow-md cursor-pointer group flex flex-col justify-between min-h-[120px] transition-all duration-200"
-                    >
-                      <div className="space-y-1.5">
-                        <h3 className="text-sm font-bold text-themeTextSecondary group-hover:text-themeAccent truncate transition-colors">
-                          {art.title}
-                        </h3>
-                        <div className="font-mono text-[10px] text-themeTextMuted truncate">
-                          /articles/{art.slug}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between border-t border-themeBorder pt-3 mt-4 text-[10px] text-themeTextMuted select-none">
-                        <div className="flex items-center gap-1">
-                          <Clock size={11} />
-                          <span>Updated {formatRelativeTime(art.updated_at)}</span>
-                        </div>
-                        <span className="flex items-center gap-0.5 text-themeAccent font-semibold group-hover:translate-x-1 transition-transform">
-                          Open <ArrowRight size={10} />
-                        </span>
-                      </div>
-                    </div>
+                    <ArticleCard key={art.slug} art={art} onNavigate={onNavigate} />
                   ))
                 )}
               </div>
