@@ -141,25 +141,33 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
   });
 
   // Filtered lists based on category-specific queries
-  const filteredWikiArticles = wikiArticles.filter(art =>
-    art.title.toLowerCase().includes(wikiSearchQuery.toLowerCase()) ||
-    art.slug.toLowerCase().includes(wikiSearchQuery.toLowerCase())
-  );
+  const filteredWikiArticles = wikiArticles.filter(art => {
+    const q = wikiSearchQuery.toLowerCase();
+    return art.title.toLowerCase().includes(q) ||
+      art.slug.toLowerCase().includes(q) ||
+      art.tags?.some(t => t.toLowerCase().includes(q));
+  });
 
-  const filteredAiMemories = aiMemories.filter(art =>
-    art.title.toLowerCase().includes(memoriesSearchQuery.toLowerCase()) ||
-    art.slug.toLowerCase().includes(memoriesSearchQuery.toLowerCase())
-  );
+  const filteredAiMemories = aiMemories.filter(art => {
+    const q = memoriesSearchQuery.toLowerCase();
+    return art.title.toLowerCase().includes(q) ||
+      art.slug.toLowerCase().includes(q) ||
+      art.tags?.some(t => t.toLowerCase().includes(q));
+  });
 
-  const filteredAiPlans = aiPlans.filter(art =>
-    art.title.toLowerCase().includes(plansSearchQuery.toLowerCase()) ||
-    art.slug.toLowerCase().includes(plansSearchQuery.toLowerCase())
-  );
+  const filteredAiPlans = aiPlans.filter(art => {
+    const q = plansSearchQuery.toLowerCase();
+    return art.title.toLowerCase().includes(q) ||
+      art.slug.toLowerCase().includes(q) ||
+      art.tags?.some(t => t.toLowerCase().includes(q));
+  });
 
-  const filteredAiSkills = aiSkills.filter(art =>
-    art.title.toLowerCase().includes(skillsSearchQuery.toLowerCase()) ||
-    art.slug.toLowerCase().includes(skillsSearchQuery.toLowerCase())
-  );
+  const filteredAiSkills = aiSkills.filter(art => {
+    const q = skillsSearchQuery.toLowerCase();
+    return art.title.toLowerCase().includes(q) ||
+      art.slug.toLowerCase().includes(q) ||
+      art.tags?.some(t => t.toLowerCase().includes(q));
+  });
 
   const handleFtsSearch = (e: React.SyntheticEvent) => {
     e.preventDefault();
