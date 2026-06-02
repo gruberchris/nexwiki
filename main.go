@@ -17,6 +17,11 @@ import (
 //go:embed frontend/dist/*
 var embeddedFrontend embed.FS
 
+// Version is the current semantic version of NexWiki.
+// In CI/CD pipelines, this value can be overwritten at link/build time
+// using: go build -ldflags "-X main.Version=0.1.0"
+var Version = "0.1.0"
+
 func main() {
 	// Force all log statements to print exclusively to Stderr!
 	// This prevents logs from corrupting the Stdio MCP JSON-RPC communication on Stdout.
@@ -63,7 +68,7 @@ func main() {
 	eventBus := server.NewEventBus()
 
 	// Initialize server instance with configured name, theme, event bus, and scheduling settings
-	srv := server.NewServer(storage, name, defaultTheme, themeSchedulingEnabled, eventBus)
+	srv := server.NewServer(storage, name, defaultTheme, themeSchedulingEnabled, eventBus, Version)
 
 	// Spin up the stdio MCP JSON-RPC server in a background goroutine!
 	go srv.StartMCPServer()

@@ -33,6 +33,7 @@ interface SidebarProps {
   wikiName: string;
   onExportAll: () => void;
   onOpenActivityLog: () => void;
+  version?: string;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -45,7 +46,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCreateNew,
   wikiName,
   onExportAll,
-  onOpenActivityLog
+  onOpenActivityLog,
+  version = '0.1.0'
 }) => {
   const { unreadCount } = useSSE();
   const [filterQuery, setFilterQuery] = useState('');
@@ -514,7 +516,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Sidebar Footer */}
       <div className="p-4 border-t border-themeBorder bg-themeBgPrimary/30 flex items-center justify-between text-[10px] text-themeTextMuted font-semibold tracking-wide">
-        <span>v1.0.0</span>
+        <span>v{version}</span>
         <span className="flex items-center gap-1 text-themeTextMuted">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
           Single-User Mode

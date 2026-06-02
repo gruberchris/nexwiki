@@ -68,6 +68,7 @@ export const App: React.FC = () => {
   });
   const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [wikiName, setWikiName] = useState('NexWiki');
+  const [version, setVersion] = useState('0.1.0');
 
   // Theme Manager states
   const [themes, setThemes] = useState<Theme[]>([]);
@@ -355,6 +356,9 @@ export const App: React.FC = () => {
           const configData = await configRes.json();
           if (configData.wiki_name) {
             setWikiName(configData.wiki_name);
+          }
+          if (configData.version) {
+            setVersion(configData.version);
           }
           if (configData.default_theme) {
             defaultTheme = configData.default_theme;
@@ -690,6 +694,7 @@ export const App: React.FC = () => {
           wikiName={wikiName}
           onExportAll={handleExportAll}
           onOpenActivityLog={() => setIsActivityOpen(true)}
+          version={version}
         />
       </div>
 

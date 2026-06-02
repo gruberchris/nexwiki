@@ -19,16 +19,18 @@ type Server struct {
 	DefaultTheme           string
 	ThemeSchedulingEnabled bool
 	EventBus               *EventBus
+	Version                string
 }
 
 // NewServer builds a new API controller.
-func NewServer(storage *Storage, wikiName string, defaultTheme string, themeSchedulingEnabled bool, eventBus *EventBus) *Server {
+func NewServer(storage *Storage, wikiName string, defaultTheme string, themeSchedulingEnabled bool, eventBus *EventBus, version string) *Server {
 	return &Server{
 		Storage:                storage,
 		WikiName:               wikiName,
 		DefaultTheme:           defaultTheme,
 		ThemeSchedulingEnabled: themeSchedulingEnabled,
 		EventBus:               eventBus,
+		Version:                version,
 	}
 }
 
@@ -58,6 +60,7 @@ type ConfigResp struct {
 	DefaultTheme           string `json:"default_theme"`
 	ThemeSchedulingEnabled bool   `json:"theme_scheduling_enabled"`
 	ScheduledTheme         string `json:"scheduled_theme,omitempty"`
+	Version                string `json:"version"`
 }
 
 // HandleGetConfig serves the custom title configuration settings to the client.
@@ -78,6 +81,7 @@ func (srv *Server) HandleGetConfig(w http.ResponseWriter, _ *http.Request) {
 		DefaultTheme:           srv.DefaultTheme,
 		ThemeSchedulingEnabled: srv.ThemeSchedulingEnabled,
 		ScheduledTheme:         scheduledTheme,
+		Version:                srv.Version,
 	})
 }
 

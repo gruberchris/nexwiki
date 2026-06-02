@@ -95,7 +95,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 			},
 			"serverInfo": map[string]interface{}{
 				"name":    "NexWiki MCP Server",
-				"version": "1.0.0",
+				"version": srv.Version,
 			},
 		}
 
