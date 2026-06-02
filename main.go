@@ -30,30 +30,20 @@ func main() {
 	themeScheduling := flag.Bool("theme-scheduling", false, "Enable opt-in seasonal theme scheduling auto-swaps")
 	flag.Parse()
 
-	// Environment variable NEXWIKI_NAME (or fallback WIKI_NAME) takes precedence over command line flag
+	// Environment variable NEXWIKI_NAME takes precedence over command line flag
 	name := *wikiName
 	if envName := os.Getenv("NEXWIKI_NAME"); envName != "" {
 		name = envName
-	} else if envName := os.Getenv("WIKI_NAME"); envName != "" {
-		name = envName
 	}
 
-	// Environment variable NEXWIKI_THEME (or fallbacks WIKI_THEME/THEME) takes precedence over command line flag
+	// Environment variable NEXWIKI_THEME takes precedence over command line flag
 	defaultTheme := *theme
 	if envTheme := os.Getenv("NEXWIKI_THEME"); envTheme != "" {
-		defaultTheme = envTheme
-	} else if envTheme := os.Getenv("WIKI_THEME"); envTheme != "" {
-		defaultTheme = envTheme
-	} else if envTheme := os.Getenv("THEME"); envTheme != "" {
 		defaultTheme = envTheme
 	}
 
 	themeSchedulingEnabled := *themeScheduling
 	if envSched := os.Getenv("NEXWIKI_THEME_SCHEDULING"); envSched != "" {
-		themeSchedulingEnabled = envSched == "true"
-	} else if envSched := os.Getenv("WIKI_THEME_SCHEDULING"); envSched != "" {
-		themeSchedulingEnabled = envSched == "true"
-	} else if envSched := os.Getenv("THEME_SCHEDULING"); envSched != "" {
 		themeSchedulingEnabled = envSched == "true"
 	}
 

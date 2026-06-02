@@ -23,7 +23,7 @@ Use the `-theme` configuration flag when running the compiled Go binary:
 ```
 
 ### Option B: Environment Variables
-Alternatively, you can set the `NEXWIKI_THEME` environment variable (with legacy support for `WIKI_THEME` or `THEME`). These automatically override the command-line flag if present:
+Alternatively, you can set the `NEXWIKI_THEME` environment variable. This automatically overrides the command-line flag if present:
 
 ```bash
 # Set default theme using NEXWIKI_THEME environment variable
