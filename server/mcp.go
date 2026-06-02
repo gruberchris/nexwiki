@@ -400,6 +400,10 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 								"type":        "string",
 								"description": "Optional project context name to filter plans by.",
 							},
+							"tag": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional tag name to filter plans by (e.g., 'completed'). Only plans with this tag will be returned.",
+							},
 						},
 					},
 				},
@@ -1183,6 +1187,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 	case "list_agent_plans":
 		type ListPlansArgs struct {
 			ProjectContext string `json:"project_context"`
+			Tag            string `json:"tag"`
 		}
 		var lArgs ListPlansArgs
 		_ = json.Unmarshal(args.Arguments, &lArgs) // ignore err, it is optional
@@ -1193,6 +1198,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		}
 
 		filterProj := Slugify(strings.TrimSpace(lArgs.ProjectContext))
+		filterTag := strings.ToLower(strings.TrimSpace(lArgs.Tag))
 
 		var text string
 		count := 0
@@ -1203,7 +1209,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			}
 
 			isPlan := false
-			matchFilter := filterProj == ""
+			matchProjFilter := filterProj == ""
+			matchTagFilter := filterTag == ""
 
 			for _, tag := range art.Tags {
 				tagLower := strings.ToLower(tag)
@@ -1211,11 +1218,14 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 					isPlan = true
 				}
 				if filterProj != "" && tagLower == filterProj {
-					matchFilter = true
+					matchProjFilter = true
+				}
+				if filterTag != "" && tagLower == filterTag {
+					matchTagFilter = true
 				}
 			}
 
-			if isPlan && matchFilter {
+			if isPlan && matchProjFilter && matchTagFilter {
 				count++
 				if count == 1 {
 					text = "Collaborative AI Plans Index:\n\n"
@@ -1227,8 +1237,12 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		}
 
 		if count == 0 {
-			if filterProj != "" {
+			if filterProj != "" && filterTag != "" {
+				text = fmt.Sprintf("No Collaborative AI Plans found for project '%s' with tag '%s'.\n", lArgs.ProjectContext, lArgs.Tag)
+			} else if filterProj != "" {
 				text = fmt.Sprintf("No Collaborative AI Plans found for project '%s'.\n", lArgs.ProjectContext)
+			} else if filterTag != "" {
+				text = fmt.Sprintf("No Collaborative AI Plans found with tag '%s'.\n", lArgs.Tag)
 			} else {
 				text = "No Collaborative AI Plans found inside the knowledge base.\n"
 			}

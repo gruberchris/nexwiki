@@ -278,6 +278,7 @@ Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved in
 
 * **Arguments**:
   * `project_context` (string, **optional**): An optional project context name to filter plans by.
+  * `tag` (string, **optional**): An optional tag name to filter plans by (e.g., `completed`). Only plans with this tag will be returned.
 * **Output Format**:
   A bulleted index of all collaborative plans with titles, slugs, and active tags.
 
