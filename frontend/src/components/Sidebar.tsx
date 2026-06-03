@@ -18,9 +18,12 @@ import {
   X,
   Palette,
   Archive,
-  Activity
+  Activity,
+  HelpCircle
 } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
+import { matchesSidebarFilter } from '../filterUtils';
+import { SidebarFilterHelpModal } from './SidebarFilterHelpModal';
 
 interface SidebarProps {
   articles: Article[];
@@ -52,6 +55,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { unreadCount } = useSSE();
   const [filterQuery, setFilterQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [showFilterHelp, setShowFilterHelp] = useState(false);
   const [aiMemoriesOpen, setAiMemoriesOpen] = useState(true);
   const [aiSkillsOpen, setAiSkillsOpen] = useState(true);
   const [aiPlansOpen, setAiPlansOpen] = useState(true);
@@ -75,8 +79,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const isAgent = art.tags?.some(tag => tag.toLowerCase().startsWith('aiagent-'));
       if (isAgent) return false;
 
-      const matchesQuery = art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
-        art.slug.toLowerCase().includes(filterQuery.toLowerCase());
+      const matchesQuery = matchesSidebarFilter(art, filterQuery);
       
       const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
 
@@ -93,8 +96,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const isPlan = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan');
       if (isSkill || isPlan) return false;
 
-      const matchesQuery = art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
-        art.slug.toLowerCase().includes(filterQuery.toLowerCase());
+      const matchesQuery = matchesSidebarFilter(art, filterQuery);
       const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
       return matchesQuery && matchesTag;
     });
@@ -106,8 +108,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const isSkill = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill');
       if (!isSkill) return false;
 
-      const matchesQuery = art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
-        art.slug.toLowerCase().includes(filterQuery.toLowerCase());
+      const matchesQuery = matchesSidebarFilter(art, filterQuery);
       const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
       return matchesQuery && matchesTag;
     });
@@ -119,15 +120,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const isPlan = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan');
       if (!isPlan) return false;
 
-      const matchesQuery = art.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
-        art.slug.toLowerCase().includes(filterQuery.toLowerCase());
+      const matchesQuery = matchesSidebarFilter(art, filterQuery);
       const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
       return matchesQuery && matchesTag;
     });
   }, [articles, filterQuery, selectedTag]);
 
   return (
-    <aside className="w-80 h-screen flex flex-col theme-sidebar backdrop-blur-md transition-all select-none">
+    <aside className="w-80 h-screen flex flex-col theme-sidebar backdrop-blur-md transition-all select-none relative">
       {/* Branding Header */}
       <div className="p-6 pb-4 flex items-center justify-between">
         <div 
@@ -215,15 +215,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Local Filter input box */}
       <div className="px-6 py-3">
-        <div className="relative">
-          <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
-          <input
-            type="text"
-            placeholder="Filter sidebar..."
-            value={filterQuery}
-            onChange={(e) => setFilterQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgPrimary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent focus:bg-themeBgSecondary text-themeTextSecondary transition-all placeholder:text-themeTextMuted"
-          />
+        <div className="flex items-center gap-1.5 animate-fade-in">
+          <div className="relative flex-1 group">
+            <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted group-focus-within:text-themeAccent transition-colors" />
+            <input
+              type="text"
+              placeholder="Filter sidebar..."
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgPrimary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent focus:bg-themeBgSecondary text-themeTextSecondary transition-all placeholder:text-themeTextMuted"
+            />
+            {filterQuery && (
+              <button
+                onClick={() => setFilterQuery('')}
+                className="absolute inset-y-0 right-3 flex items-center text-themeTextMuted hover:text-rose-500 transition-colors"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+          <button
+            onClick={() => setShowFilterHelp(true)}
+            className="shrink-0 p-1.5 rounded-lg text-themeTextMuted hover:text-themeAccent hover:bg-themeAccentBg transition-colors"
+            title="Filter syntax help"
+          >
+            <HelpCircle size={14} />
+          </button>
         </div>
       </div>
 
@@ -528,6 +545,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           Single-User Mode
         </span>
       </div>
+
+      {showFilterHelp && <SidebarFilterHelpModal onClose={() => setShowFilterHelp(false)} />}
     </aside>
   );
 };

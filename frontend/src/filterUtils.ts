@@ -71,6 +71,14 @@ export function matchesFilter(art: Article, query: string): boolean {
 }
 
 /**
+ * Evaluates a filter query against an article's title, slug, and tags.
+ */
+export function matchesSidebarFilter(art: Article, query: string): boolean {
+  const fields = [art.title, art.slug, ...(art.tags ?? [])];
+  return evaluateBooleanQuery(fields, query);
+}
+
+/**
  * Evaluates a filter query against a log event's fields.
  */
 export function matchesLogEvent(event: LogEvent, query: string): boolean {

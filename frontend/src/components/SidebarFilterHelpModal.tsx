@@ -11,24 +11,24 @@ function Row({ code, desc }: { code: string; desc: string }) {
   );
 }
 
-interface ActivityFilterHelpModalProps {
+interface SidebarFilterHelpModalProps {
   onClose: () => void;
 }
 
-export function ActivityFilterHelpModal({ onClose }: ActivityFilterHelpModalProps) {
+export function SidebarFilterHelpModal({ onClose }: SidebarFilterHelpModalProps) {
   return (
     <div
       className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 dark:bg-black/60 backdrop-blur-[2px] animate-fade-in"
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-sm bg-themeBgPrimary border border-themeBorder rounded-2xl shadow-2xl p-6 space-y-5"
+        className="relative w-full max-w-[280px] bg-themeBgPrimary border border-themeBorder rounded-2xl shadow-2xl p-5 space-y-4"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <HelpCircle size={16} className="text-themeAccent" />
-            <h2 className="text-sm font-bold text-themeTextPrimary">Activity Filter Syntax</h2>
+            <h2 className="text-sm font-bold text-themeTextPrimary">Sidebar Filter Syntax</h2>
           </div>
           <button
             onClick={onClose}
@@ -40,36 +40,33 @@ export function ActivityFilterHelpModal({ onClose }: ActivityFilterHelpModalProp
 
         <div className="space-y-4 text-xs text-themeTextSecondary">
           <div className="space-y-2">
-            <p className="font-semibold text-themeTextPrimary">Filter by Event Data</p>
+            <p className="font-semibold text-themeTextPrimary">Basic Search</p>
             <div className="space-y-1.5">
-              <Row code="mcp" desc="Match events from the MCP Server source" />
-              <Row code="edit" desc='Match events with the "edit" action' />
-              <Row code="read_article" desc="Match events using a specific tool" />
-              <Row code="!api" desc="Exclude all REST API activity" />
+              <Row code="guide" desc="Match articles with 'guide' in title or tags" />
+              <Row code="!draft" desc="Exclude articles marked as 'draft'" />
             </div>
           </div>
 
           <div className="space-y-2">
             <p className="font-semibold text-themeTextPrimary">Combining terms</p>
             <div className="space-y-1.5">
-              <Row code="edit create" desc="OR — show edits or creations (space = OR)" />
-              <Row code="mcp && edit" desc="AND — MCP source events that are edits" />
-              <Row code="!api !read" desc="Exclude both API events and any read actions" />
+              <Row code="api docs" desc="OR — show items matching 'api' or 'docs'" />
+              <Row code="api && core" desc="AND — must match both 'api' and 'core'" />
+              <Row code="!archived !legacy" desc="Exclude both archived and legacy items" />
             </div>
           </div>
 
           <div className="space-y-2">
-            <p className="font-semibold text-themeTextPrimary">Operator & Tool matching</p>
+            <p className="font-semibold text-themeTextPrimary">Advanced Filtering</p>
             <div className="space-y-1.5">
-              <Row code="AI && create" desc='Show creations made by the "AI Agent"' />
-              <Row code="User !delete" desc="User activity excluding deletions" />
-              <Row code="mcp !list_articles" desc="MCP activity excluding list operations" />
+              <Row code="project-x && !wip" desc="Show Project-X items that aren't 'wip'" />
+              <Row code="skill || plan" desc="Show items related to skills or plans" />
             </div>
           </div>
         </div>
 
         <p className="text-[10px] text-themeTextMuted pt-1 border-t border-themeBorder">
-          Filters match against actions, sources, tools, slugs, titles, and agents. Operators are case-insensitive.
+          Filters match against article titles, slugs, and all assigned tags. Operators are case-insensitive.
         </p>
       </div>
     </div>

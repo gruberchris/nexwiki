@@ -297,8 +297,9 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
         <div className="p-4 border-t border-slate-100 dark:border-slate-800/60 text-center text-[10px] text-slate-400 dark:text-slate-550 select-none font-medium">
           Captured circular cache of last 200 operations.
         </div>
+
+        {showFilterHelp && <ActivityFilterHelpModal onClose={() => setShowFilterHelp(false)} />}
       </div>
-      {showFilterHelp && <ActivityFilterHelpModal onClose={() => setShowFilterHelp(false)} />}
     </>
   );
 };
