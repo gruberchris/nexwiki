@@ -106,6 +106,8 @@ export const Editor: React.FC<EditorProps> = ({
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
+
+
   const startResizing = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setIsDragging(true);
@@ -172,6 +174,14 @@ export const Editor: React.FC<EditorProps> = ({
       )
       .slice(0, 10); // Performance optimization: limit DOM node counts to top 10 matches
   }, [tagInput, allExistingTags, tags]);
+
+  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
+  const [prevSuggestionsLength, setPrevSuggestionsLength] = useState(tagSuggestions.length);
+
+  if (tagSuggestions.length !== prevSuggestionsLength) {
+    setFocusedIndex(-1);
+    setPrevSuggestionsLength(tagSuggestions.length);
+  }
 
   const errorCount = useMemo(() => diagnostics.filter(d => d.severity === 'error').length, [diagnostics]);
   const warningCount = useMemo(() => diagnostics.filter(d => d.severity === 'warning').length, [diagnostics]);
@@ -402,7 +412,7 @@ export const Editor: React.FC<EditorProps> = ({
       <form onSubmit={handleSave} className="flex-1 flex flex-col h-full overflow-hidden">
         
         {/* Editor Top Control Bar */}
-        <div className="p-4 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex items-center justify-between gap-4 select-none">
+        <div className="p-4 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex items-center justify-between gap-4 select-none relative z-30">
           <div className="flex-1">
             <input
               type="text"
@@ -489,6 +499,26 @@ export const Editor: React.FC<EditorProps> = ({
                         setTagInput(val);
                       }}
                       onKeyDown={(e) => {
+                        if (tagSuggestions.length > 0) {
+                          if (e.key === 'Tab') {
+                            e.preventDefault();
+                            if (e.shiftKey) {
+                              setFocusedIndex(prev => (prev <= -1 ? tagSuggestions.length - 1 : prev - 1));
+                            } else {
+                              setFocusedIndex(prev => (prev >= tagSuggestions.length - 1 ? -1 : prev + 1));
+                            }
+                            return;
+                          }
+                          if (e.key === 'Enter' && focusedIndex >= 0 && focusedIndex < tagSuggestions.length) {
+                            e.preventDefault();
+                            const selection = tagSuggestions[focusedIndex];
+                            setTags([...tags, selection]);
+                            setTagInput('');
+                            setFocusedIndex(-1);
+                            return;
+                          }
+                        }
+
                         if (e.key === 'Enter' || e.key === ',') {
                           e.preventDefault();
                           const cleanTag = tagInput.trim().replace(/,/g, '');
@@ -507,15 +537,20 @@ export const Editor: React.FC<EditorProps> = ({
 
                     {/* Auto-complete Tag Suggestions Dropdown */}
                     {tagSuggestions.length > 0 && (
-                      <div className="absolute left-0 top-full mt-1 z-[99] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl rounded-lg max-h-36 overflow-y-auto min-w-[120px] py-1 select-none font-sans text-[10px]">
-                        {tagSuggestions.map(suggestion => (
+                      <div className="absolute left-0 top-full mt-1 z-[99] bg-white dark:bg-slate-900 backdrop-blur-lg border border-slate-200 dark:border-slate-800 shadow-xl rounded-lg max-h-36 overflow-y-auto min-w-[120px] py-1 select-none font-sans text-[10px]">
+                        {tagSuggestions.map((suggestion, idx) => (
                           <div
                             key={suggestion}
                             onClick={() => {
                               setTags([...tags, suggestion]);
                               setTagInput('');
+                              setFocusedIndex(-1);
                             }}
-                            className="px-3 py-1.5 hover:bg-indigo-500 hover:text-white dark:hover:bg-themeAccent/85 cursor-pointer text-slate-700 dark:text-slate-300 font-medium transition-colors"
+                            className={`px-3 py-1.5 cursor-pointer font-medium transition-colors ${
+                              idx === focusedIndex
+                                ? 'bg-indigo-500 text-white'
+                                : 'hover:bg-indigo-500 hover:text-white dark:hover:bg-themeAccent/85 text-slate-700 dark:text-slate-300'
+                            }`}
                           >
                             {suggestion}
                           </div>

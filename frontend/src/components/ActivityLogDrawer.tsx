@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu, HelpCircle } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
 import { useEscapeKey } from '../hooks/useEscapeKey';
-import { matchesLogEvent } from '../filterUtils';
+import { matchesLogEvent, getActiveFilterToken, applyAutocompleteSelection } from '../filterUtils';
 import { ActivityFilterHelpModal } from './ActivityFilterHelpModal';
 
 interface ActivityLogDrawerProps {
@@ -23,6 +23,55 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilterHelp, setShowFilterHelp] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
+
+
+
+  const activeToken = useMemo(() => getActiveFilterToken(searchQuery), [searchQuery]);
+
+  const logSuggestions = useMemo(() => {
+    const query = activeToken.trim().toLowerCase();
+    if (!query) return [];
+
+    const actions = new Set<string>();
+    const tools = new Set<string>();
+    const agents = new Set<string>();
+    const sources = new Set<string>();
+
+    activityLog.forEach(event => {
+      if (event.action && event.action.toLowerCase().includes(query)) {
+        actions.add(event.action);
+      }
+      if (event.tool && event.tool.toLowerCase().includes(query)) {
+        tools.add(event.tool);
+      }
+      if (event.agent && event.agent.toLowerCase().includes(query)) {
+        agents.add(event.agent);
+      }
+      if (event.source && event.source.toLowerCase().includes(query)) {
+        sources.add(event.source);
+      }
+    });
+
+    const actionResults = Array.from(actions).map(val => ({ type: 'action', value: val }));
+    const toolResults = Array.from(tools).map(val => ({ type: 'tool', value: val }));
+    const agentResults = Array.from(agents).map(val => ({ type: 'agent', value: val }));
+    const sourceResults = Array.from(sources).map(val => ({ type: 'source', value: val }));
+
+    return [...actionResults, ...toolResults, ...agentResults, ...sourceResults].slice(0, 8);
+  }, [activeToken, activityLog]);
+
+  const handleSelectSuggestion = (selection: string) => {
+    const newQuery = applyAutocompleteSelection(searchQuery, selection);
+    setSearchQuery(newQuery);
+  };
+
+  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
+  const [prevSuggestionsLength, setPrevSuggestionsLength] = useState(logSuggestions.length);
+
+  if (logSuggestions.length !== prevSuggestionsLength) {
+    setFocusedIndex(-1);
+    setPrevSuggestionsLength(logSuggestions.length);
+  }
 
   // Close on Escape key
   useEscapeKey(isOpen, onClose);
@@ -127,7 +176,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
         </div>
 
         {/* Filters Section */}
-        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800/40 bg-slate-50/30 dark:bg-slate-950/10 space-y-3">
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800/40 bg-slate-50/30 dark:bg-slate-950/10 space-y-3 relative z-20">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setActiveSource('all')}
@@ -165,13 +214,32 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 animate-fade-in">
-            <div className="relative flex-1 group">
+            <div className="relative flex-1 group z-30">
               <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted group-focus-within:text-themeAccent transition-colors" />
               <input
                 type="text"
                 placeholder="Filter by action, agent, tool..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (logSuggestions.length > 0) {
+                    if (e.key === 'Tab') {
+                      e.preventDefault();
+                      if (e.shiftKey) {
+                        setFocusedIndex(prev => (prev <= -1 ? logSuggestions.length - 1 : prev - 1));
+                      } else {
+                        setFocusedIndex(prev => (prev >= logSuggestions.length - 1 ? -1 : prev + 1));
+                      }
+                      return;
+                    }
+                    if (e.key === 'Enter' && focusedIndex >= 0 && focusedIndex < logSuggestions.length) {
+                      e.preventDefault();
+                      handleSelectSuggestion(logSuggestions[focusedIndex].value);
+                      setFocusedIndex(-1);
+                      return;
+                    }
+                  }
+                }}
                 className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary shadow-sm transition-all placeholder:text-themeTextMuted"
               />
               {searchQuery && (
@@ -181,6 +249,31 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
                 >
                   <X size={12} />
                 </button>
+              )}
+
+              {/* Log Autocomplete Suggestions Dropdown */}
+              {logSuggestions.length > 0 && (
+                <div className="absolute left-0 top-full mt-1.5 z-50 w-full bg-themeBgSecondary backdrop-blur-lg border border-themeBorder shadow-xl rounded-2xl max-h-48 overflow-y-auto py-1.5 select-none font-sans text-xs text-themeTextSecondary">
+                  {logSuggestions.map((s, idx) => (
+                    <div
+                      key={`${s.type}-${s.value}`}
+                      onClick={() => {
+                        handleSelectSuggestion(s.value);
+                        setFocusedIndex(-1);
+                      }}
+                      className={`px-3.5 py-2 cursor-pointer flex items-center justify-between transition-colors ${
+                        idx === focusedIndex
+                          ? 'bg-themeAccentBg text-themeAccent'
+                          : 'hover:bg-themeAccentBg hover:text-themeAccent text-themeTextSecondary'
+                      }`}
+                    >
+                      <span className="truncate font-medium">{s.value}</span>
+                      <span className="text-[9px] font-bold text-themeTextMuted uppercase tracking-wider ml-2 bg-themeBgPrimary px-1.5 py-0.5 rounded border border-themeBorder">
+                        {s.type}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
             <button

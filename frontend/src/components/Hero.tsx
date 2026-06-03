@@ -11,6 +11,7 @@ import {
   ClipboardList,
   Wrench,
   Cpu,
+  X,
 } from 'lucide-react';
 import { matchesFilter } from '../filterUtils';
 import { DirectorySection } from './DirectorySection';
@@ -105,8 +106,17 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   placeholder={`Search ${wikiName} for articles, keywords, or topics...`}
                   value={ftsQuery}
                   onChange={(e) => setFtsQuery(e.target.value)}
-                  className="w-full pl-12 pr-4 py-4 rounded-2xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-sm shadow-md text-themeTextSecondary placeholder:text-themeTextMuted transition-all font-medium"
+                  className="w-full pl-12 pr-11 py-4 rounded-2xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-sm shadow-md text-themeTextSecondary placeholder:text-themeTextMuted transition-all font-medium"
                 />
+                {ftsQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setFtsQuery('')}
+                    className="absolute inset-y-0 right-4 flex items-center text-themeTextMuted hover:text-rose-500 transition-colors animate-fade-in"
+                  >
+                    <X size={15} />
+                  </button>
+                )}
               </div>
             </div>
             <div className="flex justify-center gap-3">

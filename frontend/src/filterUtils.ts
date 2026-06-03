@@ -92,3 +92,25 @@ export function matchesLogEvent(event: LogEvent, query: string): boolean {
   ].filter(Boolean);
   return evaluateBooleanQuery(fields, query);
 }
+
+/**
+ * Isolates the active token being typed in a boolean query string.
+ */
+export function getActiveFilterToken(query: string): string {
+  if (!query) return '';
+  const parts = query.split(/[\s&|!]+/);
+  return parts[parts.length - 1] || '';
+}
+
+/**
+ * Replaces the active typed token in the query with the selected auto-completed term.
+ */
+export function applyAutocompleteSelection(query: string, selection: string): string {
+  const match = query.match(/[\s&|!]+([^\s&|!]*)$/);
+  if (match) {
+    const operatorPart = query.substring(0, query.length - match[1].length);
+    return operatorPart + selection;
+  }
+  return selection;
+}
+
