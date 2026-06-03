@@ -278,6 +278,76 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+}
+
+// HandleUpdateArticleTags updates only the tags of an existing article.
+func (srv *Server) HandleUpdateArticleTags(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeError(w, http.StatusBadRequest, "article slug is required")
+		return
+	}
+
+	var req struct {
+		Tags          []string `json:"tags"`
+		LoadedVersion int      `json:"loaded_version"`
+		EditSummary   string   `json:"edit_summary"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request payload")
+		return
+	}
+
+	// Verify that the article actually exists first
+	existing, err := srv.Storage.GetArticle(slug)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "article not found")
+		return
+	}
+
+	// Optimistic locking verification
+	if req.LoadedVersion > 0 && existing.Version > 0 && existing.Version != req.LoadedVersion {
+		writeError(w, http.StatusConflict, "this article has been updated in another session. Please reload the page and try again.")
+		return
+	}
+
+	// Clean tags and preserve existing "aiagent-" tags
+	cleanedTags := validateAndCleanUserTags(req.Tags, existing.Tags)
+
+	summary := req.EditSummary
+	if summary == "" {
+		summary = "Updated article tags"
+	}
+
+	art, err := srv.Storage.SaveArticle(slug, existing.Title, existing.Content, summary, cleanedTags)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if srv.EventBus != nil {
+		srv.EventBus.PublishActivity("api", "edit", "update_tags", art.Slug, art.Title, "User")
+		articles, err := srv.Storage.ListArticles()
+		if err == nil {
+			dir := getArticleDirectory(art.Tags)
+			dirCount := 0
+			for _, a := range articles {
+				if getArticleDirectory(a.Tags) == dir {
+					dirCount++
+				}
+			}
+			srv.EventBus.PublishWikiUpdate(WikiUpdate{
+				Type:           "article-edited",
+				Slug:           art.Slug,
+				Title:          art.Title,
+				Tags:           art.Tags,
+				Directory:      dir,
+				TotalCount:     len(articles),
+				DirectoryCount: dirCount,
+			})
+		}
+	}
+
 	writeJSON(w, http.StatusOK, art)
 }
 

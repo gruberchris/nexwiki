@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -178,5 +179,85 @@ func TestStorageVersioning(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(storage.HistoryDir, "renamed-page")); !os.IsNotExist(err) {
 		t.Errorf("Expected history directory for renamed-page to be deleted completely")
+	}
+}
+
+func TestStorageHistoryInitialization(t *testing.T) {
+	tempDir := t.TempDir()
+	storage, err := NewStorage(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to initialize storage: %v", err)
+	}
+
+	// 1. Manually write a file to disk to simulate a seeded/pre-existing file
+	slug := "pre-existing"
+	filePath := filepath.Join(storage.ArticleDir, slug+".md")
+	fmt.Printf("TEST: Manually writing file to: %s\n", filePath)
+	content := "---\ntitle: Pre-existing Page\nslug: pre-existing\ncreated_at: 2026-06-01T12:00:00Z\nupdated_at: 2026-06-01T12:00:00Z\nversion: 1\n---\n# Pre-existing Content\n"
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write manual file: %v", err)
+	}
+
+	// 2. Perform an edit using SaveArticle (this is the first edit via storage)
+	art, err := storage.SaveArticle(slug, "Pre-existing Page", "# Edited Content", "First Edit", []string{"tag"})
+	if err != nil {
+		t.Fatalf("SaveArticle failed: %v", err)
+	}
+
+	if art.Version != 2 {
+		t.Errorf("Expected version 2, got %d", art.Version)
+	}
+
+	// 3. Verify the history folder was created and contains BOTH version 1 (original) and version 2 (edit)
+	v1, err := storage.GetArticleVersion(art.Slug, 1)
+	if err != nil {
+		t.Fatalf("Failed to retrieve version 1: %v", err)
+	}
+	if v1.Content != "# Pre-existing Content" {
+		t.Errorf("Expected version 1 content '# Pre-existing Content', got '%s'", v1.Content)
+	}
+
+	v2, err := storage.GetArticleVersion(art.Slug, 2)
+	if err != nil {
+		t.Fatalf("Failed to retrieve version 2: %v", err)
+	}
+	if v2.Content != "# Edited Content" {
+		t.Errorf("Expected version 2 content '# Edited Content', got '%s'", v2.Content)
+	}
+}
+
+func TestStorageUpdateArticleTags(t *testing.T) {
+	tempDir := t.TempDir()
+	storage, err := NewStorage(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to initialize storage: %v", err)
+	}
+
+	// 1. Create a page
+	art, err := storage.SaveArticle("", "Original Page", "# Body Content", "Initial commit", []string{"initial"})
+	if err != nil {
+		t.Fatalf("SaveArticle failed: %v", err)
+	}
+
+	// 2. Update tags via UpdateArticleTags
+	updated, err := storage.UpdateArticleTags(art.Slug, []string{"new-tag", "another-tag"}, art.Version, "Update tags only")
+	if err != nil {
+		t.Fatalf("UpdateArticleTags failed: %v", err)
+	}
+
+	if updated.Version != 2 {
+		t.Errorf("Expected version 2, got %d", updated.Version)
+	}
+	if len(updated.Tags) != 2 || updated.Tags[0] != "new-tag" || updated.Tags[1] != "another-tag" {
+		t.Errorf("Expected updated tags, got %v", updated.Tags)
+	}
+	if updated.Content != "# Body Content" {
+		t.Errorf("Expected content to remain unchanged, got '%s'", updated.Content)
+	}
+
+	// 3. Verify version conflict checking
+	_, err = storage.UpdateArticleTags(art.Slug, []string{"fail"}, 1, "Should conflict")
+	if err == nil {
+		t.Errorf("Expected version conflict error, got nil")
 	}
 }

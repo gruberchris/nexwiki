@@ -114,3 +114,49 @@ func TestMCPEditAgentPlan(t *testing.T) {
 		t.Errorf("Expected plan validation error message, got: %s", resp4.Content[0].Text)
 	}
 }
+
+func TestMCPUpdateArticleTags(t *testing.T) {
+	tempDir := t.TempDir()
+
+	storage, err := NewStorage(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to initialize storage: %v", err)
+	}
+
+	eventBus := NewEventBus()
+	srv := NewServer(storage, "Test Wiki", "light", false, eventBus, "1.0.0")
+
+	// 1. Create a standard article first
+	_, err = storage.SaveArticle("", "Golang Guide", "# Go content", "Initial seed", []string{"go", "backend"})
+	if err != nil {
+		t.Fatalf("Failed to save article: %v", err)
+	}
+
+	// 2. Call update_article_tags via MCP tool interface
+	updateArgs := json.RawMessage(`{"name":"update_article_tags","arguments":{"slug":"golang-guide","tags":["programming","backend","language"],"loaded_version":1,"edit_summary":"MCP tag update"}}`)
+	res, rpcErr := srv.executeToolCallInternal(updateArgs)
+	if rpcErr != nil {
+		t.Fatalf("update_article_tags failed: %v", rpcErr)
+	}
+
+	resp, ok := res.(ToolResponse)
+	if !ok || resp.IsError {
+		t.Fatalf("update_article_tags returned error response: %v", resp)
+	}
+
+	// 3. Verify changes on disk
+	art, err := storage.GetArticle("golang-guide")
+	if err != nil {
+		t.Fatalf("Failed to load article: %v", err)
+	}
+
+	if art.Version != 2 {
+		t.Errorf("Expected version 2, got %d", art.Version)
+	}
+	if len(art.Tags) != 3 || art.Tags[0] != "programming" || art.Tags[1] != "backend" || art.Tags[2] != "language" {
+		t.Errorf("Expected tags ['programming', 'backend', 'language'], got %v", art.Tags)
+	}
+	if art.Content != "# Go content" {
+		t.Errorf("Expected content to remain unchanged, got '%s'", art.Content)
+	}
+}

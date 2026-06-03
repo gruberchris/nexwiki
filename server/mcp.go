@@ -205,6 +205,35 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 					},
 				},
 				{
+					"name":        "update_article_tags",
+					"description": "Directly update the tags array of an existing article. This is fast, token-efficient, and prevents modifying any page content body. Employs optimistic locking.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"slug": map[string]interface{}{
+								"type":        "string",
+								"description": "The unique URL-safe identifier slug of the article to update tags for.",
+							},
+							"tags": map[string]interface{}{
+								"type": "array",
+								"items": map[string]interface{}{
+									"type": "string",
+								},
+								"description": "The complete array of user/status tags to apply to the article (replaces existing user tags; existing system 'aiagent-*' tags are always preserved).",
+							},
+							"loaded_version": map[string]interface{}{
+								"type":        "integer",
+								"description": "Optional. The active version number of the article loaded by the client (helps detect multi-session edit collisions).",
+							},
+							"edit_summary": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional. Summary explaining the tag updates.",
+							},
+						},
+						"required": []string{"slug", "tags"},
+					},
+				},
+				{
 					"name":        "delete_wiki_article",
 					"description": "Permanently delete an existing wiki article and its historical backups from disk.",
 					"inputSchema": map[string]interface{}{
@@ -638,7 +667,7 @@ func (srv *Server) logMCPToolCall(params json.RawMessage) {
 	tool := args.Name
 	if strings.HasPrefix(tool, "create_") {
 		action = "create"
-	} else if strings.HasPrefix(tool, "edit_") || strings.HasPrefix(tool, "append_") || strings.HasPrefix(tool, "revert_") {
+	} else if strings.HasPrefix(tool, "edit_") || strings.HasPrefix(tool, "append_") || strings.HasPrefix(tool, "revert_") || strings.HasPrefix(tool, "update_") {
 		action = "edit"
 	} else if strings.HasPrefix(tool, "delete_") {
 		action = "delete"
@@ -873,6 +902,34 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 		respText := fmt.Sprintf("Success! Article '%s' (slug: %s) updated successfully.\nNew Version: %d\nLast Edited: %s\n",
 			art.Title, art.Slug, art.Version, art.UpdatedAt.Format(time.RFC3339))
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "update_article_tags":
+		type UpdateTagsArgs struct {
+			Slug          string   `json:"slug"`
+			Tags          []string `json:"tags"`
+			LoadedVersion int      `json:"loaded_version"`
+			EditSummary   string   `json:"edit_summary"`
+		}
+		var uArgs UpdateTagsArgs
+		if err := json.Unmarshal(args.Arguments, &uArgs); err != nil || uArgs.Slug == "" || uArgs.Tags == nil {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. Requires 'slug' and 'tags' array."}
+		}
+
+		existing, err := srv.Storage.GetArticle(uArgs.Slug)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", uArgs.Slug)}}}, nil
+		}
+
+		cleanedTags := validateAndCleanUserTags(uArgs.Tags, existing.Tags)
+
+		art, err := srv.Storage.UpdateArticleTags(uArgs.Slug, cleanedTags, uArgs.LoadedVersion, uArgs.EditSummary)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error updating tags: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! Article '%s' tags updated successfully.\nNew Version: %d\nTags: %s\n",
+			art.Title, art.Version, strings.Join(art.Tags, ", "))
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 
 	case "delete_wiki_article":

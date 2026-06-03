@@ -193,7 +193,6 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 		oldSlug = Slugify(oldSlug)
 		oldPath := filepath.Join(s.ArticleDir, oldSlug+".md")
 
-		// Read existing to preserve CreatedAt timestamp
 		existingData, err := os.ReadFile(oldPath)
 		if err == nil {
 			existingArt, parseErr := parseArticleFile(existingData, false)
@@ -260,6 +259,17 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 						nextVersion = v + 1
 					}
 				}
+			}
+		}
+	}
+
+	// If history is empty but the article already exists on disk, archive the current state as version 1 first
+	if oldSlug != "" && nextVersion == 1 {
+		activePath := filepath.Join(s.ArticleDir, newSlug+".md")
+		if existingData, err := os.ReadFile(activePath); err == nil {
+			histFilePath := filepath.Join(histFolder, "1.md.gz")
+			if err := writeGzippedFile(histFilePath, existingData); err == nil {
+				nextVersion = 2
 			}
 		}
 	}
@@ -543,33 +553,50 @@ func (s *Storage) UnindexArticle(slug string) error {
 	return s.SearchIndex.Delete(slug)
 }
 
-// SyncSearchIndex populates the Bleve index with all existing Markdown articles on startup if the index is brand new.
+// SyncSearchIndex populates the Bleve index with all existing Markdown articles on startup and reconciles discrepancies.
 func (s *Storage) SyncSearchIndex() error {
-	count, err := s.SearchIndex.DocCount()
+	_, _ = fmt.Fprintf(os.Stderr, "Commencing search index boot synchronization and reconciliation...\n")
+	articles, err := s.ListArticles()
 	if err != nil {
-		return fmt.Errorf("failed to count search index documents: %w", err)
+		return fmt.Errorf("failed to list articles for indexing: %w", err)
 	}
 
-	// If the index is empty, read all articles from disk and index them
-	if count == 0 {
-		_, _ = fmt.Fprintf(os.Stderr, "Search index is empty. Commencing full boot synchronization...\n")
-		articles, err := s.ListArticles()
-		if err != nil {
-			return fmt.Errorf("failed to list articles for indexing: %w", err)
+	validSlugs := make(map[string]bool)
+	// Always index the home page (since it is excluded from ListArticles)
+	validSlugs["home"] = true
+	homeArt, err := s.GetArticle("home")
+	if err == nil {
+		if err := s.IndexArticle(homeArt); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to index 'home' article: %v\n", err)
 		}
+	}
 
-		for _, item := range articles {
-			art, err := s.GetArticle(item.Slug)
-			if err == nil {
-				if err := s.IndexArticle(art); err != nil {
-					_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to index article '%s' on boot sync: %v\n", item.Slug, err)
-				}
+	for _, item := range articles {
+		validSlugs[item.Slug] = true
+		art, err := s.GetArticle(item.Slug)
+		if err == nil {
+			if err := s.IndexArticle(art); err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to index article '%s': %v\n", item.Slug, err)
 			}
 		}
-		newCount, _ := s.SearchIndex.DocCount()
-		_, _ = fmt.Fprintf(os.Stderr, "Boot synchronization complete. Successfully indexed %d articles.\n", newCount)
 	}
 
+	// Clean up any orphaned documents in the index that no longer exist on disk
+	q := bleve.NewMatchAllQuery()
+	searchRequest := bleve.NewSearchRequest(q)
+	searchRequest.Size = 1000000 // A very large size to retrieve all documents
+	results, err := s.SearchIndex.Search(searchRequest)
+	if err == nil {
+		for _, hit := range results.Hits {
+			if !validSlugs[hit.ID] {
+				_, _ = fmt.Fprintf(os.Stderr, "Removing orphaned article '%s' from search index...\n", hit.ID)
+				_ = s.SearchIndex.Delete(hit.ID)
+			}
+		}
+	}
+
+	newCount, _ := s.SearchIndex.DocCount()
+	_, _ = fmt.Fprintf(os.Stderr, "Boot synchronization complete. Search index contains %d articles.\n", newCount)
 	return nil
 }
 
@@ -811,6 +838,24 @@ func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 
 	summary := fmt.Sprintf("Reverted to version %d", version)
 	return s.SaveArticle(slug, histArt.Title, histArt.Content, summary, histArt.Tags)
+}
+
+// UpdateArticleTags updates only the tag array for an article without modifying the title or content.
+func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion int, editSummary string) (*Article, error) {
+	art, err := s.GetArticle(slug)
+	if err != nil {
+		return nil, err
+	}
+
+	if loadedVersion > 0 && art.Version > 0 && art.Version != loadedVersion {
+		return nil, fmt.Errorf("version conflict: loaded version %d, current version %d", loadedVersion, art.Version)
+	}
+
+	if editSummary == "" {
+		editSummary = "Updated article tags"
+	}
+
+	return s.SaveArticle(slug, art.Title, art.Content, editSummary, tags)
 }
 
 // DeleteTagGlobally removes a tag from all articles in the wiki.

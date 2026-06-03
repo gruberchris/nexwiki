@@ -88,6 +88,7 @@ func main() {
 	mux.HandleFunc("GET /api/articles/{slug}", srv.HandleGetArticle)
 	mux.HandleFunc("POST /api/articles", srv.HandleCreateArticle)
 	mux.HandleFunc("PUT /api/articles/{slug}", srv.HandleUpdateArticle)
+	mux.HandleFunc("PUT /api/articles/{slug}/tags", srv.HandleUpdateArticleTags)
 	mux.HandleFunc("DELETE /api/articles/{slug}", srv.HandleDeleteArticle)
 	mux.HandleFunc("POST /api/articles/{slug}/assets", srv.HandleUploadAsset)
 	mux.HandleFunc("GET /api/assets/{slug}/{filename}", srv.HandleGetAsset)

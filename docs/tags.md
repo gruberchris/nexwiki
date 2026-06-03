@@ -33,6 +33,7 @@ tags: database, backend, production
 ### 2. Removing and Deleting Tags
 * **Remove a tag from an article**: Click the tiny `×` on the tag badge in the Editor, then save the page.
 * **Delete a tag globally**: If you want to remove a tag from all articles in the wiki, click the tag badge in the **Filter by Tag** cloud in the sidebar, or issue a `DELETE /api/tags/{tag}` request. This will completely remove the tag from the front-matter of every article containing it.
+* **Update tags programmatically**: Connected clients and AI agents can update tags using the `PUT /api/articles/{slug}/tags` API endpoint or the `update_article_tags` MCP tool. This performs a tag-only update without loading or rewriting the main page body, offering high speed and preventing accidental modifications to page contents.
 
 *Note: NexWiki does not allow global tag renaming. To rename a tag, apply the new tag name to the desired articles and delete the old tag.*
 
@@ -46,7 +47,7 @@ tags: database, backend, production
 
 NexWiki separates AI-driven note-taking into three distinct, structured models:
 1. **AI Agent Memories (`aiagent-memory-<type>`)**: Strictly AI-originated (e.g., troubleshooting logs, decision files, todos). While standard users can view and delete them, they are protected from manual creation in the UI.
-2. **AI Agent Skills (`aiagent-skill`)**: Reusable agent instructions (`SKILL.md` format) that standard users can create, edit, and manage. Exposed as a custom skills registry.
+2. **AI Agent Skills (`aiagent-skill`)**: Reusable agent instructions (`SKILL.md` format) that standard users can create, edit, and manage. Exposed as a custom Skills Registry.
 3. **Collaborative AI Plans (`aiagent-plan`)**: Roadmap files that can be created, edited, and completed by **either** the user or the AI agent.
 
 ### 🛡️ Secure Tag Rules & Validation
