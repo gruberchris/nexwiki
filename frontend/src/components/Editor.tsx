@@ -147,6 +147,32 @@ export const Editor: React.FC<EditorProps> = ({
     return lintMarkdown(content, articles);
   }, [content, articles]);
 
+  // Aggregate all unique tags that exist across all articles in the knowledge base
+  const allExistingTags = useMemo(() => {
+    const set = new Set<string>();
+    articles.forEach(art => {
+      art.tags?.forEach(tag => {
+        // Exclude system/protected tags starting with 'aiagent-'
+        if (!tag.toLowerCase().startsWith('aiagent-')) {
+          set.add(tag);
+        }
+      });
+    });
+    return Array.from(set);
+  }, [articles]);
+
+  // Compute tag suggestions based on the user's current tag input value
+  const tagSuggestions = useMemo(() => {
+    const query = tagInput.trim().toLowerCase();
+    if (!query) return [];
+    return allExistingTags
+      .filter(tag => 
+        tag.toLowerCase().includes(query) && 
+        !tags.some(t => t.toLowerCase() === tag.toLowerCase())
+      )
+      .slice(0, 10); // Performance optimization: limit DOM node counts to top 10 matches
+  }, [tagInput, allExistingTags, tags]);
+
   const errorCount = useMemo(() => diagnostics.filter(d => d.severity === 'error').length, [diagnostics]);
   const warningCount = useMemo(() => diagnostics.filter(d => d.severity === 'warning').length, [diagnostics]);
 
@@ -452,31 +478,51 @@ export const Editor: React.FC<EditorProps> = ({
                       </span>
                     );
                   })}
-                  <input
-                    type="text"
-                    placeholder="Add tag..."
-                    value={tagInput}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val.toLowerCase().startsWith('aiagent-')) return;
-                      setTagInput(val);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ',') {
-                        e.preventDefault();
-                        const cleanTag = tagInput.trim().replace(/,/g, '');
-                        if (cleanTag && !tags.some(t => t.toLowerCase() === cleanTag.toLowerCase())) {
-                          if (cleanTag.toLowerCase().startsWith('aiagent-')) {
-                            setTagInput('');
-                            return;
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Add tag..."
+                      value={tagInput}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val.toLowerCase().startsWith('aiagent-')) return;
+                        setTagInput(val);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ',') {
+                          e.preventDefault();
+                          const cleanTag = tagInput.trim().replace(/,/g, '');
+                          if (cleanTag && !tags.some(t => t.toLowerCase() === cleanTag.toLowerCase())) {
+                            if (cleanTag.toLowerCase().startsWith('aiagent-')) {
+                              setTagInput('');
+                              return;
+                            }
+                            setTags([...tags, cleanTag]);
                           }
-                          setTags([...tags, cleanTag]);
+                          setTagInput('');
                         }
-                        setTagInput('');
-                      }
-                    }}
-                    className="text-[10px] py-0.5 px-2 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-200 outline-none w-20 focus:w-28 focus:ring-1 focus:ring-indigo-500 transition-all font-medium"
-                  />
+                      }}
+                      className="text-[10px] py-0.5 px-2 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-200 outline-none w-20 focus:w-28 focus:ring-1 focus:ring-indigo-500 transition-all font-medium"
+                    />
+
+                    {/* Auto-complete Tag Suggestions Dropdown */}
+                    {tagSuggestions.length > 0 && (
+                      <div className="absolute left-0 top-full mt-1 z-[99] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl rounded-lg max-h-36 overflow-y-auto min-w-[120px] py-1 select-none font-sans text-[10px]">
+                        {tagSuggestions.map(suggestion => (
+                          <div
+                            key={suggestion}
+                            onClick={() => {
+                              setTags([...tags, suggestion]);
+                              setTagInput('');
+                            }}
+                            className="px-3 py-1.5 hover:bg-indigo-500 hover:text-white dark:hover:bg-themeAccent/85 cursor-pointer text-slate-700 dark:text-slate-300 font-medium transition-colors"
+                          >
+                            {suggestion}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
