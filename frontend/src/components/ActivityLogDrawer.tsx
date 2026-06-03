@@ -1,7 +1,9 @@
-import React, { useEffect, useRef } from 'react';
-import { X, Sparkles, Terminal, Activity, ArrowRight, User } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu, HelpCircle } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { matchesLogEvent } from '../filterUtils';
+import { ActivityFilterHelpModal } from './ActivityFilterHelpModal';
 
 interface ActivityLogDrawerProps {
   isOpen: boolean;
@@ -9,12 +11,17 @@ interface ActivityLogDrawerProps {
   onNavigate: (slug: string) => void;
 }
 
+type SourceFilter = 'all' | 'api' | 'mcp';
+
 export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
   isOpen,
   onClose,
   onNavigate,
 }) => {
   const { activityLog, isConnected } = useSSE();
+  const [activeSource, setActiveSource] = useState<SourceFilter>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showFilterHelp, setShowFilterHelp] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
 
   // Close on Escape key
@@ -69,6 +76,12 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
     );
   };
 
+  const filteredLog = activityLog.filter((event) => {
+    const sourceMatch = activeSource === 'all' || event.source === activeSource;
+    const queryMatch = matchesLogEvent(event, searchQuery);
+    return sourceMatch && queryMatch;
+  });
+
   return (
     <>
       {/* Dark overlay backdrop */}
@@ -113,6 +126,73 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
           </button>
         </div>
 
+        {/* Filters Section */}
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800/40 bg-slate-50/30 dark:bg-slate-950/10 space-y-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveSource('all')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                activeSource === 'all'
+                  ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-600 dark:text-indigo-400 shadow-sm ring-1 ring-indigo-500/20'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-850'
+              }`}
+            >
+              <Activity size={12} />
+              <span>All</span>
+            </button>
+            <button
+              onClick={() => setActiveSource('api')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                activeSource === 'api'
+                  ? 'bg-slate-500/10 border-slate-500/30 text-slate-600 dark:text-slate-400 shadow-sm ring-1 ring-slate-500/20'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-850'
+              }`}
+            >
+              <User size={12} />
+              <span>REST API</span>
+            </button>
+            <button
+              onClick={() => setActiveSource('mcp')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                activeSource === 'mcp'
+                  ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-600 dark:text-indigo-400 shadow-sm ring-1 ring-indigo-500/20'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-850'
+              }`}
+            >
+              <Cpu size={12} />
+              <span>MCP Server</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5 animate-fade-in">
+            <div className="relative flex-1 group">
+              <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted group-focus-within:text-themeAccent transition-colors" />
+              <input
+                type="text"
+                placeholder="Filter by action, agent, tool..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary shadow-sm transition-all placeholder:text-themeTextMuted"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute inset-y-0 right-3 flex items-center text-themeTextMuted hover:text-rose-500 transition-colors"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+            <button
+              onClick={() => setShowFilterHelp(true)}
+              className="shrink-0 p-1.5 rounded-lg text-themeTextMuted hover:text-themeAccent hover:bg-themeAccentBg transition-colors"
+              title="Filter syntax help"
+            >
+              <HelpCircle size={14} />
+            </button>
+          </div>
+        </div>
+
         {/* Scrollable Events Queue */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           {!isConnected && activityLog.length === 0 ? (
@@ -138,9 +218,23 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
               <span>No activity has been captured yet.</span>
               <span className="text-[10px] mt-0.5">Use the wiki or MCP client to trigger events!</span>
             </div>
+          ) : filteredLog.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-slate-400 dark:text-slate-500 italic text-xs select-none">
+              <Search className="text-slate-300 dark:text-slate-700 mb-2" size={24} />
+              <span>No activity matches your filters.</span>
+              <button
+                onClick={() => {
+                  setActiveSource('all');
+                  setSearchQuery('');
+                }}
+                className="text-[10px] mt-2 text-indigo-500 hover:underline cursor-pointer"
+              >
+                Clear all filters
+              </button>
+            </div>
           ) : (
             <div className="flex flex-col gap-3">
-              {activityLog.map((event) => (
+              {filteredLog.map((event) => (
                 <div
                   key={event.id}
                   className="p-4 rounded-2xl border border-slate-100 dark:border-slate-800/30 bg-slate-50/20 dark:bg-slate-950/10 flex flex-col gap-2 hover:bg-slate-50/40 dark:hover:bg-slate-950/20 hover:border-slate-200/50 dark:hover:border-slate-850/50 transition-all duration-150 relative group"
@@ -204,6 +298,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
           Captured circular cache of last 200 operations.
         </div>
       </div>
+      {showFilterHelp && <ActivityFilterHelpModal onClose={() => setShowFilterHelp(false)} />}
     </>
   );
 };

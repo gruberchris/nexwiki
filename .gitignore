@@ -60,6 +60,7 @@ dev-data/
 *.sw?
 .antigravitycli/
 .claude/
+.gemini/
 
 # OS files
 .DS_Store
