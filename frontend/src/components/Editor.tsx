@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { 
   Save, 
   X, 
@@ -100,6 +100,47 @@ export const Editor: React.FC<EditorProps> = ({
     window.addEventListener('click', closeMenu);
     return () => window.removeEventListener('click', closeMenu);
   }, []);
+
+  // Split pane drag-to-resize states
+  const [splitPercentage, setSplitPercentage] = useState<number>(50);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const stopResizing = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  const resize = useCallback((e: MouseEvent) => {
+    if (!isDragging || !containerRef.current) return;
+
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const newWidth = e.clientX - containerRect.left;
+    const percentage = (newWidth / containerRect.width) * 100;
+
+    // Constraints: keep the editor and preview within 20% to 80% bounds
+    if (percentage >= 20 && percentage <= 80) {
+      setSplitPercentage(percentage);
+    }
+  }, [isDragging]);
+
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', resize);
+      window.addEventListener('mouseup', stopResizing);
+    } else {
+      window.removeEventListener('mousemove', resize);
+      window.removeEventListener('mouseup', stopResizing);
+    }
+    return () => {
+      window.removeEventListener('mousemove', resize);
+      window.removeEventListener('mouseup', stopResizing);
+    };
+  }, [isDragging, resize, stopResizing]);
 
   // Compute diagnostics reactively on change
   const diagnostics = useMemo(() => {
@@ -644,8 +685,13 @@ export const Editor: React.FC<EditorProps> = ({
         </div>
 
         {/* Main Work Area */}
-        <div className="flex-1 flex overflow-hidden relative min-w-0">
+        <div ref={containerRef} className="flex-1 flex overflow-hidden relative min-w-0">
           
+          {/* Drag Overlay to prevent mouse event loss or selections during drag */}
+          {isDragging && (
+            <div className="absolute inset-0 z-50 cursor-col-resize select-none" />
+          )}
+
           {/* Error Banner */}
           {errorMsg && (
             <div className="absolute top-4 left-4 right-4 z-50 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 p-4 border border-rose-200 dark:border-rose-900 rounded-xl text-sm font-medium shadow-md animate-fade-in">
@@ -659,7 +705,8 @@ export const Editor: React.FC<EditorProps> = ({
               onDrop={handleDrop}
               onDragOver={handleDragOver}
               onContextMenu={handleContextMenu}
-              className="flex-1 h-full overflow-hidden bg-white dark:bg-slate-900 flex flex-col font-mono text-slate-800 dark:text-slate-200 min-w-0"
+              style={{ width: viewMode === 'split' ? `${splitPercentage}%` : undefined }}
+              className={`${viewMode === 'split' ? 'flex-shrink-0' : 'flex-1'} h-full overflow-hidden bg-white dark:bg-slate-900 flex flex-col font-mono text-slate-800 dark:text-slate-200 min-w-0`}
             >
               <CodeMirror
                 ref={editorRef}
@@ -696,14 +743,21 @@ export const Editor: React.FC<EditorProps> = ({
             </div>
           )}
 
-          {/* Vertical Separator */}
+          {/* Vertical Separator Handle */}
           {viewMode === 'split' && (
-            <div className="w-[1px] h-full bg-slate-200 dark:bg-slate-800"></div>
+            <div 
+              onMouseDown={startResizing}
+              className="w-1.5 h-full cursor-col-resize bg-slate-200 dark:bg-slate-800 hover:bg-themeAccent/50 active:bg-themeAccent/80 transition-colors flex-shrink-0 z-10"
+              title="Drag to resize pane width"
+            />
           )}
 
           {/* Right Column (Visual Rendered Preview Pane) */}
           {(viewMode === 'preview' || viewMode === 'split') && (
-            <div className="flex-1 h-full overflow-y-auto bg-slate-50 dark:bg-slate-950/20 p-8 min-w-0">
+            <div 
+              style={{ width: viewMode === 'split' ? `${100 - splitPercentage}%` : undefined }}
+              className={`${viewMode === 'split' ? 'flex-shrink-0' : 'flex-1'} h-full overflow-y-auto bg-slate-50 dark:bg-slate-950/20 p-8 min-w-0`}
+            >
               <div className="max-w-2xl mx-auto py-2 bg-white dark:bg-slate-900 border border-slate-200/50 dark:border-slate-800/60 p-8 shadow-sm rounded-2xl min-h-full">
                 {title.trim() && (
                   <h1 className="text-4xl font-extrabold text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-800 pb-3 mb-6 tracking-tight">

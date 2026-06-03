@@ -28,7 +28,9 @@ import {
   Printer,
   FileDown,
   Wrench,
-  ClipboardList
+  ClipboardList,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 // Simple check to identify new page creation urls
@@ -77,6 +79,9 @@ export const App: React.FC = () => {
 
   // Activity Log states
   const [isActivityOpen, setIsActivityOpen] = useState(false);
+
+  // Sidebar visibility state
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   // Alert notifier triggers
   const triggerAlert = (type: 'success' | 'error', text: string) => {
@@ -681,21 +686,42 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Sidebar Component */}
-      <div className="no-print">
-        <Sidebar
-          articles={articles}
-          currentSlug={routeInfo.slug || (routeInfo.route === 'home' ? 'home' : '')}
-          darkMode={darkMode}
-          onToggleDarkMode={toggleDarkMode}
-          onOpenThemeManager={() => setThemeModalOpen(true)}
-          onNavigate={handleNavigate}
-          onCreateNew={(type: 'article' | 'plan' | 'skill') => navigate(`/new?type=${type}`)}
-          wikiName={wikiName}
-          onExportAll={handleExportAll}
-          onOpenActivityLog={() => setIsActivityOpen(true)}
-          version={version}
-        />
+      {/* Sidebar Component with Sliding Double-Div Transition */}
+      <div 
+        className={`no-print transition-all duration-300 ease-in-out flex-shrink-0 relative z-30 ${
+          isSidebarOpen ? 'w-80' : 'w-0'
+        }`}
+      >
+        <div 
+          className={`h-full transition-transform duration-300 ease-in-out relative ${
+            isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+          style={{ width: '20rem' }}
+        >
+          <Sidebar
+            articles={articles}
+            currentSlug={routeInfo.slug || (routeInfo.route === 'home' ? 'home' : '')}
+            darkMode={darkMode}
+            onToggleDarkMode={toggleDarkMode}
+            onOpenThemeManager={() => setThemeModalOpen(true)}
+            onNavigate={handleNavigate}
+            onCreateNew={(type: 'article' | 'plan' | 'skill') => navigate(`/new?type=${type}`)}
+            wikiName={wikiName}
+            onExportAll={handleExportAll}
+            onOpenActivityLog={() => setIsActivityOpen(true)}
+            version={version}
+          />
+
+          {/* Subtle Border-Aligned Slide Toggle Button */}
+          <button
+            onClick={() => setIsSidebarOpen(prev => !prev)}
+            className="absolute top-1/2 -right-3.5 transform -translate-y-1/2 z-50 w-7 h-7 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500 hover:text-themeAccent dark:hover:text-themeAccent shadow-md hover:scale-110 active:scale-95 transition-all duration-200 cursor-pointer flex items-center justify-center no-print"
+            title={isSidebarOpen ? "Minimize Sidebar" : "Expand Sidebar"}
+            aria-label={isSidebarOpen ? "Minimize Sidebar" : "Expand Sidebar"}
+          >
+            {isSidebarOpen ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+          </button>
+        </div>
       </div>
 
       {/* Main Content Area */}

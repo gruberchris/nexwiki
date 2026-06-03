@@ -182,6 +182,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             {darkMode ? <Sun size={14} className="text-amber-400" /> : <Moon size={14} className="text-themeAccent" />}
           </button>
+
+
         </div>
       </div>
 
