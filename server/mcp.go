@@ -133,7 +133,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "list_articles",
-					"description": "List all articles currently available inside your NexWiki knowledge base, showing their titles and URL slugs.",
+					"description": "List all articles currently available inside your NexWiki knowledge base, showing their titles, URL slugs, and article types (e.g., Wiki Article, Agent Memory, Agent Plan, or Agent Skill).",
 					"inputSchema": map[string]interface{}{
 						"type":       "object",
 						"properties": map[string]interface{}{},
@@ -875,12 +875,27 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		} else {
 			text = fmt.Sprintf("NexWiki Directory Index contains %d articles:\n\n", len(articles))
 			for i, art := range articles {
+				articleType := "Wiki Article"
+				for _, tag := range art.Tags {
+					tagLower := strings.ToLower(tag)
+					if strings.HasPrefix(tagLower, "aiagent-memory") {
+						articleType = "Agent Memory"
+						break
+					} else if tagLower == "aiagent-plan" {
+						articleType = "Agent Plan"
+						break
+					} else if tagLower == "aiagent-skill" {
+						articleType = "Agent Skill"
+						break
+					}
+				}
+
 				tagsStr := ""
 				if len(art.Tags) > 0 {
 					tagsStr = fmt.Sprintf(" | Tags: %s", strings.Join(art.Tags, ", "))
 				}
-				text += fmt.Sprintf("[%d] %s (Slug: %s, Last Edited: %s%s)\n",
-					i+1, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"), tagsStr)
+				text += fmt.Sprintf("[%d] %s (Slug: %s, Type: %s, Last Edited: %s%s)\n",
+					i+1, art.Title, art.Slug, articleType, art.UpdatedAt.Format("2006-01-02 15:04:05"), tagsStr)
 			}
 		}
 
