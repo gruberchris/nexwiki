@@ -50,10 +50,27 @@ func (eb *EventBus) Unsubscribe(ch chan string) {
 func (eb *EventBus) PublishActivity(source, action, tool, slug, title, agent string) {
 	eb.mu.Lock()
 
+	// Prevent duplicate events within a 2-second window
+	now := time.Now()
+	for i := len(eb.buffer) - 1; i >= 0; i-- {
+		prev := eb.buffer[i]
+		if now.Sub(prev.Timestamp) > 2*time.Second {
+			break
+		}
+		if prev.Source == source &&
+			prev.Action == action &&
+			prev.Tool == tool &&
+			prev.Slug == slug &&
+			prev.Agent == agent {
+			eb.mu.Unlock()
+			return
+		}
+	}
+
 	eb.eventCount++
 	event := LogEvent{
-		ID:        fmt.Sprintf("evt_%d_%d", time.Now().UnixNano(), eb.eventCount),
-		Timestamp: time.Now(),
+		ID:        fmt.Sprintf("evt_%d_%d", now.UnixNano(), eb.eventCount),
+		Timestamp: now,
 		Source:    source,
 		Action:    action,
 		Tool:      tool,

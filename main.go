@@ -140,6 +140,7 @@ func main() {
 		// If port is already in use, don't crash in case we are running as a secondary stdio MCP server!
 		log.Printf("Web server ListenAndServe notice: %v", err)
 		log.Printf("Continuing execution for Stdio MCP server loop...")
+		srv.IsSecondaryProcess = true
 		// Keep the process alive so the background Stdio server continues handling agent requests!
 		select {}
 	}

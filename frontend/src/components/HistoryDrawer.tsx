@@ -30,10 +30,12 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
       try {
         const res = await fetch(`/api/articles/${slug}/history`);
         if (!res.ok) {
-          throw new Error('Failed to load version logs');
+          console.error('Error fetching version logs: Failed to load version logs');
+          setHistory([]);
+        } else {
+          const data = await res.json();
+          setHistory(data || []);
         }
-        const data = await res.json();
-        setHistory(data || []);
       } catch (err) {
         console.error('Error fetching version logs:', err);
       } finally {
@@ -49,10 +51,11 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
     try {
       const res = await fetch(`/api/articles/${slug}/history/${version}`);
       if (!res.ok) {
-        throw new Error('Failed to load historical content');
+        alert('Failed to load historical content');
+      } else {
+        const data = await res.json();
+        setSelectedVersion(data);
       }
-      const data = await res.json();
-      setSelectedVersion(data);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Error loading historical version');
     } finally {
@@ -74,10 +77,11 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
       });
 
       if (!res.ok) {
-        throw new Error('Server error: failed to perform revert');
+        alert('Server error: failed to perform revert');
+        setIsReverting(false);
+      } else {
+        onRevertComplete();
       }
-      
-      onRevertComplete();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Revert failed');
       setIsReverting(false);
@@ -159,14 +163,20 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
               </div>
 
               {/* Action revert button */}
-              <button
-                onClick={() => handleRevert(selectedVersion.version!)}
-                disabled={isReverting}
-                className="flex items-center gap-1.5 py-2 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-xs shadow-md shadow-emerald-100 dark:shadow-none transition-all disabled:opacity-50"
-              >
-                <RotateCcw size={12} className={isReverting ? 'animate-spin' : ''} />
-                <span>{isReverting ? 'Reverting...' : 'Revert to this version'}</span>
-              </button>
+              {selectedVersion.version !== history[0]?.version ? (
+                <button
+                  onClick={() => handleRevert(selectedVersion.version!)}
+                  disabled={isReverting}
+                  className="flex items-center gap-1.5 py-2 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-xs shadow-md shadow-emerald-100 dark:shadow-none transition-all disabled:opacity-50"
+                >
+                  <RotateCcw size={12} className={isReverting ? 'animate-spin' : ''} />
+                  <span>{isReverting ? 'Reverting...' : 'Revert to this version'}</span>
+                </button>
+              ) : (
+                <span className="px-3.5 py-2 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-xs font-bold font-sans">
+                  Active Version
+                </span>
+              )}
             </div>
 
             {/* Render Visual Diff Engine */}
@@ -244,11 +254,11 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                         <Eye size={11} />
                         <span>Inspect</span>
                       </button>
-                      {!isLatest && (
+                      {h.version !== undefined && h.version > 1 && (
                         <button
-                          onClick={() => handleRevert(h.version!)}
+                          onClick={() => handleRevert(h.version! - 1)}
                           className="flex items-center gap-1 py-1.5 px-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 hover:bg-emerald-100 dark:hover:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] active:scale-95 transition-all"
-                          title="Quick Revert"
+                          title={`Revert to v${h.version - 1}`}
                         >
                           <RotateCcw size={11} />
                           <span>Revert</span>

@@ -3,6 +3,7 @@ import type { Article } from '../types';
 import { Search, ChevronDown, HelpCircle, X } from 'lucide-react';
 import { ArticleCard } from './ArticleCard';
 import { getActiveFilterToken, applyAutocompleteSelection } from '../filterUtils';
+import { useClickOutside } from '../hooks/useClickOutside';
 
 interface DirectorySectionProps {
   title: string;
@@ -68,9 +69,15 @@ export function DirectorySection({
     return [...tagResults, ...titleResults].slice(0, 8);
   }, [activeToken, articles]);
 
+  const [showDropdown, setShowDropdown] = React.useState(false);
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
+
+  useClickOutside(dropdownRef, () => setShowDropdown(false));
+
   const handleSelectSuggestion = (selection: string) => {
     const newQuery = applyAutocompleteSelection(searchQuery, selection);
     onSearchChange(newQuery);
+    setShowDropdown(false);
   };
 
   const [focusedIndex, setFocusedIndex] = React.useState<number>(-1);
@@ -101,13 +108,17 @@ export function DirectorySection({
 
         {isExpanded && (
           <div className="flex items-center gap-1.5 w-full sm:w-80 animate-fade-in">
-            <div className="relative flex-1 z-30">
+            <div ref={dropdownRef} className="relative flex-1 z-30">
               <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted" />
               <input
                 type="text"
                 placeholder={filterPlaceholder}
                 value={searchQuery}
-                onChange={(e) => onSearchChange(e.target.value)}
+                onFocus={() => setShowDropdown(true)}
+                onChange={(e) => {
+                  onSearchChange(e.target.value);
+                  setShowDropdown(true);
+                }}
                 onKeyDown={(e) => {
                   if (suggestions.length > 0) {
                     if (e.key === 'Tab') {
@@ -139,7 +150,7 @@ export function DirectorySection({
               )}
 
               {/* Autocomplete Suggestions Dropdown */}
-              {suggestions.length > 0 && (
+              {showDropdown && suggestions.length > 0 && (
                 <div className="absolute left-0 top-full mt-1.5 z-50 w-full bg-themeBgSecondary backdrop-blur-lg border border-themeBorder shadow-xl rounded-2xl max-h-48 overflow-y-auto py-1.5 select-none font-sans text-xs text-themeTextSecondary">
                   {suggestions.map((s, idx) => (
                     <div

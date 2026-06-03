@@ -60,6 +60,23 @@ export const SSEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }, 5000);
       };
 
+      // Listen to historical activity log streams
+      eventSource.addEventListener('history', (event: MessageEvent) => {
+        try {
+          const ev = JSON.parse(event.data) as LogEvent;
+          setActivityLog((prev) => {
+            // Deduplicate logs by ID to prevent duplicates on reconnections
+            if (prev.some(p => p.id === ev.id)) {
+              return prev;
+            }
+            const next = [ev, ...prev];
+            return next.slice(0, 200); // cap circular buffer at 200 log entries
+          });
+        } catch (err) {
+          console.error('Failed to parse SSE history:', err);
+        }
+      });
+
       // Listen to live activity log streams
       eventSource.addEventListener('activity', (event: MessageEvent) => {
         try {
@@ -74,7 +91,9 @@ export const SSEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
           
           // Increment unread operations (e.g., AI agent tool uses)
-          triggerCumulativeUnreadBadge(1);
+          if (ev.agent !== 'User' && ev.source !== 'api') {
+            triggerCumulativeUnreadBadge(1);
+          }
         } catch (err) {
           console.error('Failed to parse SSE activity:', err);
         }

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import type { Article } from '../types';
 import { formatRelativeTime } from '../utils';
 import { 
@@ -24,6 +24,7 @@ import {
 import { useSSE } from '../hooks/useSSE';
 import { matchesSidebarFilter, getActiveFilterToken, applyAutocompleteSelection } from '../filterUtils';
 import { SidebarFilterHelpModal } from './SidebarFilterHelpModal';
+import { useClickOutside } from '../hooks/useClickOutside';
 
 interface SidebarProps {
   articles: Article[];
@@ -95,9 +96,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return [...tagResults, ...titleResults].slice(0, 8);
   }, [activeToken, allUserTags, articles]);
 
+  const [showDropdown, setShowDropdown] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useClickOutside(dropdownRef, () => setShowDropdown(false));
+
   const handleSelectSuggestion = (selection: string) => {
     const newQuery = applyAutocompleteSelection(filterQuery, selection);
     setFilterQuery(newQuery);
+    setShowDropdown(false);
   };
 
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
@@ -253,13 +260,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Local Filter input box */}
       <div className="px-6 py-3 relative z-20">
         <div className="flex items-center gap-1.5 animate-fade-in">
-          <div className="relative flex-1 group z-30">
+          <div ref={dropdownRef} className="relative flex-1 group z-30">
             <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted group-focus-within:text-themeAccent transition-colors" />
             <input
               type="text"
               placeholder="Filter sidebar..."
               value={filterQuery}
-              onChange={(e) => setFilterQuery(e.target.value)}
+              onFocus={() => setShowDropdown(true)}
+              onChange={(e) => {
+                setFilterQuery(e.target.value);
+                setShowDropdown(true);
+              }}
               onKeyDown={(e) => {
                 if (filterSuggestions.length > 0) {
                   if (e.key === 'Tab') {
@@ -291,7 +302,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
 
             {/* Sidebar Autocomplete Dropdown */}
-            {filterSuggestions.length > 0 && (
+            {showDropdown && filterSuggestions.length > 0 && (
               <div className="absolute left-0 top-full mt-1.5 z-50 w-full bg-themeBgSecondary backdrop-blur-lg border border-themeBorder shadow-xl rounded-2xl max-h-48 overflow-y-auto py-1.5 select-none font-sans text-xs text-themeTextSecondary">
                 {filterSuggestions.map((s, idx) => (
                   <div

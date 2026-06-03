@@ -21,6 +21,7 @@ type Server struct {
 	EventBus               *EventBus
 	Version                string
 	Port                   string
+	IsSecondaryProcess     bool
 }
 
 // NewServer builds a new API controller.
@@ -953,7 +954,7 @@ func (srv *Server) HandleActivityStream(w http.ResponseWriter, r *http.Request) 
 	for _, ev := range history {
 		data, err := json.Marshal(ev)
 		if err == nil {
-			_, _ = fmt.Fprintf(w, "event: activity\ndata: %s\n\n", string(data))
+			_, _ = fmt.Fprintf(w, "event: history\ndata: %s\n\n", string(data))
 		}
 	}
 	flusher.Flush()
@@ -1006,6 +1007,44 @@ func (srv *Server) HandlePostActivityLog(w http.ResponseWriter, r *http.Request)
 
 	if srv.EventBus != nil {
 		srv.EventBus.PublishActivity(payload.Source, payload.Action, payload.Tool, payload.Slug, payload.Title, payload.Agent)
+
+		// Synchronize client list/stats reactively when secondary process mutates the wiki
+		if payload.Action != "read" {
+			articles, err := srv.Storage.ListArticles()
+			if err == nil {
+				var targetTags []string
+				if payload.Slug != "" {
+					if art, err := srv.Storage.GetArticle(payload.Slug); err == nil {
+						targetTags = art.Tags
+					}
+				}
+
+				dir := getArticleDirectory(targetTags)
+				dirCount := 0
+				for _, a := range articles {
+					if getArticleDirectory(a.Tags) == dir {
+						dirCount++
+					}
+				}
+
+				updateType := "article-edited"
+				if payload.Action == "create" {
+					updateType = "article-added"
+				} else if payload.Action == "delete" {
+					updateType = "article-removed"
+				}
+
+				srv.EventBus.PublishWikiUpdate(WikiUpdate{
+					Type:           updateType,
+					Slug:           payload.Slug,
+					Title:          payload.Title,
+					Tags:           targetTags,
+					Directory:      dir,
+					TotalCount:     len(articles),
+					DirectoryCount: dirCount,
+				})
+			}
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)

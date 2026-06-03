@@ -695,7 +695,9 @@ func (srv *Server) logMCPToolCall(params json.RawMessage) {
 	srv.EventBus.PublishActivity("mcp", action, tool, slug, title, agent)
 
 	// Forward to the main web server process if we are running in a secondary process
-	go srv.forwardActivityToWebServer("mcp", action, tool, slug, title, agent)
+	if srv.IsSecondaryProcess {
+		go srv.forwardActivityToWebServer("mcp", action, tool, slug, title, agent)
+	}
 
 	// If it's a mutation, broadcast a WikiUpdate to sync all clients!
 	if action != "read" {

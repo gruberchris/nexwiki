@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu, HelpCircle } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useClickOutside } from '../hooks/useClickOutside';
 import { matchesLogEvent, getActiveFilterToken, applyAutocompleteSelection } from '../filterUtils';
 import { ActivityFilterHelpModal } from './ActivityFilterHelpModal';
 
@@ -60,9 +61,15 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
     return [...actionResults, ...toolResults, ...agentResults, ...sourceResults].slice(0, 8);
   }, [activeToken, activityLog]);
 
+  const [showDropdown, setShowDropdown] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useClickOutside(dropdownRef, () => setShowDropdown(false));
+
   const handleSelectSuggestion = (selection: string) => {
     const newQuery = applyAutocompleteSelection(searchQuery, selection);
     setSearchQuery(newQuery);
+    setShowDropdown(false);
   };
 
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
@@ -77,15 +84,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
   useEscapeKey(isOpen, onClose);
 
   // Handle outside click to close
-  useEffect(() => {
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (isOpen && drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
-        onClose();
-      }
-    };
-    window.addEventListener('mousedown', handleOutsideClick);
-    return () => window.removeEventListener('mousedown', handleOutsideClick);
-  }, [isOpen, onClose]);
+  useClickOutside(drawerRef, onClose, isOpen);
 
   const getActionBadge = (action: string) => {
     switch (action.toLowerCase()) {
@@ -214,13 +213,17 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 animate-fade-in">
-            <div className="relative flex-1 group z-30">
+            <div ref={dropdownRef} className="relative flex-1 group z-30">
               <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted group-focus-within:text-themeAccent transition-colors" />
               <input
                 type="text"
                 placeholder="Filter by action, agent, tool..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onFocus={() => setShowDropdown(true)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setShowDropdown(true);
+                }}
                 onKeyDown={(e) => {
                   if (logSuggestions.length > 0) {
                     if (e.key === 'Tab') {
@@ -252,7 +255,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
               )}
 
               {/* Log Autocomplete Suggestions Dropdown */}
-              {logSuggestions.length > 0 && (
+              {showDropdown && logSuggestions.length > 0 && (
                 <div className="absolute left-0 top-full mt-1.5 z-50 w-full bg-themeBgSecondary backdrop-blur-lg border border-themeBorder shadow-xl rounded-2xl max-h-48 overflow-y-auto py-1.5 select-none font-sans text-xs text-themeTextSecondary">
                   {logSuggestions.map((s, idx) => (
                     <div
