@@ -20,10 +20,11 @@ type Server struct {
 	ThemeSchedulingEnabled bool
 	EventBus               *EventBus
 	Version                string
+	Port                   string
 }
 
 // NewServer builds a new API controller.
-func NewServer(storage *Storage, wikiName string, defaultTheme string, themeSchedulingEnabled bool, eventBus *EventBus, version string) *Server {
+func NewServer(storage *Storage, wikiName string, defaultTheme string, themeSchedulingEnabled bool, eventBus *EventBus, version string, port string) *Server {
 	return &Server{
 		Storage:                storage,
 		WikiName:               wikiName,
@@ -31,6 +32,7 @@ func NewServer(storage *Storage, wikiName string, defaultTheme string, themeSche
 		ThemeSchedulingEnabled: themeSchedulingEnabled,
 		EventBus:               eventBus,
 		Version:                version,
+		Port:                   port,
 	}
 }
 
@@ -978,4 +980,33 @@ func (srv *Server) HandleActivityStream(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+}
+
+// HandlePostActivityLog receives activity log updates from secondary processes (like stdio MCP agents)
+// and broadcasts them to the active client SSE listeners.
+func (srv *Server) HandlePostActivityLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		Source string `json:"source"`
+		Action string `json:"action"`
+		Tool   string `json:"tool"`
+		Slug   string `json:"slug"`
+		Title  string `json:"title"`
+		Agent  string `json:"agent"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if srv.EventBus != nil {
+		srv.EventBus.PublishActivity(payload.Source, payload.Action, payload.Tool, payload.Slug, payload.Title, payload.Agent)
+	}
+
+	w.WriteHeader(http.StatusOK)
 }

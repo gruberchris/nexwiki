@@ -15,7 +15,7 @@ func TestMCPEditAgentPlan(t *testing.T) {
 	}
 
 	eventBus := NewEventBus()
-	srv := NewServer(storage, "Test Wiki", "light", false, eventBus, "1.0.0")
+	srv := NewServer(storage, "Test Wiki", "light", false, eventBus, "1.0.0", "")
 
 	// 1. Create a plan first using executeToolCallInternal
 	createArgs := json.RawMessage(`{"name":"create_agent_plan","arguments":{"title":"Migration Plan","content":"# Migration Checklist","project_context":"nexwiki","edit_summary":"Initial seed"}}`)
@@ -124,7 +124,7 @@ func TestMCPUpdateArticleTags(t *testing.T) {
 	}
 
 	eventBus := NewEventBus()
-	srv := NewServer(storage, "Test Wiki", "light", false, eventBus, "1.0.0")
+	srv := NewServer(storage, "Test Wiki", "light", false, eventBus, "1.0.0", "")
 
 	// 1. Create a standard article first
 	_, err = storage.SaveArticle("", "Golang Guide", "# Go content", "Initial seed", []string{"go", "backend"})

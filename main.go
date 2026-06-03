@@ -68,7 +68,7 @@ func main() {
 	eventBus := server.NewEventBus()
 
 	// Initialize server instance with configured name, theme, event bus, and scheduling settings
-	srv := server.NewServer(storage, name, defaultTheme, themeSchedulingEnabled, eventBus, Version)
+	srv := server.NewServer(storage, name, defaultTheme, themeSchedulingEnabled, eventBus, Version, *port)
 
 	// Spin up the stdio MCP JSON-RPC server in a background goroutine!
 	go srv.StartMCPServer()
@@ -97,6 +97,7 @@ func main() {
 	mux.HandleFunc("POST /api/articles/{slug}/revert", srv.HandleRevertArticle)
 	mux.HandleFunc("DELETE /api/tags/{tag}", srv.HandleDeleteTagGlobally)
 	mux.HandleFunc("GET /api/activity/stream", srv.HandleActivityStream)
+	mux.HandleFunc("POST /api/activity/log", srv.HandlePostActivityLog)
 	mux.HandleFunc("GET /api/wiki/stats", srv.HandleGetWikiStats)
 
 	// Register AI Skills registry endpoints
@@ -136,7 +137,11 @@ func main() {
 	log.Printf("NexWiki web server is running on http://localhost%s", addr)
 
 	if err := http.ListenAndServe(addr, handler); err != nil {
-		log.Fatalf("Fatal: server exited: %v", err)
+		// If port is already in use, don't crash in case we are running as a secondary stdio MCP server!
+		log.Printf("Web server ListenAndServe notice: %v", err)
+		log.Printf("Continuing execution for Stdio MCP server loop...")
+		// Keep the process alive so the background Stdio server continues handling agent requests!
+		select {}
 	}
 }
 
