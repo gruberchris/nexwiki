@@ -1,10 +1,11 @@
 import React, { useRef, useState, useMemo } from 'react';
-import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu, HelpCircle } from 'lucide-react';
+import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useClickOutside } from '../hooks/useClickOutside';
-import { matchesLogEvent, getActiveFilterToken, applyAutocompleteSelection } from '../filterUtils';
+import { matchesLogEvent, getAutocompleteSearchTerm } from '../filterUtils';
 import { ActivityFilterHelpModal } from './ActivityFilterHelpModal';
+import { FilterInput } from './FilterInput';
 
 interface ActivityLogDrawerProps {
   isOpen: boolean;
@@ -25,30 +26,29 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
   const [showFilterHelp, setShowFilterHelp] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
 
-
-
-  const activeToken = useMemo(() => getActiveFilterToken(searchQuery), [searchQuery]);
+  // Get search term without a "!" prefix for autocomplete suggestions
+  const autocompleteTerm = useMemo(() => getAutocompleteSearchTerm(searchQuery), [searchQuery]);
 
   const logSuggestions = useMemo(() => {
-    const query = activeToken.trim().toLowerCase();
-    if (!query) return [];
-
+    if (!autocompleteTerm) return [];
+    
     const actions = new Set<string>();
     const tools = new Set<string>();
     const agents = new Set<string>();
     const sources = new Set<string>();
 
     activityLog.forEach(event => {
-      if (event.action && event.action.toLowerCase().includes(query)) {
+      // Search in all fields without the ! prefix
+      if (event.action && event.action.toLowerCase().includes(autocompleteTerm.toLowerCase())) {
         actions.add(event.action);
       }
-      if (event.tool && event.tool.toLowerCase().includes(query)) {
+      if (event.tool && event.tool.toLowerCase().includes(autocompleteTerm.toLowerCase())) {
         tools.add(event.tool);
       }
-      if (event.agent && event.agent.toLowerCase().includes(query)) {
+      if (event.agent && event.agent.toLowerCase().includes(autocompleteTerm.toLowerCase())) {
         agents.add(event.agent);
       }
-      if (event.source && event.source.toLowerCase().includes(query)) {
+      if (event.source && event.source.toLowerCase().includes(autocompleteTerm.toLowerCase())) {
         sources.add(event.source);
       }
     });
@@ -59,26 +59,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
     const sourceResults = Array.from(sources).map(val => ({ type: 'source', value: val }));
 
     return [...actionResults, ...toolResults, ...agentResults, ...sourceResults].slice(0, 8);
-  }, [activeToken, activityLog]);
-
-  const [showDropdown, setShowDropdown] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  useClickOutside(dropdownRef, () => setShowDropdown(false));
-
-  const handleSelectSuggestion = (selection: string) => {
-    const newQuery = applyAutocompleteSelection(searchQuery, selection);
-    setSearchQuery(newQuery);
-    setShowDropdown(false);
-  };
-
-  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
-  const [prevSuggestionsLength, setPrevSuggestionsLength] = useState(logSuggestions.length);
-
-  if (logSuggestions.length !== prevSuggestionsLength) {
-    setFocusedIndex(-1);
-    setPrevSuggestionsLength(logSuggestions.length);
-  }
+  }, [autocompleteTerm, activityLog]);
 
   // Close on Escape key
   useEscapeKey(isOpen, onClose);
@@ -212,81 +193,14 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
             </button>
           </div>
 
-          <div className="flex items-center gap-1.5 animate-fade-in">
-            <div ref={dropdownRef} className="relative flex-1 group z-30">
-              <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted group-focus-within:text-themeAccent transition-colors" />
-              <input
-                type="text"
-                placeholder="Filter by action, agent, tool..."
-                value={searchQuery}
-                onFocus={() => setShowDropdown(true)}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setShowDropdown(true);
-                }}
-                onKeyDown={(e) => {
-                  if (logSuggestions.length > 0) {
-                    if (e.key === 'Tab') {
-                      e.preventDefault();
-                      if (e.shiftKey) {
-                        setFocusedIndex(prev => (prev <= -1 ? logSuggestions.length - 1 : prev - 1));
-                      } else {
-                        setFocusedIndex(prev => (prev >= logSuggestions.length - 1 ? -1 : prev + 1));
-                      }
-                      return;
-                    }
-                    if (e.key === 'Enter' && focusedIndex >= 0 && focusedIndex < logSuggestions.length) {
-                      e.preventDefault();
-                      handleSelectSuggestion(logSuggestions[focusedIndex].value);
-                      setFocusedIndex(-1);
-                      return;
-                    }
-                  }
-                }}
-                className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary shadow-sm transition-all placeholder:text-themeTextMuted"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute inset-y-0 right-3 flex items-center text-themeTextMuted hover:text-rose-500 transition-colors"
-                >
-                  <X size={12} />
-                </button>
-              )}
-
-              {/* Log Autocomplete Suggestions Dropdown */}
-              {showDropdown && logSuggestions.length > 0 && (
-                <div className="absolute left-0 top-full mt-1.5 z-50 w-full bg-themeBgSecondary backdrop-blur-lg border border-themeBorder shadow-xl rounded-2xl max-h-48 overflow-y-auto py-1.5 select-none font-sans text-xs text-themeTextSecondary">
-                  {logSuggestions.map((s, idx) => (
-                    <div
-                      key={`${s.type}-${s.value}`}
-                      onClick={() => {
-                        handleSelectSuggestion(s.value);
-                        setFocusedIndex(-1);
-                      }}
-                      className={`px-3.5 py-2 cursor-pointer flex items-center justify-between transition-colors ${
-                        idx === focusedIndex
-                          ? 'bg-themeAccentBg text-themeAccent'
-                          : 'hover:bg-themeAccentBg hover:text-themeAccent text-themeTextSecondary'
-                      }`}
-                    >
-                      <span className="truncate font-medium">{s.value}</span>
-                      <span className="text-[9px] font-bold text-themeTextMuted uppercase tracking-wider ml-2 bg-themeBgPrimary px-1.5 py-0.5 rounded border border-themeBorder">
-                        {s.type}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => setShowFilterHelp(true)}
-              className="shrink-0 p-1.5 rounded-lg text-themeTextMuted hover:text-themeAccent hover:bg-themeAccentBg transition-colors"
-              title="Filter syntax help"
-            >
-              <HelpCircle size={14} />
-            </button>
-          </div>
+          <FilterInput
+            value={searchQuery}
+            onChange={setSearchQuery}
+            suggestions={logSuggestions}
+            placeholder="Filter by action, agent, tool..."
+            onOpenHelp={() => setShowFilterHelp(true)}
+            inputClassName="bg-themeBgSecondary shadow-sm"
+          />
         </div>
 
         {/* Scrollable Events Queue */}

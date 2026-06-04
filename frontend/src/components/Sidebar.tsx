@@ -1,13 +1,12 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { Article } from '../types';
 import { formatRelativeTime } from '../utils';
-import { 
-  FileText, 
-  Search, 
-  Moon, 
-  Sun, 
-  Layers, 
-  Clock, 
+import {
+  FileText,
+  Moon,
+  Sun,
+  Layers,
+  Clock,
   ChevronRight,
   BookOpen,
   Cpu,
@@ -19,12 +18,11 @@ import {
   Palette,
   Archive,
   Activity,
-  HelpCircle
 } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
-import { matchesSidebarFilter, getActiveFilterToken, applyAutocompleteSelection } from '../filterUtils';
+import { matchesSidebarFilter, getAutocompleteSearchTerm, buildSuggestionsFromArticles } from '../filterUtils';
 import { SidebarFilterHelpModal } from './SidebarFilterHelpModal';
-import { useClickOutside } from '../hooks/useClickOutside';
+import { FilterInput } from './FilterInput';
 
 interface SidebarProps {
   articles: Article[];
@@ -76,44 +74,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
 
 
-  const activeToken = useMemo(() => getActiveFilterToken(filterQuery), [filterQuery]);
+  const autocompleteTerm = useMemo(() => getAutocompleteSearchTerm(filterQuery), [filterQuery]);
 
   const filterSuggestions = useMemo(() => {
-    const query = activeToken.trim().toLowerCase();
-    if (!query) return [];
-
-    const matchedTags = allUserTags.filter(t => t.toLowerCase().includes(query));
-    const matchedTitles: string[] = [];
-    articles.forEach(art => {
-      if (art.title.toLowerCase().includes(query)) {
-        matchedTitles.push(art.title);
-      }
-    });
-
-    const tagResults = matchedTags.map(t => ({ type: 'tag', value: t }));
-    const titleResults = matchedTitles.map(t => ({ type: 'title', value: t }));
-
-    return [...tagResults, ...titleResults].slice(0, 8);
-  }, [activeToken, allUserTags, articles]);
-
-  const [showDropdown, setShowDropdown] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  useClickOutside(dropdownRef, () => setShowDropdown(false));
-
-  const handleSelectSuggestion = (selection: string) => {
-    const newQuery = applyAutocompleteSelection(filterQuery, selection);
-    setFilterQuery(newQuery);
-    setShowDropdown(false);
-  };
-
-  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
-  const [prevSuggestionsLength, setPrevSuggestionsLength] = useState(filterSuggestions.length);
-
-  if (filterSuggestions.length !== prevSuggestionsLength) {
-    setFocusedIndex(-1);
-    setPrevSuggestionsLength(filterSuggestions.length);
-  }
+    if (!autocompleteTerm) return [];
+    return buildSuggestionsFromArticles(articles, autocompleteTerm);
+  }, [autocompleteTerm, articles]);
 
   // Standard articles filter (excl. agent pages, and matching tag + search query)
   const standardArticles = useMemo(() => {
@@ -259,81 +225,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Local Filter input box */}
       <div className="px-6 py-3 relative z-20">
-        <div className="flex items-center gap-1.5 animate-fade-in">
-          <div ref={dropdownRef} className="relative flex-1 group z-30">
-            <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted group-focus-within:text-themeAccent transition-colors" />
-            <input
-              type="text"
-              placeholder="Filter sidebar..."
-              value={filterQuery}
-              onFocus={() => setShowDropdown(true)}
-              onChange={(e) => {
-                setFilterQuery(e.target.value);
-                setShowDropdown(true);
-              }}
-              onKeyDown={(e) => {
-                if (filterSuggestions.length > 0) {
-                  if (e.key === 'Tab') {
-                    e.preventDefault();
-                    if (e.shiftKey) {
-                      setFocusedIndex(prev => (prev <= -1 ? filterSuggestions.length - 1 : prev - 1));
-                    } else {
-                      setFocusedIndex(prev => (prev >= filterSuggestions.length - 1 ? -1 : prev + 1));
-                    }
-                    return;
-                  }
-                  if (e.key === 'Enter' && focusedIndex >= 0 && focusedIndex < filterSuggestions.length) {
-                    e.preventDefault();
-                    handleSelectSuggestion(filterSuggestions[focusedIndex].value);
-                    setFocusedIndex(-1);
-                    return;
-                  }
-                }
-              }}
-              className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-themeBgPrimary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent focus:bg-themeBgSecondary text-themeTextSecondary transition-all placeholder:text-themeTextMuted"
-            />
-            {filterQuery && (
-              <button
-                onClick={() => setFilterQuery('')}
-                className="absolute inset-y-0 right-3 flex items-center text-themeTextMuted hover:text-rose-500 transition-colors animate-fade-in"
-              >
-                <X size={12} />
-              </button>
-            )}
-
-            {/* Sidebar Autocomplete Dropdown */}
-            {showDropdown && filterSuggestions.length > 0 && (
-              <div className="absolute left-0 top-full mt-1.5 z-50 w-full bg-themeBgSecondary backdrop-blur-lg border border-themeBorder shadow-xl rounded-2xl max-h-48 overflow-y-auto py-1.5 select-none font-sans text-xs text-themeTextSecondary">
-                {filterSuggestions.map((s, idx) => (
-                  <div
-                    key={`${s.type}-${s.value}`}
-                    onClick={() => {
-                      handleSelectSuggestion(s.value);
-                      setFocusedIndex(-1);
-                    }}
-                    className={`px-3.5 py-2 cursor-pointer flex items-center justify-between transition-colors ${
-                      idx === focusedIndex
-                        ? 'bg-themeAccentBg text-themeAccent'
-                        : 'hover:bg-themeAccentBg hover:text-themeAccent text-themeTextSecondary'
-                    }`}
-                  >
-                    <span className="truncate font-medium">{s.value}</span>
-                    <span className="text-[9px] font-bold text-themeTextMuted uppercase tracking-wider ml-2 bg-themeBgPrimary px-1.5 py-0.5 rounded border border-themeBorder">
-                      {s.type}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          <button
-            onClick={() => setShowFilterHelp(true)}
-            className="shrink-0 p-1.5 rounded-lg text-themeTextMuted hover:text-themeAccent hover:bg-themeAccentBg transition-colors"
-            title="Filter syntax help"
-          >
-            <HelpCircle size={14} />
-          </button>
-        </div>
+        <FilterInput
+          value={filterQuery}
+          onChange={setFilterQuery}
+          suggestions={filterSuggestions}
+          placeholder="Filter sidebar..."
+          onOpenHelp={() => setShowFilterHelp(true)}
+          inputClassName="bg-themeBgPrimary focus:bg-themeBgSecondary"
+        />
       </div>
 
       {/* Tag Cloud Filter Section */}

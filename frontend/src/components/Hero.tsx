@@ -57,10 +57,13 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
   const aiPlans = articles.filter(art => art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan'));
   const aiSkills = articles.filter(art => art.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill'));
 
+  // Filtered lists for display (applies both category filter AND search query)
   const filteredWikiArticles = wikiArticles.filter(art => matchesFilter(art, wikiSearchQuery));
   const filteredAiMemories = aiMemories.filter(art => matchesFilter(art, memoriesSearchQuery));
   const filteredAiPlans = aiPlans.filter(art => matchesFilter(art, plansSearchQuery));
   const filteredAiSkills = aiSkills.filter(art => matchesFilter(art, skillsSearchQuery));
+
+  // Original unfiltered lists for autocomplete suggestions (only category filter)
 
   const handleFtsSearch = (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -173,7 +176,8 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
             onSearchChange={setWikiSearchQuery}
             filterPlaceholder="Filter articles by title or tag..."
             onOpenFilterHelp={() => setShowFilterHelp(true)}
-            articles={filteredWikiArticles}
+            allArticles={wikiArticles}
+            filteredArticles={filteredWikiArticles}
             onNavigate={onNavigate}
             statusTags={statusTags}
             emptyContent={
@@ -198,7 +202,8 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
             onSearchChange={setMemoriesSearchQuery}
             filterPlaceholder="Filter memories by title or tag..."
             onOpenFilterHelp={() => setShowFilterHelp(true)}
-            articles={filteredAiMemories}
+            allArticles={aiMemories}
+            filteredArticles={filteredAiMemories}
             onNavigate={onNavigate}
             statusTags={statusTags}
             emptyContent={
@@ -220,7 +225,8 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
             onSearchChange={setPlansSearchQuery}
             filterPlaceholder="Filter plans by title or tag..."
             onOpenFilterHelp={() => setShowFilterHelp(true)}
-            articles={filteredAiPlans}
+            allArticles={aiPlans}
+            filteredArticles={filteredAiPlans}
             onNavigate={onNavigate}
             statusTags={statusTags}
             emptyContent={
@@ -241,11 +247,13 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
             icon={<Wrench size={16} className="text-themeAccent" />}
             isExpanded={skillsExpanded}
             onToggle={() => setSkillsExpanded(!skillsExpanded)}
+            secondary
             searchQuery={skillsSearchQuery}
             onSearchChange={setSkillsSearchQuery}
             filterPlaceholder="Filter skills by title or tag..."
             onOpenFilterHelp={() => setShowFilterHelp(true)}
-            articles={filteredAiSkills}
+            allArticles={aiSkills}
+            filteredArticles={filteredAiSkills}
             onNavigate={onNavigate}
             statusTags={statusTags}
             emptyContent={
