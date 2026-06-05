@@ -59,6 +59,7 @@ export const App: React.FC = () => {
   const [shareDropdownOpen, setShareDropdownOpen] = useState(false);
   const [copiedMd, setCopiedMd] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [copiedTitle, setCopiedTitle] = useState(false);
 
   // UI state
   const [isLoading, setIsLoading] = useState(true);
@@ -565,6 +566,20 @@ export const App: React.FC = () => {
     }
   };
 
+  // Clipboard title copying
+  const handleCopyTitle = async () => {
+    if (!currentArticle) return;
+    try {
+      await navigator.clipboard.writeText(currentArticle.title);
+      setCopiedTitle(true);
+      triggerAlert('success', 'Article title copied to clipboard!');
+      setTimeout(() => setCopiedTitle(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy title:', err);
+      triggerAlert('error', 'Failed to copy article title.');
+    }
+  };
+
   // PDF print export trigger
   const handleExportPDF = () => {
     setShareDropdownOpen(false);
@@ -802,9 +817,18 @@ export const App: React.FC = () => {
                   
                   {/* Title & Metadata */}
                   <div className="space-y-2">
-                    <h1 className="text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight leading-tight">
-                      {currentArticle.title}
-                    </h1>
+                    <div className="flex items-center gap-2">
+                      <h1 className="text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight leading-tight">
+                        {currentArticle.title}
+                      </h1>
+                      <button
+                        onClick={handleCopyTitle}
+                        className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+                        title="Copy article title to clipboard"
+                      >
+                        {copiedTitle ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
+                      </button>
+                    </div>
                     <div className="flex flex-wrap gap-4 text-[10px] text-slate-400 dark:text-slate-500 font-semibold tracking-wide uppercase">
                       <span className="flex items-center gap-1">
                         <Calendar size={11} className="text-indigo-400" />

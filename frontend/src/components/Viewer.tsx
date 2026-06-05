@@ -36,10 +36,10 @@ export const Viewer: React.FC<ViewerProps> = ({ content, onNavigate, articles })
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
         components={{
-          h1: ({ children }) => {
-            const id = Slugify(String(children));
-            return <h1 id={id}>{children}</h1>;
-          },
+        h1: ({ children }) => {
+          const id = Slugify(String(children));
+          return <h1 id={id}>{children}</h1>;
+        },
           h2: ({ children }) => {
             const id = Slugify(String(children));
             return <h2 id={id}>{children}</h2>;
