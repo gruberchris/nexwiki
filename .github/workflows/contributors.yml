@@ -1,0 +1,22 @@
+name: Generate Contributors
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  generate-contributors:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate contributors
+        uses: akhilmhdh/contributors-readme-action@v2.3.11
+        with:
+          commit-message: "docs: update contributors list"
+          committer-email: "41898282+github-actions[bot]@users.noreply.github.com"
+          committer-name: "github-actions[bot]"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
