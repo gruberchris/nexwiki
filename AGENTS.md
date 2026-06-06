@@ -58,7 +58,7 @@ To prevent name collisions, improve system modularity, and establish unified sys
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes nineteen powerful, semantic tools for AI agents:
+The NexWiki MCP server registers and exposes twenty powerful, semantic tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine. It supports advanced queries (wildcards, exact phrase quotes, and logical operators).
@@ -138,6 +138,7 @@ Creates a brand-new wiki article with a given title and raw Markdown content bod
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the new article (e.g. "React Hooks Guide").
   * `content` (string, **required**): The raw Markdown content of the article body.
+  * `tags` (array of strings, **optional**): Status or user tags to apply to the article. Call `get_status_tags` to see recognized status values (e.g. `draft`, `wip`). System `aiagent-*` tags are reserved and will be ignored if provided.
   * `edit_summary` (string, **optional**): A summary describing the reason for creating the page.
 * **Output Format**:
   A confirmation string detailing the title, generated URL slug, creation timestamp, and initial version number.
@@ -151,6 +152,7 @@ Modifies the title, Markdown content, or edit a summary of an existing wiki arti
   * `slug` (string, **required**): The unique URL slug of the article to edit.
   * `title` (string, **required**): The updated title of the article.
   * `content` (string, **required**): The updated raw Markdown content of the article body.
+  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see recognized status values. Omit to leave existing tags unchanged.
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
   * `edit_summary` (string, **optional**): A summary detailing the modifications.
 * **Output Format**:
@@ -319,6 +321,43 @@ Lists all Custom AI Skills (tagged with `aiagent-skill`) currently saved in the 
 
 ---
 
+### 20. `get_status_tags`
+Returns the canonical list of recognized status tags used to indicate the lifecycle state of wiki articles and AI plans.
+
+* **Arguments**: None (empty object `{}`).
+* **Output Format**:
+  A plain text listing of all recognized status tag values and a tip on how to use them with `list_agent_plans`. Status tags are displayed with highest visual priority on the home dashboard. Call this before tagging articles, plans, or skills to ensure you use a recognized value.
+
+* **Recognized values**: `completed`, `done`, `wip`, `draft`, `in-progress`, `archived`, `active`, `todo`, `pending`, `review`, `blocked`, `ready`
+
+---
+
+## 🎯 MCP Prompts
+
+In addition to tools, NexWiki exposes two **MCP Prompts** — interactive workflow templates that guide an AI agent through a multi-step task. Clients that support the `prompts/list` and `prompts/get` MCP methods (such as Claude Desktop) can invoke these by name.
+
+### 1. `article_creation_workflow`
+Guides the agent to search for existing formatting/style guidelines and custom memories *before* writing a new wiki article, ensuring consistency across the knowledge base.
+
+* **Arguments**:
+  * `title` (string, **required**): The title of the article to be created.
+  * `description` (string, **optional**): A brief summary of what the article should cover.
+* **Behavior**:
+  Instructs the agent to call `list_agent_memories` / `search_wiki` to locate relevant style-guide memories, read them with `read_article`, incorporate the rules into the new article, and then save it with `create_wiki_article`.
+
+---
+
+### 2. `project_planning_workflow`
+Guides the agent to collaboratively outline a new development plan with the user and immediately persist it as a Collaborative AI Plan in NexWiki.
+
+* **Arguments**:
+  * `title` (string, **required**): The title of the Collaborative Plan (e.g. "Go 1.22 Migration Plan").
+  * `project` (string, **required**): The project context name (e.g. `nexwiki`).
+* **Behavior**:
+  Instructs the agent to collaboratively outline objectives, technical requirements, and task checklists with the user, save the initial plan immediately with `create_agent_plan`, report the slug to the user, and use `append_agent_plan` to log progress as tasks are completed.
+
+---
+
 ## 🔌 Connecting Popular AI Clients
 
 ### 1. Claude Desktop (Stdio Connection)
@@ -357,7 +396,7 @@ If you compiled the binary on your local machine:
 }
 ```
 
-Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat window, confirming that the `search_wiki`, `read_article`, and `list_articles` tools are ready to use!
+Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat window, confirming that all twenty NexWiki MCP tools are ready to use!
 
 ---
 
@@ -373,7 +412,7 @@ NexWiki implements the modern **Streamable HTTP** transport (2025 Spec) at `/api
    * **URL**: `http://localhost:8080/api/mcp` (or your production domain e.g. `https://wiki.yourdomain.com/api/mcp`)
 5. Click **Save**.
 
-Cursor will establish a stream connection and immediately list the three tools in the sidebar. You can now use Cursor Composer or chat (`Cmd+K` / `Ctrl+K`) and reference your wiki directly during code generation!
+Cursor will establish a stream connection and immediately list all twenty NexWiki tools in the sidebar. You can now use Cursor Composer or chat (`Cmd+K` / `Ctrl+K`) and reference your wiki directly during code generation!
 
 ---
 
