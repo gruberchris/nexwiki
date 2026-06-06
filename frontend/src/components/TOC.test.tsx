@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, act, waitFor } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import { TOC } from './TOC';
 
 // IntersectionObserver mock for happy-dom
@@ -11,7 +11,13 @@ class MockIntersectionObserver {
   observe = mockObserve;
   unobserve = mockUnobserve;
   disconnect = mockDisconnect;
-  constructor(_callback: IntersectionObserverCallback, _options?: IntersectionObserverInit) {}
+  constructor(_callback: IntersectionObserverCallback, _options?: IntersectionObserverInit) {
+    void _callback;
+    void _options;
+    void this.observe;
+    void this.unobserve;
+    void this.disconnect;
+  }
 }
 
 vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, act, waitFor } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import { SSEProvider } from './SSEContext';
 import { useSSE } from '../hooks/useSSE';
 
@@ -26,7 +26,11 @@ describe('SSEProvider', () => {
       onerror: (() => void) | null = null;
       addEventListener = vi.fn();
       close = vi.fn();
-      constructor(_url: string) {}
+      constructor(_url: string) {
+        void _url;
+        void this.onopen;
+        void this.onerror;
+      }
     }
     vi.stubGlobal('EventSource', MockEventSource);
 
@@ -48,7 +52,11 @@ describe('SSEProvider', () => {
       onerror: (() => void) | null = null;
       addEventListener = vi.fn();
       close = vi.fn();
-      constructor(_url: string) {}
+      constructor(_url: string) {
+        void _url;
+        void this.onopen;
+        void this.onerror;
+      }
     }
     vi.stubGlobal('EventSource', MockEventSource);
 
@@ -72,6 +80,10 @@ describe('SSEProvider', () => {
       addEventListener = vi.fn();
       close = vi.fn();
       constructor(_url: string) {
+        void _url;
+        void this.onopen;
+        void this.onerror;
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
         capturedInstance = this;
       }
     }

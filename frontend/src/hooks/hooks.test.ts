@@ -15,7 +15,7 @@ afterEach(() => {
 describe('useClickOutside', () => {
   it('does not fire callback when enabled is false', () => {
     const callback = vi.fn();
-    const { result } = renderHook(() => {
+    renderHook(() => {
       const ref = useRef<HTMLElement>(null);
       useClickOutside(ref, callback, false);
       return ref;
@@ -80,7 +80,7 @@ describe('useClickOutside', () => {
     act(() => {
       document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     });
-    // After unmount, callback should not be called
+    // After unmounting, callback should not be called
     expect(callback).not.toHaveBeenCalled();
 
     document.body.removeChild(div);
