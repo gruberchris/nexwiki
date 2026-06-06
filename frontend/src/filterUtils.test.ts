@@ -3,6 +3,12 @@ import {
   evaluateBooleanQuery,
   getAutocompleteSearchTerm,
   applyAutocompleteSelection,
+  getTagPriority,
+  sortCardTags,
+  matchesFilter,
+  matchesSidebarFilter,
+  matchesLogEvent,
+  buildSuggestionsFromArticles,
 } from './filterUtils';
 
 // ---------------------------------------------------------------------------
@@ -157,6 +163,7 @@ describe('applyAutocompleteSelection', () => {
 
   it('wraps multi-word selection in single quotes', () => {
     expect(applyAutocompleteSelection('pro', 'programming language')).toBe("'programming language'");
+
   });
 
   it('preserves ! prefix for exclusion with single-word selection', () => {
@@ -189,5 +196,215 @@ describe('applyAutocompleteSelection', () => {
 
   it('works with AND operator in prefix', () => {
     expect(applyAutocompleteSelection('python&&jav', 'javascript')).toBe('python&&javascript');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getTagPriority
+// ---------------------------------------------------------------------------
+
+describe('getTagPriority', () => {
+  const statusTags = new Set(['completed', 'wip', 'draft', 'review']);
+
+  it('returns 0 for status tags', () => {
+    expect(getTagPriority('completed', statusTags)).toBe(0);
+    expect(getTagPriority('WIP', statusTags)).toBe(0);
+  });
+
+  it('returns 2 for aiagent- prefixed tags', () => {
+    expect(getTagPriority('aiagent-plan', statusTags)).toBe(2);
+    expect(getTagPriority('aiagent-memory-rules', statusTags)).toBe(2);
+    expect(getTagPriority('AIAGENT-SKILL', statusTags)).toBe(2);
+  });
+
+  it('returns 1 for regular tags', () => {
+    expect(getTagPriority('golang', statusTags)).toBe(1);
+    expect(getTagPriority('backend', statusTags)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sortCardTags
+// ---------------------------------------------------------------------------
+
+describe('sortCardTags', () => {
+  const statusTags = new Set(['completed', 'wip', 'draft']);
+
+  it('sorts status tags first, regular second, aiagent- last', () => {
+    const tags = ['golang', 'aiagent-plan', 'completed', 'backend'];
+    const sorted = sortCardTags(tags, statusTags);
+    expect(sorted[0]).toBe('completed');
+    expect(sorted[sorted.length - 1]).toBe('aiagent-plan');
+  });
+
+  it('preserves order within same priority group', () => {
+    const tags = ['alpha', 'beta'];
+    const sorted = sortCardTags(tags, new Set());
+    expect(sorted).toEqual(['alpha', 'beta']);
+  });
+
+  it('does not mutate the original array', () => {
+    const tags = ['b', 'a'];
+    const original = [...tags];
+    sortCardTags(tags, new Set());
+    expect(tags).toEqual(original);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// matchesFilter
+// ---------------------------------------------------------------------------
+
+describe('matchesFilter', () => {
+  const art = {
+    slug: 'golang-guide',
+    title: 'Golang Guide',
+    tags: ['programming', 'backend'],
+    created_at: '',
+    updated_at: '',
+    version: 1,
+  };
+
+  it('returns true when title matches', () => {
+    expect(matchesFilter(art, 'golang')).toBe(true);
+  });
+
+  it('returns true when tag matches', () => {
+    expect(matchesFilter(art, 'programming')).toBe(true);
+  });
+
+  it('returns false when nothing matches', () => {
+    expect(matchesFilter(art, 'python')).toBe(false);
+  });
+
+  it('returns true for empty query', () => {
+    expect(matchesFilter(art, '')).toBe(true);
+  });
+
+  it('handles article with no tags', () => {
+    const noTags = { ...art, tags: undefined };
+    expect(matchesFilter(noTags as typeof art, 'golang')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// matchesSidebarFilter
+// ---------------------------------------------------------------------------
+
+describe('matchesSidebarFilter', () => {
+  const art = {
+    slug: 'go-guide',
+    title: 'Golang Guide',
+    tags: ['backend'],
+    created_at: '',
+    updated_at: '',
+    version: 1,
+  };
+
+  it('returns true when slug matches (unlike matchesFilter)', () => {
+    expect(matchesSidebarFilter(art, 'go-guide')).toBe(true);
+  });
+
+  it('returns true when title matches', () => {
+    expect(matchesSidebarFilter(art, 'golang')).toBe(true);
+  });
+
+  it('returns false when nothing matches', () => {
+    expect(matchesSidebarFilter(art, 'python')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// matchesLogEvent
+// ---------------------------------------------------------------------------
+
+describe('matchesLogEvent', () => {
+  const event = {
+    id: '1',
+    timestamp: new Date().toISOString(),
+    source: 'mcp',
+    action: 'create',
+    tool: 'create_wiki_article',
+    slug: 'my-article',
+    title: 'My Article',
+    agent: 'Claude',
+  };
+
+  it('returns true when action matches', () => {
+    expect(matchesLogEvent(event, 'create')).toBe(true);
+  });
+
+  it('returns true when tool matches', () => {
+    expect(matchesLogEvent(event, 'create_wiki')).toBe(true);
+  });
+
+  it('returns true when agent matches', () => {
+    expect(matchesLogEvent(event, 'claude')).toBe(true);
+  });
+
+  it('returns false when nothing matches', () => {
+    expect(matchesLogEvent(event, 'python')).toBe(false);
+  });
+
+  it('returns true for empty query', () => {
+    expect(matchesLogEvent(event, '')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildSuggestionsFromArticles
+// ---------------------------------------------------------------------------
+
+describe('buildSuggestionsFromArticles', () => {
+  const articles = [
+    { slug: 'go-guide', title: 'Go Programming Guide', tags: ['golang', 'backend'], created_at: '', updated_at: '', version: 1 },
+    { slug: 'js-guide', title: 'JavaScript Handbook', tags: ['javascript', 'frontend', 'aiagent-skill'], created_at: '', updated_at: '', version: 1 },
+    { slug: 'rust-guide', title: 'Rust Book', tags: ['rust', 'systems'], created_at: '', updated_at: '', version: 1 },
+  ];
+
+  it('returns empty array for empty search term', () => {
+    expect(buildSuggestionsFromArticles(articles, '')).toHaveLength(0);
+    expect(buildSuggestionsFromArticles(articles, '   ')).toHaveLength(0);
+  });
+
+  it('returns title suggestions when title matches', () => {
+    const results = buildSuggestionsFromArticles(articles, 'go');
+    const titles = results.filter(r => r.type === 'title').map(r => r.value);
+    expect(titles).toContain('Go Programming Guide');
+  });
+
+  it('returns tag suggestions when tag matches', () => {
+    const results = buildSuggestionsFromArticles(articles, 'golang');
+    const tags = results.filter(r => r.type === 'tag').map(r => r.value);
+    expect(tags).toContain('golang');
+  });
+
+  it('excludes aiagent- prefixed tags', () => {
+    const results = buildSuggestionsFromArticles(articles, 'aiagent');
+    const tags = results.filter(r => r.type === 'tag').map(r => r.value);
+    expect(tags).not.toContain('aiagent-skill');
+  });
+
+  it('caps results at 8', () => {
+    const manyArticles = Array.from({ length: 20 }, (_, i) => ({
+      slug: `article-${i}`,
+      title: `Test Article ${i}`,
+      tags: [`tag-${i}`],
+      created_at: '',
+      updated_at: '',
+      version: 1,
+    }));
+    const results = buildSuggestionsFromArticles(manyArticles, 'test');
+    expect(results.length).toBeLessThanOrEqual(8);
+  });
+
+  it('deduplicates suggestions', () => {
+    const dupeArticles = [
+      { slug: 'a1', title: 'Go Guide', tags: ['golang'], created_at: '', updated_at: '', version: 1 },
+      { slug: 'a2', title: 'Go Guide', tags: ['golang'], created_at: '', updated_at: '', version: 1 },
+    ];
+    const results = buildSuggestionsFromArticles(dupeArticles, 'go');
+    const titles = results.filter(r => r.type === 'title' && r.value === 'Go Guide');
+    expect(titles).toHaveLength(1);
   });
 });
