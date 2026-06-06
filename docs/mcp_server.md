@@ -20,7 +20,7 @@ To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools l
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes nineteen powerful, semantic tools for AI agents:
+The NexWiki MCP server registers and exposes twenty powerful, semantic tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine.
@@ -79,7 +79,20 @@ Modifies the title, Markdown content, tags, or edit summary of an existing wiki 
 
 ---
 
-### 6. `delete_wiki_article`
+### 6. `update_article_tags`
+Directly updates the tags array of an existing wiki article without modifying its content body. This is the fastest and most token-efficient way to classify or re-classify an article.
+
+* **Arguments**:
+  * `slug` (string, **required**): The unique URL-safe slug of the article to update tags for.
+  * `tags` (array of strings, **required**): The complete array of user/status tags to apply (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see recognized status values.
+  * `loaded_version` (integer, **optional**): The active version number of the article loaded by the client (helps detect multi-session edit collisions).
+  * `edit_summary` (string, **optional**): Optional summary explaining the tag updates.
+* **Behavior**:
+  Validates and cleans the supplied tags (stripping reserved `aiagent-*` prefixes from the user-supplied list while preserving any existing system tags), applies optimistic locking if `loaded_version` is provided, increments the version, and saves the updated front-matter without touching the Markdown body.
+
+---
+
+### 7. `delete_wiki_article`
 Permanently deletes an existing wiki article and its associated resources.
 
 * **Arguments**:
@@ -89,7 +102,7 @@ Permanently deletes an existing wiki article and its associated resources.
 
 ---
 
-### 7. `get_article_history`
+### 8. `get_article_history`
 Retrieves the full revision history log of a wiki page, showing version numbers, timestamps, and edit summaries.
 
 * **Arguments**:
@@ -99,7 +112,7 @@ Retrieves the full revision history log of a wiki page, showing version numbers,
 
 ---
 
-### 8. `revert_article_version`
+### 9. `revert_article_version`
 Reverts the active state of an article to a specific historical version number.
 
 * **Arguments**:
@@ -110,7 +123,7 @@ Reverts the active state of an article to a specific historical version number.
 
 ---
 
-### 9. `get_wiki_statistics`
+### 10. `get_wiki_statistics`
 Scans the entire knowledge base to compile total page stats and **autonomously scan for dead or broken internal WikiLinks** (e.g., `[[Missing Page]]`).
 
 * **Arguments**: None (empty object `{}`).
@@ -119,7 +132,7 @@ Scans the entire knowledge base to compile total page stats and **autonomously s
 
 ---
 
-### 10. `create_agent_memory`
+### 11. `create_agent_memory`
 Creates a brand new protected AI Agent Memory document (such as a troubleshooting note, architecture decision, or custom rules).
 
 * **Arguments**:
@@ -133,7 +146,7 @@ Creates a brand new protected AI Agent Memory document (such as a troubleshootin
 
 ---
 
-### 11. `append_agent_memory`
+### 12. `append_agent_memory`
 Appends observations, subtask completions, or updates to the end of an existing protected AI Agent Memory page.
 
 * **Arguments**:
@@ -145,7 +158,7 @@ Appends observations, subtask completions, or updates to the end of an existing 
 
 ---
 
-### 12. `list_agent_memories`
+### 13. `list_agent_memories`
 Lists all protected AI Agent Memory articles (tagged with `aiagent-memory-` prefix) saved in your wiki.
 
 * **Arguments**:
@@ -155,7 +168,7 @@ Lists all protected AI Agent Memory articles (tagged with `aiagent-memory-` pref
 
 ---
 
-### 13. `create_agent_plan`
+### 14. `create_agent_plan`
 Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent.
 
 * **Arguments**:
@@ -168,7 +181,7 @@ Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by
 
 ---
 
-### 14. `append_agent_plan`
+### 15. `append_agent_plan`
 Appends task status, observations, or checklists to an existing Collaborative AI Plan (must possess the `aiagent-plan` tag).
 
 * **Arguments**:
@@ -180,7 +193,7 @@ Appends task status, observations, or checklists to an existing Collaborative AI
 
 ---
 
-### 15. `edit_agent_plan`
+### 16. `edit_agent_plan`
 Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts and automatically preserves/prepends the protected `aiagent-plan` tag.
 
 * **Arguments**:
@@ -194,7 +207,7 @@ Modifies the title, tags, or edit the summary of an existing Collaborative AI Pl
 
 ---
 
-### 16. `list_agent_plans`
+### 17. `list_agent_plans`
 Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved inside the knowledge base.
 
 * **Arguments**:
@@ -205,7 +218,7 @@ Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved in
 
 ---
 
-### 17. `create_agent_skill`
+### 18. `create_agent_skill`
 Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry.
 
 * **Arguments**:
@@ -218,7 +231,7 @@ Creates a new Custom AI Skill, automatically making it part of the custom Skills
 
 ---
 
-### 18. `list_agent_skills`
+### 19. `list_agent_skills`
 Lists all Custom AI Skills (tagged with `aiagent-skill`) currently saved in the knowledge base.
 
 * **Arguments**: None (empty object `{}`).
@@ -227,7 +240,7 @@ Lists all Custom AI Skills (tagged with `aiagent-skill`) currently saved in the 
 
 ---
 
-### 19. `get_status_tags`
+### 20. `get_status_tags`
 Returns the canonical list of recognized status tags used to indicate the lifecycle state of wiki articles and AI plans.
 
 * **Arguments**: None (empty object `{}`).
