@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import type { Article } from './types';
+import type { LogEvent } from './context/SSEContextObject';
 import {
   evaluateBooleanQuery,
   getAutocompleteSearchTerm,
@@ -283,7 +285,7 @@ describe('matchesFilter', () => {
 
   it('handles article with no tags', () => {
     const noTags = { ...art, tags: undefined };
-    expect(matchesFilter(noTags as typeof art, 'golang')).toBe(true);
+    expect(matchesFilter(noTags as unknown as Article, 'golang')).toBe(true);
   });
 });
 
@@ -319,7 +321,7 @@ describe('matchesSidebarFilter', () => {
 // ---------------------------------------------------------------------------
 
 describe('matchesLogEvent', () => {
-  const event = {
+  const event: LogEvent = {
     id: '1',
     timestamp: new Date().toISOString(),
     source: 'mcp',
