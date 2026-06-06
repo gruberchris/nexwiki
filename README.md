@@ -30,6 +30,178 @@ Designed as an **AI-ready second brain**, NexWiki bridges the gap between human 
 
 ---
 
+## ⬇️ Quickstart: Download & Run a Pre-Built Binary
+
+The easiest way to run NexWiki — no Docker, no Go toolchain required. Just download the binary for your platform, make it executable, and run it.
+
+### 1. Download the Binary
+
+Visit the [GitHub Releases page](https://github.com/gruberchris/nexwiki/releases) and download the binary for your platform:
+
+| Platform | Binary filename |
+|---|---|
+| macOS (Apple Silicon / M-series) | `nexwiki-{VERSION}-darwin-arm64` |
+| Linux x86_64 | `nexwiki-{VERSION}-linux-amd64` |
+| Linux ARM64 | `nexwiki-{VERSION}-linux-arm64` |
+| Windows x86_64 | `nexwiki-{VERSION}-windows-amd64.exe` |
+
+Each release also includes a `SHA256SUMS.txt` file you can use to verify your download:
+```bash
+# macOS / Linux
+sha256sum -c SHA256SUMS.txt --ignore-missing
+```
+
+### 2. Make It Executable (macOS & Linux)
+
+```bash
+chmod +x nexwiki-*-darwin-arm64   # macOS
+# or
+chmod +x nexwiki-*-linux-amd64    # Linux x86_64
+```
+
+> **macOS note:** If macOS blocks the binary with a Gatekeeper warning, right-click the file in Finder → **Open** → **Open** to grant a one-time exception, or run: `xattr -d com.apple.quarantine ./nexwiki-*-darwin-arm64`
+
+> **Windows note:** Windows Defender SmartScreen may show a warning for unsigned binaries. Click **More info** → **Run anyway** to proceed.
+
+### 3. Run with Default Settings
+
+```bash
+# macOS / Linux
+./nexwiki-1.0.0-darwin-arm64
+
+# Windows (PowerShell)
+.\nexwiki-1.0.0-windows-amd64.exe
+```
+
+Open your browser to `http://localhost:8080`. NexWiki will create a `./data` directory in the current folder to store your articles and search index.
+
+### 4. Configuration
+
+All settings can be set via CLI flags. The `NEXWIKI_NAME`, `NEXWIKI_THEME`, and `NEXWIKI_THEME_SCHEDULING` environment variables take precedence over their corresponding flags when both are set.
+
+| Option | CLI Flag | Env Variable | Default | Description |
+|---|---|---|---|---|
+| HTTP port | `-port` | — | `8080` | Port the web server listens on |
+| Data directory | `-data` | — | `./data` | Directory for articles, assets, and the search index |
+| Wiki name | `-name` | `NEXWIKI_NAME` | `NexWiki` | Title displayed in the UI and HTML headers |
+| Default theme | `-theme` | `NEXWIKI_THEME` | `default` | Initial active color theme |
+| Seasonal themes | `-theme-scheduling` | `NEXWIKI_THEME_SCHEDULING` | `false` | Enable automatic annual seasonal theme switching |
+
+### 5. Examples
+
+```bash
+# macOS / Linux — custom port, data directory, and wiki name
+./nexwiki-1.0.0-darwin-arm64 \
+  -port=9090 \
+  -data=/home/user/my-wiki-data \
+  -name="My Personal Brain"
+
+# macOS / Linux — enable seasonal themes via environment variable
+NEXWIKI_NAME="Team Wiki" NEXWIKI_THEME_SCHEDULING=true \
+  ./nexwiki-1.0.0-linux-amd64 -data=/var/wiki/data
+
+# Windows (PowerShell) — custom name and data path
+$env:NEXWIKI_NAME="My Knowledge Base"
+.\nexwiki-1.0.0-windows-amd64.exe -data="C:\Users\user\wiki-data" -port=9090
+```
+
+---
+
+## 🐳 Quickstart: Pull & Run from GitHub Container Registry
+
+NexWiki publishes a ready-to-run multi-platform Docker image to the [GitHub Container Registry](https://github.com/gruberchris/nexwiki/pkgs/container/nexwiki) on every release. No build step needed.
+
+**Image**: `ghcr.io/gruberchris/nexwiki`  
+**Platforms**: `linux/amd64`, `linux/arm64` (runs natively on Apple Silicon via Docker Desktop)
+
+### Prerequisites
+Ensure you have [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running.
+
+### 1. Pull the Image
+
+```bash
+# Latest release
+docker pull ghcr.io/gruberchris/nexwiki:latest
+
+# Or a specific version
+docker pull ghcr.io/gruberchris/nexwiki:1.0.0
+```
+
+### 2. Run with `docker run`
+
+**Minimal (defaults):**
+```bash
+docker run -d \
+  -p 8080:8080 \
+  -v "$(pwd)/my-wiki-data:/app/data" \
+  --name my-wiki \
+  --restart unless-stopped \
+  ghcr.io/gruberchris/nexwiki:latest
+```
+
+**With full configuration:**
+```bash
+docker run -d \
+  -p 9090:9090 \
+  -v "$(pwd)/my-wiki-data:/app/data" \
+  -e NEXWIKI_NAME="My Personal Brain" \
+  -e NEXWIKI_THEME="default" \
+  -e NEXWIKI_THEME_SCHEDULING="true" \
+  --name my-wiki \
+  --restart unless-stopped \
+  ghcr.io/gruberchris/nexwiki:latest \
+  -port=9090
+```
+
+> **Note:** When changing the port with `-port`, you must also update the `-p` host mapping (e.g., `-p 9090:9090`).
+
+### 3. Run with Docker Compose
+
+Save the following as `docker-compose.yml` and run `docker compose up -d`:
+
+```yaml
+services:
+  wiki:
+    image: ghcr.io/gruberchris/nexwiki:latest
+    container_name: my-wiki
+    environment:
+      - NEXWIKI_NAME=My Personal Brain
+      - NEXWIKI_THEME=default
+      # - NEXWIKI_THEME_SCHEDULING=true   # Uncomment to enable seasonal themes
+    volumes:
+      - wiki-data:/app/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  wiki-data:
+    driver: local
+```
+
+Open your browser to `http://localhost:8080`.
+
+### Understanding the Volume Mount (`/app/data`)
+
+The `/app/data` directory inside the container holds all persistent state:
+- `articles/` — All your Markdown wiki files.
+- `assets/` — Uploaded images and media attachments grouped by article.
+- `search.bleve/` — The Bleve full-text search index database.
+
+Always mount this path to a persistent local directory or named Docker volume to preserve your data across container restarts and upgrades.
+
+### Configuration
+
+| Env Variable | Default | Description |
+|---|---|---|
+| `NEXWIKI_NAME` | `NexWiki` | Title displayed in the UI and HTML headers |
+| `NEXWIKI_THEME` | `default` | Initial active color theme |
+| `NEXWIKI_THEME_SCHEDULING` | `false` | Set to `true` to enable seasonal auto theme switching |
+
+The port and data directory are fixed to `8080` and `/app/data` inside the container; adjust the `-p` host mapping and volume mount to change them on the host side.
+
+---
+
 ## 🐳 Running on Localhost Using Docker
 
 The fastest way to get NexWiki up and running locally is using **Docker** and **Docker Compose**.
