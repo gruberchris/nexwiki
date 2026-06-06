@@ -36,3 +36,6 @@ jobs:
 
       - name: Run tests
         run: go test -v ./...
+
+      - name: Verify binary compiles
+        run: CGO_ENABLED=0 go build -ldflags="-w -s" -o nexwiki main.go
