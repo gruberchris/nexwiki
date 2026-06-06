@@ -59,6 +59,7 @@ dev-data/
 *.sln
 *.sw?
 .antigravitycli/
+
 .claude/
 .gemini/
 
@@ -70,3 +71,5 @@ dev-data/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+**/coverage/**
