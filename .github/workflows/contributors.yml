@@ -15,8 +15,9 @@ jobs:
       - name: Generate contributors
         uses: akhilmhdh/contributors-readme-action@v2.3.11
         with:
-          commit-message: "docs: update contributors list"
-          committer-email: "41898282+github-actions[bot]@users.noreply.github.com"
-          committer-name: "github-actions[bot]"
+          readme_path: "CONTRIBUTORS.md"
+          commit_message: "docs: update contributors list"
+          committer_username: "github-actions[bot]"
+          committer_email: "41898282+github-actions[bot]@users.noreply.github.com"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
