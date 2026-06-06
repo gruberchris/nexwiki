@@ -12,6 +12,9 @@ jobs:
   generate-contributors:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Generate contributors
         uses: akhilmhdh/contributors-readme-action@v2.3.11
         with:
