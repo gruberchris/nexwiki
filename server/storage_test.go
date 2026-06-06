@@ -14,6 +14,8 @@ func TestStorageVersioning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}
+	t.Cleanup(func() { _ = storage.Close() })
+	t.Cleanup(func() { _ = storage.Close() })
 
 	// 1. Test Saving Initial version
 	art, err := storage.SaveArticle("", "Test Page", "# Version 1 content", "Initial commit", []string{"tag1", "tag2"})
@@ -188,6 +190,7 @@ func TestStorageHistoryInitialization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}
+	t.Cleanup(func() { _ = storage.Close() })
 
 	// 1. Manually write a file to disk to simulate a seeded/pre-existing file
 	slug := "pre-existing"
@@ -232,6 +235,7 @@ func TestStorageUpdateArticleTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}
+	t.Cleanup(func() { _ = storage.Close() })
 
 	// 1. Create a page
 	art, err := storage.SaveArticle("", "Original Page", "# Body Content", "Initial commit", []string{"initial"})

@@ -35,8 +35,10 @@ COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 COPY main.go ./
 COPY server/ ./server/
 
+ARG VERSION=0.1.0
+
 # Compile static self-contained binary, stripping debugging symbols (-w -s) for tiny footprint
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o nexwiki main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s -X main.Version=${VERSION}" -o nexwiki main.go
 
 # ==========================================
 # Stage 3: Minimal and Secure Production Runner

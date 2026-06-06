@@ -13,6 +13,7 @@ func TestMCPEditAgentPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}
+	t.Cleanup(func() { _ = storage.Close() })
 
 	eventBus := NewEventBus()
 	srv := NewServer(storage, "Test Wiki", "light", false, eventBus, "1.0.0", "")
@@ -122,6 +123,7 @@ func TestMCPUpdateArticleTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize storage: %v", err)
 	}
+	t.Cleanup(func() { _ = storage.Close() })
 
 	eventBus := NewEventBus()
 	srv := NewServer(storage, "Test Wiki", "light", false, eventBus, "1.0.0", "")
