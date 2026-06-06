@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
@@ -36,6 +37,7 @@ type Storage struct {
 	HistoryDir  string
 	SearchIndex bleve.Index
 	ThemeStore  *ThemeStore
+	closeOnce   sync.Once
 }
 
 // NewStorage initializes and returns a Storage manager, ensuring required subdirectories exist.
@@ -856,6 +858,18 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 	}
 
 	return s.SaveArticle(slug, art.Title, art.Content, editSummary, tags)
+}
+
+// Close releases resources held by the Storage, including the Bleve search index.
+// It is safe to call multiple times; only the first invocation performs the close.
+func (s *Storage) Close() error {
+	var err error
+	s.closeOnce.Do(func() {
+		if s.SearchIndex != nil {
+			err = s.SearchIndex.Close()
+		}
+	})
+	return err
 }
 
 // DeleteTagGlobally removes a tag from all articles in the wiki.
