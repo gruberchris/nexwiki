@@ -290,32 +290,28 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_memory",
-					"description": "Create a brand new protected AI Agent Memory document. Automatically applies the protected 'aiagent-memory-<type>' tag, which must NEVER be removed unless explicitly instructed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to align on memory formats and preservation standards before executing this tool.)",
+					"description": "Create a brand new protected AI Agent Memory document. The 'memory_type' controls the tag applied and how the memory is scoped: use the project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for reusable cross-project knowledge, or omit it for general knowledge (tagged bare 'aiagent-memory'). Memories must be succinct and high-value — they are loaded into agent context windows, so keep them short, specific, and free of repetition. The protected tag must NEVER be removed unless explicitly instructed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' before executing this tool.)",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"title": map[string]interface{}{
 								"type":        "string",
-								"description": "The human-readable title of the memory article (e.g. 'Build Server Outage Resolution').",
+								"description": "The human-readable title of the memory article (e.g. 'NexWiki MCP Tag Preservation Rules').",
 							},
 							"content": map[string]interface{}{
 								"type":        "string",
-								"description": "The raw Markdown content of the memory document.",
+								"description": "The raw Markdown content of the memory document. Keep it succinct — bullet points over paragraphs, one clear insight per memory.",
 							},
 							"memory_type": map[string]interface{}{
 								"type":        "string",
-								"description": "The classification type of memory. Must be one of: troubleshooting, memory, decision, todo, rules.",
-							},
-							"project_context": map[string]interface{}{
-								"type":        "string",
-								"description": "Optional project identifier to apply a secondary contextual tag (e.g. 'project-x' generates the tag 'project-x').",
+								"description": "Scopes the memory and determines its tag. Use a project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for cross-project knowledge, or omit for general knowledge. Becomes the tag 'aiagent-memory-<memory_type>' or bare 'aiagent-memory' if omitted.",
 							},
 							"edit_summary": map[string]interface{}{
 								"type":        "string",
 								"description": "Optional revision log description summarizing why this memory was created.",
 							},
 						},
-						"required": []string{"title", "content", "memory_type"},
+						"required": []string{"title", "content"},
 					},
 				},
 				{
@@ -342,13 +338,13 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "list_agent_memories",
-					"description": "List all protected AI Agent Memory documents (tagged with 'aiagent-memory-' prefixes) currently saved inside the knowledge base.",
+					"description": "List all protected AI Agent Memory documents currently saved inside the knowledge base.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"memory_type": map[string]interface{}{
 								"type":        "string",
-								"description": "Optional memory type to filter the list (e.g., troubleshooting, memory, decision, todo, rules).",
+								"description": "Optional filter by memory type (project name, topic name, or other free-form value used at creation). For example, 'nexwiki' returns only nexwiki project memories.",
 							},
 						},
 					},
@@ -1026,35 +1022,22 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			EditSummary    string `json:"edit_summary"`
 		}
 		var mArgs CreateMemoryArgs
-		if err := json.Unmarshal(args.Arguments, &mArgs); err != nil || mArgs.Title == "" || mArgs.Content == "" || mArgs.MemoryType == "" {
-			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title', 'content', and 'memory_type' are required."}
+		if err := json.Unmarshal(args.Arguments, &mArgs); err != nil || mArgs.Title == "" || mArgs.Content == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title' and 'content' are required."}
 		}
 
 		mType := strings.ToLower(strings.TrimSpace(mArgs.MemoryType))
-		validTypes := map[string]bool{
-			"troubleshooting": true,
-			"memory":          true,
-			"decision":        true,
-			"todo":            true,
-			"rules":           true,
+
+		var primaryTag string
+		if mType == "" {
+			primaryTag = "aiagent-memory"
+		} else {
+			primaryTag = "aiagent-memory-" + mType
 		}
-		if !validTypes[mType] {
-			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: invalid memory_type '%s'. Valid types are: troubleshooting, memory, decision, todo, rules", mArgs.MemoryType)}}}, nil
-		}
+		tags := []string{primaryTag}
 
 		title := mArgs.Title
 		slug := Slugify(title)
-
-		primaryTag := "aiagent-memory-" + mType
-		tags := []string{primaryTag}
-
-		projCtx := strings.TrimSpace(mArgs.ProjectContext)
-		if projCtx != "" {
-			contextTag := Slugify(projCtx)
-			if contextTag != "" && contextTag != primaryTag {
-				tags = append(tags, contextTag)
-			}
-		}
 
 		if _, err := srv.Storage.GetArticle(slug); err == nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: an article with slug '%s' already exists", slug)}}}, nil
@@ -1062,7 +1045,11 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 		summary := mArgs.EditSummary
 		if summary == "" {
-			summary = fmt.Sprintf("Created AI Agent %s Memory", mType)
+			if mType == "" {
+				summary = "Created AI Agent Memory"
+			} else {
+				summary = fmt.Sprintf("Created AI Agent %s Memory", mType)
+			}
 		}
 
 		art, err := srv.Storage.SaveArticle("", title, mArgs.Content, summary, tags)
@@ -1092,7 +1079,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 		hasAgentMemoryTag := false
 		for _, tag := range existing.Tags {
-			if strings.HasPrefix(strings.ToLower(tag), "aiagent-memory-") {
+			tagLower := strings.ToLower(tag)
+			if tagLower == "aiagent-memory" || strings.HasPrefix(tagLower, "aiagent-memory-") {
 				hasAgentMemoryTag = true
 				break
 			}
@@ -1145,7 +1133,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 			for _, tag := range art.Tags {
 				tagLower := strings.ToLower(tag)
-				if strings.HasPrefix(tagLower, "aiagent-memory-") {
+				if tagLower == "aiagent-memory" || strings.HasPrefix(tagLower, "aiagent-memory-") {
 					isAgentMemory = true
 					memoryTags = append(memoryTags, tag)
 					if filterType != "" && strings.HasPrefix(tagLower, "aiagent-memory-"+filterType) {

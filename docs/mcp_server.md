@@ -133,16 +133,15 @@ Scans the entire knowledge base to compile total page stats and **autonomously s
 ---
 
 ### 11. `create_agent_memory`
-Creates a brand new protected AI Agent Memory document (such as a troubleshooting note, architecture decision, or custom rules). Automatically applies the protected `aiagent-memory-<type>` tag, which must **NEVER** be removed unless explicitly instructed.
+Creates a brand new protected AI Agent Memory document. The `memory_type` scopes the memory and determines its protected tag. Memories must be **succinct and high-value** — they are loaded into agent context windows, so keep them short, specific, and free of repetition.
 
 * **Arguments**:
-  * `title` (string, **required**): The human-readable title of the memory article (e.g. "Build Server Outage Resolution").
-  * `content` (string, **required**): The raw Markdown content of the memory document body.
-  * `memory_type` (string, **required**): The type of memory to log. Must be one of: `troubleshooting`, `memory`, `decision`, `todo`, `rules`.
-  * `project_context` (string, **optional**): A context string (like a project ID) to generate a secondary custom tag (e.g. `"project-x"` tags the document with `"project-x"`).
+  * `title` (string, **required**): The human-readable title of the memory article (e.g. "NexWiki MCP Tag Preservation Rules").
+  * `content` (string, **required**): The raw Markdown content of the memory document. Prefer bullet points over paragraphs. One clear insight per memory.
+  * `memory_type` (string, **optional**): Scopes the memory and sets the protected tag. Use a **project name** (e.g. `nexwiki`) for project-specific knowledge, a **topic name** (e.g. `docker`) for reusable cross-project knowledge, or **omit** for general knowledge. Becomes the tag `aiagent-memory-<memory_type>`, or bare `aiagent-memory` if omitted.
   * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
 * **Behavior**:
-  Checks for slug collision, automatically attaches the protected `aiagent-memory-<type>` tag, applies a custom tag for the project name (if `project_context` is provided), saves the flat Markdown file, commits the first version snapshot, and indexes the document in the search engine.
+  Checks for slug collision, automatically attaches the protected tag (`aiagent-memory-<memory_type>` or bare `aiagent-memory`), saves the flat Markdown file, commits the first version snapshot, and indexes the document in the search engine.
 
 ---
 
@@ -159,12 +158,12 @@ Appends observations, subtask completions, or updates to the end of an existing 
 ---
 
 ### 13. `list_agent_memories`
-Lists all protected AI Agent Memory articles (tagged with `aiagent-memory-` prefix) saved in your wiki.
+Lists all protected AI Agent Memory articles saved in your wiki.
 
 * **Arguments**:
-  * `memory_type` (string, **optional**): An optional memory type to filter the listing (e.g., `troubleshooting`, `memory`, `decision`, `todo`, `rules`).
+  * `memory_type` (string, **optional**): Optional filter by memory type (the project name, topic name, or other free-form value used at creation). For example, `nexwiki` returns only nexwiki project memories.
 * **Behavior**:
-  Scans all active articles, isolates pages that possess tags starting with `"aiagent-memory-"`, filters them to those matching the specified memory type, and returns a bulleted index of matches including titles, slugs, and active tags.
+  Scans all active articles, isolates pages tagged with `aiagent-memory` or any `aiagent-memory-*` prefix, optionally filters by the specified type, and returns a bulleted index of matches including titles, slugs, and active tags.
 
 ---
 
