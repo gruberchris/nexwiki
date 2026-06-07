@@ -27,6 +27,7 @@ type Article struct {
 	Version     int       `json:"version,omitempty"`      // Version number
 	EditSummary string    `json:"edit_summary,omitempty"` // Summary of edits
 	Tags        []string  `json:"tags,omitempty"`         // Tags list
+	ArchivedAt  time.Time `json:"archived_at,omitempty"`  // When the article was archived
 }
 
 // Storage manages persistent article files and uploaded assets on disk.
@@ -86,6 +87,11 @@ func NewStorage(dataDir string) (*Storage, error) {
 	if err := s.seedDefaultHome(); err != nil {
 		_ = index.Close()
 		return nil, err
+	}
+
+	// Cleanup archived articles that have exceeded their retention period
+	if err := s.CleanupArchivedArticles(); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to cleanup archived articles: %v\n", err)
 	}
 
 	// Sync/populate search index
@@ -200,12 +206,13 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 			existingArt, parseErr := parseArticleFile(existingData, false)
 			if parseErr == nil {
 				art = &Article{
-					Title:     title,
-					Slug:      newSlug,
-					CreatedAt: existingArt.CreatedAt,
-					UpdatedAt: now,
-					Content:   content,
-					Tags:      tags,
+					Title:      title,
+					Slug:       newSlug,
+					CreatedAt:  existingArt.CreatedAt,
+					ArchivedAt: existingArt.ArchivedAt,
+					UpdatedAt:  now,
+					Content:    content,
+					Tags:       tags,
 				}
 			}
 		}
@@ -301,6 +308,16 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 		}
 	} else {
 		art.Tags = tags
+	}
+
+	// Set ArchivedAt if the article is being tagged as archived for the first time
+	if art.ArchivedAt.IsZero() {
+		for _, tag := range art.Tags {
+			if strings.ToLower(tag) == "archived" {
+				art.ArchivedAt = now
+				break
+			}
+		}
 	}
 
 	// Set version and edit summary
@@ -513,6 +530,11 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 				}
 			}
 			art.Tags = tags
+		case "archived_at":
+			t, err := time.Parse(time.RFC3339, val)
+			if err == nil {
+				art.ArchivedAt = t
+			}
 		}
 	}
 
@@ -534,7 +556,11 @@ func serializeFrontMatter(art *Article) string {
 	if len(art.Tags) > 0 {
 		tagsStr = fmt.Sprintf("\ntags: %s", strings.Join(art.Tags, ", "))
 	}
-	return fmt.Sprintf("---\ntitle: %s\nslug: %s\ncreated_at: %s\nupdated_at: %s\nversion: %d\nedit_summary: %s%s\n---\n",
+	var archivedAtStr string
+	if !art.ArchivedAt.IsZero() {
+		archivedAtStr = fmt.Sprintf("\narchived_at: %s", art.ArchivedAt.Format(time.RFC3339))
+	}
+	return fmt.Sprintf("---\ntitle: %s\nslug: %s\ncreated_at: %s\nupdated_at: %s\nversion: %d\nedit_summary: %s%s%s\n---\n",
 		art.Title,
 		art.Slug,
 		art.CreatedAt.Format(time.RFC3339),
@@ -542,6 +568,7 @@ func serializeFrontMatter(art *Article) string {
 		art.Version,
 		art.EditSummary,
 		tagsStr,
+		archivedAtStr,
 	)
 }
 
@@ -648,6 +675,20 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 
 		// Exclude "home" from search results (reserved for Hero dashboard)
 		if art.Slug == "home" {
+			continue
+		}
+
+		// Filter out archived articles unless query explicitly requests them
+		isArchived := !art.ArchivedAt.IsZero()
+		if !isArchived {
+			for _, tag := range art.Tags {
+				if strings.ToLower(tag) == "archived" {
+					isArchived = true
+					break
+				}
+			}
+		}
+		if isArchived && !strings.Contains(strings.ToLower(queryStr), "archived") {
 			continue
 		}
 
@@ -870,6 +911,53 @@ func (s *Storage) Close() error {
 		}
 	})
 	return err
+}
+
+// CleanupArchivedArticles removes articles that have been tagged as archived
+// and whose archive time has elapsed based on the configured delay.
+func (s *Storage) CleanupArchivedArticles() error {
+	// Get the configured delay from environment variable
+	delayStr := os.Getenv("NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS")
+	if delayStr == "" {
+		delayStr = "0" // Default to disabled
+	}
+
+	delay, err := strconv.Atoi(delayStr)
+	if err != nil {
+		return fmt.Errorf("invalid NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS value: %w", err)
+	}
+
+	// If delay is 0, auto-deletion is disabled
+	if delay <= 0 {
+		return nil
+	}
+
+	// List all articles
+	articles, err := s.ListArticles()
+	if err != nil {
+		return fmt.Errorf("failed to list articles for cleanup: %w", err)
+	}
+
+	// Check each article
+	for _, art := range articles {
+		// Skip if not archived
+		if art.ArchivedAt.IsZero() {
+			continue
+		}
+
+		// Calculate if the delay has elapsed
+		elapsed := time.Since(art.ArchivedAt)
+		if elapsed >= time.Duration(delay)*24*time.Hour {
+			// Delete the article
+			err = s.DeleteArticle(art.Slug)
+			if err != nil {
+				return fmt.Errorf("failed to delete archived article %s: %w", art.Slug, err)
+			}
+			_, _ = fmt.Fprintf(os.Stderr, "Deleted archived article: %s (archived at: %s)\n", art.Slug, art.ArchivedAt.Format(time.RFC3339))
+		}
+	}
+
+	return nil
 }
 
 // DeleteTagGlobally removes a tag from all articles in the wiki.
