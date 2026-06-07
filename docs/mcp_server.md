@@ -71,7 +71,7 @@ Modifies the title, Markdown content, tags, or edit the summary of an existing w
   * `slug` (string, **required**): The unique URL slug of the article to edit.
   * `title` (string, **required**): The updated title of the article.
   * `content` (string, **required**): The updated raw Markdown content of the article body.
-  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see the recognized status values (e.g. `completed`, `review`). Omit leaving existing tags unchanged.
+  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see the recognized status values (e.g. `completed`, `review`). Omit to leave existing tags unchanged.
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
   * `edit_summary` (string, **optional**): A summary detailing the modifications.
 * **Behavior**:
@@ -178,6 +178,8 @@ Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by
   * `edit_summary` (string, **optional**): Optional summary detailing the creation of the plan.
 * **Behavior**:
   Checks for slug collision, automatically attaches the whitelisted `aiagent-plan` tag, applies a custom tag for the project name, saves the flat Markdown file, commits the first version snapshot, and indexes the plan in Bleve for search.
+* **Plan Completion Workflow**:
+  After a plan is fully implemented, use `append_agent_plan` to add final notes documenting the implementation (plan deviations, files created, tools used, unexpected challenges, or other observations). Then use `edit_agent_plan` to add the `completed` status tag to mark the plan as done.
 
 ---
 
@@ -194,7 +196,7 @@ Appends task status, observations, or checklists to an existing Collaborative AI
 ---
 
 ### 16. `edit_agent_plan`
-Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. The `aiagent-plan` protected tag is strictly preserved and must **NEVER** be removed. Use this to mark a plan as `completed` after implementation by adding the `completed` status tag.
+Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts. The `aiagent-plan` protected tag is strictly preserved and must **NEVER** be removed. Use this to mark a plan as `completed` after implementation by adding the `completed` status tag.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the plan to edit.

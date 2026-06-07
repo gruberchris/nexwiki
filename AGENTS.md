@@ -152,7 +152,7 @@ Modifies the title, Markdown content, or edit a summary of an existing wiki arti
   * `slug` (string, **required**): The unique URL slug of the article to edit.
   * `title` (string, **required**): The updated title of the article.
   * `content` (string, **required**): The updated raw Markdown content of the article body.
-  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see recognized status values. Omit leaving existing tags unchanged.
+  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see recognized status values. Omit to leave existing tags unchanged.
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
   * `edit_summary` (string, **optional**): A summary detailing the modifications.
 * **Output Format**:
@@ -277,7 +277,7 @@ Appends task status, observations, or checklists to an existing Collaborative AI
 ---
 
 ### 16. `edit_agent_plan`
-Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. The `aiagent-plan` protected tag is strictly preserved and must **NEVER** be removed. Use this to mark a plan as `completed` after implementation by adding the `completed` status tag.
+Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts. The `aiagent-plan` protected tag is strictly preserved and must **NEVER** be removed. Use this to mark a plan as `completed` after implementation by adding the `completed` status tag.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the plan to edit.
