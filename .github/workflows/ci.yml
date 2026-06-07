@@ -28,6 +28,10 @@ jobs:
           npm install -D tailwindcss@3
           npm run build
 
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
