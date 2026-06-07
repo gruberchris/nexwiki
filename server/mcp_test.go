@@ -292,32 +292,64 @@ func TestMCPDeleteWikiArticle(t *testing.T) {
 func TestMCPCreateAgentMemory(t *testing.T) {
 	srv := newMCPServer(t)
 
-	// Invalid memory_type
-	resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"My Memory","content":"# Memory","memory_type":"invalid-type"}}`)
-	if !resp.IsError {
-		t.Error("expected error for invalid memory_type")
+	// Project-scoped memory: memory_type becomes the tag suffix
+	resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"NexWiki Deploy Notes","content":"# Notes","memory_type":"nexwiki"}}`)
+	if resp.IsError {
+		t.Errorf("expected success for project-scoped memory, got error: %s", resp.Content[0].Text)
 	}
-
-	// Valid memory creation
-	resp2 := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Rules Memory","content":"# Rules\n\n1. Be helpful","memory_type":"rules"}}`)
-	if resp2.IsError {
-		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
-	}
-
-	// Verify the article has aiagent-memory-rules tag
-	art, err := srv.Storage.GetArticle("rules-memory")
+	art, err := srv.Storage.GetArticle("nexwiki-deploy-notes")
 	if err != nil {
 		t.Fatalf("failed to get created memory: %v", err)
 	}
 	hasTag := false
 	for _, tag := range art.Tags {
-		if tag == "aiagent-memory-rules" {
+		if tag == "aiagent-memory-nexwiki" {
 			hasTag = true
 			break
 		}
 	}
 	if !hasTag {
-		t.Errorf("expected aiagent-memory-rules tag, got %v", art.Tags)
+		t.Errorf("expected aiagent-memory-nexwiki tag, got %v", art.Tags)
+	}
+
+	// Any free-form memory_type is accepted (e.g. topic name)
+	resp2 := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Docker Tips","content":"# Tips","memory_type":"docker"}}`)
+	if resp2.IsError {
+		t.Errorf("expected success for topic-scoped memory, got error: %s", resp2.Content[0].Text)
+	}
+	art2, err := srv.Storage.GetArticle("docker-tips")
+	if err != nil {
+		t.Fatalf("failed to get topic-scoped memory: %v", err)
+	}
+	hasDockerTag := false
+	for _, tag := range art2.Tags {
+		if tag == "aiagent-memory-docker" {
+			hasDockerTag = true
+			break
+		}
+	}
+	if !hasDockerTag {
+		t.Errorf("expected aiagent-memory-docker tag, got %v", art2.Tags)
+	}
+
+	// Omitting memory_type produces the bare aiagent-memory tag
+	resp3 := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"General Note","content":"# General"}}`)
+	if resp3.IsError {
+		t.Errorf("expected success for unscoped memory, got error: %s", resp3.Content[0].Text)
+	}
+	art3, err := srv.Storage.GetArticle("general-note")
+	if err != nil {
+		t.Fatalf("failed to get unscoped memory: %v", err)
+	}
+	hasBareTag := false
+	for _, tag := range art3.Tags {
+		if tag == "aiagent-memory" {
+			hasBareTag = true
+			break
+		}
+	}
+	if !hasBareTag {
+		t.Errorf("expected bare aiagent-memory tag, got %v", art3.Tags)
 	}
 }
 
@@ -331,8 +363,8 @@ func TestMCPAppendAgentMemory(t *testing.T) {
 		t.Error("expected error for non-memory article")
 	}
 
-	// Valid append
-	_, _ = srv.Storage.SaveArticle("", "My Memory", "# Base content", "", []string{"aiagent-memory-rules"})
+	// Valid append to scoped memory
+	_, _ = srv.Storage.SaveArticle("", "My Memory", "# Base content", "", []string{"aiagent-memory-nexwiki"})
 	resp2 := toolCall(t, srv, `{"name":"append_agent_memory","arguments":{"slug":"my-memory","content_to_append":"\n\n## Appended Section\n\nNew content here."}}`)
 	if resp2.IsError {
 		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
@@ -342,6 +374,13 @@ func TestMCPAppendAgentMemory(t *testing.T) {
 	art, _ := srv.Storage.GetArticle("my-memory")
 	if !strings.Contains(art.Content, "Appended Section") {
 		t.Errorf("expected appended content, got: %s", art.Content)
+	}
+
+	// Valid append to bare aiagent-memory tagged article
+	_, _ = srv.Storage.SaveArticle("", "General Memory", "# Base", "", []string{"aiagent-memory"})
+	resp3 := toolCall(t, srv, `{"name":"append_agent_memory","arguments":{"slug":"general-memory","content_to_append":"\n\n## Extra"}}`)
+	if resp3.IsError {
+		t.Errorf("expected success appending to bare aiagent-memory article, got error: %s", resp3.Content[0].Text)
 	}
 }
 
@@ -685,23 +724,33 @@ func TestMCPListAgentMemories(t *testing.T) {
 		t.Errorf("expected success, got error: %s", resp.Content[0].Text)
 	}
 
-	// Create memories of different types
-	_, _ = srv.Storage.SaveArticle("", "Rules Memory", "# rules", "", []string{"aiagent-memory-rules"})
-	_, _ = srv.Storage.SaveArticle("", "Context Memory", "# context", "", []string{"aiagent-memory-context"})
+	// Create memories: scoped and bare
+	_, _ = srv.Storage.SaveArticle("", "NexWiki Notes", "# notes", "", []string{"aiagent-memory-nexwiki"})
+	_, _ = srv.Storage.SaveArticle("", "Docker Tips", "# tips", "", []string{"aiagent-memory-docker"})
+	_, _ = srv.Storage.SaveArticle("", "General Note", "# general", "", []string{"aiagent-memory"})
 
-	// List all
+	// List all — bare aiagent-memory tag must be included
 	resp2 := toolCall(t, srv, `{"name":"list_agent_memories","arguments":{}}`)
 	if resp2.IsError {
 		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
 	}
-	if !strings.Contains(resp2.Content[0].Text, "Rules Memory") {
-		t.Errorf("expected memory in response, got: %s", resp2.Content[0].Text)
+	if !strings.Contains(resp2.Content[0].Text, "NexWiki Notes") {
+		t.Errorf("expected scoped memory in response, got: %s", resp2.Content[0].Text)
+	}
+	if !strings.Contains(resp2.Content[0].Text, "General Note") {
+		t.Errorf("expected bare-tagged memory in response, got: %s", resp2.Content[0].Text)
 	}
 
-	// Filter by type
-	resp3 := toolCall(t, srv, `{"name":"list_agent_memories","arguments":{"memory_type":"rules"}}`)
+	// Filter by project name
+	resp3 := toolCall(t, srv, `{"name":"list_agent_memories","arguments":{"memory_type":"nexwiki"}}`)
 	if resp3.IsError {
 		t.Errorf("expected success, got error: %s", resp3.Content[0].Text)
+	}
+	if !strings.Contains(resp3.Content[0].Text, "NexWiki Notes") {
+		t.Errorf("expected nexwiki memory in filtered response, got: %s", resp3.Content[0].Text)
+	}
+	if strings.Contains(resp3.Content[0].Text, "Docker Tips") {
+		t.Errorf("docker memory should not appear in nexwiki filter, got: %s", resp3.Content[0].Text)
 	}
 }
 
