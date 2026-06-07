@@ -65,13 +65,13 @@ Creates a new wiki article with a given title and raw Markdown content body.
 ---
 
 ### 5. `edit_wiki_article`
-Modifies the title, Markdown content, tags, or edit summary of an existing wiki article.
+Modifies the title, Markdown content, tags, or edit the summary of an existing wiki article.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the article to edit.
   * `title` (string, **required**): The updated title of the article.
   * `content` (string, **required**): The updated raw Markdown content of the article body.
-  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see the recognized status values (e.g. `completed`, `review`). Omit to leave existing tags unchanged.
+  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see the recognized status values (e.g. `completed`, `review`). Omit leaving existing tags unchanged.
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
   * `edit_summary` (string, **optional**): A summary detailing the modifications.
 * **Behavior**:
@@ -133,7 +133,7 @@ Scans the entire knowledge base to compile total page stats and **autonomously s
 ---
 
 ### 11. `create_agent_memory`
-Creates a brand new protected AI Agent Memory document (such as a troubleshooting note, architecture decision, or custom rules).
+Creates a brand new protected AI Agent Memory document (such as a troubleshooting note, architecture decision, or custom rules). Automatically applies the protected `aiagent-memory-<type>` tag, which must **NEVER** be removed unless explicitly instructed.
 
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the memory article (e.g. "Build Server Outage Resolution").
@@ -169,7 +169,7 @@ Lists all protected AI Agent Memory articles (tagged with `aiagent-memory-` pref
 ---
 
 ### 14. `create_agent_plan`
-Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent.
+Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Automatically applies the protected `aiagent-plan` tag, which must **NEVER** be removed unless explicitly instructed.
 
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the plan (e.g., "Go 1.22 Migration Plan").
@@ -182,7 +182,7 @@ Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by
 ---
 
 ### 15. `append_agent_plan`
-Appends task status, observations, or checklists to an existing Collaborative AI Plan (must possess the `aiagent-plan` tag).
+Appends task status, observations, or checklists to an existing Collaborative AI Plan (must possess the `aiagent-plan` tag). Use this to log implementation progress as tasks are completed and to add final notes when a plan is fully implemented before marking it completed.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target plan.
@@ -194,7 +194,7 @@ Appends task status, observations, or checklists to an existing Collaborative AI
 ---
 
 ### 16. `edit_agent_plan`
-Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts and automatically preserves/prepends the protected `aiagent-plan` tag.
+Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. The `aiagent-plan` protected tag is strictly preserved and must **NEVER** be removed. Use this to mark a plan as `completed` after implementation by adding the `completed` status tag.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the plan to edit.
@@ -219,7 +219,7 @@ Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved in
 ---
 
 ### 18. `create_agent_skill`
-Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry.
+Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry. Automatically applies the protected `aiagent-skill` tag, which must **NEVER** be removed unless explicitly instructed.
 
 * **Arguments**:
   * `title` (string, **required**): The title of the skill (e.g., "Docker Container Pruning").
@@ -245,7 +245,7 @@ Returns the canonical list of recognized status tags used to indicate the lifecy
 
 * **Arguments**: None (empty object `{}`).
 * **Behavior**:
-  Returns the server-authoritative list of status tag values. Call this before tagging articles, plans, or skills to ensure you use a recognized value. Status tags are displayed with highest visual priority on the home dashboard, ahead of regular user tags and system `aiagent-*` tags. They can also be used with `list_agent_plans` to filter plans by state.
+  Returns the server-authoritative list of status tag values along with usage tips. Call this before tagging articles, plans, or skills to ensure you use a recognized value. Status tags are displayed with the highest visual priority on the home dashboard. Output includes a tip about the plan completion workflow: after a plan is fully implemented, use `append_agent_plan` to add final notes, then use `edit_agent_plan` to add the `completed` status tag.
 
 * **Recognized values**: `completed`, `done`, `wip`, `draft`, `in-progress`, `archived`, `active`, `todo`, `pending`, `review`, `blocked`, `ready`
 

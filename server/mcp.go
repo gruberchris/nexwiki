@@ -290,7 +290,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_memory",
-					"description": "Create a brand new protected AI Agent Memory document. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to align on memory formats and preservation standards before executing this tool.)",
+					"description": "Create a brand new protected AI Agent Memory document. Automatically applies the protected 'aiagent-memory-<type>' tag, which must NEVER be removed unless explicitly instructed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to align on memory formats and preservation standards before executing this tool.)",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -355,7 +355,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_plan",
-					"description": "Create a brand new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Automatically tags the page with 'aiagent-plan'. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand how plans must be saved and structured before executing this tool.)",
+					"description": "Create a brand new Collaborative AI Plan. Automatically applies the protected 'aiagent-plan' tag, which must NEVER be removed unless explicitly instructed. After a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to mark it as completed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand how plans must be saved and structured before executing this tool.)",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -381,7 +381,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "append_agent_plan",
-					"description": "Append task status, observations, or checklists to an existing Collaborative AI Plan (must possess the 'aiagent-plan' tag).",
+					"description": "Append task status, observations, or checklists to an existing Collaborative AI Plan (must possess the 'aiagent-plan' tag). Use this to log implementation progress, and to add final notes when a plan is fully implemented before marking it completed.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -403,7 +403,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "edit_agent_plan",
-					"description": "Modify the title, tags, or edit summary of an existing Collaborative AI Plan. Employs optimistic locking to prevent concurrent overwrite collisions, and strictly preserves the 'aiagent-plan' tag.",
+					"description": "Modify the title, tags, or edit summary of an existing Collaborative AI Plan. The 'aiagent-plan' protected tag is strictly preserved and must NEVER be removed. Use this to mark a plan as 'completed' after implementation by adding the 'completed' status tag.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -453,7 +453,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_skill",
-					"description": "Create a brand new Custom AI Skill. Automatically tags the page with 'aiagent-skill', making it part of the custom skills registry.",
+					"description": "Create a brand new Custom AI Skill. Automatically applies the protected 'aiagent-skill' tag, which must NEVER be removed unless explicitly instructed. Makes the skill part of the custom skills registry.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -594,7 +594,11 @@ Please follow these strict steps:
 2. Format the plan using rich, clean Markdown.
 3. Save the initial plan in NexWiki immediately using the 'create_agent_plan' tool. Make sure to specify the project_context as "%s".
 4. Inform the user that the plan is saved in NexWiki, provide the article slug, and ask for their feedback or approval on the plan.
-5. As tasks are completed or updated, use 'append_agent_plan' to log the progress and update the checklists.`, project, title, project)
+5. As tasks are completed or updated during implementation, use 'append_agent_plan' to log the progress and update the checklists.
+6. When the plan is fully implemented, use 'append_agent_plan' to add final notes documenting anything worth noting (plan deviations, files created, tools used, unexpected challenges, or other observations).
+7. After adding final notes, use 'edit_agent_plan' to mark the plan as completed by adding the 'completed' status tag.
+
+IMPORTANT: The 'aiagent-plan' protected tag must NEVER be removed from the plan unless explicitly instructed by the user.`, project, title, project)
 
 			result = map[string]interface{}{
 				"description": "Guides the agent on how to collaboratively plan a new development task, outline subtasks, and ensure the plan is saved and updated in NexWiki.",
@@ -1484,7 +1488,10 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		for _, tag := range StatusTags {
 			text += fmt.Sprintf("  • %s\n", tag)
 		}
-		text += "\nTip: use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"completed\").\n"
+		text += "\nTips:\n"
+		text += "  • Use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"completed\").\n"
+		text += "  • When a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to add the 'completed' status tag.\n"
+		text += "  • The 'aiagent-plan' protected tag must NEVER be removed from a plan.\n"
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
 
 	case "get_article_history":
