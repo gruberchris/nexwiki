@@ -214,16 +214,15 @@ Scans the entire knowledge base to compile total page stats and **autonomously s
 ---
 
 ### 11. `create_agent_memory`
-Creates a brand new protected AI Agent Memory document (such as a troubleshooting note, architecture decision, or custom rules).
+Creates a brand new protected AI Agent Memory document. The `memory_type` scopes the memory and determines its protected tag. Memories must be **succinct and high-value** — they are loaded into agent context windows, so keep them short, specific, and free of repetition.
 
 * **Arguments**:
-  * `title` (string, **required**): The human-readable title of the memory article (e.g. "Build Server Outage Resolution").
-  * `content` (string, **required**): The raw Markdown content of the memory document body.
-  * `memory_type` (string, **required**): The type of memory to log. Must be one of: `troubleshooting`, `memory`, `decision`, `todo`, `rules`.
-  * `project_context` (string, **optional**): A context string (like a project ID) to generate a secondary custom tag (e.g. `"project-x"` tags the document with `"project-x"`).
+  * `title` (string, **required**): The human-readable title of the memory article (e.g. "NexWiki MCP Tag Preservation Rules").
+  * `content` (string, **required**): The raw Markdown content of the memory document. Prefer bullet points over paragraphs. One clear insight per memory.
+  * `memory_type` (string, **optional**): Scopes the memory and sets the protected tag. Use a **project name** (e.g. `nexwiki`) for project-specific knowledge, a **topic name** (e.g. `docker`) for reusable cross-project knowledge, or **omit** for general knowledge. Becomes the tag `aiagent-memory-<memory_type>`, or bare `aiagent-memory` if omitted.
   * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
 * **Output Format**:
-  A structured, human-readable success message with slug, creation timestamp, version, and applied tags. All memory types automatically receive the protected tag `aiagent-memory-<type>`.
+  A structured, human-readable success message with slug, creation timestamp, version, and applied tags.
 
 ---
 
@@ -240,17 +239,17 @@ Appends observations, subtask completions, or updates to the end of an existing 
 ---
 
 ### 13. `list_agent_memories`
-Lists all protected AI Agent Memory articles (tagged with `aiagent-memory-` prefix) saved in your wiki.
+Lists all protected AI Agent Memory articles saved in your wiki.
 
 * **Arguments**:
-  * `memory_type` (string, **optional**): An optional memory type to filter the listing (e.g., `troubleshooting`, `memory`, `decision`, `todo`, `rules`).
+  * `memory_type` (string, **optional**): Optional filter by memory type (the project name, topic name, or other free-form value used at creation). For example, `nexwiki` returns only nexwiki project memories.
 * **Output Format**:
   A bulleted plain text index containing the titles, URL-safe slugs, active tags, and edit summaries of matching memory documents.
 
 ---
 
 ### 14. `create_agent_plan`
-Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent.
+Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Automatically applies the protected `aiagent-plan` tag, which must **NEVER** be removed unless explicitly instructed.
 
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the plan (e.g., "Go 1.22 Migration Plan").
@@ -259,11 +258,13 @@ Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by
   * `edit_summary` (string, **optional**): Optional summary detailing the creation of the plan.
 * **Output Format**:
   A success message containing the title, slug, version, creation timestamp, and all applied tags (including the auto-applied `aiagent-plan` tag).
+* **Plan Completion Workflow**:
+  After a plan is fully implemented, use `append_agent_plan` to add final notes documenting the implementation (plan deviations, files created, tools used, unexpected challenges, or other observations). Then use `edit_agent_plan` to add the `completed` status tag to mark the plan as done.
 
 ---
 
 ### 15. `append_agent_plan`
-Appends task status, observations, or checklists to an existing Collaborative AI Plan (must possess the `aiagent-plan` tag).
+Appends task status, observations, or checklists to an existing Collaborative AI Plan (must possess the `aiagent-plan` tag). Use this to log implementation progress as tasks are completed and to add final notes when a plan is fully implemented before marking it completed.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target plan.
@@ -275,7 +276,7 @@ Appends task status, observations, or checklists to an existing Collaborative AI
 ---
 
 ### 16. `edit_agent_plan`
-Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts and automatically preserves/prepends the protected `aiagent-plan` tag.
+Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts. The `aiagent-plan` protected tag is strictly preserved and must **NEVER** be removed. Use this to mark a plan as `completed` after implementation by adding the `completed` status tag.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the plan to edit.
@@ -300,7 +301,7 @@ Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved in
 ---
 
 ### 18. `create_agent_skill`
-Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry.
+Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry. Automatically applies the protected `aiagent-skill` tag, which must **NEVER** be removed unless explicitly instructed.
 
 * **Arguments**:
   * `title` (string, **required**): The title of the skill (e.g., "Docker Container Pruning").
@@ -326,7 +327,7 @@ Returns the canonical list of recognized status tags used to indicate the lifecy
 
 * **Arguments**: None (empty object `{}`).
 * **Output Format**:
-  A plain text listing of all recognized status tag values and a tip on how to use them with `list_agent_plans`. Status tags are displayed with highest visual priority on the home dashboard. Call this before tagging articles, plans, or skills to ensure you use a recognized value.
+  A plain text listing of all recognized status tag values and tips on how to use them. Status tags are displayed with the highest visual priority on the home dashboard. Call this before tagging articles, plans, or skills to ensure you use a recognized value. Output includes a tip about the plan completion workflow.
 
 * **Recognized values**: `completed`, `done`, `wip`, `draft`, `in-progress`, `archived`, `active`, `todo`, `pending`, `review`, `blocked`, `ready`
 
@@ -334,7 +335,7 @@ Returns the canonical list of recognized status tags used to indicate the lifecy
 
 ## 🎯 MCP Prompts
 
-In addition to tools, NexWiki exposes two **MCP Prompts** — interactive workflow templates that guide an AI agent through a multi-step task. Clients that support the `prompts/list` and `prompts/get` MCP methods (such as Claude Desktop) can invoke these by name.
+In addition to tools, NexWiki exposes two **MCP Prompts** — interactive workflow templates that guide an AI agent through a multistep task. Clients that support the `prompts/list` and `prompts/get` MCP methods (such as Claude Desktop) can invoke these by name.
 
 ### 1. `article_creation_workflow`
 Guides the agent to search for existing formatting/style guidelines and custom memories *before* writing a new wiki article, ensuring consistency across the knowledge base.
@@ -354,7 +355,7 @@ Guides the agent to collaboratively outline a new development plan with the user
   * `title` (string, **required**): The title of the Collaborative Plan (e.g. "Go 1.22 Migration Plan").
   * `project` (string, **required**): The project context name (e.g. `nexwiki`).
 * **Behavior**:
-  Instructs the agent to collaboratively outline objectives, technical requirements, and task checklists with the user, save the initial plan immediately with `create_agent_plan`, report the slug to the user, and use `append_agent_plan` to log progress as tasks are completed.
+  Instructs the agent to collaboratively outline goals, technical requirements, and task checklists with the user, save the initial plan immediately with `create_agent_plan`, report the slug to the user, and use `append_agent_plan` to log progress as tasks are completed. After full implementation, the agent must append final notes and mark the plan as `completed` using `edit_agent_plan`. The `aiagent-plan` protected tag must never be removed.
 
 ---
 

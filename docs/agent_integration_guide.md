@@ -111,3 +111,15 @@ Imagine you are working in a legacy project (`/Projects/legacy-system`) and tell
 2. **Agent loads guidelines**: The agent calls `read_article(slug="nexwiki-agent-guidelines")` and confirms it must save any plans persistently in the wiki.
 3. **Agent saves plan**: The agent automatically executes `create_agent_plan`, creating the page `mysql-database-migration-plan` with the `project_context` set to `legacy-system`.
 4. **Agent reports slug**: The agent provides you with the slug and link, keeping both the local workspace and your knowledge base perfectly in sync.
+
+---
+
+### Walkthrough 3: Plan Completion Workflow
+Imagine your agent has finished implementing a plan it previously created (e.g., `mysql-database-migration-plan`).
+
+**The Agent's Step-by-Step Execution:**
+1. **Agent completes implementation**: The agent finishes all the coding tasks outlined in the plan.
+2. **Agent appends final notes**: The agent calls `append_agent_plan(slug="mysql-database-migration-plan")` to document the implementation: any plan deviations, files created, tools used, unexpected challenges, or other observations.
+3. **Agent marks plan as completed**: The agent calls `edit_agent_plan(slug="mysql-database-migration-plan", tags=["completed"], loaded_version=<current_version>)` to add the `completed` status tag.
+4. **Protected tag preserved**: The `aiagent-plan` tag is automatically preserved by the system and cannot be removed.
+5. **Agent reports completion**: The agent confirms the plan is now marked as completed with final notes appended.

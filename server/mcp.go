@@ -290,32 +290,28 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_memory",
-					"description": "Create a brand new protected AI Agent Memory document. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to align on memory formats and preservation standards before executing this tool.)",
+					"description": "Create a brand new protected AI Agent Memory document. The 'memory_type' controls the tag applied and how the memory is scoped: use the project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for reusable cross-project knowledge, or omit it for general knowledge (tagged bare 'aiagent-memory'). Memories must be succinct and high-value — they are loaded into agent context windows, so keep them short, specific, and free of repetition. The protected tag must NEVER be removed unless explicitly instructed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' before executing this tool.)",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"title": map[string]interface{}{
 								"type":        "string",
-								"description": "The human-readable title of the memory article (e.g. 'Build Server Outage Resolution').",
+								"description": "The human-readable title of the memory article (e.g. 'NexWiki MCP Tag Preservation Rules').",
 							},
 							"content": map[string]interface{}{
 								"type":        "string",
-								"description": "The raw Markdown content of the memory document.",
+								"description": "The raw Markdown content of the memory document. Keep it succinct — bullet points over paragraphs, one clear insight per memory.",
 							},
 							"memory_type": map[string]interface{}{
 								"type":        "string",
-								"description": "The classification type of memory. Must be one of: troubleshooting, memory, decision, todo, rules.",
-							},
-							"project_context": map[string]interface{}{
-								"type":        "string",
-								"description": "Optional project identifier to apply a secondary contextual tag (e.g. 'project-x' generates the tag 'project-x').",
+								"description": "Scopes the memory and determines its tag. Use a project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for cross-project knowledge, or omit for general knowledge. Becomes the tag 'aiagent-memory-<memory_type>' or bare 'aiagent-memory' if omitted.",
 							},
 							"edit_summary": map[string]interface{}{
 								"type":        "string",
 								"description": "Optional revision log description summarizing why this memory was created.",
 							},
 						},
-						"required": []string{"title", "content", "memory_type"},
+						"required": []string{"title", "content"},
 					},
 				},
 				{
@@ -342,20 +338,20 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "list_agent_memories",
-					"description": "List all protected AI Agent Memory documents (tagged with 'aiagent-memory-' prefixes) currently saved inside the knowledge base.",
+					"description": "List all protected AI Agent Memory documents currently saved inside the knowledge base.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"memory_type": map[string]interface{}{
 								"type":        "string",
-								"description": "Optional memory type to filter the list (e.g., troubleshooting, memory, decision, todo, rules).",
+								"description": "Optional filter by memory type (project name, topic name, or other free-form value used at creation). For example, 'nexwiki' returns only nexwiki project memories.",
 							},
 						},
 					},
 				},
 				{
 					"name":        "create_agent_plan",
-					"description": "Create a brand new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Automatically tags the page with 'aiagent-plan'. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand how plans must be saved and structured before executing this tool.)",
+					"description": "Create a brand new Collaborative AI Plan. Automatically applies the protected 'aiagent-plan' tag, which must NEVER be removed unless explicitly instructed. After a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to mark it as completed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand how plans must be saved and structured before executing this tool.)",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -381,7 +377,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "append_agent_plan",
-					"description": "Append task status, observations, or checklists to an existing Collaborative AI Plan (must possess the 'aiagent-plan' tag).",
+					"description": "Append task status, observations, or checklists to an existing Collaborative AI Plan (must possess the 'aiagent-plan' tag). Use this to log implementation progress, and to add final notes when a plan is fully implemented before marking it completed.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -403,7 +399,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "edit_agent_plan",
-					"description": "Modify the title, tags, or edit summary of an existing Collaborative AI Plan. Employs optimistic locking to prevent concurrent overwrite collisions, and strictly preserves the 'aiagent-plan' tag.",
+					"description": "Modify the title, tags, or edit summary of an existing Collaborative AI Plan. The 'aiagent-plan' protected tag is strictly preserved and must NEVER be removed. Use this to mark a plan as 'completed' after implementation by adding the 'completed' status tag.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -453,7 +449,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_skill",
-					"description": "Create a brand new Custom AI Skill. Automatically tags the page with 'aiagent-skill', making it part of the custom skills registry.",
+					"description": "Create a brand new Custom AI Skill. Automatically applies the protected 'aiagent-skill' tag, which must NEVER be removed unless explicitly instructed. Makes the skill part of the custom skills registry.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -594,7 +590,11 @@ Please follow these strict steps:
 2. Format the plan using rich, clean Markdown.
 3. Save the initial plan in NexWiki immediately using the 'create_agent_plan' tool. Make sure to specify the project_context as "%s".
 4. Inform the user that the plan is saved in NexWiki, provide the article slug, and ask for their feedback or approval on the plan.
-5. As tasks are completed or updated, use 'append_agent_plan' to log the progress and update the checklists.`, project, title, project)
+5. As tasks are completed or updated during implementation, use 'append_agent_plan' to log the progress and update the checklists.
+6. When the plan is fully implemented, use 'append_agent_plan' to add final notes documenting anything worth noting (plan deviations, files created, tools used, unexpected challenges, or other observations).
+7. After adding final notes, use 'edit_agent_plan' to mark the plan as completed by adding the 'completed' status tag.
+
+IMPORTANT: The 'aiagent-plan' protected tag must NEVER be removed from the plan unless explicitly instructed by the user.`, project, title, project)
 
 			result = map[string]interface{}{
 				"description": "Guides the agent on how to collaboratively plan a new development task, outline subtasks, and ensure the plan is saved and updated in NexWiki.",
@@ -1022,35 +1022,22 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			EditSummary    string `json:"edit_summary"`
 		}
 		var mArgs CreateMemoryArgs
-		if err := json.Unmarshal(args.Arguments, &mArgs); err != nil || mArgs.Title == "" || mArgs.Content == "" || mArgs.MemoryType == "" {
-			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title', 'content', and 'memory_type' are required."}
+		if err := json.Unmarshal(args.Arguments, &mArgs); err != nil || mArgs.Title == "" || mArgs.Content == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title' and 'content' are required."}
 		}
 
 		mType := strings.ToLower(strings.TrimSpace(mArgs.MemoryType))
-		validTypes := map[string]bool{
-			"troubleshooting": true,
-			"memory":          true,
-			"decision":        true,
-			"todo":            true,
-			"rules":           true,
+
+		var primaryTag string
+		if mType == "" {
+			primaryTag = "aiagent-memory"
+		} else {
+			primaryTag = "aiagent-memory-" + mType
 		}
-		if !validTypes[mType] {
-			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: invalid memory_type '%s'. Valid types are: troubleshooting, memory, decision, todo, rules", mArgs.MemoryType)}}}, nil
-		}
+		tags := []string{primaryTag}
 
 		title := mArgs.Title
 		slug := Slugify(title)
-
-		primaryTag := "aiagent-memory-" + mType
-		tags := []string{primaryTag}
-
-		projCtx := strings.TrimSpace(mArgs.ProjectContext)
-		if projCtx != "" {
-			contextTag := Slugify(projCtx)
-			if contextTag != "" && contextTag != primaryTag {
-				tags = append(tags, contextTag)
-			}
-		}
 
 		if _, err := srv.Storage.GetArticle(slug); err == nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: an article with slug '%s' already exists", slug)}}}, nil
@@ -1058,7 +1045,11 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 		summary := mArgs.EditSummary
 		if summary == "" {
-			summary = fmt.Sprintf("Created AI Agent %s Memory", mType)
+			if mType == "" {
+				summary = "Created AI Agent Memory"
+			} else {
+				summary = fmt.Sprintf("Created AI Agent %s Memory", mType)
+			}
 		}
 
 		art, err := srv.Storage.SaveArticle("", title, mArgs.Content, summary, tags)
@@ -1088,7 +1079,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 		hasAgentMemoryTag := false
 		for _, tag := range existing.Tags {
-			if strings.HasPrefix(strings.ToLower(tag), "aiagent-memory-") {
+			tagLower := strings.ToLower(tag)
+			if tagLower == "aiagent-memory" || strings.HasPrefix(tagLower, "aiagent-memory-") {
 				hasAgentMemoryTag = true
 				break
 			}
@@ -1141,7 +1133,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 			for _, tag := range art.Tags {
 				tagLower := strings.ToLower(tag)
-				if strings.HasPrefix(tagLower, "aiagent-memory-") {
+				if tagLower == "aiagent-memory" || strings.HasPrefix(tagLower, "aiagent-memory-") {
 					isAgentMemory = true
 					memoryTags = append(memoryTags, tag)
 					if filterType != "" && strings.HasPrefix(tagLower, "aiagent-memory-"+filterType) {
@@ -1484,7 +1476,10 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		for _, tag := range StatusTags {
 			text += fmt.Sprintf("  • %s\n", tag)
 		}
-		text += "\nTip: use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"completed\").\n"
+		text += "\nTips:\n"
+		text += "  • Use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"completed\").\n"
+		text += "  • When a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to add the 'completed' status tag.\n"
+		text += "  • The 'aiagent-plan' protected tag must NEVER be removed from a plan.\n"
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
 
 	case "get_article_history":

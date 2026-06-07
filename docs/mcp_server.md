@@ -65,7 +65,7 @@ Creates a new wiki article with a given title and raw Markdown content body.
 ---
 
 ### 5. `edit_wiki_article`
-Modifies the title, Markdown content, tags, or edit summary of an existing wiki article.
+Modifies the title, Markdown content, tags, or edit the summary of an existing wiki article.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the article to edit.
@@ -133,16 +133,15 @@ Scans the entire knowledge base to compile total page stats and **autonomously s
 ---
 
 ### 11. `create_agent_memory`
-Creates a brand new protected AI Agent Memory document (such as a troubleshooting note, architecture decision, or custom rules).
+Creates a brand new protected AI Agent Memory document. The `memory_type` scopes the memory and determines its protected tag. Memories must be **succinct and high-value** — they are loaded into agent context windows, so keep them short, specific, and free of repetition.
 
 * **Arguments**:
-  * `title` (string, **required**): The human-readable title of the memory article (e.g. "Build Server Outage Resolution").
-  * `content` (string, **required**): The raw Markdown content of the memory document body.
-  * `memory_type` (string, **required**): The type of memory to log. Must be one of: `troubleshooting`, `memory`, `decision`, `todo`, `rules`.
-  * `project_context` (string, **optional**): A context string (like a project ID) to generate a secondary custom tag (e.g. `"project-x"` tags the document with `"project-x"`).
+  * `title` (string, **required**): The human-readable title of the memory article (e.g. "NexWiki MCP Tag Preservation Rules").
+  * `content` (string, **required**): The raw Markdown content of the memory document. Prefer bullet points over paragraphs. One clear insight per memory.
+  * `memory_type` (string, **optional**): Scopes the memory and sets the protected tag. Use a **project name** (e.g. `nexwiki`) for project-specific knowledge, a **topic name** (e.g. `docker`) for reusable cross-project knowledge, or **omit** for general knowledge. Becomes the tag `aiagent-memory-<memory_type>`, or bare `aiagent-memory` if omitted.
   * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
 * **Behavior**:
-  Checks for slug collision, automatically attaches the protected `aiagent-memory-<type>` tag, applies a custom tag for the project name (if `project_context` is provided), saves the flat Markdown file, commits the first version snapshot, and indexes the document in the search engine.
+  Checks for slug collision, automatically attaches the protected tag (`aiagent-memory-<memory_type>` or bare `aiagent-memory`), saves the flat Markdown file, commits the first version snapshot, and indexes the document in the search engine.
 
 ---
 
@@ -159,17 +158,17 @@ Appends observations, subtask completions, or updates to the end of an existing 
 ---
 
 ### 13. `list_agent_memories`
-Lists all protected AI Agent Memory articles (tagged with `aiagent-memory-` prefix) saved in your wiki.
+Lists all protected AI Agent Memory articles saved in your wiki.
 
 * **Arguments**:
-  * `memory_type` (string, **optional**): An optional memory type to filter the listing (e.g., `troubleshooting`, `memory`, `decision`, `todo`, `rules`).
+  * `memory_type` (string, **optional**): Optional filter by memory type (the project name, topic name, or other free-form value used at creation). For example, `nexwiki` returns only nexwiki project memories.
 * **Behavior**:
-  Scans all active articles, isolates pages that possess tags starting with `"aiagent-memory-"`, filters them to those matching the specified memory type, and returns a bulleted index of matches including titles, slugs, and active tags.
+  Scans all active articles, isolates pages tagged with `aiagent-memory` or any `aiagent-memory-*` prefix, optionally filters by the specified type, and returns a bulleted index of matches including titles, slugs, and active tags.
 
 ---
 
 ### 14. `create_agent_plan`
-Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent.
+Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Automatically applies the protected `aiagent-plan` tag, which must **NEVER** be removed unless explicitly instructed.
 
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the plan (e.g., "Go 1.22 Migration Plan").
@@ -178,11 +177,13 @@ Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by
   * `edit_summary` (string, **optional**): Optional summary detailing the creation of the plan.
 * **Behavior**:
   Checks for slug collision, automatically attaches the whitelisted `aiagent-plan` tag, applies a custom tag for the project name, saves the flat Markdown file, commits the first version snapshot, and indexes the plan in Bleve for search.
+* **Plan Completion Workflow**:
+  After a plan is fully implemented, use `append_agent_plan` to add final notes documenting the implementation (plan deviations, files created, tools used, unexpected challenges, or other observations). Then use `edit_agent_plan` to add the `completed` status tag to mark the plan as done.
 
 ---
 
 ### 15. `append_agent_plan`
-Appends task status, observations, or checklists to an existing Collaborative AI Plan (must possess the `aiagent-plan` tag).
+Appends task status, observations, or checklists to an existing Collaborative AI Plan (must possess the `aiagent-plan` tag). Use this to log implementation progress as tasks are completed and to add final notes when a plan is fully implemented before marking it completed.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target plan.
@@ -194,7 +195,7 @@ Appends task status, observations, or checklists to an existing Collaborative AI
 ---
 
 ### 16. `edit_agent_plan`
-Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts and automatically preserves/prepends the protected `aiagent-plan` tag.
+Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts. The `aiagent-plan` protected tag is strictly preserved and must **NEVER** be removed. Use this to mark a plan as `completed` after implementation by adding the `completed` status tag.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the plan to edit.
@@ -219,7 +220,7 @@ Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved in
 ---
 
 ### 18. `create_agent_skill`
-Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry.
+Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry. Automatically applies the protected `aiagent-skill` tag, which must **NEVER** be removed unless explicitly instructed.
 
 * **Arguments**:
   * `title` (string, **required**): The title of the skill (e.g., "Docker Container Pruning").
@@ -245,7 +246,7 @@ Returns the canonical list of recognized status tags used to indicate the lifecy
 
 * **Arguments**: None (empty object `{}`).
 * **Behavior**:
-  Returns the server-authoritative list of status tag values. Call this before tagging articles, plans, or skills to ensure you use a recognized value. Status tags are displayed with highest visual priority on the home dashboard, ahead of regular user tags and system `aiagent-*` tags. They can also be used with `list_agent_plans` to filter plans by state.
+  Returns the server-authoritative list of status tag values along with usage tips. Call this before tagging articles, plans, or skills to ensure you use a recognized value. Status tags are displayed with the highest visual priority on the home dashboard. Output includes a tip about the plan completion workflow: after a plan is fully implemented, use `append_agent_plan` to add final notes, then use `edit_agent_plan` to add the `completed` status tag.
 
 * **Recognized values**: `completed`, `done`, `wip`, `draft`, `in-progress`, `archived`, `active`, `todo`, `pending`, `review`, `blocked`, `ready`
 
