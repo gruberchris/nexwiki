@@ -2,7 +2,15 @@
 
 NexWiki serves as a **dynamic AI skills registry** that allows you to author procedural instructions, templates, and rules (commonly referred to as `SKILL.md` documents) and expose them directly to AI agents.
 
-This guide details what AI skills are, how to manage them inside NexWiki, how they interact with search, and how to connect your AI agents (such as JetBrains AI Assistant, custom agents, or Claude Code) to NexWiki's custom skills registry.
+This guide details what AI skills are, how to manage them inside NexWiki, how they interact with search, and how to connect your AI agents (such as JetBrains AI Assistant, custom agents, or Claude Code) to NexWiki's custom Skills Registry.
+
+---
+
+## ⚠️ Before You Start: Create the Core Guidelines Skill
+
+If you are connecting AI agents (Claude Desktop, Cursor, etc.) to NexWiki, the **most important skill to create first** is the `nexwiki-agent-guidelines` skill. The MCP tool descriptions for `create_wiki_article`, `create_agent_plan`, and `create_agent_memory` all instruct agents to load this skill before acting. If it does not exist, agents will error and proceed without any governance rules.
+
+See **[AI Agent Integration Guide](agent_integration_guide.md)** → *Crafting Your `nexwiki-agent-guidelines` Skill* for exactly what to write and what to leave out.
 
 ---
 
@@ -33,7 +41,7 @@ Once saved, skill pages are instantly moved out of your main **Articles** sectio
 
 ### 3. Glassmorphic Registry Dashboard
 When viewing any page registered as an AI skill, NexWiki renders a beautiful, glassmorphic **AI Agent Skill Active** banner right above your Markdown content.
-* This banner confirms that the page is currently being served on your local custom skills registry.
+* This banner confirms that the page is currently being served on your local custom Skills Registry.
 * It provides direct click-to-open links to inspect the **JSON Schema** metadata or view the **Raw SKILL.md** representation served to agents.
 
 ---

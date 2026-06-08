@@ -12,6 +12,7 @@ import { ThemeManagerModal } from './components/ThemeManagerModal';
 import type { Theme } from './components/ThemeManagerModal';
 import { useSSE } from './hooks/useSSE';
 import { useWikiUpdates } from './hooks/useWikiUpdates';
+import { useBrowserColorScheme } from './hooks/useBrowserColorScheme';
 import { ActivityLogDrawer } from './components/ActivityLogDrawer';
 import { 
   Edit, 
@@ -431,7 +432,10 @@ export const App: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath]);
 
-  // Toggle dark/light theme variant of active theme
+  // Follow browser prefers-color-scheme changes unless the user has explicitly chosen a mode.
+  useBrowserColorScheme(setDarkMode);
+
+  // Toggle dark/light theme variant of active theme (marks an explicit user preference).
   const toggleDarkMode = () => {
     const nextMode = !darkMode;
     setDarkMode(nextMode);

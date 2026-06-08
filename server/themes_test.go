@@ -80,7 +80,7 @@ func TestResolveScheduledTheme(t *testing.T) {
 		t.Errorf("multiple candidates: expected deterministic result, got %q and %q", result1, result2)
 	}
 
-	// DefaultThemes: christmas schedule starts Dec 1
+	// DefaultThemes: Christmas schedule starts Dec 1
 	christmasDate := date(12, 15)
 	result := ResolveScheduledTheme(DefaultThemes, christmasDate)
 	if result != "christmas" {
@@ -177,7 +177,142 @@ func TestThemeStoreSaveLoadRoundtrip(t *testing.T) {
 	}
 }
 
-// date builds a time.Time for a given month and day in year 2024.
+// ---------------------------------------------------------------------------
+// DefaultThemes catalogue tests (validates the seasonal expansion plan)
+// ---------------------------------------------------------------------------
+
+func TestDefaultThemeCount(t *testing.T) {
+	if len(DefaultThemes) != 16 {
+		t.Errorf("expected 16 default themes, got %d", len(DefaultThemes))
+	}
+}
+
+func TestDefaultThemeNames(t *testing.T) {
+	want := map[string]bool{
+		"default":                      true,
+		"mlk-day":                      true,
+		"valentine-day":                true,
+		"black-history-month":          true,
+		"st-patricks-day":              true,
+		"memorial-day":                 true,
+		"d-day":                        true,
+		"independence-day":             true,
+		"labor-day":                    true,
+		"patriots-day":                 true,
+		"halloween":                    true,
+		"veterans-day":                 true,
+		"thanksgiving":                 true,
+		"pearl-harbor-remembrance-day": true,
+		"christmas":                    true,
+		"new-years":                    true,
+	}
+
+	for _, theme := range DefaultThemes {
+		if !want[theme.Name] {
+			t.Errorf("unexpected theme name %q in DefaultThemes", theme.Name)
+		}
+		delete(want, theme.Name)
+	}
+	for missing := range want {
+		t.Errorf("theme %q is missing from DefaultThemes", missing)
+	}
+}
+
+// Only the "default" theme should have no schedule; every holiday theme must have one.
+func TestDefaultThemesOnlyDefaultHasNilSchedule(t *testing.T) {
+	for _, theme := range DefaultThemes {
+		if theme.Name == "default" {
+			if theme.Schedule != nil {
+				t.Errorf("default theme should have nil schedule, got %+v", theme.Schedule)
+			}
+		} else {
+			if theme.Schedule == nil {
+				t.Errorf("theme %q must have a non-nil schedule", theme.Name)
+			}
+		}
+	}
+}
+
+// Every theme must have the critical color fields populated in both variants.
+func TestDefaultThemesColorFieldsPopulated(t *testing.T) {
+	for _, theme := range DefaultThemes {
+		if theme.Light.BgPrimary == "" {
+			t.Errorf("theme %q: Light.BgPrimary is empty", theme.Name)
+		}
+		if theme.Dark.BgPrimary == "" {
+			t.Errorf("theme %q: Dark.BgPrimary is empty", theme.Name)
+		}
+		if theme.Light.AccentPrimary == "" {
+			t.Errorf("theme %q: Light.AccentPrimary is empty", theme.Name)
+		}
+		if theme.Dark.AccentPrimary == "" {
+			t.Errorf("theme %q: Dark.AccentPrimary is empty", theme.Name)
+		}
+	}
+}
+
+// Each new holiday theme must activate on its canonical date.
+// Dates are chosen so that only one theme is active (no schedule overlap).
+func TestAllNewHolidayThemesActivateOnKeyDate(t *testing.T) {
+	tests := []struct {
+		theme      string
+		month, day int
+	}{
+		{"mlk-day", 1, 17},             // third Monday of January — solo window
+		{"black-history-month", 2, 20}, // after valentine-day ends Feb 18
+		{"st-patricks-day", 3, 17},     // St. Patrick's Day — solo window
+		{"memorial-day", 5, 25},        // before d-day window starts Jun 5
+		{"independence-day", 7, 4},     // Fourth of July — solo window
+		{"labor-day", 9, 3},            // before patriots-day window starts Sep 8
+		{"patriots-day", 9, 11},        // September 11 — solo window
+		{"halloween", 10, 31},          // Halloween — solo window
+		{"veterans-day", 11, 11},       // Veterans Day — solo window
+		{"thanksgiving", 11, 25},       // before Christmas starts Dec 1
+		{"christmas", 12, 15},          // outside Thanksgiving and pearl-harbor windows
+		{"new-years", 1, 3},            // after mlk-day starts Jan 14
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.theme, func(t *testing.T) {
+			got := ResolveScheduledTheme(DefaultThemes, date(tc.month, tc.day))
+			if got != tc.theme {
+				t.Errorf("date %02d/%02d: expected %q, got %q", tc.month, tc.day, tc.theme, got)
+			}
+		})
+	}
+}
+
+// Dates where two or more theme windows overlap must still produce a stable,
+// non-empty result thanks to the deterministic hash resolver.
+func TestOverlappingHolidayDatesAreDeterministic(t *testing.T) {
+	overlaps := []struct {
+		name       string
+		month, day int
+	}{
+		{"valentine-day + black-history-month", 2, 14},
+		{"memorial-day + d-day", 6, 6},
+		{"christmas + thanksgiving", 12, 2},
+		{"christmas + pearl-harbor-remembrance-day", 12, 8},
+	}
+
+	for _, tc := range overlaps {
+		t.Run(tc.name, func(t *testing.T) {
+			d := date(tc.month, tc.day)
+			r1 := ResolveScheduledTheme(DefaultThemes, d)
+			r2 := ResolveScheduledTheme(DefaultThemes, d)
+			if r1 == "" {
+				t.Errorf("date %02d/%02d: expected a non-empty theme, got empty string", tc.month, tc.day)
+			}
+			if r1 != r2 {
+				t.Errorf("date %02d/%02d: non-deterministic: got %q then %q", tc.month, tc.day, r1, r2)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+
+// date builds a time.Time for a given month and day in the year 2024.
 func date(month, day int) time.Time {
 	return time.Date(2024, time.Month(month), day, 12, 0, 0, 0, time.UTC)
 }

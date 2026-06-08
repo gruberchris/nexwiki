@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { Slugify, formatRelativeTime, generateDocxContent } from './utils';
+import { Slugify, formatRelativeTime, generateDocxContent, formatThemeName } from './utils';
 
 describe('Slugify', () => {
   it('returns empty string for empty/falsy input', () => {
@@ -80,6 +80,40 @@ describe('formatRelativeTime', () => {
     // Should contain a month abbreviation
     expect(result).toMatch(/[A-Za-z]+/);
     expect(result).not.toContain('ago');
+  });
+});
+
+describe('formatThemeName', () => {
+  it('capitalizes a single-word slug', () => {
+    expect(formatThemeName('halloween')).toBe('Halloween');
+    expect(formatThemeName('default')).toBe('Default');
+  });
+
+  it('converts a two-word hyphenated slug to title case with a space', () => {
+    expect(formatThemeName('independence-day')).toBe('Independence Day');
+    expect(formatThemeName('patriots-day')).toBe('Patriots Day');
+    expect(formatThemeName('labor-day')).toBe('Labor Day');
+    expect(formatThemeName('mlk-day')).toBe('Mlk Day');
+    expect(formatThemeName('veterans-day')).toBe('Veterans Day');
+    expect(formatThemeName('thanksgiving')).toBe('Thanksgiving');
+    expect(formatThemeName('new-years')).toBe('New Years');
+    expect(formatThemeName('christmas')).toBe('Christmas');
+    expect(formatThemeName('valentine-day')).toBe('Valentine Day');
+    expect(formatThemeName('memorial-day')).toBe('Memorial Day');
+  });
+
+  it('converts a multi-segment slug correctly', () => {
+    expect(formatThemeName('st-patricks-day')).toBe('St Patricks Day');
+    expect(formatThemeName('black-history-month')).toBe('Black History Month');
+    expect(formatThemeName('pearl-harbor-remembrance-day')).toBe('Pearl Harbor Remembrance Day');
+  });
+
+  it('handles numeric segments without breaking', () => {
+    expect(formatThemeName('d-day')).toBe('D Day');
+  });
+
+  it('returns an empty string for an empty input', () => {
+    expect(formatThemeName('')).toBe('');
   });
 });
 

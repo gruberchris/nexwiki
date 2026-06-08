@@ -215,6 +215,14 @@ ${htmlOpen}
 }
 
 /**
+ * Converts a hyphenated theme slug into a display-friendly title-cased string.
+ * e.g. "independence-day" → "Independence Day", "st-patricks-day" → "St Patricks Day"
+ */
+export function formatThemeName(name: string): string {
+  return name.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+/**
  * Formats standard timestamps into relative time display string (e.g., 5m ago, Yesterday).
  */
 export function formatRelativeTime(dateStr: string): string {

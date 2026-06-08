@@ -43,6 +43,62 @@ tags: database, backend, production
 
 ---
 
+## 📌 Status & Lifecycle Tags
+
+NexWiki recognizes a fixed set of **status tags** that signal the lifecycle state of any article or AI plan. These tags are displayed with **highest priority** on the home dashboard article cards, making it easy to see what's active, blocked, or done at a glance.
+
+### Recognized Status Values
+
+| Tag | Meaning |
+|---|---|
+| `draft` | Work in progress, not ready for review |
+| `wip` | Actively being worked on |
+| `in-progress` | Same as `wip` — task underway |
+| `todo` | Queued but not yet started |
+| `active` | Currently in use or being maintained |
+| `review` | Ready for review by another person or agent |
+| `ready` | Approved and ready to act on |
+| `blocked` | Cannot proceed — waiting on a dependency |
+| `pending` | Awaiting an external event or decision |
+| `completed` | Fully implemented or resolved |
+| `done` | Equivalent to `completed` |
+| `archived` | Retired — kept for reference, no longer active |
+
+### How Status Tags Work
+
+Most status tags are **purely semantic labels** — they do not trigger automatic filtering, hiding, or routing in the backend. The `archived` tag is the exception: it has optional auto-deletion behavior.
+
+* Applying `archived` to an article does **not** remove it from search results or move it to a separate folder. The article remains fully visible and searchable.
+* To exclude archived articles from a filter query, use the negation operator explicitly: `!archived` in the sidebar filter or search bar.
+* The filter help modals (accessible via the `?` icon in the filter bar) include examples like `draft OR wip !archived`.
+
+### Auto-Deletion of Archived Articles
+
+When an article is tagged `archived`, NexWiki records the timestamp in the article's front-matter as `archived_at`. On each server startup, NexWiki checks all archived articles and deletes any whose `archived_at` timestamp is older than the configured retention period.
+
+This behavior is controlled by the `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` environment variable:
+
+| Value | Behavior |
+|---|---|
+| Unset or `0` | Auto-deletion is **disabled** (default) |
+| Positive integer (e.g. `30`) | Articles archived longer than that many days are deleted on the next startup |
+
+```bash
+# Delete archived articles that have been archived for more than 30 days
+export NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS=30
+./nexwiki -data ./wiki-data
+```
+
+> **Note:** Deletion is permanent and not recoverable (unless you have a backup). The server logs a line to stderr for each article deleted: `Deleted archived article: <slug> (archived at: <timestamp>)`.
+
+### Applying Status Tags
+
+* **In the Editor**: Type a status tag (e.g., `archived`) in the Tags input field. Status tags appear with higher visual priority than regular user tags on article cards.
+* **Via MCP**: AI agents can apply status tags using `update_article_tags` or the `tags` parameter on `create_wiki_article`, `edit_wiki_article`, `create_agent_plan`, or `edit_agent_plan`. Call `get_status_tags` to retrieve the canonical list.
+* **Via REST API**: Use `PUT /api/articles/{slug}/tags` with your updated tags array.
+
+---
+
 ## 🤖 Protected AI Agent Memories & Collaborative Plans
 
 NexWiki separates AI-driven note-taking into three distinct, structured models:

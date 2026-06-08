@@ -22,7 +22,7 @@ Designed as an **AI-ready second brain**, NexWiki bridges the gap between human 
 - 📤 **Export, Share, Copy & Bulk Archive Utilities**: Export any wiki article directly to a professional print-styled PDF (via a native vector-drawn printing engine, with cascade precedence CSS fixes), Microsoft Word (`.docx`), or standard Markdown (`.md`) files. Instantly copy raw body text or page URLs from a consolidated glassmorphic dropdown, and package your entire wiki database as a folder-categorized `.zip` archive (containing standard `wiki/` notes, `aimemories/`, `aiplans/`, `aiskills/`, and a root `README.md` index file) in one click.
 - 🖼️ **Asset & Image Uploads**: Built-in support for uploading and referencing media assets (such as PNG, JPEG, GIF, SVG, and WebP) directly within articles.
 - **⚙️ Dynamic Customization**: Personalize your wiki's name via environment variables (`NEXWIKI_NAME`) or command-line flags.
-- 🎨 **Seasonal Theme Scheduling & Customizable Palettes**: Configure default themes via CLI flags or environment variables, customize dual-variant (Light/Dark) palettes using custom pickers, and schedule annual seasonal themes (`july-4th`, `halloween`, `christmas`, `new-years`) using CLI flags (`-theme-scheduling`) or environment parameters (`NEXWIKI_THEME_SCHEDULING`). Features scheduled badges and a deterministic overlap date hash resolver.
+- 🎨 **Seasonal Theme Scheduling & Customizable Palettes**: Configure default themes via CLI flags or environment variables, customize dual-variant (Light/Dark) palettes using custom pickers, and schedule annual seasonal themes (`independence-day`, `halloween`, `christmas`, `new-years`) using CLI flags (`-theme-scheduling`) or environment parameters (`NEXWIKI_THEME_SCHEDULING`). Features scheduled badges and a deterministic overlap date hash resolver.
 - 💻 **IDE-Grade CodeMirror 6 Editor & Cheat Sheet**: Replaced the primitive textarea with CodeMirror 6, complete with auto-resizing, Tab-indent formatting, image drag-and-drop, and clean transactional toolbar formats. Pressing `Ctrl+/` / `Cmd+/` instantly overlays a glassmorphic Markdown Syntax cheat cheatsheet. Integrates dynamic colors wrapping active themes (Option B) natively at runtime.
 - 🔍 **Real-Time Markdown Linter & Inline Warnings**: Debounced validation checks your writing against standard rules (MD001 hierarchy, MD025 multiple H1s, MD037 interior spacing, MD034 bare URLs) and broken internal `[[WikiLinks]]`. Shows severity wavy underlines, hover details/quick fixes, right-click custom context menus, and a rich Diagnostics Dashboard modal with sorting, filters, cursor jumps, and AI Correction prompt copy tools.
 - 📡 **Real-Time SSE Syncing & Live Activity Log**: Establish single global `EventSource` connections over `/api/activity/stream` backed by a thread-safe circular `EventBus` (caching the last 200 operations). Rapid AI tool mutations are buffered in a 500 ms cooldown window to show cumulative glowing badges (Option B), and live operations (REST API vs. MCP AI tools) stream to a slide-in Activity Drawer. Drives instant zero-refresh dashboard stats and active reader content synchronization.
@@ -32,7 +32,7 @@ Designed as an **AI-ready second brain**, NexWiki bridges the gap between human 
 
 ## ⬇️ Quickstart: Download & Run a Pre-Built Binary
 
-The easiest way to run NexWiki — no Docker, no Go toolchain required. Just download the binary for your platform, make it executable, and run it.
+The easiest way to run NexWiki — no Docker, no Go toolchain required. Download the binary for your platform, make it executable, and run it.
 
 ### 1. Download the Binary
 
@@ -86,6 +86,7 @@ All settings can be set via CLI flags. The `NEXWIKI_NAME`, `NEXWIKI_THEME`, and 
 | Wiki name | `-name` | `NEXWIKI_NAME` | `NexWiki` | Title displayed in the UI and HTML headers |
 | Default theme | `-theme` | `NEXWIKI_THEME` | `default` | Initial active color theme |
 | Seasonal themes | `-theme-scheduling` | `NEXWIKI_THEME_SCHEDULING` | `false` | Enable automatic annual seasonal theme switching |
+| Archive auto-delete | — | `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Days after archiving before an article is permanently deleted on startup |
 
 ### 5. Examples
 
@@ -109,7 +110,7 @@ $env:NEXWIKI_NAME="My Knowledge Base"
 
 ## 🐳 Quickstart: Pull & Run from GitHub Container Registry
 
-NexWiki publishes a ready-to-run multi-platform Docker image to the [GitHub Container Registry](https://github.com/gruberchris/nexwiki/pkgs/container/nexwiki) on every release. No build step needed.
+NexWiki publishes a ready-to-run multi-platform Docker image to the [GitHub Container Registry](https://github.com/gruberchris/nexwiki/pkgs/container/nexwiki) on every release. No build step is needed.
 
 **Image**: `ghcr.io/gruberchris/nexwiki`  
 **Platforms**: `linux/amd64`, `linux/arm64` (runs natively on Apple Silicon via Docker Desktop)
@@ -197,6 +198,7 @@ Always mount this path to a persistent local directory or named Docker volume to
 | `NEXWIKI_NAME` | `NexWiki` | Title displayed in the UI and HTML headers |
 | `NEXWIKI_THEME` | `default` | Initial active color theme |
 | `NEXWIKI_THEME_SCHEDULING` | `false` | Set to `true` to enable seasonal auto theme switching |
+| `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Days after archiving before an article is permanently deleted on startup |
 
 The port and data directory are fixed to `8080` and `/app/data` inside the container; adjust the `-p` host mapping and volume mount to change them on the host side.
 
