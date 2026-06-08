@@ -9,11 +9,22 @@ Welcome to the advanced guide for NexWiki's unified editor and real-time syncing
 NexWiki automatically schedules seasonal or holiday themes throughout the year based on custom or built-in scheduling rules.
 
 ### Built-in Seasonal Themes
-NexWiki ships with four default annual holiday schedules:
-* **July 4th (`july-4th`)**: Jun 28 – Jul 6 (Contextual badge: 🎆)
-* **Halloween (`halloween`)**: Oct 15 – Nov 1 (Contextual badge: 🎃)
-* **Christmas (`christmas`)**: Dec 1 – Dec 25 (Contextual badge: 🎄)
-* **New Year's (`new-years`)**: Dec 26 – Jan 7 (Contextual badge: 📅)
+NexWiki ships with sixteen default annual holiday schedules:
+* **MLK Day (`mlk-day`)**: Jan 14 – Jan 22
+* **New Year's (`new-years`)**: Dec 26 – Jan 7
+* **Black History Month (`black-history-month`)**: Feb 1 – Feb 28
+* **Valentine's Day (`valentine-day`)**: Feb 10 – Feb 18
+* **St. Patrick's Day (`st-patricks-day`)**: Mar 10 – Apr 2
+* **Memorial Day (`memorial-day`)**: May 20 – Jun 10
+* **D-Day Anniversary (`d-day`)**: Jun 5 – Jun 10
+* **Independence Day (`independence-day`)**: Jun 28 – Jul 6
+* **Labor Day (`labor-day`)**: Sep 1 – Sep 7
+* **September 11th Remembrance (`patriots-day`)**: Sep 8 – Sep 12
+* **Halloween (`halloween`)**: Oct 15 – Nov 1
+* **Veterans Day (`veterans-day`)**: Nov 8 – Nov 12
+* **Thanksgiving (`thanksgiving`)**: Nov 20 – Dec 5
+* **Pearl Harbor Remembrance Day (`pearl-harbor-remembrance-day`)**: Dec 7 – Dec 10
+* **Christmas (`christmas`)**: Dec 1 – Dec 25
 
 ### How to Configure Scheduling
 1. **Enable the Scheduler**: Run the backend server with the `-theme-scheduling` flag:

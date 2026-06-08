@@ -37,14 +37,14 @@ If no configurations are specified, NexWiki defaults to the `"default"` system t
 
 ## 🎨 2. Standard System Themes
 
-NexWiki compiles with ten pre-installed system default themes, all configured to render in **Light Mode by default** while fully supporting dual-variant dark modes:
+NexWiki compiles with sixteen pre-installed system default themes, all configured to render in **Light Mode by default** while fully supporting dual-variant dark modes:
 
 ### 1. Default (`"default"`)
 The standard premium look and feel of NexWiki:
 * **Light Mode**: High-fidelity indigo accents (`#4f46e5`) on a clean slate-50 backdrop.
 * **Dark Mode**: High-contrast emerald accents (`#10b981`) on a deep slate-955 backdrop.
 
-### 2. Fourth of July (`"july-4th"`)
+### 2. Independence Day (`"independence-day"`)
 A patriotic theme capturing the crimson red, white, and navy blue spirit:
 * **Light Mode**: Clean snow-white background with patriotic crimson red (`#b91c1c`) links and bold navy blue (`#1d4ed8`) highlighting.
 * **Dark Mode**: Deep navy starry night backdrop (`#0b0f19`) with bright holiday red (`#ef4444`) and blue (`#3b82f6`) accents.
@@ -65,7 +65,7 @@ An elegant, glittering celebration theme:
 * **Dark Mode**: Midnight sky black backdrop (`#09090b`) with glistening silver text, sparkling fireworks gold (`#eab308`), and silver (`#a1a1aa`) celebration elements.
 
 ### 6. Valentine's Day (`"valentine-day"`)
-A romantic theme featuring soft blush pink and rose red:
+A romantic theme featuring soft blush pink and rose-red:
 * **Light Mode**: Soft blush pink background with deep rose links and berry accents.
 * **Dark Mode**: Deep wine black backdrop with bright rose pink and neon red-pink accents.
 
@@ -84,7 +84,7 @@ An autumnal, earthy theme marking the end of summer:
 * **Light Mode**: Floral white canvas with deep brown/orange links and pumpkin orange highlights.
 * **Dark Mode**: Deep wood brown backdrop with warm stone gray text and amber orange accents.
 
-### 10. September 11th (`"sept-11"`)
+### 10. September 11th Remembrance (`"patriots-day"`)
 A solemn, respectful theme for remembrance:
 * **Light Mode**: Neutral white background with deep solemn blue links and muted slate highlights.
 * **Dark Mode**: Dark navy backdrop with pale blush white text and muted slate blue accents.
@@ -113,6 +113,11 @@ A vibrant, hopeful theme:
 A dignified, muted theme of respect:
 * **Light Mode**: Soft slate white background with navy links and muted red highlights.
 * **Dark Mode**: Dark navy sky backdrop with snow-white text and bright red/blue accents.
+
+### 16. Thanksgiving (`"thanksgiving"`)
+A warm, autumnal harvest theme:
+* **Light Mode**: Warm cream canvas with deep brown primary text, burnt orange (`#b45309`) links, and metallic gold highlights.
+* **Dark Mode**: Dark chocolate brown backdrop with warm stone text and amber orange (`#f59e0b`) and metallic gold (`#ca8a04`) accents.
 
 ---
 

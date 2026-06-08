@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Plus, Trash2, Check, Palette } from 'lucide-react';
+import { formatThemeName } from '../utils';
 
 export interface ThemeColors {
   bg_primary: string;
@@ -44,6 +45,7 @@ const formatMonthName = (month: number): string => {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return months[month - 1] || '';
 };
+
 
 const colorFields: { key: keyof ThemeColors; label: string; desc: string }[] = [
   { key: 'bg_primary', label: 'Primary Background', desc: 'Main window backdrop background' },
@@ -230,7 +232,7 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                     }`}
                   >
                     <div className="flex flex-col gap-0.5 overflow-hidden">
-                      <span className="text-sm truncate capitalize">{theme.name}</span>
+                      <span className="text-sm truncate">{formatThemeName(theme.name)}</span>
                       <span className="text-[10px] opacity-80 font-normal">
                         Default: {theme.default_mode} mode
                       </span>
@@ -238,9 +240,9 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                         <span className="inline-flex items-center gap-1 mt-1.5 text-[9px] font-bold px-2 py-0.5 rounded-full bg-themeAccentBg/40 border border-themeAccent/20 text-themeAccent max-w-fit select-none">
                           {theme.name === 'halloween' && '🎃 '}
                           {theme.name === 'christmas' && '🎄 '}
-                          {theme.name === 'july-4th' && '🎆 '}
+                          {theme.name === 'independence-day' && '🎆 '}
                           {theme.name === 'new-years' && '✨ '}
-                          {!['halloween', 'christmas', 'july-4th', 'new-years'].includes(theme.name) && '📅 '}
+                          {!['halloween', 'christmas', 'independence-day', 'new-years'].includes(theme.name) && '📅 '}
                           {formatMonthName(theme.schedule.start_month)} {theme.schedule.start_day} - {formatMonthName(theme.schedule.end_month)} {theme.schedule.end_day}
                         </span>
                       )}
@@ -494,7 +496,7 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                     <>
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                          <h3 className="text-base font-black text-themeTextPrimary capitalize">{selectedTheme.name} Theme</h3>
+                          <h3 className="text-base font-black text-themeTextPrimary">{formatThemeName(selectedTheme.name)} Theme</h3>
                           <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-themeAccentBg text-themeAccent border border-themeAccent/20">
                             {selectedTheme.custom ? 'Custom' : 'System Theme'}
                           </span>

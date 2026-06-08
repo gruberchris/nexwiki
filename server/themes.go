@@ -72,6 +72,36 @@ var DefaultThemes = []Theme{
 		},
 	},
 	{
+		Name:        "mlk-day",
+		DefaultMode: "light",
+		Custom:      false,
+		Schedule:    &ThemeSchedule{StartMonth: 1, StartDay: 14, EndMonth: 1, EndDay: 22},
+		Light: ThemeColors{
+			BgPrimary:       "#f8fafc", // soft slate white
+			BgSecondary:     "#ffffff",
+			TextPrimary:     "#1e3a8a", // deep navy blue
+			TextSecondary:   "#1d4ed8",
+			TextMuted:       "#64748b",
+			BorderColor:     "#dbeafe",
+			AccentPrimary:   "#2563eb", // vibrant blue
+			AccentSecondary: "#1d4ed8",
+			AccentHover:     "#1e40af",
+			AccentBg:        "rgba(37, 99, 235, 0.1)",
+		},
+		Dark: ThemeColors{
+			BgPrimary:       "#0f172a", // navy night
+			BgSecondary:     "#1e3a8a",
+			TextPrimary:     "#f8fafc", // snow-white
+			TextSecondary:   "#bfdbfe",
+			TextMuted:       "#64748b",
+			BorderColor:     "#1e40af",
+			AccentPrimary:   "#38bdf8", // bright sky blue
+			AccentSecondary: "#94a3b8",
+			AccentHover:     "#7dd3fc",
+			AccentBg:        "rgba(56, 189, 248, 0.2)",
+		},
+	},
+	{
 		Name:        "valentine-day",
 		DefaultMode: "light",
 		Custom:      false,
@@ -83,7 +113,7 @@ var DefaultThemes = []Theme{
 			TextSecondary:   "#be185d", // pinkish berry
 			TextMuted:       "#fb7185", // light pink
 			BorderColor:     "#fbcfe8", // very light pink
-			AccentPrimary:   "#e11d48", // vibrant rose red
+			AccentPrimary:   "#e11d48", // vibrant rose-red
 			AccentSecondary: "#db2777", // hot pink
 			AccentHover:     "#be185d",
 			AccentBg:        "rgba(244, 114, 160, 0.15)",
@@ -99,6 +129,36 @@ var DefaultThemes = []Theme{
 			AccentSecondary: "#f43f5e", // neon red-pink
 			AccentHover:     "#ea580c",
 			AccentBg:        "rgba(239, 68, 68, 0.2)",
+		},
+	},
+	{
+		Name:        "black-history-month",
+		DefaultMode: "light",
+		Custom:      false,
+		Schedule:    &ThemeSchedule{StartMonth: 2, StartDay: 1, EndMonth: 2, EndDay: 28},
+		Light: ThemeColors{
+			BgPrimary:       "#fdf8f6", // warm off-white
+			BgSecondary:     "#ffffff",
+			TextPrimary:     "#451a03", // deep mahogany
+			TextSecondary:   "#78350f",
+			TextMuted:       "#92400e",
+			BorderColor:     "#fed7aa",
+			AccentPrimary:   "#b91c1c", // crimson
+			AccentSecondary: "#78350f", // warm brown
+			AccentHover:     "#991b1b",
+			AccentBg:        "rgba(185, 28, 28, 0.1)",
+		},
+		Dark: ThemeColors{
+			BgPrimary:       "#1c0a00", // deep wood brown
+			BgSecondary:     "#2d1a0e",
+			TextPrimary:     "#f8fafc", // snow-white
+			TextSecondary:   "#fed7aa",
+			TextMuted:       "#92400e",
+			BorderColor:     "#451a03",
+			AccentPrimary:   "#fb7185", // rose pink
+			AccentSecondary: "#ea580c", // pumpkin orange
+			AccentHover:     "#f43f5e",
+			AccentBg:        "rgba(251, 113, 133, 0.2)",
 		},
 	},
 	{
@@ -162,6 +222,96 @@ var DefaultThemes = []Theme{
 		},
 	},
 	{
+		Name:        "d-day",
+		DefaultMode: "light",
+		Custom:      false,
+		Schedule:    &ThemeSchedule{StartMonth: 6, StartDay: 5, EndMonth: 6, EndDay: 10},
+		Light: ThemeColors{
+			BgPrimary:       "#f8fafc",
+			BgSecondary:     "#ffffff",
+			TextPrimary:     "#0f172a",
+			TextSecondary:   "#334155",
+			TextMuted:       "#64748b",
+			BorderColor:     "#e2e8f0",
+			AccentPrimary:   "#1e3a8a", // deep patriotic blue
+			AccentSecondary: "#94a3b8",
+			AccentHover:     "#1d4ed8",
+			AccentBg:        "rgba(30, 58, 138, 0.1)",
+		},
+		Dark: ThemeColors{
+			BgPrimary:       "#0f172a",
+			BgSecondary:     "#1e293b",
+			TextPrimary:     "#f8fafc",
+			TextSecondary:   "#cbd5e1",
+			TextMuted:       "#64748b",
+			BorderColor:     "#334155",
+			AccentPrimary:   "#3b82f6", // bright blue
+			AccentSecondary: "#94a3b8",
+			AccentHover:     "#60a5fa",
+			AccentBg:        "rgba(59, 130, 246, 0.2)",
+		},
+	},
+	{
+		Name:        "independence-day",
+		DefaultMode: "light",
+		Custom:      false,
+		Schedule:    &ThemeSchedule{StartMonth: 6, StartDay: 28, EndMonth: 7, EndDay: 6},
+		Light: ThemeColors{
+			BgPrimary:       "#f8fafc", // soft slate white
+			BgSecondary:     "#ffffff", // white
+			TextPrimary:     "#0f172a", // navy
+			TextSecondary:   "#1e293b",
+			TextMuted:       "#64748b",
+			BorderColor:     "#cbd5e1", // blue-gray border
+			AccentPrimary:   "#b91c1c", // patriotic red
+			AccentSecondary: "#1d4ed8", // patriotic blue
+			AccentHover:     "#991b1b",
+			AccentBg:        "#fee2e2", // red accent bg
+		},
+		Dark: ThemeColors{
+			BgPrimary:       "#0b0f19", // deep navy sky
+			BgSecondary:     "#111827", // dark navy crypt
+			TextPrimary:     "#f8fafc",
+			TextSecondary:   "#cbd5e1",
+			TextMuted:       "#6b7280",
+			BorderColor:     "#1f2937",
+			AccentPrimary:   "#ef4444", // bright holiday red
+			AccentSecondary: "#3b82f6", // bright holiday blue
+			AccentHover:     "#f87171",
+			AccentBg:        "rgba(239, 68, 68, 0.15)",
+		},
+	},
+	{
+		Name:        "labor-day",
+		DefaultMode: "light",
+		Custom:      false,
+		Schedule:    &ThemeSchedule{StartMonth: 9, StartDay: 1, EndMonth: 9, EndDay: 7},
+		Light: ThemeColors{
+			BgPrimary:       "#fffcf9", // floral white
+			BgSecondary:     "#ffffff",
+			TextPrimary:     "#7c2d12", // deep burnt orange/brown
+			TextSecondary:   "#9a3412",
+			TextMuted:       "#64748b",
+			BorderColor:     "#fed7aa",
+			AccentPrimary:   "#ea580c", // pumpkin orange
+			AccentSecondary: "#1e3a8a", // deep blue
+			AccentHover:     "#c2410c",
+			AccentBg:        "rgba(234, 88, 12, 0.1)",
+		},
+		Dark: ThemeColors{
+			BgPrimary:       "#2d1a0e", // deep wood brown
+			BgSecondary:     "#451a03",
+			TextPrimary:     "#fafaf9",
+			TextSecondary:   "#d6d3d1", // warm stone gray
+			TextMuted:       "#a8a29e",
+			BorderColor:     "#44403c",
+			AccentPrimary:   "#f59e0b", // amber orange
+			AccentSecondary: "#60a5fa",
+			AccentHover:     "#fbbf24",
+			AccentBg:        "rgba(245, 158, 11, 0.2)",
+		},
+	},
+	{
 		Name:        "patriots-day",
 		DefaultMode: "light",
 		Custom:      false,
@@ -192,63 +342,63 @@ var DefaultThemes = []Theme{
 		},
 	},
 	{
-		Name:        "pearl-harbor-remembrance-day",
+		Name:        "halloween",
 		DefaultMode: "light",
 		Custom:      false,
-		Schedule:    &ThemeSchedule{StartMonth: 12, StartDay: 7, EndMonth: 12, EndDay: 10},
+		Schedule:    &ThemeSchedule{StartMonth: 10, StartDay: 15, EndMonth: 11, EndDay: 1},
 		Light: ThemeColors{
-			BgPrimary:       "#f8fafc",
+			BgPrimary:       "#fffbeb", // warm amber cream
 			BgSecondary:     "#ffffff",
-			TextPrimary:     "#0f172a",
-			TextSecondary:   "#334155",
-			TextMuted:       "#64748b",
-			BorderColor:     "#e2e8f0",
-			AccentPrimary:   "#1e293b", // solemn navy
-			AccentSecondary: "#475569",
-			AccentHover:     "#334155",
-			AccentBg:        "rgba(30, 41, 59, 0.1)",
+			TextPrimary:     "#1c1917", // charcoal black
+			TextSecondary:   "#44403c",
+			TextMuted:       "#78716c",
+			BorderColor:     "#fed7aa", // pumpkin border
+			AccentPrimary:   "#ea580c", // pumpkin orange
+			AccentSecondary: "#7c3aed", // witch purple
+			AccentHover:     "#c2410c",
+			AccentBg:        "#ffedd5",
 		},
 		Dark: ThemeColors{
-			BgPrimary:       "#0f172a",
-			BgSecondary:     "#1e293b",
-			TextPrimary:     "#f8fafc",
-			TextSecondary:   "#cbd5e1",
-			TextMuted:       "#64748b",
-			BorderColor:     "#334155",
-			AccentPrimary:   "#94a3b8",
-			AccentSecondary: "#64748b",
-			AccentHover:     "#cbd5e1",
-			AccentBg:        "rgba(100, 116, 139, 0.2)",
+			BgPrimary:       "#0c0a09", // haunted stone black
+			BgSecondary:     "#1c1917", // haunted stone gray
+			TextPrimary:     "#fafaf9", // ghostly white
+			TextSecondary:   "#d6d3d1", // skeleton gray
+			TextMuted:       "#78716c",
+			BorderColor:     "#44403c",
+			AccentPrimary:   "#f97316", // neon orange
+			AccentSecondary: "#a78bfa", // neon purple
+			AccentHover:     "#fb923c",
+			AccentBg:        "rgba(249, 115, 22, 0.15)",
 		},
 	},
 	{
-		Name:        "allied-invasion-of-normandy-remembrance-day",
+		Name:        "veterans-day",
 		DefaultMode: "light",
 		Custom:      false,
-		Schedule:    &ThemeSchedule{StartMonth: 6, StartDay: 5, EndMonth: 6, EndDay: 10},
+		Schedule:    &ThemeSchedule{StartMonth: 11, StartDay: 8, EndMonth: 11, EndDay: 12},
 		Light: ThemeColors{
-			BgPrimary:       "#f8fafc",
+			BgPrimary:       "#f8fafc", // soft slate white
 			BgSecondary:     "#ffffff",
-			TextPrimary:     "#0f172a",
-			TextSecondary:   "#334155",
+			TextPrimary:     "#1e3a8a", // navy
+			TextSecondary:   "#1d4ed8",
 			TextMuted:       "#64748b",
-			BorderColor:     "#e2e8f0",
-			AccentPrimary:   "#1e3a8a", // deep patriotic blue
-			AccentSecondary: "#94a3b8",
-			AccentHover:     "#1d4ed8",
-			AccentBg:        "rgba(30, 58, 138, 0.1)",
+			BorderColor:     "#cbd5e1",
+			AccentPrimary:   "#dc2626", // muted red
+			AccentSecondary: "#1e40af", // navy blue
+			AccentHover:     "#b91c1c",
+			AccentBg:        "rgba(220, 38, 38, 0.1)",
 		},
 		Dark: ThemeColors{
-			BgPrimary:       "#0f172a",
+			BgPrimary:       "#0f172a", // dark navy sky
 			BgSecondary:     "#1e293b",
-			TextPrimary:     "#f8fafc",
+			TextPrimary:     "#f8fafc", // snow-white
 			TextSecondary:   "#cbd5e1",
 			TextMuted:       "#64748b",
 			BorderColor:     "#334155",
-			AccentPrimary:   "#3b82f6", // bright blue
-			AccentSecondary: "#94a3b8",
-			AccentHover:     "#60a5fa",
-			AccentBg:        "rgba(59, 130, 246, 0.2)",
+			AccentPrimary:   "#ef4444", // bright red
+			AccentSecondary: "#60a5fa", // bright blue
+			AccentHover:     "#f87171",
+			AccentBg:        "rgba(239, 68, 68, 0.2)",
 		},
 	},
 	{
@@ -280,34 +430,35 @@ var DefaultThemes = []Theme{
 			AccentHover:     "#fbbf24",
 			AccentBg:        "rgba(217, 119, 6, 0.2)",
 		},
-	}, {
-		Name:        "halloween",
+	},
+	{
+		Name:        "pearl-harbor-remembrance-day",
 		DefaultMode: "light",
 		Custom:      false,
-		Schedule:    &ThemeSchedule{StartMonth: 10, StartDay: 15, EndMonth: 11, EndDay: 1},
+		Schedule:    &ThemeSchedule{StartMonth: 12, StartDay: 7, EndMonth: 12, EndDay: 10},
 		Light: ThemeColors{
-			BgPrimary:       "#fffbeb", // warm amber cream
+			BgPrimary:       "#f8fafc",
 			BgSecondary:     "#ffffff",
-			TextPrimary:     "#1c1917", // charcoal black
-			TextSecondary:   "#44403c",
-			TextMuted:       "#78716c",
-			BorderColor:     "#fed7aa", // pumpkin border
-			AccentPrimary:   "#ea580c", // pumpkin orange
-			AccentSecondary: "#7c3aed", // witch purple
-			AccentHover:     "#c2410c",
-			AccentBg:        "#ffedd5",
+			TextPrimary:     "#0f172a",
+			TextSecondary:   "#334155",
+			TextMuted:       "#64748b",
+			BorderColor:     "#e2e8f0",
+			AccentPrimary:   "#1e293b", // solemn navy
+			AccentSecondary: "#475569",
+			AccentHover:     "#334155",
+			AccentBg:        "rgba(30, 41, 59, 0.1)",
 		},
 		Dark: ThemeColors{
-			BgPrimary:       "#0c0a09", // haunted stone black
-			BgSecondary:     "#1c1917", // haunted stone gray
-			TextPrimary:     "#fafaf9", // ghostly white
-			TextSecondary:   "#d6d3d1", // skeleton gray
-			TextMuted:       "#78716c",
-			BorderColor:     "#44403c",
-			AccentPrimary:   "#f97316", // neon orange
-			AccentSecondary: "#a78bfa", // neon purple
-			AccentHover:     "#fb923c",
-			AccentBg:        "rgba(249, 115, 22, 0.15)",
+			BgPrimary:       "#0f172a",
+			BgSecondary:     "#1e293b",
+			TextPrimary:     "#f8fafc",
+			TextSecondary:   "#cbd5e1",
+			TextMuted:       "#64748b",
+			BorderColor:     "#334155",
+			AccentPrimary:   "#94a3b8",
+			AccentSecondary: "#64748b",
+			AccentHover:     "#cbd5e1",
+			AccentBg:        "rgba(100, 116, 139, 0.2)",
 		},
 	},
 	{
