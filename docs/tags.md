@@ -66,11 +66,30 @@ NexWiki recognizes a fixed set of **status tags** that signal the lifecycle stat
 
 ### How Status Tags Work
 
-Status tags are **purely semantic labels**. They do not trigger any automatic filtering, hiding, or routing in the backend. Specifically:
+Most status tags are **purely semantic labels** — they do not trigger automatic filtering, hiding, or routing in the backend. The `archived` tag is the exception: it has optional auto-deletion behavior.
 
 * Applying `archived` to an article does **not** remove it from search results or move it to a separate folder. The article remains fully visible and searchable.
 * To exclude archived articles from a filter query, use the negation operator explicitly: `!archived` in the sidebar filter or search bar.
 * The filter help modals (accessible via the `?` icon in the filter bar) include examples like `draft OR wip !archived`.
+
+### Auto-Deletion of Archived Articles
+
+When an article is tagged `archived`, NexWiki records the timestamp in the article's front-matter as `archived_at`. On each server startup, NexWiki checks all archived articles and deletes any whose `archived_at` timestamp is older than the configured retention period.
+
+This behavior is controlled by the `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` environment variable:
+
+| Value | Behavior |
+|---|---|
+| Unset or `0` | Auto-deletion is **disabled** (default) |
+| Positive integer (e.g. `30`) | Articles archived longer than that many days are deleted on the next startup |
+
+```bash
+# Delete archived articles that have been archived for more than 30 days
+export NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS=30
+./nexwiki -data ./wiki-data
+```
+
+> **Note:** Deletion is permanent and not recoverable (unless you have a backup). The server logs a line to stderr for each article deleted: `Deleted archived article: <slug> (archived at: <timestamp>)`.
 
 ### Applying Status Tags
 

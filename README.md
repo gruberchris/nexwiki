@@ -86,6 +86,7 @@ All settings can be set via CLI flags. The `NEXWIKI_NAME`, `NEXWIKI_THEME`, and 
 | Wiki name | `-name` | `NEXWIKI_NAME` | `NexWiki` | Title displayed in the UI and HTML headers |
 | Default theme | `-theme` | `NEXWIKI_THEME` | `default` | Initial active color theme |
 | Seasonal themes | `-theme-scheduling` | `NEXWIKI_THEME_SCHEDULING` | `false` | Enable automatic annual seasonal theme switching |
+| Archive auto-delete | — | `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Days after archiving before an article is permanently deleted on startup |
 
 ### 5. Examples
 
@@ -197,6 +198,7 @@ Always mount this path to a persistent local directory or named Docker volume to
 | `NEXWIKI_NAME` | `NexWiki` | Title displayed in the UI and HTML headers |
 | `NEXWIKI_THEME` | `default` | Initial active color theme |
 | `NEXWIKI_THEME_SCHEDULING` | `false` | Set to `true` to enable seasonal auto theme switching |
+| `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Days after archiving before an article is permanently deleted on startup |
 
 The port and data directory are fixed to `8080` and `/app/data` inside the container; adjust the `-p` host mapping and volume mount to change them on the host side.
 
