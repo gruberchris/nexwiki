@@ -37,7 +37,7 @@ If no configurations are specified, NexWiki defaults to the `"default"` system t
 
 ## 🎨 2. Standard System Themes
 
-NexWiki compiles with five pre-installed system default themes, all configured to render in **Light Mode by default** while fully supporting dual-variant dark modes:
+NexWiki compiles with ten pre-installed system default themes, all configured to render in **Light Mode by default** while fully supporting dual-variant dark modes:
 
 ### 1. Default (`"default"`)
 The standard premium look and feel of NexWiki:
@@ -64,6 +64,56 @@ An elegant, glittering celebration theme:
 * **Light Mode**: Warm champagne stone backdrop (`#fafaf9`) with metallic midnight gold (`#ca8a04`) primary elements and celebration silver (`#78716c`) accents.
 * **Dark Mode**: Midnight sky black backdrop (`#09090b`) with glistening silver text, sparkling fireworks gold (`#eab308`), and silver (`#a1a1aa`) celebration elements.
 
+### 6. Valentine's Day (`"valentine-day"`)
+A romantic theme featuring soft blush pink and rose red:
+* **Light Mode**: Soft blush pink background with deep rose links and berry accents.
+* **Dark Mode**: Deep wine black backdrop with bright rose pink and neon red-pink accents.
+
+### 7. St. Patrick's Day (`"st-patricks-day"`)
+A vibrant green theme celebrating the luck of the Irish:
+* **Light Mode**: Minty white background with emerald green headers, grass green highlights, and gold accents.
+* **Dark Mode**: Deep evergreen backdrop with snow-white text and bright gold/emerald accents.
+
+### 8. Memorial Day (`"memorial-day"`)
+A respectful theme honoring service members:
+* **Light Mode**: Slate white background with navy blue links and patriotic red highlighting.
+* **Dark Mode**: Dark navy sky backdrop with pale blush white text and bright holiday red accents.
+
+### 9. Labor Day (`"labor-day"`)
+An autumnal, earthy theme marking the end of summer:
+* **Light Mode**: Floral white canvas with deep brown/orange links and pumpkin orange highlights.
+* **Dark Mode**: Deep wood brown backdrop with warm stone gray text and amber orange accents.
+
+### 10. September 11th (`"sept-11"`)
+A solemn, respectful theme for remembrance:
+* **Light Mode**: Neutral white background with deep solemn blue links and muted slate highlights.
+* **Dark Mode**: Dark navy backdrop with pale blush white text and muted slate blue accents.
+
+### 11. Pearl Harbor Remembrance Day (`"pearl-harbor"`)
+A somber, respectful theme:
+* **Light Mode**: Neutral white background with deep solemn blue links and muted slate highlights.
+* **Dark Mode**: Dark navy backdrop with pale blush white text and muted slate blue accents.
+
+### 12. D-Day Anniversary (`"d-day"`)
+A patriotic historical theme:
+* **Light Mode**: Soft slate white background with deep patriotic blue links and slate gray highlights.
+* **Dark Mode**: Dark navy sky backdrop with snow-white text and bright blue/slate accents.
+
+### 13. Black History Month (`"black-history-month"`)
+A rich, warm theme honoring heritage:
+* **Light Mode**: Warm off-white canvas with deep mahogany links and crimson highlights.
+* **Dark Mode**: Deep wood brown backdrop with snow-white text and rose pink/pumpkin orange accents.
+
+### 14. MLK Day (`"mlk-day"`)
+A vibrant, hopeful theme:
+* **Light Mode**: Soft slate white background with deep navy blue links and vibrant blue highlights.
+* **Dark Mode**: Navy night backdrop with snow-white text and bright sky blue/gray accents.
+
+### 15. Veterans Day (`"veterans-day"`)
+A dignified, muted theme of respect:
+* **Light Mode**: Soft slate white background with navy links and muted red highlights.
+* **Dark Mode**: Dark navy sky backdrop with snow-white text and bright red/blue accents.
+
 ---
 
 ## 🛠️ 3. Designing Custom Themes in the UI
@@ -77,11 +127,11 @@ You can craft and refine customized dual-variant themes directly inside the web 
 ### Creating a Theme
 1. In the Theme Manager, click the **+ Create Custom Theme** button in the left column.
 2. In the designer panel:
-   * Enter a **Theme Name** (e.g., `Emerald Forest` or `Solar Eclipse`).
-   * Select the **Default Active Mode** (specify whether the Light or Dark variant should display by default when this theme is selected).
+    * Enter a **Theme Name** (e.g., `Emerald Forest` or `Solar Eclipse`).
+    * Select the **Default Active Mode** (specify whether the Light or Dark variant should display by default when this theme is selected).
 3. Select the **☀️ Light Variant Colors** tab and customize the colors:
-   * Click the color box to open a visual HTML5 color picker.
-   * Customize key tokens like **Primary Background**, **Secondary Background**, **Primary Text**, and **Primary Accent** to your liking.
+    * Click the color box to open a visual HTML5 color picker.
+    * Customize key tokens like **Primary Background**, **Secondary Background**, **Primary Text**, and **Primary Accent** to your liking.
 4. Select the **🌙 Dark Variant Colors** tab and specify the dark-mode color tokens for this theme.
 5. Click **Save Custom Theme**.
 
@@ -133,3 +183,4 @@ To ensure that your custom designs are fully portable and persistent, NexWiki ma
   }
 ]
 ```
+
