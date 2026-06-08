@@ -72,8 +72,6 @@ Status tags are **purely semantic labels**. They do not trigger any automatic fi
 * To exclude archived articles from a filter query, use the negation operator explicitly: `!archived` in the sidebar filter or search bar.
 * The filter help modals (accessible via the `?` icon in the filter bar) include examples like `draft OR wip !archived`.
 
-> **No environment variable controls the `archived` tag.** There is no `NEXWIKI_ARCHIVE_*` or equivalent — the tag is a label you apply and query against, nothing more.
-
 ### Applying Status Tags
 
 * **In the Editor**: Type a status tag (e.g., `archived`) in the Tags input field. Status tags appear with higher visual priority than regular user tags on article cards.
