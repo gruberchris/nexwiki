@@ -43,6 +43,45 @@ tags: database, backend, production
 
 ---
 
+## 📌 Status & Lifecycle Tags
+
+NexWiki recognizes a fixed set of **status tags** that signal the lifecycle state of any article or AI plan. These tags are displayed with **highest priority** on the home dashboard article cards, making it easy to see what's active, blocked, or done at a glance.
+
+### Recognized Status Values
+
+| Tag | Meaning |
+|---|---|
+| `draft` | Work in progress, not ready for review |
+| `wip` | Actively being worked on |
+| `in-progress` | Same as `wip` — task underway |
+| `todo` | Queued but not yet started |
+| `active` | Currently in use or being maintained |
+| `review` | Ready for review by another person or agent |
+| `ready` | Approved and ready to act on |
+| `blocked` | Cannot proceed — waiting on a dependency |
+| `pending` | Awaiting an external event or decision |
+| `completed` | Fully implemented or resolved |
+| `done` | Equivalent to `completed` |
+| `archived` | Retired — kept for reference, no longer active |
+
+### How Status Tags Work
+
+Status tags are **purely semantic labels**. They do not trigger any automatic filtering, hiding, or routing in the backend. Specifically:
+
+* Applying `archived` to an article does **not** remove it from search results or move it to a separate folder. The article remains fully visible and searchable.
+* To exclude archived articles from a filter query, use the negation operator explicitly: `!archived` in the sidebar filter or search bar.
+* The filter help modals (accessible via the `?` icon in the filter bar) include examples like `draft OR wip !archived`.
+
+> **No environment variable controls the `archived` tag.** There is no `NEXWIKI_ARCHIVE_*` or equivalent — the tag is a label you apply and query against, nothing more.
+
+### Applying Status Tags
+
+* **In the Editor**: Type a status tag (e.g., `archived`) in the Tags input field. Status tags appear with higher visual priority than regular user tags on article cards.
+* **Via MCP**: AI agents can apply status tags using `update_article_tags` or the `tags` parameter on `create_wiki_article`, `edit_wiki_article`, `create_agent_plan`, or `edit_agent_plan`. Call `get_status_tags` to retrieve the canonical list.
+* **Via REST API**: Use `PUT /api/articles/{slug}/tags` with your updated tags array.
+
+---
+
 ## 🤖 Protected AI Agent Memories & Collaborative Plans
 
 NexWiki separates AI-driven note-taking into three distinct, structured models:

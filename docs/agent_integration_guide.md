@@ -46,6 +46,8 @@ Instead of duplicating rules in local files across countless folders, all instru
 * Because it is tagged with `aiagent-skill`, it is automatically registered on NexWiki's Custom AI Skills Registry.
 * You can edit these agent rules directly from your browser in the NexWiki UI. **Any changes you save are instantly propagated to all connected AI agents globally.**
 
+> **The slug must be exactly `nexwiki-agent-guidelines`.** The MCP tool schema hooks are hard-coded to reference this slug. If the article does not exist, the agent will get a `not found` error when it tries to load the guidelines and may proceed without any rules applied.
+
 ---
 
 ### 2. Schema-Driven Prerequisite Hooking
@@ -123,3 +125,69 @@ Imagine your agent has finished implementing a plan it previously created (e.g.,
 3. **Agent marks plan as completed**: The agent calls `edit_agent_plan(slug="mysql-database-migration-plan", tags=["completed"], loaded_version=<current_version>)` to add the `completed` status tag.
 4. **Protected tag preserved**: The `aiagent-plan` tag is automatically preserved by the system and cannot be removed.
 5. **Agent reports completion**: The agent confirms the plan is now marked as completed with final notes appended.
+
+---
+
+## 📋 Crafting Your `nexwiki-agent-guidelines` Skill
+
+This skill is the single most important document in your NexWiki instance when using AI agents. If it does not exist, the schema hooks in `create_wiki_article`, `create_agent_memory`, and `create_agent_plan` will fail silently — the agent will get a not-found error and proceed without any governance at all.
+
+**Create it immediately after setting up NexWiki**, before connecting any AI agent. Use the **AI Skill** button in the sidebar and set the title to `NexWiki Agent Core Guidelines` (the slug auto-generates as `nexwiki-agent-guidelines`).
+
+### What to Include
+
+Write this skill as a numbered list of imperative directives — not prose. Agents parse and follow bullet lists far more reliably than paragraphs.
+
+**1. Memory search before writing**
+```markdown
+Before creating any wiki article, always call `list_agent_memories` or `search_wiki` 
+for formatting memories, style guides, or templates relevant to the article type.
+If a style guide memory exists, read it and follow it exactly.
+```
+
+**2. Plan-saving behavior**
+```markdown
+Any implementation task with more than two steps must be saved as a Collaborative AI Plan 
+using `create_agent_plan` before work begins. Set `project_context` to the project name.
+Append progress using `append_agent_plan` after each major milestone.
+Mark plans completed with `edit_agent_plan` (add "completed" tag) once done.
+```
+
+**3. Tag and slug rules**
+```markdown
+Never remove `aiagent-plan`, `aiagent-skill`, or `aiagent-memory-*` tags from any document.
+Article slugs must be lowercase, hyphenated, and descriptive (e.g., "go-api-database-schema").
+Use `get_status_tags` to see valid lifecycle tags (draft, wip, completed, etc.).
+```
+
+**4. Memory creation guidelines**
+```markdown
+Memories must be succinct — bullet points over paragraphs. One clear insight per memory.
+Use project-scoped memory_type (e.g., "nexwiki") for project-specific knowledge.
+Use topic-scoped memory_type (e.g., "docker") for cross-project reusable knowledge.
+Omit memory_type only for general, broadly applicable knowledge.
+```
+
+**5. Your personal style preferences** *(examples)*
+```markdown
+Article headers: use sentence case, not title case.
+Code blocks: always specify the language identifier.
+Tables: prefer pipe tables with alignment markers.
+Avoid emoji in article titles or headers unless the existing page already uses them.
+```
+
+### What to Exclude
+
+Keep the guidelines skill lean. Bloated context slows agents down and risks being truncated.
+
+| Do NOT include | Use instead |
+|---|---|
+| Project-specific configs (API keys, folder paths, repo names) | A project-scoped AI memory (`memory_type: "myproject"`) |
+| Per-language coding standards | Individual topic skills (e.g., `go-coding-standards`) |
+| Content that changes per task | Agent memory logs (`create_agent_memory`) |
+| Verbose explanations of NexWiki internals | Cross-reference `read_article(slug: "nexwiki-agent-guidelines")` is enough |
+| Credentials, tokens, or secrets | Never store these in NexWiki |
+
+### Keeping It Up to Date
+
+Because the skill is a live wiki article, you can edit and refine it directly in your browser at any time. Changes take effect immediately — the next agent session will read the updated version. There is no cache to flush and no server restart required.
