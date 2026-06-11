@@ -138,14 +138,23 @@ This skill is the single most important document in your NexWiki instance when u
 
 Write this skill as a numbered list of imperative directives — not prose. Agents parse and follow bullet lists far more reliably than paragraphs.
 
-**1. Memory search before writing**
+**1. Session orientation (progressive disclosure)**
+```markdown
+At session start, call `get_context_overview` to load a compact index of the entire wiki
+(titles, slugs, one-line summaries, tags) before reading anything. Then call `read_article`
+only on the entries you actually need — do not bulk-read articles to orient yourself.
+If resuming work, call `get_recent_activity` (e.g. since: "24h") to see what changed
+since your last session.
+```
+
+**2. Memory search before writing**
 ```markdown
 Before creating any wiki article, always call `list_agent_memories` or `search_wiki` 
 for formatting memories, style guides, or templates relevant to the article type.
 If a style guide memory exists, read it and follow it exactly.
 ```
 
-**2. Plan-saving behavior**
+**3. Plan-saving behavior**
 ```markdown
 Any implementation task with more than two steps must be saved as a Collaborative AI Plan 
 using `create_agent_plan` before work begins. Set `project_context` to the project name.
@@ -153,22 +162,26 @@ Append progress using `append_agent_plan` after each major milestone.
 Mark plans completed with `edit_agent_plan` (add "completed" tag) once done.
 ```
 
-**3. Tag and slug rules**
+**4. Tag and slug rules**
 ```markdown
 Never remove `aiagent-plan`, `aiagent-skill`, or `aiagent-memory-*` tags from any document.
 Article slugs must be lowercase, hyphenated, and descriptive (e.g., "go-api-database-schema").
 Use `get_status_tags` to see valid lifecycle tags (draft, wip, completed, etc.).
 ```
 
-**4. Memory creation guidelines**
+**5. Memory creation and hygiene guidelines**
 ```markdown
 Memories must be succinct — bullet points over paragraphs. One clear insight per memory.
 Use project-scoped memory_type (e.g., "nexwiki") for project-specific knowledge.
 Use topic-scoped memory_type (e.g., "docker") for cross-project reusable knowledge.
 Omit memory_type only for general, broadly applicable knowledge.
+When a memory turns out to be stale or wrong, correct it in place with `edit_agent_memory`
+(do not create a near-duplicate). Retire fully superseded memories with `delete_agent_memory`.
+Set the `description` (one-line summary) and `source` (provenance) fields on everything
+you create — descriptions power the context overview; sources keep knowledge auditable.
 ```
 
-**5. Your personal style preferences** *(examples)*
+**6. Your personal style preferences** *(examples)*
 ```markdown
 Article headers: use sentence case, not title case.
 Code blocks: always specify the language identifier.

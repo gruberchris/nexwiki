@@ -2,7 +2,7 @@
 
 NexWiki is an elegant, lightning-fast personal and collaborative knowledge base written in **Go** with a modern embedded **React + TypeScript** frontend. It serves as a zero-dependency, self-contained wiki server that preserves your content as standard, human-readable Markdown files.
 
-Designed as an **AI-ready second brain**, NexWiki bridges the gap between human notes and artificial intelligence. Beyond serving as a traditional wiki, it runs an always-on Model Context Protocol (MCP) server supporting standard Stdio and the modern Streamable HTTP transport (2025 Spec). This lets AI agents (like Claude, Cursor, and custom tools) instantly query, read, and explore your knowledge base using twenty built-in semantic tools. With first-class workflows for secure AI memories, collaborative plans, and a dynamic custom AI skills registry, NexWiki transforms your personal wiki into an active, collaborative environment where AI assistants can reason, learn, and work directly with you.
+Designed as an **AI-ready second brain**, NexWiki bridges the gap between human notes and artificial intelligence. Beyond serving as a traditional wiki, it runs an always-on Model Context Protocol (MCP) server supporting standard Stdio and the modern Streamable HTTP transport (2025 Spec). This lets AI agents (like Claude, Cursor, and custom tools) instantly query, read, and explore your knowledge base using twenty-five built-in tools. With first-class workflows for secure AI memories, collaborative plans, and a dynamic custom AI skills registry, NexWiki transforms your personal wiki into an active, collaborative environment where AI assistants can reason, learn, and work directly with you.
 
 <img src="images/home-view.png" alt="NexWiki Home View" width="800" />
 
@@ -15,7 +15,9 @@ Designed as an **AI-ready second brain**, NexWiki bridges the gap between human 
 - 🏷️ **Dynamic Tagging & Navigation**: Organize note files using custom tags. Filter documents instantly using the interactive sidebar Tag Cloud, add/remove tags in the split-editor, and perform global tag deletion with one click.
 - 🤖 **Isolated & Protected AI Memories**: Dedicated, secure support for AI-created memories (plans, troubleshooting guides, decisions, todos, rules) protected by `aiagent-memory-` and `aiagent-` prefixed tags, with page slugs named after features and project contexts attached as custom tags. These pages are isolated and auto-excluded from default searches by default. While standard users cannot manually create or add *new* protected tags, they have full freedom to edit and delete the documents themselves and remove existing tags as they see fit.
 - 🛠️ **AI Agent Skills & Custom Registry**: Create, edit, delete, and manage custom AI Agent skills (procedural instructions) inside the wiki. Skills are auto-tagged with `aiagent-skill` and isolated inside a dedicated **Collapsible Sidebar Folder** to keep your wiki clean. It registers dedicated REST API routes (`GET /api/skills`, `GET /api/skills/{slug}`, and `GET /api/skills/{slug}/raw`) allowing third-party tools (like JetBrains AI Assistant, custom agents, or Claude Code) to easily consume the wiki as a custom, dynamic Skills Registry.
-- **🤖 Built-in MCP Server & Agent Governance**: Exposes twenty powerful Model Context Protocol tools (including dedicated, cleanly separated tools for managing AI memories, collaborative AI plans, and custom AI skills) to AI clients via Stdio and Streamable HTTP. Includes native support for **MCP Prompts Protocol** (interactive task workflows), strict tool schema rules that force external coding agents to search memories and auto-save plans, and a new programmatic tool to edit collaborative plan metadata (`edit_agent_plan`).
+- **🤖 Built-in MCP Server & Agent Governance**: Exposes twenty-five powerful Model Context Protocol tools (including dedicated, cleanly separated tools for managing AI memories, collaborative AI plans, and custom AI skills) to AI clients via Stdio and Streamable HTTP. Includes native support for **MCP Prompts Protocol** (interactive task workflows), strict tool schema rules that force external coding agents to search memories and auto-save plans, programmatic plan metadata editing (`edit_agent_plan`), and full memory lifecycle hygiene (`edit_agent_memory`, `delete_agent_memory`, with `delete_wiki_article` refusing protected memories).
+- 🧠 **Progressive Disclosure, Provenance & Backlinks**: Every article supports optional one-line `description` and `source` (citation) front-matter fields surfaced in cards, list tools, and the article header. The `get_context_overview` MCP tool serves a compact sectioned index of the whole wiki so agents orient cheaply before reading selectively, and `get_backlinks` + a "Linked from" viewer panel make `[[WikiLink]]` graph traversal bidirectional.
+- 🪵 **Durable Activity Log**: All REST and MCP activity events persist to an append-only `data/activity.jsonl` (JSON Lines, one-deep rotation at 10 MB). The `get_recent_activity` MCP tool lets agents ask "what changed since my last session?" with duration/timestamp, action, and source filters.
 - **🔍 Blazing-Fast Full-Text Search**: Powered by the robust `github.com/blevesearch/bleve/v2` engine. Supports advanced query parsing, scoring, and text snippet highlighting.
 - **📂 Flat-File Markdown Storage**: Wiki pages are stored on disk as plain Markdown files with YAML-like front matter metadata. Your files remain completely portable and easily readable by external editors.
 - 🕒 **Gzipped Flat-File Versioning**: Built-in revision engine that saves highly efficient compressed `.md.gz` gzip snapshots of your article history. Review historical changes side-by-side using interactive **Split Pane** or **Unified Inline** diff modes, roll back changes instantly, and prevent session write conflicts with automatic optimistic locking guards.
@@ -188,6 +190,7 @@ The `/app/data` directory inside the container holds all persistent state:
 - `articles/` — All your Markdown wiki files.
 - `assets/` — Uploaded images and media attachments grouped by article.
 - `search.bleve/` — The Bleve full-text search index database.
+- `activity.jsonl` — The durable activity event log (rotated once at 10 MB).
 
 Always mount this path to a persistent local directory or named Docker volume to preserve your data across container restarts and upgrades.
 
@@ -250,6 +253,7 @@ The Docker container maps `/app/data` to your local machine (`./my-wiki-data` in
 - `articles/` - All your Markdown wiki files (e.g., `home.md`, `setup-guide.md`).
 - `assets/` - Uploaded images and media attachments grouped by article.
 - `search.bleve/` - The Bleve full-text search index database.
+- `activity.jsonl` - The durable activity event log (rotated once at 10 MB).
 
 ---
 
