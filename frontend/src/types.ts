@@ -8,3 +8,6 @@ export interface Article {
   edit_summary?: string;
   tags?: string[];
 }
+
+// Light/dark variant selection mode: explicit choice or follow the browser.
+export type ThemeMode = 'light' | 'dark' | 'auto';

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import type { Article } from './types';
+import type { Article, ThemeMode } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Viewer } from './components/Viewer';
 import { Editor } from './components/Editor';
@@ -65,10 +65,19 @@ export const App: React.FC = () => {
   // UI state
   const [isLoading, setIsLoading] = useState(true);
   const [isArticleLoading, setIsArticleLoading] = useState(false);
+  // 'light' | 'dark' = explicit user choice (persisted); 'auto' = follow the
+  // browser's prefers-color-scheme (the default, stored as an absent key).
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const savedTheme = localStorage.getItem('theme');
+    return savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'auto';
+  });
   const [darkMode, setDarkMode] = useState(() => {
     const savedTheme = localStorage.getItem('theme');
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    return savedTheme === 'dark' || (!savedTheme && prefersDark);
+    if (savedTheme === 'dark' || savedTheme === 'light') {
+      return savedTheme === 'dark';
+    }
+    return prefersDark;
   });
   const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [wikiName, setWikiName] = useState('NexWiki');
@@ -306,12 +315,12 @@ export const App: React.FC = () => {
     setActiveThemeName(name);
     localStorage.setItem('active-theme', name);
     
-    // Automatically apply its default variant mode initially
+    // Automatically apply its default variant mode initially. Do not persist
+    // it to localStorage 'theme': that key marks an explicit user mode choice,
+    // and setting it would stop useBrowserColorScheme from following the OS.
     const targetTheme = themes.find(t => t.name === name);
     if (targetTheme) {
-      const mode = targetTheme.default_mode;
-      setDarkMode(mode === 'dark');
-      localStorage.setItem('theme', mode);
+      setDarkMode(targetTheme.default_mode === 'dark');
     }
   };
 
@@ -382,12 +391,10 @@ export const App: React.FC = () => {
       }
 
       // 2. Fetch all available themes
-      let loadedThemes: Theme[] = [];
       try {
         const res = await fetch('/api/themes');
         if (res.ok) {
-          loadedThemes = await res.json();
-          setThemes(loadedThemes || []);
+          setThemes(((await res.json()) as Theme[] | null) ?? []);
         }
       } catch (err) {
         console.error('Failed to fetch themes during boot:', err);
@@ -405,14 +412,14 @@ export const App: React.FC = () => {
       }
       setActiveThemeName(finalThemeName);
 
-      // 4. Set initial dark/light variant mode
-      const activeThemeObj = loadedThemes.find(t => t.name === finalThemeName);
+      // 4. Set initial dark/light variant mode. An explicit saved user choice
+      // wins; otherwise keep mirroring the browser's prefer-color-scheme
+      // (already applied by the darkMode initial state). Never write the
+      // 'theme' key here — it must only record an explicit user toggle,
+      // otherwise useBrowserColorScheme stops following OS scheme changes.
       const activeMode = localStorage.getItem('theme');
-      if (activeMode) {
+      if (activeMode === 'dark' || activeMode === 'light') {
         setDarkMode(activeMode === 'dark');
-      } else if (activeThemeObj) {
-        setDarkMode(activeThemeObj.default_mode === 'dark');
-        localStorage.setItem('theme', activeThemeObj.default_mode);
       }
 
       await fetchArticles();
@@ -435,11 +442,18 @@ export const App: React.FC = () => {
   // Follow browser prefers-color-scheme changes unless the user has explicitly chosen a mode.
   useBrowserColorScheme(setDarkMode);
 
-  // Toggle dark/light theme variant of active theme (marks an explicit user preference).
-  const toggleDarkMode = () => {
-    const nextMode = !darkMode;
-    setDarkMode(nextMode);
-    localStorage.setItem('theme', nextMode ? 'dark' : 'light');
+  // Cycle Light → Dark → Auto. Light/Dark persist an explicit preference;
+  // Auto clears it so the mode follows the browser's prefers-color-scheme.
+  const cycleThemeMode = () => {
+    const next: ThemeMode = themeMode === 'light' ? 'dark' : themeMode === 'dark' ? 'auto' : 'light';
+    setThemeMode(next);
+    if (next === 'auto') {
+      localStorage.removeItem('theme');
+      setDarkMode(window.matchMedia('(prefers-color-scheme: dark)').matches);
+    } else {
+      localStorage.setItem('theme', next);
+      setDarkMode(next === 'dark');
+    }
   };
 
   // CRUD: Saving Article edits/creates
@@ -720,8 +734,8 @@ export const App: React.FC = () => {
           <Sidebar
             articles={articles}
             currentSlug={routeInfo.slug || (routeInfo.route === 'home' ? 'home' : '')}
-            darkMode={darkMode}
-            onToggleDarkMode={toggleDarkMode}
+            themeMode={themeMode}
+            onCycleThemeMode={cycleThemeMode}
             onOpenThemeManager={() => setThemeModalOpen(true)}
             onNavigate={handleNavigate}
             onCreateNew={(type: 'article' | 'plan' | 'skill') => navigate(`/new?type=${type}`)}

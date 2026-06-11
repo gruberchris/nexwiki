@@ -1,6 +1,12 @@
 # NexWiki Customizable Themes Engine Guide 🎨
 
-Welcome to the customizable multimode theme engine documentation. NexWiki features a state-of-the-art styling system where every theme includes **both a Light Mode and a Dark Mode variant**. Toggling the light/dark button in the sidebar dynamically switches between the light and dark color profiles of your active theme.
+Welcome to the customizable multimode theme engine documentation. NexWiki features a state-of-the-art styling system where every theme includes **both a Light Mode and a Dark Mode variant**. The mode button in the sidebar header cycles through three states:
+
+* **☀️ Light** — always use the active theme's light variant.
+* **🌙 Dark** — always use the active theme's dark variant.
+* **🌗 Auto** (the default) — follow your operating system / browser color scheme (`prefers-color-scheme`), switching live when the OS switches between light and dark. Supported in Chrome, Safari, Firefox, and Microsoft Edge.
+
+Choosing Light or Dark saves an explicit preference in your browser; choosing Auto clears it and resumes following the system.
 
 This guide covers:
 1. **Configuring Default Themes** via command-line flags and environment variables.

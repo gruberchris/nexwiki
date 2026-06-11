@@ -51,10 +51,42 @@ describe('Viewer', () => {
       expect(container.textContent).toContain('Existing Page');
     }, { timeout: 5000 });
     const link = container.querySelector('a, span[title]');
-    if (link) {
-      await userEvent.click(link as HTMLElement);
-      expect(onNavigate).toHaveBeenCalled();
-    }
+    expect(link).not.toBeNull();
+    await userEvent.click(link as HTMLElement);
+    expect(onNavigate).toHaveBeenCalledWith('existing-page');
+  });
+
+  it('renders a multi-word wiki link as an internal anchor', async () => {
+    const { container } = render(<Viewer {...baseProps} content="[[Existing Page]] (extra text)" />);
+    const link = await waitFor(() => {
+      const el = container.querySelector('a[href="/articles/existing-page"]');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(link.textContent).toBe('Existing Page');
+    expect(container.textContent).not.toContain('[[');
+  });
+
+  it('renders a piped wiki link with custom display text', async () => {
+    const { container } = render(<Viewer {...baseProps} content="Read [[existing-page|My Custom Text]] now." />);
+    const link = await waitFor(() => {
+      const el = container.querySelector('a[href="/articles/existing-page"]');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(link.textContent).toBe('My Custom Text');
+  });
+
+  it('renders a broken wiki link as a clickable create prompt', async () => {
+    const onNavigate = vi.fn();
+    const { container } = render(<Viewer {...baseProps} content="See [[Missing Page]] later." onNavigate={onNavigate} />);
+    const broken = await waitFor(() => {
+      const el = container.querySelector('span.wikilink-broken');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    await userEvent.click(broken);
+    expect(onNavigate).toHaveBeenCalledWith('new?title=Missing%20Page');
   });
 
   it('renders empty content without crashing', () => {
