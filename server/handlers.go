@@ -123,9 +123,13 @@ func (srv *Server) HandleGetArticle(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateArticleReq represents the payload body for creating a new article.
+// Description and Source are pointers so clients that omit them preserve existing values on update,
+// while sending an explicit empty string clears them.
 type CreateArticleReq struct {
 	Title         string   `json:"title"`
 	Content       string   `json:"content"`
+	Description   *string  `json:"description"`    // Optional one-line summary
+	Source        *string  `json:"source"`         // Optional provenance reference
 	EditSummary   string   `json:"edit_summary"`   // Summary for revision history
 	LoadedVersion int      `json:"loaded_version"` // Version loaded by client for conflict validation
 	Tags          []string `json:"tags"`           // Tags list
@@ -185,7 +189,16 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 	// Clean tags (existingTags is nil on creation)
 	cleanedTags := validateAndCleanUserTags(req.Tags, nil)
 
-	art, err := srv.Storage.SaveArticle("", req.Title, req.Content, req.EditSummary, cleanedTags)
+	description := ""
+	if req.Description != nil {
+		description = *req.Description
+	}
+	source := ""
+	if req.Source != nil {
+		source = *req.Source
+	}
+
+	art, err := srv.Storage.SaveArticle("", req.Title, req.Content, description, source, req.EditSummary, cleanedTags)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -252,7 +265,17 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 	// Clean tags and preserve existing "aiagent-" tags
 	cleanedTags := validateAndCleanUserTags(req.Tags, existing.Tags)
 
-	art, err := srv.Storage.SaveArticle(slug, req.Title, req.Content, req.EditSummary, cleanedTags)
+	// Omitted description/source preserve existing values; explicit empty strings clear them
+	description := existing.Description
+	if req.Description != nil {
+		description = *req.Description
+	}
+	source := existing.Source
+	if req.Source != nil {
+		source = *req.Source
+	}
+
+	art, err := srv.Storage.SaveArticle(slug, req.Title, req.Content, description, source, req.EditSummary, cleanedTags)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -322,7 +345,7 @@ func (srv *Server) HandleUpdateArticleTags(w http.ResponseWriter, r *http.Reques
 		summary = "Updated article tags"
 	}
 
-	art, err := srv.Storage.SaveArticle(slug, existing.Title, existing.Content, summary, cleanedTags)
+	art, err := srv.Storage.SaveArticle(slug, existing.Title, existing.Content, existing.Description, existing.Source, summary, cleanedTags)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

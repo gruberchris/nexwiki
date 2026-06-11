@@ -153,6 +153,14 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 								"type":        "string",
 								"description": "The raw Markdown content of the article body.",
 							},
+							"description": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional one-line summary of the article, shown in list indexes and the context overview.",
+							},
+							"source": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional provenance: the URL, document, or reference this knowledge came from. AI-created articles SHOULD cite their source.",
+							},
 							"tags": map[string]interface{}{
 								"type": "array",
 								"items": map[string]interface{}{
@@ -185,6 +193,14 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 							"content": map[string]interface{}{
 								"type":        "string",
 								"description": "The updated raw Markdown content of the article body.",
+							},
+							"description": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional one-line summary of the article. Omit or pass empty to preserve the existing description.",
+							},
+							"source": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional provenance reference. Omit or pass empty to preserve the existing source.",
 							},
 							"tags": map[string]interface{}{
 								"type": "array",
@@ -306,6 +322,14 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 								"type":        "string",
 								"description": "Scopes the memory and determines its tag. Use a project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for cross-project knowledge, or omit for general knowledge. Becomes the tag 'aiagent-memory-<memory_type>' or bare 'aiagent-memory' if omitted.",
 							},
+							"description": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional one-line summary of the memory, shown in list indexes and the context overview.",
+							},
+							"source": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional provenance: where this knowledge came from (URL, document, or session context).",
+							},
 							"edit_summary": map[string]interface{}{
 								"type":        "string",
 								"description": "Optional revision log description summarizing why this memory was created.",
@@ -366,6 +390,14 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 							"project_context": map[string]interface{}{
 								"type":        "string",
 								"description": "The name of the project this plan is for. Generates a custom project tag.",
+							},
+							"description": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional one-line summary of the plan, shown in list indexes and the context overview.",
+							},
+							"source": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional provenance: where this plan originated (URL, ticket, or session context).",
 							},
 							"edit_summary": map[string]interface{}{
 								"type":        "string",
@@ -460,6 +492,14 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 							"content": map[string]interface{}{
 								"type":        "string",
 								"description": "The raw Markdown content of the skill instructions (SKILL.md format).",
+							},
+							"description": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional one-line summary of what the skill does, shown in list indexes and the context overview.",
+							},
+							"source": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional provenance: where this skill's procedure came from (URL, document, or session context).",
 							},
 							"tags": map[string]interface{}{
 								"type": "array",
@@ -856,10 +896,18 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		if len(art.Tags) > 0 {
 			tagsStr = fmt.Sprintf("\nTags: %s", strings.Join(art.Tags, ", "))
 		}
+		descStr := ""
+		if art.Description != "" {
+			descStr = fmt.Sprintf("\nDescription: %s", art.Description)
+		}
+		sourceStr := ""
+		if art.Source != "" {
+			sourceStr = fmt.Sprintf("\nSource: %s", art.Source)
+		}
 
 		// Return both front-matter configurations and full Markdown content to the agent
-		text := fmt.Sprintf("Title: %s\nSlug: %s\nCreated: %s\nUpdated: %s%s\n\n%s",
-			art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.UpdatedAt.Format(time.RFC3339), tagsStr, art.Content)
+		text := fmt.Sprintf("Title: %s\nSlug: %s\nCreated: %s\nUpdated: %s%s%s%s\n\n%s",
+			art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.UpdatedAt.Format(time.RFC3339), descStr, sourceStr, tagsStr, art.Content)
 
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
 
@@ -896,6 +944,9 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 				}
 				text += fmt.Sprintf("[%d] %s (Slug: %s, Type: %s, Last Edited: %s%s)\n",
 					i+1, art.Title, art.Slug, articleType, art.UpdatedAt.Format("2006-01-02 15:04:05"), tagsStr)
+				if art.Description != "" {
+					text += fmt.Sprintf("    Summary: %s\n", art.Description)
+				}
 			}
 		}
 
@@ -905,6 +956,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		type CreateArgs struct {
 			Title       string   `json:"title"`
 			Content     string   `json:"content"`
+			Description string   `json:"description"`
+			Source      string   `json:"source"`
 			Tags        []string `json:"tags"`
 			EditSummary string   `json:"edit_summary"`
 		}
@@ -919,7 +972,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		}
 
 		tags := validateAndCleanUserTags(cArgs.Tags, nil)
-		art, err := srv.Storage.SaveArticle("", cArgs.Title, cArgs.Content, cArgs.EditSummary, tags)
+		art, err := srv.Storage.SaveArticle("", cArgs.Title, cArgs.Content, cArgs.Description, cArgs.Source, cArgs.EditSummary, tags)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating article: %v", err)}}}, nil
 		}
@@ -933,6 +986,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			Slug          string   `json:"slug"`
 			Title         string   `json:"title"`
 			Content       string   `json:"content"`
+			Description   string   `json:"description"`
+			Source        string   `json:"source"`
 			Tags          []string `json:"tags"`
 			LoadedVersion int      `json:"loaded_version"`
 			EditSummary   string   `json:"edit_summary"`
@@ -955,7 +1010,18 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		if eArgs.Tags != nil {
 			tags = validateAndCleanUserTags(eArgs.Tags, existing.Tags)
 		}
-		art, err := srv.Storage.SaveArticle(eArgs.Slug, eArgs.Title, eArgs.Content, eArgs.EditSummary, tags)
+
+		// Empty/omitted description and source preserve the existing values
+		description := existing.Description
+		if eArgs.Description != "" {
+			description = eArgs.Description
+		}
+		source := existing.Source
+		if eArgs.Source != "" {
+			source = eArgs.Source
+		}
+
+		art, err := srv.Storage.SaveArticle(eArgs.Slug, eArgs.Title, eArgs.Content, description, source, eArgs.EditSummary, tags)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing article: %v", err)}}}, nil
 		}
@@ -1019,6 +1085,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			Content        string `json:"content"`
 			MemoryType     string `json:"memory_type"`
 			ProjectContext string `json:"project_context"`
+			Description    string `json:"description"`
+			Source         string `json:"source"`
 			EditSummary    string `json:"edit_summary"`
 		}
 		var mArgs CreateMemoryArgs
@@ -1052,7 +1120,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			}
 		}
 
-		art, err := srv.Storage.SaveArticle("", title, mArgs.Content, summary, tags)
+		art, err := srv.Storage.SaveArticle("", title, mArgs.Content, mArgs.Description, mArgs.Source, summary, tags)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent memory: %v", err)}}}, nil
 		}
@@ -1096,7 +1164,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			summary = "Appended AI Agent memory details"
 		}
 
-		art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, summary, existing.Tags)
+		art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, summary, existing.Tags)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent memory: %v", err)}}}, nil
 		}
@@ -1149,6 +1217,9 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 				}
 				text += fmt.Sprintf("[%d] %s (Slug: %s, Edited: %s)\n",
 					count, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"))
+				if art.Description != "" {
+					text += fmt.Sprintf("    Summary: %s\n", art.Description)
+				}
 				text += fmt.Sprintf("    Tags: %s\n\n", strings.Join(memoryTags, ", "))
 			}
 		}
@@ -1168,6 +1239,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			Title          string `json:"title"`
 			Content        string `json:"content"`
 			ProjectContext string `json:"project_context"`
+			Description    string `json:"description"`
+			Source         string `json:"source"`
 			EditSummary    string `json:"edit_summary"`
 		}
 		var pArgs CreatePlanArgs
@@ -1196,7 +1269,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			summary = "Created Collaborative AI Plan"
 		}
 
-		art, err := srv.Storage.SaveArticle("", title, pArgs.Content, summary, tags)
+		art, err := srv.Storage.SaveArticle("", title, pArgs.Content, pArgs.Description, pArgs.Source, summary, tags)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent plan: %v", err)}}}, nil
 		}
@@ -1239,7 +1312,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			summary = "Appended Collaborative AI Plan details"
 		}
 
-		art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, summary, existing.Tags)
+		art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, summary, existing.Tags)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent plan: %v", err)}}}, nil
 		}
@@ -1313,7 +1386,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			summary = "Updated Collaborative AI Plan metadata"
 		}
 
-		art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, existing.Content, summary, newTags)
+		art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, existing.Content, existing.Description, existing.Source, summary, newTags)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent plan: %v", err)}}}, nil
 		}
@@ -1370,6 +1443,9 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 				}
 				text += fmt.Sprintf("[%d] %s (Slug: %s, Edited: %s)\n",
 					count, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"))
+				if art.Description != "" {
+					text += fmt.Sprintf("    Summary: %s\n", art.Description)
+				}
 				text += fmt.Sprintf("    Tags: %s\n\n", strings.Join(art.Tags, ", "))
 			}
 		}
@@ -1392,6 +1468,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		type CreateSkillArgs struct {
 			Title       string   `json:"title"`
 			Content     string   `json:"content"`
+			Description string   `json:"description"`
+			Source      string   `json:"source"`
 			Tags        []string `json:"tags"`
 			EditSummary string   `json:"edit_summary"`
 		}
@@ -1423,7 +1501,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			summary = "Created Custom AI Agent Skill"
 		}
 
-		art, err := srv.Storage.SaveArticle("", title, sArgs.Content, summary, tags)
+		art, err := srv.Storage.SaveArticle("", title, sArgs.Content, sArgs.Description, sArgs.Source, summary, tags)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent skill: %v", err)}}}, nil
 		}
@@ -1461,6 +1539,9 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 				}
 				text += fmt.Sprintf("[%d] %s (Slug: %s, Edited: %s)\n",
 					count, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"))
+				if art.Description != "" {
+					text += fmt.Sprintf("    Summary: %s\n", art.Description)
+				}
 				text += fmt.Sprintf("    Tags: %s\n\n", strings.Join(art.Tags, ", "))
 			}
 		}

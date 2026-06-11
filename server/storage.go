@@ -24,10 +24,16 @@ type Article struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	Content     string    `json:"content,omitempty"`
+	Description string    `json:"description,omitempty"` // Optional one-line summary shown in indexes
+	Source      string    `json:"source,omitempty"`      // Optional provenance (URL, reference, or agent context)
 	Version     int       `json:"version,omitempty"`      // Version number
 	EditSummary string    `json:"edit_summary,omitempty"` // Summary of edits
 	Tags        []string  `json:"tags,omitempty"`         // Tags list
 	ArchivedAt  time.Time `json:"archived_at,omitempty"`  // When the article was archived
+
+	// ContentPreview holds the first content line during metadata-only parses
+	// (used as a description fallback in indexes); never serialized.
+	ContentPreview string `json:"-"`
 }
 
 // Storage manages persistent article files and uploaded assets on disk.
@@ -187,7 +193,8 @@ func (s *Storage) GetArticle(slug string) (*Article, error) {
 }
 
 // SaveArticle writes article Markdown to disk, handling potential slug changes and compressing a copy in gzip version history.
-func (s *Storage) SaveArticle(oldSlug string, title string, content string, editSummary string, tags []string) (*Article, error) {
+// Description and source are written as given (callers preserve existing values by passing them through).
+func (s *Storage) SaveArticle(oldSlug string, title string, content string, description string, source string, editSummary string, tags []string) (*Article, error) {
 	newSlug := Slugify(title)
 	if newSlug == "" {
 		return nil, fmt.Errorf("article title must contain valid characters to generate a slug")
@@ -283,10 +290,10 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 		}
 	}
 
-	// Clean up newlines from edit summary to keep YAML parsing clean
-	editSummary = strings.ReplaceAll(editSummary, "\n", " ")
-	editSummary = strings.ReplaceAll(editSummary, "\r", "")
-	editSummary = strings.TrimSpace(editSummary)
+	// Clean up newlines to keep the line-based front matter parsing clean
+	editSummary = sanitizeMetaValue(editSummary)
+	description = sanitizeMetaValue(description)
+	source = sanitizeMetaValue(source)
 
 	if editSummary == "" {
 		if nextVersion == 1 {
@@ -309,6 +316,8 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 	} else {
 		art.Tags = tags
 	}
+	art.Description = description
+	art.Source = source
 
 	// Set ArchivedAt if the article is being tagged as archived for the first time
 	if art.ArchivedAt.IsZero() {
@@ -462,7 +471,7 @@ This wiki is built using **Go** for the backend server and **React + TypeScript 
 *   Click the **New Page** button in the sidebar or search index to create a new page.
 *   Try inserting a link to a new page using the double-bracket syntax: ` + "`" + `[[My Draft Page]]` + "`" + `. Click it to create the article on the fly!
 `
-	_, err = s.SaveArticle("", "Home", defaultHomeContent, "Initial version", nil)
+	_, err = s.SaveArticle("", "Home", defaultHomeContent, "", "", "Initial version", nil)
 	return err
 }
 
@@ -521,6 +530,10 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 			}
 		case "edit_summary":
 			art.EditSummary = val
+		case "description":
+			art.Description = val
+		case "source":
+			art.Source = val
 		case "tags":
 			var tags []string
 			for _, t := range strings.Split(val, ",") {
@@ -545,13 +558,49 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 
 	if loadContent {
 		art.Content = bodySection
+	} else {
+		art.ContentPreview = extractContentPreview(bodySection)
 	}
 
 	return art, nil
 }
 
+// extractContentPreview returns the first meaningful content line of a Markdown body,
+// stripped of heading markers and WikiLink brackets, truncated to 120 runes.
+func extractContentPreview(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#"))
+		if line == "" || line == "---" {
+			continue
+		}
+		line = strings.ReplaceAll(line, "[[", "")
+		line = strings.ReplaceAll(line, "]]", "")
+		runes := []rune(line)
+		if len(runes) > 120 {
+			return string(runes[:120]) + "..."
+		}
+		return line
+	}
+	return ""
+}
+
+// sanitizeMetaValue flattens newlines so a value cannot corrupt the line-based front matter block.
+func sanitizeMetaValue(val string) string {
+	val = strings.ReplaceAll(val, "\n", " ")
+	val = strings.ReplaceAll(val, "\r", "")
+	return strings.TrimSpace(val)
+}
+
 // serializeFrontMatter converts article metadata into the front matter block.
 func serializeFrontMatter(art *Article) string {
+	var descriptionStr string
+	if art.Description != "" {
+		descriptionStr = fmt.Sprintf("\ndescription: %s", art.Description)
+	}
+	var sourceStr string
+	if art.Source != "" {
+		sourceStr = fmt.Sprintf("\nsource: %s", art.Source)
+	}
 	var tagsStr string
 	if len(art.Tags) > 0 {
 		tagsStr = fmt.Sprintf("\ntags: %s", strings.Join(art.Tags, ", "))
@@ -560,13 +609,15 @@ func serializeFrontMatter(art *Article) string {
 	if !art.ArchivedAt.IsZero() {
 		archivedAtStr = fmt.Sprintf("\narchived_at: %s", art.ArchivedAt.Format(time.RFC3339))
 	}
-	return fmt.Sprintf("---\ntitle: %s\nslug: %s\ncreated_at: %s\nupdated_at: %s\nversion: %d\nedit_summary: %s%s%s\n---\n",
+	return fmt.Sprintf("---\ntitle: %s\nslug: %s\ncreated_at: %s\nupdated_at: %s\nversion: %d\nedit_summary: %s%s%s%s%s\n---\n",
 		art.Title,
 		art.Slug,
 		art.CreatedAt.Format(time.RFC3339),
 		art.UpdatedAt.Format(time.RFC3339),
 		art.Version,
 		art.EditSummary,
+		descriptionStr,
+		sourceStr,
 		tagsStr,
 		archivedAtStr,
 	)
@@ -880,7 +931,7 @@ func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 	}
 
 	summary := fmt.Sprintf("Reverted to version %d", version)
-	return s.SaveArticle(slug, histArt.Title, histArt.Content, summary, histArt.Tags)
+	return s.SaveArticle(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, summary, histArt.Tags)
 }
 
 // UpdateArticleTags updates only the tag array for an article without modifying the title or content.
@@ -898,7 +949,7 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 		editSummary = "Updated article tags"
 	}
 
-	return s.SaveArticle(slug, art.Title, art.Content, editSummary, tags)
+	return s.SaveArticle(slug, art.Title, art.Content, art.Description, art.Source, editSummary, tags)
 }
 
 // Close releases resources held by the Storage, including the Bleve search index.
@@ -992,7 +1043,7 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 			// Remove the tag
 			newTags := append(art.Tags[:tagIndex], art.Tags[tagIndex+1:]...)
 			// Save the updated article
-			_, err = s.SaveArticle(art.Slug, art.Title, art.Content, fmt.Sprintf("Removed tag '%s' globally", tag), newTags)
+			_, err = s.SaveArticle(art.Slug, art.Title, art.Content, art.Description, art.Source, fmt.Sprintf("Removed tag '%s' globally", tag), newTags)
 			if err != nil {
 				return fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
 			}
