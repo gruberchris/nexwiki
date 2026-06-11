@@ -97,6 +97,30 @@ describe('useBrowserColorScheme', () => {
     expect(mockMq.removeEventListener).toHaveBeenCalledWith('change', expect.any(Function));
   });
 
+  it('falls back to addListener/removeListener on browsers without MediaQueryList.addEventListener (Safari <14)', () => {
+    const legacyHandlers: ChangeHandler[] = [];
+    const legacyMq = {
+      matches: false,
+      addEventListener: undefined,
+      removeEventListener: undefined,
+      addListener: vi.fn((handler: ChangeHandler) => {
+        legacyHandlers.push(handler);
+      }),
+      removeListener: vi.fn(),
+    };
+    vi.spyOn(window, 'matchMedia').mockReturnValue(legacyMq as unknown as MediaQueryList);
+
+    const onChange = vi.fn();
+    const { unmount } = renderHook(() => useBrowserColorScheme(onChange));
+    expect(legacyMq.addListener).toHaveBeenCalledWith(expect.any(Function));
+
+    act(() => { legacyHandlers.forEach(h => h({ matches: true } as MediaQueryListEvent)); });
+    expect(onChange).toHaveBeenCalledWith(true);
+
+    unmount();
+    expect(legacyMq.removeListener).toHaveBeenCalledWith(expect.any(Function));
+  });
+
   it('resumes following OS after localStorage preference is cleared', () => {
     localStorage.setItem('theme', 'light');
     const onChange = vi.fn();

@@ -306,12 +306,12 @@ export const App: React.FC = () => {
     setActiveThemeName(name);
     localStorage.setItem('active-theme', name);
     
-    // Automatically apply its default variant mode initially
+    // Automatically apply its default variant mode initially. Do not persist
+    // it to localStorage 'theme': that key marks an explicit user mode choice,
+    // and setting it would stop useBrowserColorScheme from following the OS.
     const targetTheme = themes.find(t => t.name === name);
     if (targetTheme) {
-      const mode = targetTheme.default_mode;
-      setDarkMode(mode === 'dark');
-      localStorage.setItem('theme', mode);
+      setDarkMode(targetTheme.default_mode === 'dark');
     }
   };
 
@@ -405,14 +405,14 @@ export const App: React.FC = () => {
       }
       setActiveThemeName(finalThemeName);
 
-      // 4. Set initial dark/light variant mode
-      const activeThemeObj = loadedThemes.find(t => t.name === finalThemeName);
+      // 4. Set initial dark/light variant mode. An explicit saved user choice
+      // wins; otherwise keep mirroring the browser's prefers-color-scheme
+      // (already applied by the darkMode initial state). Never write the
+      // 'theme' key here — it must only record an explicit user toggle,
+      // otherwise useBrowserColorScheme stops following OS scheme changes.
       const activeMode = localStorage.getItem('theme');
       if (activeMode) {
         setDarkMode(activeMode === 'dark');
-      } else if (activeThemeObj) {
-        setDarkMode(activeThemeObj.default_mode === 'dark');
-        localStorage.setItem('theme', activeThemeObj.default_mode);
       }
 
       await fetchArticles();

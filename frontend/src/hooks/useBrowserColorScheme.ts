@@ -12,7 +12,13 @@ export function useBrowserColorScheme(onSchemeChange: (isDark: boolean) => void)
         onSchemeChange(e.matches);
       }
     };
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
+    // Safari only gained MediaQueryList.addEventListener in version 14;
+    // fall back to the deprecated addListener API for older versions.
+    if (typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', handler);
+      return () => mq.removeEventListener('change', handler);
+    }
+    mq.addListener(handler);
+    return () => mq.removeListener(handler);
   }, [onSchemeChange]);
 }

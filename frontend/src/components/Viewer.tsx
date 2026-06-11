@@ -1,5 +1,5 @@
 import React from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark-dimmed.css';
@@ -20,7 +20,7 @@ interface ViewerProps {
  */
 function preprocessWikiLinks(markdown: string): string {
   if (!markdown) return '';
-  return markdown.replace(/\[\[([^]|]+)(?:\|([^]]+))?]]/g, (_, target, display) => {
+  return markdown.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?]]/g, (_, target, display) => {
     const text = display ? display.trim() : target.trim();
     const slug = Slugify(target.trim());
     return `[${text}](wikilink:${slug})`;
@@ -35,6 +35,8 @@ export const Viewer: React.FC<ViewerProps> = ({ content, onNavigate, articles })
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
+        // The default transform sanitizes away the custom wikilink: protocol
+        urlTransform={(url) => (url.startsWith('wikilink:') ? url : defaultUrlTransform(url))}
         components={{
         h1: ({ children }) => {
           const id = Slugify(String(children));
