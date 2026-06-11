@@ -1,10 +1,11 @@
 import React, { useState, useMemo } from 'react';
-import type { Article } from '../types';
+import type { Article, ThemeMode } from '../types';
 import { formatRelativeTime } from '../utils';
 import {
   FileText,
   Moon,
   Sun,
+  SunMoon,
   Layers,
   Clock,
   ChevronRight,
@@ -27,8 +28,8 @@ import { FilterInput } from './FilterInput';
 interface SidebarProps {
   articles: Article[];
   currentSlug: string;
-  darkMode: boolean;
-  onToggleDarkMode: () => void;
+  themeMode: ThemeMode;
+  onCycleThemeMode: () => void;
   onOpenThemeManager: () => void;
   onNavigate: (slug: string) => void;
   onCreateNew: (type: 'article' | 'plan' | 'skill') => void;
@@ -41,8 +42,8 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({
   articles,
   currentSlug,
-  darkMode,
-  onToggleDarkMode,
+  themeMode,
+  onCycleThemeMode,
   onOpenThemeManager,
   onNavigate,
   onCreateNew,
@@ -181,14 +182,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Palette size={14} className="text-themeAccent" />
           </button>
 
-          {/* Light/Dark Toggle Button */}
+          {/* Light/Dark/Auto Cycle Button (icon shows the current mode) */}
           <button
-            onClick={onToggleDarkMode}
+            onClick={onCycleThemeMode}
             className="p-2 rounded-xl text-themeTextMuted hover:bg-themeBgPrimary hover:text-themeTextPrimary border border-themeBorder hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer"
-            title="Toggle Light/Dark"
-            aria-label="Toggle Light/Dark"
+            title={
+              themeMode === 'light'
+                ? 'Theme Mode: Light — click for Dark'
+                : themeMode === 'dark'
+                  ? 'Theme Mode: Dark — click for Auto'
+                  : 'Theme Mode: Auto — click for Light'
+            }
+            aria-label="Cycle Light/Dark/Auto theme mode"
           >
-            {darkMode ? <Sun size={14} className="text-amber-400" /> : <Moon size={14} className="text-themeAccent" />}
+            {themeMode === 'light' ? (
+              <Sun size={14} className="text-amber-400" />
+            ) : themeMode === 'dark' ? (
+              <Moon size={14} className="text-themeAccent" />
+            ) : (
+              <SunMoon size={14} className="text-themeAccent" />
+            )}
           </button>
 
 

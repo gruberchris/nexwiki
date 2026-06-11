@@ -65,6 +65,16 @@ describe('useBrowserColorScheme', () => {
     expect(onChange).toHaveBeenCalledWith(false);
   });
 
+  it('calls onSchemeChange when localStorage holds "auto" (follow-system mode)', () => {
+    localStorage.setItem('theme', 'auto');
+    const onChange = vi.fn();
+    renderHook(() => useBrowserColorScheme(onChange));
+
+    act(() => { fireChange(true); });
+
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+
   it('does NOT call onSchemeChange when localStorage has an explicit "light" preference', () => {
     localStorage.setItem('theme', 'light');
     const onChange = vi.fn();
