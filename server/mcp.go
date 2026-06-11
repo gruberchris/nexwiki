@@ -252,7 +252,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "delete_wiki_article",
-					"description": "Permanently delete an existing wiki article and its historical backups from disk.",
+					"description": "Permanently delete an existing wiki article and its historical backups from disk. Refuses protected AI Agent Memories — use 'delete_agent_memory' for those.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -306,7 +306,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_memory",
-					"description": "Create a brand new protected AI Agent Memory document. The 'memory_type' controls the tag applied and how the memory is scoped: use the project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for reusable cross-project knowledge, or omit it for general knowledge (tagged bare 'aiagent-memory'). Memories must be succinct and high-value — they are loaded into agent context windows, so keep them short, specific, and free of repetition. The protected tag must NEVER be removed unless explicitly instructed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' before executing this tool.)",
+					"description": "Create a brand new protected AI Agent Memory document. The 'memory_type' controls the tag applied and how the memory is scoped: use the project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for reusable cross-project knowledge, or omit it for general knowledge (tagged bare 'aiagent-memory'). Memories must be succinct and high-value — they are loaded into agent context windows, so keep them short, specific, and free of repetition. Search for an existing memory first; if one becomes stale later, use 'edit_agent_memory' to correct it or 'delete_agent_memory' to retire it rather than creating near-duplicates. The protected tag must NEVER be removed unless explicitly instructed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' before executing this tool.)",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -340,7 +340,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "append_agent_memory",
-					"description": "Append logs, subtask completions, or troubleshooting observations to the end of an existing protected AI Agent Memory document (must have an 'aiagent-memory-' prefixed tag).",
+					"description": "Append logs, subtask completions, or troubleshooting observations to the end of an existing protected AI Agent Memory document (must have an 'aiagent-memory-' prefixed tag). If existing memory content is stale or wrong, use 'edit_agent_memory' to correct it in place instead of appending contradictions.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -358,6 +358,65 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 							},
 						},
 						"required": []string{"slug", "content_to_append"},
+					},
+				},
+				{
+					"name":        "edit_agent_memory",
+					"description": "Replace or correct an existing protected AI Agent Memory in place. Prefer this over creating a near-duplicate memory: update stale facts directly, then note what changed in edit_summary. The 'aiagent-memory' protected tag is strictly preserved. Employs optimistic locking.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"slug": map[string]interface{}{
+								"type":        "string",
+								"description": "The unique URL-safe slug of the memory to edit.",
+							},
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional new memory title (preserves existing title if omitted).",
+							},
+							"content": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional full replacement of the memory's Markdown content (preserves existing content if omitted). Use append_agent_memory to add without replacing.",
+							},
+							"description": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional new one-line summary (preserves existing if omitted).",
+							},
+							"source": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional new provenance reference (preserves existing if omitted).",
+							},
+							"tags": map[string]interface{}{
+								"type": "array",
+								"items": map[string]interface{}{
+									"type": "string",
+								},
+								"description": "Optional tags to set on the memory (replaces existing tags; the protected 'aiagent-memory*' tag is always preserved).",
+							},
+							"loaded_version": map[string]interface{}{
+								"type":        "integer",
+								"description": "The active version number of the memory loaded by the client (helps detect multi-session edit collisions).",
+							},
+							"edit_summary": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional summary outlining what was corrected or changed.",
+							},
+						},
+						"required": []string{"slug", "loaded_version"},
+					},
+				},
+				{
+					"name":        "delete_agent_memory",
+					"description": "Permanently delete an obsolete or superseded protected AI Agent Memory. Use this when a memory is wrong or fully superseded; prefer edit_agent_memory to correct a memory rather than deleting and recreating it.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"slug": map[string]interface{}{
+								"type":        "string",
+								"description": "The unique URL-safe slug of the memory to delete.",
+							},
+						},
+						"required": []string{"slug"},
 					},
 				},
 				{
@@ -845,6 +904,18 @@ func (srv *Server) forwardActivityToWebServer(source, action, tool, slug, title,
 	_ = resp.Body.Close()
 }
 
+// hasMemoryTag reports whether a tag list marks an article as a protected AI Agent Memory
+// (bare 'aiagent-memory' or any scoped 'aiagent-memory-<type>' variant).
+func hasMemoryTag(tags []string) bool {
+	for _, tag := range tags {
+		tagLower := strings.ToLower(tag)
+		if tagLower == "aiagent-memory" || strings.HasPrefix(tagLower, "aiagent-memory-") {
+			return true
+		}
+	}
+	return false
+}
+
 // executeToolCall parses parameters and executes requested MCP tools, with automatic logging hooks.
 func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRPCError) {
 	result, rpcErr := srv.executeToolCallInternal(params)
@@ -1109,11 +1180,16 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'slug' argument"}
 		}
 
-		if _, err := srv.Storage.GetArticle(dArgs.Slug); err != nil {
+		existing, err := srv.Storage.GetArticle(dArgs.Slug)
+		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", dArgs.Slug)}}}, nil
 		}
 
-		err := srv.Storage.DeleteArticle(dArgs.Slug)
+		if hasMemoryTag(existing.Tags) {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: this article is a protected AI Agent Memory. Use 'delete_agent_memory' to delete it intentionally, or 'edit_agent_memory' to correct it instead."}}}, nil
+		}
+
+		err = srv.Storage.DeleteArticle(dArgs.Slug)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error deleting article: %v", err)}}}, nil
 		}
@@ -1187,15 +1263,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", aArgs.Slug)}}}, nil
 		}
 
-		hasAgentMemoryTag := false
-		for _, tag := range existing.Tags {
-			tagLower := strings.ToLower(tag)
-			if tagLower == "aiagent-memory" || strings.HasPrefix(tagLower, "aiagent-memory-") {
-				hasAgentMemoryTag = true
-				break
-			}
-		}
-		if !hasAgentMemoryTag {
+		if !hasMemoryTag(existing.Tags) {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a protected AI agent memory (must be tagged with an 'aiagent-memory-' prefix)."}}}, nil
 		}
 
@@ -1213,6 +1281,125 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 		respText := fmt.Sprintf("Success! Appended memory details to '%s' (version: %d, edited: %s).\n",
 			art.Title, art.Version, art.UpdatedAt.Format(time.RFC3339))
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "edit_agent_memory":
+		type EditMemoryArgs struct {
+			Slug          string    `json:"slug"`
+			Title         *string   `json:"title,omitempty"`
+			Content       *string   `json:"content,omitempty"`
+			Description   *string   `json:"description,omitempty"`
+			Source        *string   `json:"source,omitempty"`
+			Tags          *[]string `json:"tags,omitempty"`
+			LoadedVersion int       `json:"loaded_version"`
+			EditSummary   string    `json:"edit_summary"`
+		}
+		var eArgs EditMemoryArgs
+		if err := json.Unmarshal(args.Arguments, &eArgs); err != nil || eArgs.Slug == "" || eArgs.LoadedVersion <= 0 {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'slug' and positive 'loaded_version' are required."}
+		}
+
+		existing, err := srv.Storage.GetArticle(eArgs.Slug)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: memory with slug '%s' not found", eArgs.Slug)}}}, nil
+		}
+
+		if !hasMemoryTag(existing.Tags) {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a protected AI agent memory (must be tagged with an 'aiagent-memory-' prefix)."}}}, nil
+		}
+
+		if existing.Version > 0 && existing.Version != eArgs.LoadedVersion {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: Version conflict! The memory was updated by another session. Disk version is %d, but you loaded version %d. Re-read the memory and try again.", existing.Version, eArgs.LoadedVersion)}}}, nil
+		}
+
+		newTitle := existing.Title
+		if eArgs.Title != nil {
+			newTitle = strings.TrimSpace(*eArgs.Title)
+			if newTitle == "" {
+				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: title cannot be empty"}}}, nil
+			}
+		}
+
+		newContent := existing.Content
+		if eArgs.Content != nil {
+			if strings.TrimSpace(*eArgs.Content) == "" {
+				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: content cannot be empty. Use 'delete_agent_memory' to retire a memory entirely."}}}, nil
+			}
+			newContent = *eArgs.Content
+		}
+
+		newDescription := existing.Description
+		if eArgs.Description != nil {
+			newDescription = *eArgs.Description
+		}
+		newSource := existing.Source
+		if eArgs.Source != nil {
+			newSource = *eArgs.Source
+		}
+
+		newTags := existing.Tags
+		if eArgs.Tags != nil {
+			var parsedTags []string
+			hasMemoryTagInNew := false
+			for _, tag := range *eArgs.Tags {
+				cleanTag := Slugify(tag)
+				if cleanTag != "" {
+					if hasMemoryTag([]string{cleanTag}) {
+						hasMemoryTagInNew = true
+					}
+					parsedTags = append(parsedTags, cleanTag)
+				}
+			}
+			if !hasMemoryTagInNew {
+				// Re-prepend the original protected memory tag(s), preserving the scoped variant
+				var preserved []string
+				for _, tag := range existing.Tags {
+					if hasMemoryTag([]string{tag}) {
+						preserved = append(preserved, tag)
+					}
+				}
+				parsedTags = append(preserved, parsedTags...)
+			}
+			newTags = parsedTags
+		}
+
+		summary := eArgs.EditSummary
+		if summary == "" {
+			summary = "Updated AI Agent Memory"
+		}
+
+		art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, newContent, newDescription, newSource, summary, newTags)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent memory: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! AI Agent Memory '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nTags: %s\n",
+			art.Title, art.Slug, art.Version, art.UpdatedAt.Format(time.RFC3339), strings.Join(art.Tags, ", "))
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "delete_agent_memory":
+		type DelMemoryArgs struct {
+			Slug string `json:"slug"`
+		}
+		var dArgs DelMemoryArgs
+		if err := json.Unmarshal(args.Arguments, &dArgs); err != nil || dArgs.Slug == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'slug' argument"}
+		}
+
+		existing, err := srv.Storage.GetArticle(dArgs.Slug)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: memory with slug '%s' not found", dArgs.Slug)}}}, nil
+		}
+
+		if !hasMemoryTag(existing.Tags) {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a protected AI agent memory. Use 'delete_wiki_article' for standard articles."}}}, nil
+		}
+
+		if err := srv.Storage.DeleteArticle(dArgs.Slug); err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error deleting agent memory: %v", err)}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! AI Agent Memory '%s' (slug: %s) has been permanently deleted from disk along with all history backups.\n", existing.Title, existing.Slug)
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 
 	case "list_agent_memories":
