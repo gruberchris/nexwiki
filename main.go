@@ -92,6 +92,7 @@ func main() {
 	mux.HandleFunc("DELETE /api/articles/{slug}", srv.HandleDeleteArticle)
 	mux.HandleFunc("POST /api/articles/{slug}/assets", srv.HandleUploadAsset)
 	mux.HandleFunc("GET /api/assets/{slug}/{filename}", srv.HandleGetAsset)
+	mux.HandleFunc("GET /api/articles/{slug}/backlinks", srv.HandleGetBacklinks)
 	mux.HandleFunc("GET /api/articles/{slug}/history", srv.HandleGetArticleHistory)
 	mux.HandleFunc("GET /api/articles/{slug}/history/{version}", srv.HandleGetArticleVersion)
 	mux.HandleFunc("POST /api/articles/{slug}/revert", srv.HandleRevertArticle)

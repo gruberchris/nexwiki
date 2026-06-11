@@ -521,6 +521,31 @@ func (srv *Server) HandleSearchArticles(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, results)
 }
 
+// HandleGetBacklinks returns metadata for all articles that link to the target slug via WikiLinks.
+func (srv *Server) HandleGetBacklinks(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeError(w, http.StatusBadRequest, "article slug is required")
+		return
+	}
+
+	target, err := srv.Storage.GetArticle(slug)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "article not found")
+		return
+	}
+
+	backlinks, err := srv.Storage.GetBacklinks(target.Slug)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if backlinks == nil {
+		backlinks = []Article{}
+	}
+	writeJSON(w, http.StatusOK, backlinks)
+}
+
 // HandleGetArticleHistory retrieves metadata for all historical versions of an article.
 func (srv *Server) HandleGetArticleHistory(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")

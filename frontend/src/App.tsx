@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import type { Article, ThemeMode } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Viewer } from './components/Viewer';
+import { BacklinksPanel } from './components/BacklinksPanel';
 import { Editor } from './components/Editor';
 import { TOC } from './components/TOC';
 import { Hero } from './components/Hero';
@@ -1090,6 +1091,8 @@ export const App: React.FC = () => {
                     onNavigate={handleNavigate}
                     articles={articles}
                   />
+
+                  <BacklinksPanel slug={currentArticle.slug} onNavigate={handleNavigate} />
                 </div>
               </article>
             ) : (

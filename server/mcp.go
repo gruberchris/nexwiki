@@ -533,6 +533,20 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 					},
 				},
 				{
+					"name":        "get_backlinks",
+					"description": "List all articles whose content links to the given article via double-bracket WikiLinks. Use this to traverse the knowledge graph in reverse: find the pages that reference a concept, decision, or note before editing or deleting it.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"slug": map[string]interface{}{
+								"type":        "string",
+								"description": "The URL-safe slug of the target article to find inbound links for.",
+							},
+						},
+						"required": []string{"slug"},
+					},
+				},
+				{
 					"name":        "get_context_overview",
 					"description": "Cheap progressive-disclosure index of the entire knowledge base: every wiki article, agent memory, plan, and skill on one compact line (title, slug, one-line summary, tags, updated date). Call this first to orient yourself in the wiki, then use read_article to load only the entries you actually need.",
 					"inputSchema": map[string]interface{}{
@@ -922,6 +936,20 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		// Return both front-matter configurations and full Markdown content to the agent
 		text := fmt.Sprintf("Title: %s\nSlug: %s\nCreated: %s\nUpdated: %s%s%s%s\n\n%s",
 			art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.UpdatedAt.Format(time.RFC3339), descStr, sourceStr, tagsStr, art.Content)
+
+		// Append inbound links for graph discoverability; never fail the read over a scan error
+		if backlinks, blErr := srv.Storage.GetBacklinks(art.Slug); blErr == nil && len(backlinks) > 0 {
+			const maxShownBacklinks = 15
+			var refs []string
+			for i, bl := range backlinks {
+				if i >= maxShownBacklinks {
+					refs = append(refs, fmt.Sprintf("and %d more", len(backlinks)-maxShownBacklinks))
+					break
+				}
+				refs = append(refs, fmt.Sprintf("%s (%s)", bl.Title, bl.Slug))
+			}
+			text += fmt.Sprintf("\n\n---\nLinked from: %s", strings.Join(refs, ", "))
+		}
 
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
 
@@ -1577,6 +1605,40 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		text += "  • The 'aiagent-plan' protected tag must NEVER be removed from a plan.\n"
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
 
+	case "get_backlinks":
+		type BacklinkArgs struct {
+			Slug string `json:"slug"`
+		}
+		var bArgs BacklinkArgs
+		if err := json.Unmarshal(args.Arguments, &bArgs); err != nil || bArgs.Slug == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'slug' argument"}
+		}
+
+		target, err := srv.Storage.GetArticle(bArgs.Slug)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", bArgs.Slug)}}}, nil
+		}
+
+		backlinks, err := srv.Storage.GetBacklinks(target.Slug)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error scanning backlinks: %v", err)}}}, nil
+		}
+
+		var text string
+		if len(backlinks) == 0 {
+			text = fmt.Sprintf("No articles link to '%s'.\n", target.Slug)
+		} else {
+			text = fmt.Sprintf("Articles linking to '%s' (%d):\n\n", target.Slug, len(backlinks))
+			for i, bl := range backlinks {
+				text += fmt.Sprintf("[%d] %s (Slug: %s, Updated: %s)\n", i+1, bl.Title, bl.Slug, bl.UpdatedAt.Format("2006-01-02 15:04:05"))
+				if bl.Description != "" {
+					text += fmt.Sprintf("    Summary: %s\n", bl.Description)
+				}
+			}
+		}
+
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+
 	case "get_context_overview":
 		type OverviewArgs struct {
 			Type string `json:"type"`
@@ -1720,32 +1782,9 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		totalLinks := 0
 
 		for _, art := range fullArticles {
-			content := art.Content
-			for {
-				startIdx := strings.Index(content, "[[")
-				if startIdx == -1 {
-					break
-				}
-				endIdx := strings.Index(content[startIdx:], "]]")
-				if endIdx == -1 {
-					break
-				}
-				endIdx += startIdx
-
-				linkContent := content[startIdx+2 : endIdx]
-				content = content[endIdx+2:]
-
+			for _, target := range ExtractWikiLinkTargets(art.Content) {
 				totalLinks++
-
-				target := linkContent
-				pipeIdx := strings.Index(linkContent, "|")
-				if pipeIdx != -1 {
-					target = linkContent[:pipeIdx]
-				}
-				target = strings.TrimSpace(target)
-
-				targetSlug := Slugify(target)
-				if !activeSlugs[targetSlug] {
+				if !activeSlugs[Slugify(target)] {
 					brokenLinks = append(brokenLinks, BrokenLink{
 						FromSlug:   art.Slug,
 						TargetLink: target,
