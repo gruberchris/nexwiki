@@ -42,8 +42,10 @@ interface EditorProps {
   initialTitle: string;
   initialContent: string;
   initialTags?: string[];
+  initialDescription?: string;
+  initialSource?: string;
   slug: string; // empty if new page
-  onSave: (title: string, content: string, editSummary: string, tags: string[]) => Promise<void>;
+  onSave: (title: string, content: string, editSummary: string, tags: string[], description: string, source: string) => Promise<void>;
   onCancel: () => void;
   articles: Article[];
   version?: number;
@@ -53,6 +55,8 @@ export const Editor: React.FC<EditorProps> = ({
   initialTitle,
   initialContent,
   initialTags,
+  initialDescription,
+  initialSource,
   slug,
   onSave,
   onCancel,
@@ -61,6 +65,8 @@ export const Editor: React.FC<EditorProps> = ({
 }) => {
   const [title, setTitle] = useState(initialTitle);
   const [content, setContent] = useState(initialContent);
+  const [description, setDescription] = useState(initialDescription || '');
+  const [source, setSource] = useState(initialSource || '');
   const [tags, setTags] = useState<string[]>(initialTags || []);
   const [tagInput, setTagInput] = useState('');
   const [viewMode, setViewMode] = useState<'split' | 'edit' | 'preview'>('split');
@@ -397,7 +403,7 @@ export const Editor: React.FC<EditorProps> = ({
     setErrorMsg('');
 
     try {
-      await onSave(title.trim(), content, editSummary, tags);
+      await onSave(title.trim(), content, editSummary, tags, description.trim(), source.trim());
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to save article.';
       setErrorMsg(msg);
@@ -423,6 +429,24 @@ export const Editor: React.FC<EditorProps> = ({
               required
               disabled={isSaving}
             />
+            <div className="flex flex-col sm:flex-row gap-1.5 mt-1">
+              <input
+                type="text"
+                placeholder="One-line description (shown in indexes)..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="flex-1 text-xs bg-transparent border-none outline-none text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
+                disabled={isSaving}
+              />
+              <input
+                type="text"
+                placeholder="Source (URL or reference)..."
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+                className="flex-1 text-xs bg-transparent border-none outline-none text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
+                disabled={isSaving}
+              />
+            </div>
             {title.trim() && (
               <div className="flex flex-col gap-1 mt-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500">
                 <div className="flex items-center gap-1.5">

@@ -457,14 +457,16 @@ export const App: React.FC = () => {
   };
 
   // CRUD: Saving Article edits/creates
-  const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[]) => {
+  const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[], description: string, source: string) => {
     const targetSlug = editorSlug; // empty if new
     const isNew = targetSlug === '';
     const newComputedSlug = Slugify(title);
 
-    const payload = { 
-      title, 
+    const payload = {
+      title,
       content,
+      description,
+      source,
       edit_summary: editSummary,
       loaded_version: currentArticle ? currentArticle.version : 0,
       tags
@@ -765,6 +767,8 @@ export const App: React.FC = () => {
           initialTitle={editorTitle}
           initialContent={editorContent}
           initialTags={editorSlug === '' ? editorTags : (currentArticle ? currentArticle.tags : [])}
+          initialDescription={editorSlug !== '' && currentArticle ? currentArticle.description : ''}
+          initialSource={editorSlug !== '' && currentArticle ? currentArticle.source : ''}
           slug={editorSlug}
           onSave={handleSaveArticle}
           onCancel={() => {
@@ -847,6 +851,28 @@ export const App: React.FC = () => {
                         {copiedTitle ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
                       </button>
                     </div>
+                    {currentArticle.description && (
+                      <p className="text-sm text-slate-500 dark:text-slate-400 leading-snug">
+                        {currentArticle.description}
+                      </p>
+                    )}
+                    {currentArticle.source && (
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                        Source:{' '}
+                        {/^https?:\/\//i.test(currentArticle.source) ? (
+                          <a
+                            href={currentArticle.source}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-indigo-500 dark:text-indigo-400 hover:underline break-all"
+                          >
+                            {currentArticle.source}
+                          </a>
+                        ) : (
+                          <span className="break-all">{currentArticle.source}</span>
+                        )}
+                      </p>
+                    )}
                     <div className="flex flex-wrap gap-4 text-[10px] text-slate-400 dark:text-slate-500 font-semibold tracking-wide uppercase">
                       <span className="flex items-center gap-1">
                         <Calendar size={11} className="text-indigo-400" />

@@ -25,6 +25,11 @@ export function ArticleCard({ art, onNavigate, secondary = false, statusTags }: 
         <h3 className={`text-sm font-bold text-themeTextSecondary ${accentHover} truncate transition-colors`}>
           {art.title}
         </h3>
+        {art.description && (
+          <p className="text-[11px] text-themeTextMuted line-clamp-2 leading-snug">
+            {art.description}
+          </p>
+        )}
         {art.tags && art.tags.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {sortCardTags(art.tags, statusTags).slice(0, MAX_VISIBLE_TAGS).map((tag) => {

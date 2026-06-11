@@ -65,4 +65,15 @@ describe('ArticleCard', () => {
     const { container } = render(<ArticleCard art={agentTagArt} onNavigate={vi.fn()} statusTags={statusTags} />);
     expect(container.textContent).toContain('aiagent-plan');
   });
+
+  it('renders the description when present', () => {
+    const describedArt = { ...mockArt, description: 'A concise guide to Go fundamentals' };
+    render(<ArticleCard art={describedArt} onNavigate={vi.fn()} statusTags={statusTags} />);
+    expect(screen.getByText('A concise guide to Go fundamentals')).toBeInTheDocument();
+  });
+
+  it('renders without a description', () => {
+    render(<ArticleCard art={mockArt} onNavigate={vi.fn()} statusTags={statusTags} />);
+    expect(screen.getByText('Go Programming Guide')).toBeInTheDocument();
+  });
 });

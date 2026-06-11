@@ -4,6 +4,8 @@ export interface Article {
   created_at: string;
   updated_at: string;
   content?: string;
+  description?: string;
+  source?: string;
   version?: number;
   edit_summary?: string;
   tags?: string[];
