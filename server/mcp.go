@@ -532,6 +532,20 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 						"properties": map[string]interface{}{},
 					},
 				},
+				{
+					"name":        "get_context_overview",
+					"description": "Cheap progressive-disclosure index of the entire knowledge base: every wiki article, agent memory, plan, and skill on one compact line (title, slug, one-line summary, tags, updated date). Call this first to orient yourself in the wiki, then use read_article to load only the entries you actually need.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"type": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional section filter: 'articles', 'memories', 'plans', or 'skills'. Omit for the full overview.",
+								"enum":        []string{"articles", "memories", "plans", "skills"},
+							},
+						},
+					},
+				},
 			},
 		}
 
@@ -1561,6 +1575,74 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		text += "  • Use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"completed\").\n"
 		text += "  • When a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to add the 'completed' status tag.\n"
 		text += "  • The 'aiagent-plan' protected tag must NEVER be removed from a plan.\n"
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+
+	case "get_context_overview":
+		type OverviewArgs struct {
+			Type string `json:"type"`
+		}
+		var oArgs OverviewArgs
+		_ = json.Unmarshal(args.Arguments, &oArgs) // optional args
+
+		filter := strings.ToLower(strings.TrimSpace(oArgs.Type))
+		sections := []struct {
+			dir    string
+			label  string
+			filter string
+		}{
+			{"wiki", "Wiki Articles", "articles"},
+			{"aimemories", "Agent Memories", "memories"},
+			{"aiplans", "Agent Plans", "plans"},
+			{"aiskills", "Agent Skills", "skills"},
+		}
+
+		validFilter := filter == ""
+		for _, sec := range sections {
+			if filter == sec.filter {
+				validFilter = true
+			}
+		}
+		if !validFilter {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: invalid 'type' filter '%s'. Valid values: articles, memories, plans, skills.", oArgs.Type)}}}, nil
+		}
+
+		articles, err := srv.Storage.ListArticles()
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+		}
+
+		grouped := make(map[string][]Article)
+		for _, art := range articles {
+			dir := getArticleDirectory(art.Tags)
+			grouped[dir] = append(grouped[dir], art)
+		}
+
+		text := fmt.Sprintf("NexWiki Context Overview (%d articles total)\n", len(articles))
+		text += "Each line: Title (slug) — summary [tags] (updated). Use read_article(slug) to load full content.\n\n"
+		for _, sec := range sections {
+			if filter != "" && filter != sec.filter {
+				continue
+			}
+			entries := grouped[sec.dir]
+			text += fmt.Sprintf("== %s (%d) ==\n", sec.label, len(entries))
+			for _, art := range entries {
+				summary := art.Description
+				if summary == "" {
+					summary = art.ContentPreview
+				}
+				line := fmt.Sprintf("- %s (%s)", art.Title, art.Slug)
+				if summary != "" {
+					line += " — " + summary
+				}
+				if len(art.Tags) > 0 {
+					line += fmt.Sprintf(" [%s]", strings.Join(art.Tags, ", "))
+				}
+				line += fmt.Sprintf(" (updated %s)", art.UpdatedAt.Format("2006-01-02"))
+				text += line + "\n"
+			}
+			text += "\n"
+		}
+
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
 
 	case "get_article_history":
