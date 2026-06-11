@@ -592,6 +592,33 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 					},
 				},
 				{
+					"name":        "get_recent_activity",
+					"description": "Query the durable wiki activity log to see what changed and when — useful at session start to catch up on edits made by other agents, processes, or the human since you last looked. Events from a different MCP process may lag by milliseconds.",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"since": map[string]interface{}{
+								"type":        "string",
+								"description": "Only return events newer than this. Accepts a Go duration (e.g. '30m', '24h', '168h' for a week) or an RFC3339 timestamp (e.g. '2026-06-10T00:00:00Z'). Omit for the newest events regardless of age.",
+							},
+							"limit": map[string]interface{}{
+								"type":        "integer",
+								"description": "Maximum number of events to return, newest kept (default 50, max 500).",
+							},
+							"action": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional filter by action type.",
+								"enum":        []string{"create", "edit", "delete", "read", "revert"},
+							},
+							"source": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional filter by origin: 'mcp' for AI tool calls, 'api' for human web UI actions.",
+								"enum":        []string{"mcp", "api"},
+							},
+						},
+					},
+				},
+				{
 					"name":        "get_backlinks",
 					"description": "List all articles whose content links to the given article via double-bracket WikiLinks. Use this to traverse the knowledge graph in reverse: find the pages that reference a concept, decision, or note before editing or deleting it.",
 					"inputSchema": map[string]interface{}{
@@ -1790,6 +1817,82 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		text += "  • Use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"completed\").\n"
 		text += "  • When a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to add the 'completed' status tag.\n"
 		text += "  • The 'aiagent-plan' protected tag must NEVER be removed from a plan.\n"
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+
+	case "get_recent_activity":
+		type ActivityArgs struct {
+			Since  string `json:"since"`
+			Limit  int    `json:"limit"`
+			Action string `json:"action"`
+			Source string `json:"source"`
+		}
+		var aArgs ActivityArgs
+		_ = json.Unmarshal(args.Arguments, &aArgs) // all args optional
+
+		var since time.Time
+		if s := strings.TrimSpace(aArgs.Since); s != "" {
+			if dur, err := time.ParseDuration(s); err == nil {
+				since = time.Now().Add(-dur)
+			} else if ts, err := time.Parse(time.RFC3339, s); err == nil {
+				since = ts
+			} else {
+				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: invalid 'since' value '%s'. Use a Go duration (e.g. '24h') or an RFC3339 timestamp.", s)}}}, nil
+			}
+		}
+
+		limit := aArgs.Limit
+		if limit <= 0 {
+			limit = 50
+		}
+		if limit > 500 {
+			limit = 500
+		}
+
+		events, err := ReadActivityLog(ActivityLogPath(srv.Storage.DataDir), since, limit, aArgs.Action, aArgs.Source)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error reading activity log: %v", err)}}}, nil
+		}
+
+		// Fall back to the in-memory ring buffer when no durable log exists yet
+		if events == nil && srv.EventBus != nil {
+			for _, ev := range srv.EventBus.GetHistory() {
+				if !since.IsZero() && ev.Timestamp.Before(since) {
+					continue
+				}
+				if aArgs.Action != "" && ev.Action != aArgs.Action {
+					continue
+				}
+				if aArgs.Source != "" && ev.Source != aArgs.Source {
+					continue
+				}
+				events = append(events, ev)
+			}
+			if len(events) > limit {
+				events = events[len(events)-limit:]
+			}
+		}
+
+		var text string
+		if len(events) == 0 {
+			text = "No activity events found for the given filters.\n"
+		} else {
+			text = fmt.Sprintf("Recent wiki activity (%d events, oldest first):\n\n", len(events))
+			for _, ev := range events {
+				toolStr := ev.Tool
+				if toolStr == "" {
+					toolStr = "web-ui"
+				}
+				line := fmt.Sprintf("%s [%s/%s] %s", ev.Timestamp.Format("2006-01-02 15:04:05"), ev.Source, ev.Action, toolStr)
+				if ev.Title != "" || ev.Slug != "" {
+					line += fmt.Sprintf(" → '%s' (%s)", ev.Title, ev.Slug)
+				}
+				if ev.Agent != "" {
+					line += " by " + ev.Agent
+				}
+				text += line + "\n"
+			}
+		}
+
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
 
 	case "get_backlinks":

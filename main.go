@@ -70,6 +70,22 @@ func main() {
 	// Initialize server instance with configured name, theme, event bus, and scheduling settings
 	srv := server.NewServer(storage, name, defaultTheme, themeSchedulingEnabled, eventBus, Version, *port)
 
+	// Persist activity events durably to data/activity.jsonl.
+	// The IsSecondaryProcess check must happen at emit time: the flag only flips after the
+	// web port bind fails, and secondary stdio processes forward their events to the primary,
+	// which persists the forwarded copy — checking here prevents double-logging.
+	if activityLog, err := server.OpenActivityLog(*dataDir); err != nil {
+		log.Printf("Warning: activity log persistence disabled: %v", err)
+	} else {
+		eventBus.SetPersist(func(ev server.LogEvent) {
+			if !srv.IsSecondaryProcess {
+				if err := activityLog.Append(ev); err != nil {
+					log.Printf("Warning: failed to persist activity event: %v", err)
+				}
+			}
+		})
+	}
+
 	// Spin up the stdio MCP JSON-RPC server in a background goroutine!
 	go srv.StartMCPServer()
 

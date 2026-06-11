@@ -14,6 +14,15 @@ type EventBus struct {
 	buffer      []LogEvent
 	bufferLimit int
 	eventCount  int
+	persist     func(LogEvent)
+}
+
+// SetPersist registers a callback invoked once for every published (non-deduplicated)
+// activity event, used to durably persist events outside the in-memory ring buffer.
+func (eb *EventBus) SetPersist(fn func(LogEvent)) {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	eb.persist = fn
 }
 
 // NewEventBus builds a thread-safe pub-sub manager.
@@ -86,8 +95,12 @@ func (eb *EventBus) PublishActivity(source, action, tool, slug, title, agent str
 	eb.buffer = append(eb.buffer, event)
 
 	data, err := json.Marshal(event)
+	persist := eb.persist
 	eb.mu.Unlock()
 
+	if persist != nil {
+		persist(event)
+	}
 	if err == nil {
 		eb.broadcast("activity", string(data))
 	}
