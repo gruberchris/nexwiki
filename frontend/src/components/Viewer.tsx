@@ -17,14 +17,30 @@ interface ViewerProps {
  * into standard Markdown links using a custom "wikilink:" protocol.
  * E.g., [[Learning Go]] -> [Learning Go](wikilink:learning-go)
  * E.g., [[learning-go|My Guide]] -> [My Guide](wikilink:learning-go)
+ *
+ * [[...]] inside fenced code blocks (``` / ~~~) and inline code spans (`...`) are left verbatim,
+ * so code examples like C++ `[[nodiscard]]` or Lua `[[long strings]]` don't render as links.
  */
 function preprocessWikiLinks(markdown: string): string {
   if (!markdown) return '';
-  return markdown.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?]]/g, (_, target, display) => {
-    const text = display ? display.trim() : target.trim();
-    const slug = Slugify(target.trim());
-    return `[${text}](wikilink:${slug})`;
-  });
+  const convert = (text: string) =>
+    text.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?]]/g, (_, target, display) => {
+      const label = display ? display.trim() : target.trim();
+      const slug = Slugify(target.trim());
+      return `[${label}](wikilink:${slug})`;
+    });
+
+  // Keep fenced code blocks untouched; within prose, keep inline code spans untouched.
+  return markdown
+    .split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g)
+    .map((segment) => {
+      if (segment.startsWith('```') || segment.startsWith('~~~')) return segment;
+      return segment
+        .split(/(`[^`]*`)/g)
+        .map((part) => (part.startsWith('`') && part.endsWith('`') ? part : convert(part)))
+        .join('');
+    })
+    .join('');
 }
 
 export const Viewer: React.FC<ViewerProps> = ({ content, onNavigate, articles }) => {

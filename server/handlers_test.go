@@ -86,8 +86,8 @@ func TestHandleListArticles(t *testing.T) {
 	}
 
 	// After creating articles
-	_, _ = srv.Storage.SaveArticle("", "Alpha Article", "# Content", "", []string{"test"})
-	_, _ = srv.Storage.SaveArticle("", "Beta Article", "# Content", "", []string{"test"})
+	_, _ = srv.Storage.SaveArticle("", "Alpha Article", "# Content", "", "", "", "", []string{"test"}, "")
+	_, _ = srv.Storage.SaveArticle("", "Beta Article", "# Content", "", "", "", "", []string{"test"}, "")
 
 	req2 := httptest.NewRequest("GET", "/api/articles", nil)
 	w2 := httptest.NewRecorder()
@@ -122,7 +122,7 @@ func TestHandleGetArticle(t *testing.T) {
 	}
 
 	// Valid
-	_, _ = srv.Storage.SaveArticle("", "Test Page", "# Hello", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Test Page", "# Hello", "", "", "", "", nil, "")
 	req3 := httptest.NewRequest("GET", "/api/articles/test-page", nil)
 	req3.SetPathValue("slug", "test-page")
 	w3 := httptest.NewRecorder()
@@ -174,8 +174,8 @@ func TestHandleCreateArticle(t *testing.T) {
 		t.Errorf("duplicate: expected 409, got %d", w3.Code)
 	}
 
-	// New aiagent-* tags (non-plan/skill) are stripped
-	req4 := httptest.NewRequest("POST", "/api/articles", strings.NewReader(`{"title": "Protected Article", "content": "# Content", "tags": ["aiagent-memory-rules", "normal"]}`))
+	// Forged memory-scope tags are stripped on user creation; free tags pass through.
+	req4 := httptest.NewRequest("POST", "/api/articles", strings.NewReader(`{"title": "Protected Article", "content": "# Content", "tags": ["memory-rules", "normal"]}`))
 	w4 := httptest.NewRecorder()
 	srv.HandleCreateArticle(w4, req4)
 	if w4.Code != http.StatusCreated {
@@ -183,10 +183,12 @@ func TestHandleCreateArticle(t *testing.T) {
 	}
 	art, _ := srv.Storage.GetArticle("protected-article")
 	for _, tag := range art.Tags {
-		lower := strings.ToLower(tag)
-		if strings.HasPrefix(lower, "aiagent-") && lower != "aiagent-skill" && lower != "aiagent-plan" {
-			t.Errorf("new aiagent-* tag should be stripped, found: %s", tag)
+		if strings.HasPrefix(strings.ToLower(tag), "memory-") {
+			t.Errorf("forged memory-scope tag should be stripped, found: %s", tag)
 		}
+	}
+	if !contains(art.Tags, "normal") {
+		t.Errorf("expected free tag 'normal' to be preserved, got %v", art.Tags)
 	}
 }
 
@@ -229,7 +231,7 @@ func TestHandleUpdateArticle(t *testing.T) {
 	}
 
 	// Valid update (same title, no slug change)
-	_, _ = srv.Storage.SaveArticle("", "Update Me", "# v1", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Update Me", "# v1", "", "", "", "", nil, "")
 	req3 := httptest.NewRequest("PUT", "/api/articles/update-me", strings.NewReader(`{"title": "Update Me", "content": "# v2", "loaded_version": 1}`))
 	req3.SetPathValue("slug", "update-me")
 	w3 := httptest.NewRecorder()
@@ -278,7 +280,7 @@ func TestHandleUpdateArticleTags(t *testing.T) {
 	}
 
 	// Valid
-	_, _ = srv.Storage.SaveArticle("", "Taggable", "# content", "", []string{"old"})
+	_, _ = srv.Storage.SaveArticle("", "Taggable", "# content", "", "", "", "", []string{"old"}, "")
 	req3 := httptest.NewRequest("PATCH", "/api/articles/taggable/tags", strings.NewReader(`{"tags": ["new", "updated"], "loaded_version": 1}`))
 	req3.SetPathValue("slug", "taggable")
 	w3 := httptest.NewRecorder()
@@ -318,7 +320,7 @@ func TestHandleDeleteArticle(t *testing.T) {
 	}
 
 	// Valid delete
-	_, _ = srv.Storage.SaveArticle("", "Delete Me", "# bye", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Delete Me", "# bye", "", "", "", "", nil, "")
 	req3 := httptest.NewRequest("DELETE", "/api/articles/delete-me", nil)
 	req3.SetPathValue("slug", "delete-me")
 	w3 := httptest.NewRecorder()
@@ -363,7 +365,7 @@ func TestHandleGetArticleHistory(t *testing.T) {
 	}
 
 	// Valid: new article has minimal history
-	_, _ = srv.Storage.SaveArticle("", "History Page", "# v1", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "History Page", "# v1", "", "", "", "", nil, "")
 	req2 := httptest.NewRequest("GET", "/api/articles/history-page/history", nil)
 	req2.SetPathValue("slug", "history-page")
 	w2 := httptest.NewRecorder()
@@ -373,7 +375,7 @@ func TestHandleGetArticleHistory(t *testing.T) {
 	}
 
 	// After a second save, history contains versions
-	_, _ = srv.Storage.SaveArticle("history-page", "History Page", "# v2", "", nil)
+	_, _ = srv.Storage.SaveArticle("history-page", "History Page", "# v2", "", "", "", "", nil, "")
 	req3 := httptest.NewRequest("GET", "/api/articles/history-page/history", nil)
 	req3.SetPathValue("slug", "history-page")
 	w3 := httptest.NewRecorder()
@@ -413,8 +415,8 @@ func TestHandleGetArticleVersion(t *testing.T) {
 	}
 
 	// Valid: retrieve version 1 after two saves
-	_, _ = srv.Storage.SaveArticle("", "Versioned Page", "# v1 content", "", nil)
-	_, _ = srv.Storage.SaveArticle("versioned-page", "Versioned Page", "# v2 content", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Versioned Page", "# v1 content", "", "", "", "", nil, "")
+	_, _ = srv.Storage.SaveArticle("versioned-page", "Versioned Page", "# v2 content", "", "", "", "", nil, "")
 	req3 := httptest.NewRequest("GET", "/api/articles/versioned-page/versions/1", nil)
 	req3.SetPathValue("slug", "versioned-page")
 	req3.SetPathValue("version", "1")
@@ -455,8 +457,8 @@ func TestHandleRevertArticle(t *testing.T) {
 	}
 
 	// Valid revert
-	_, _ = srv.Storage.SaveArticle("", "Revertable", "# v1", "", nil)
-	_, _ = srv.Storage.SaveArticle("revertable", "Revertable", "# v2", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Revertable", "# v1", "", "", "", "", nil, "")
+	_, _ = srv.Storage.SaveArticle("revertable", "Revertable", "# v2", "", "", "", "", nil, "")
 	req4 := httptest.NewRequest("POST", "/api/articles/revertable/revert", strings.NewReader(`{"version": 1}`))
 	req4.SetPathValue("slug", "revertable")
 	w4 := httptest.NewRecorder()
@@ -477,9 +479,9 @@ func TestHandleDeleteTagGlobally(t *testing.T) {
 		t.Errorf("empty tag: expected 400, got %d", w.Code)
 	}
 
-	// Protected aiagent- tag
-	req2 := httptest.NewRequest("DELETE", "/api/tags/aiagent-plan", nil)
-	req2.SetPathValue("tag", "aiagent-plan")
+	// Protected tool-managed memory-scope tag
+	req2 := httptest.NewRequest("DELETE", "/api/tags/memory-nexwiki", nil)
+	req2.SetPathValue("tag", "memory-nexwiki")
 	w2 := httptest.NewRecorder()
 	srv.HandleDeleteTagGlobally(w2, req2)
 	if w2.Code != http.StatusForbidden {
@@ -487,7 +489,7 @@ func TestHandleDeleteTagGlobally(t *testing.T) {
 	}
 
 	// Valid tag deletion
-	_, _ = srv.Storage.SaveArticle("", "Tagged", "# content", "", []string{"removable"})
+	_, _ = srv.Storage.SaveArticle("", "Tagged", "# content", "", "", "", "", []string{"removable"}, "")
 	req3 := httptest.NewRequest("DELETE", "/api/tags/removable", nil)
 	req3.SetPathValue("tag", "removable")
 	w3 := httptest.NewRecorder()
@@ -622,10 +624,10 @@ func TestHandleGetWikiStats(t *testing.T) {
 	}
 
 	// Add articles with different tag categories
-	_, _ = srv.Storage.SaveArticle("", "Wiki Article", "# content", "", nil)
-	_, _ = srv.Storage.SaveArticle("", "Memory Article", "# content", "", []string{"aiagent-memory-rules"})
-	_, _ = srv.Storage.SaveArticle("", "Plan Article", "# content", "", []string{"aiagent-plan"})
-	_, _ = srv.Storage.SaveArticle("", "Skill Article", "# content", "", []string{"aiagent-skill"})
+	_, _ = srv.Storage.SaveArticle("", "Wiki Article", "# content", "", "", "", "", nil, "")
+	_, _ = srv.Storage.SaveArticle("", "Memory Article", "# content", "", "", "", "", []string{"aiagent-memory-rules"}, ContentTypeMemory)
+	_, _ = srv.Storage.SaveArticle("", "Plan Article", "# content", "", "", "", "", []string{"aiagent-plan"}, ContentTypePlan)
+	_, _ = srv.Storage.SaveArticle("", "Skill Article", "# content", "", "", "", "", []string{"aiagent-skill"}, ContentTypeSkill)
 
 	req2 := httptest.NewRequest("GET", "/api/stats", nil)
 	w2 := httptest.NewRecorder()
@@ -663,7 +665,7 @@ func TestHandleListSkillsAndGetSkill(t *testing.T) {
 	}
 
 	// Create skill article
-	_, _ = srv.Storage.SaveArticle("", "My Skill", "# A skill\n\nThis is what it does.", "", []string{"aiagent-skill", "utility"})
+	_, _ = srv.Storage.SaveArticle("", "My Skill", "# A skill\n\nThis is what it does.", "", "", "", "", []string{"aiagent-skill", "utility"}, ContentTypeSkill)
 
 	// List skills now includes the skill
 	req2 := httptest.NewRequest("GET", "/api/skills", nil)
@@ -690,7 +692,7 @@ func TestHandleListSkillsAndGetSkill(t *testing.T) {
 	}
 
 	// Get non-skill as skill
-	_, _ = srv.Storage.SaveArticle("", "Not A Skill", "# content", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Not A Skill", "# content", "", "", "", "", nil, "")
 	req4 := httptest.NewRequest("GET", "/api/skills/not-a-skill", nil)
 	req4.SetPathValue("slug", "not-a-skill")
 	w4 := httptest.NewRecorder()
@@ -720,7 +722,7 @@ func TestHandleGetSkillRaw(t *testing.T) {
 	}
 
 	// Non-skill article
-	_, _ = srv.Storage.SaveArticle("", "Plain Article", "# plain", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Plain Article", "# plain", "", "", "", "", nil, "")
 	req2 := httptest.NewRequest("GET", "/api/skills/plain-article/raw", nil)
 	req2.SetPathValue("slug", "plain-article")
 	w2 := httptest.NewRecorder()
@@ -730,7 +732,7 @@ func TestHandleGetSkillRaw(t *testing.T) {
 	}
 
 	// Valid skill raw
-	_, _ = srv.Storage.SaveArticle("", "Raw Skill", "# raw skill content", "", []string{"aiagent-skill"})
+	_, _ = srv.Storage.SaveArticle("", "Raw Skill", "# raw skill content", "", "", "", "", []string{"aiagent-skill"}, ContentTypeSkill)
 	req3 := httptest.NewRequest("GET", "/api/skills/raw-skill/raw", nil)
 	req3.SetPathValue("slug", "raw-skill")
 	w3 := httptest.NewRecorder()
@@ -816,10 +818,10 @@ func TestValidateAndCleanUserTags(t *testing.T) {
 		{"empty incoming", []string{}, nil, 0, "", ""},
 		{"normal tags", []string{"tag1", "tag2"}, nil, 2, "tag1", ""},
 		{"deduplication", []string{"tag1", "tag1"}, nil, 1, "tag1", ""},
-		{"new aiagent-memory stripped", []string{"aiagent-memory-rules", "normal"}, nil, 1, "normal", "aiagent-memory-rules"},
-		{"existing aiagent-memory preserved", []string{"aiagent-memory-rules", "normal"}, []string{"aiagent-memory-rules"}, 2, "aiagent-memory-rules", ""},
-		{"aiagent-skill always allowed", []string{"aiagent-skill"}, nil, 1, "aiagent-skill", ""},
-		{"aiagent-plan always allowed", []string{"aiagent-plan"}, nil, 1, "aiagent-plan", ""},
+		{"forged memory-scope stripped", []string{"memory-rules", "normal"}, nil, 1, "normal", "memory-rules"},
+		{"existing memory-scope preserved", []string{"memory-rules", "normal"}, []string{"memory-rules"}, 2, "memory-rules", ""},
+		{"legacy aiagent tag now a free tag", []string{"aiagent-skill"}, nil, 1, "aiagent-skill", ""},
+		{"status tag allowed", []string{"completed"}, nil, 1, "completed", ""},
 		{"whitespace trimmed", []string{"  tag1  ", "tag2"}, nil, 2, "tag1", ""},
 		{"empty string skipped", []string{"", "tag1"}, nil, 1, "tag1", ""},
 	}
@@ -890,7 +892,7 @@ func TestHandleUploadAsset(t *testing.T) {
 	}
 
 	// Create article to upload asset for
-	_, _ = srv.Storage.SaveArticle("", "Asset Article", "# content", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Asset Article", "# content", "", "", "", "", nil, "")
 
 	// Build a valid multipart form with an image
 	var body bytes.Buffer

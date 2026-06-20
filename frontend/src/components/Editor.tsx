@@ -29,6 +29,8 @@ import type { ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
 import { EditorView, keymap } from '@codemirror/view';
 import { linter } from '@codemirror/lint';
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { tags as t } from '@lezer/highlight';
 
 import { Slugify } from '../utils';
 import { Viewer } from './Viewer';
@@ -36,14 +38,19 @@ import { lintMarkdown } from '../utils/markdownLinter';
 import type { LintDiagnostic } from '../utils/markdownLinter';
 import { MarkdownSyntaxModal } from './MarkdownSyntaxModal';
 import { MarkdownLintErrorModal } from './MarkdownLintErrorModal';
-import type { Article } from '../types';
+import type { Article, ContentType } from '../types';
+import { ContentTypes } from '../types';
 
 interface EditorProps {
   initialTitle: string;
   initialContent: string;
   initialTags?: string[];
+  initialDescription?: string;
+  initialSource?: string;
+  initialResource?: string;
+  articleType?: ContentType;
   slug: string; // empty if new page
-  onSave: (title: string, content: string, editSummary: string, tags: string[]) => Promise<void>;
+  onSave: (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string) => Promise<void>;
   onCancel: () => void;
   articles: Article[];
   version?: number;
@@ -53,6 +60,10 @@ export const Editor: React.FC<EditorProps> = ({
   initialTitle,
   initialContent,
   initialTags,
+  initialDescription,
+  initialSource,
+  initialResource,
+  articleType,
   slug,
   onSave,
   onCancel,
@@ -61,6 +72,9 @@ export const Editor: React.FC<EditorProps> = ({
 }) => {
   const [title, setTitle] = useState(initialTitle);
   const [content, setContent] = useState(initialContent);
+  const [description, setDescription] = useState(initialDescription || '');
+  const [source, setSource] = useState(initialSource || '');
+  const [resource, setResource] = useState(initialResource || '');
   const [tags, setTags] = useState<string[]>(initialTags || []);
   const [tagInput, setTagInput] = useState('');
   const [viewMode, setViewMode] = useState<'split' | 'edit' | 'preview'>('split');
@@ -88,8 +102,10 @@ export const Editor: React.FC<EditorProps> = ({
   }
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
-  const isSkill = tags.some(tag => tag.toLowerCase() === 'aiagent-skill');
-  const isPlan = tags.some(tag => tag.toLowerCase() === 'aiagent-plan');
+  // Document class is carried by the OKF type (tool-assigned), shown as a read-only mode badge.
+  const resolvedType: ContentType = articleType || ContentTypes.Wiki;
+  const isSkill = resolvedType === ContentTypes.Skill;
+  const isPlan = resolvedType === ContentTypes.Plan;
 
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -154,8 +170,8 @@ export const Editor: React.FC<EditorProps> = ({
     const set = new Set<string>();
     articles.forEach(art => {
       art.tags?.forEach(tag => {
-        // Exclude system/protected tags starting with 'aiagent-'
-        if (!tag.toLowerCase().startsWith('aiagent-')) {
+        // Exclude tool-managed memory-scope tags from the user tag suggestions
+        if (!tag.toLowerCase().startsWith('memory-')) {
           set.add(tag);
         }
       });
@@ -260,6 +276,21 @@ export const Editor: React.FC<EditorProps> = ({
     });
   }, []);
 
+  // CSS-variable-driven Markdown syntax highlighting so tokens flip with light/dark automatically.
+  // (The @uiw default light HighlightStyle is disabled below via basicSetup.syntaxHighlighting=false.)
+  const highlightStyle = useMemo(() => {
+    return HighlightStyle.define([
+      { tag: t.heading, color: "var(--accent-primary)", fontWeight: "bold" },
+      { tag: t.strong, color: "var(--text-primary)", fontWeight: "bold" },
+      { tag: t.emphasis, color: "var(--text-secondary)", fontStyle: "italic" },
+      { tag: [t.link, t.url], color: "var(--accent-secondary)", textDecoration: "underline" },
+      { tag: t.monospace, color: "var(--accent-primary)" },
+      { tag: t.list, color: "var(--text-secondary)" },
+      { tag: t.quote, color: "var(--text-muted)" },
+      { tag: [t.meta, t.processingInstruction, t.contentSeparator], color: "var(--text-muted)" },
+    ]);
+  }, []);
+
   // Dynamic linter extension integrating with CodeMirror lint layer
   const codeMirrorLinter = useMemo(() => {
     return linter((view) => {
@@ -287,10 +318,11 @@ export const Editor: React.FC<EditorProps> = ({
     return [
       markdown(),
       editorTheme,
+      syntaxHighlighting(highlightStyle),
       shortcutKeymap,
       codeMirrorLinter
     ];
-  }, [editorTheme, shortcutKeymap, codeMirrorLinter]);
+  }, [editorTheme, highlightStyle, shortcutKeymap, codeMirrorLinter]);
 
   // Handle Image uploads
   const handleImageUpload = async (file: File) => {
@@ -397,7 +429,7 @@ export const Editor: React.FC<EditorProps> = ({
     setErrorMsg('');
 
     try {
-      await onSave(title.trim(), content, editSummary, tags);
+      await onSave(title.trim(), content, editSummary, tags, description.trim(), source.trim(), resource.trim());
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to save article.';
       setErrorMsg(msg);
@@ -423,6 +455,32 @@ export const Editor: React.FC<EditorProps> = ({
               required
               disabled={isSaving}
             />
+            <div className="flex flex-col sm:flex-row gap-1.5 mt-1">
+              <input
+                type="text"
+                placeholder="One-line description (shown in indexes)..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="flex-1 text-xs bg-transparent border-none outline-none text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
+                disabled={isSaving}
+              />
+              <input
+                type="text"
+                placeholder="Source (where the knowledge came from)..."
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+                className="flex-1 text-xs bg-transparent border-none outline-none text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
+                disabled={isSaving}
+              />
+              <input
+                type="text"
+                placeholder="Resource (canonical URI of the concept)..."
+                value={resource}
+                onChange={(e) => setResource(e.target.value)}
+                className="flex-1 text-xs bg-transparent border-none outline-none text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
+                disabled={isSaving}
+              />
+            </div>
             {title.trim() && (
               <div className="flex flex-col gap-1 mt-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500">
                 <div className="flex items-center gap-1.5">
@@ -464,19 +522,19 @@ export const Editor: React.FC<EditorProps> = ({
                     Tags:
                   </span>
                   {tags.map(tag => {
-                    const isAgentTag = tag.toLowerCase().startsWith('aiagent-');
-                    const isLockedTypeTag = tag.toLowerCase() === 'aiagent-skill' || tag.toLowerCase() === 'aiagent-plan';
+                    // Tool-managed memory-scope tags are locked (no class tags exist anymore).
+                    const isLockedScopeTag = tag.toLowerCase().startsWith('memory-');
                     return (
                       <span
                         key={tag}
                         className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium shadow-sm transition-all border ${
-                          isAgentTag
-                            ? 'bg-indigo-500/10 dark:bg-emerald-400/10 border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400 animate-pulse-subtle'
+                          isLockedScopeTag
+                            ? 'bg-indigo-500/10 dark:bg-emerald-400/10 border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400'
                             : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300'
                         }`}
                       >
                         {tag}
-                        {!isLockedTypeTag && (
+                        {!isLockedScopeTag && (
                           <button
                             type="button"
                             onClick={() => setTags(tags.filter(t => t !== tag))}
@@ -495,7 +553,7 @@ export const Editor: React.FC<EditorProps> = ({
                       value={tagInput}
                       onChange={(e) => {
                         const val = e.target.value;
-                        if (val.toLowerCase().startsWith('aiagent-')) return;
+                        if (val.toLowerCase().startsWith('memory-')) return;
                         setTagInput(val);
                       }}
                       onKeyDown={(e) => {
@@ -523,7 +581,7 @@ export const Editor: React.FC<EditorProps> = ({
                           e.preventDefault();
                           const cleanTag = tagInput.trim().replace(/,/g, '');
                           if (cleanTag && !tags.some(t => t.toLowerCase() === cleanTag.toLowerCase())) {
-                            if (cleanTag.toLowerCase().startsWith('aiagent-')) {
+                            if (cleanTag.toLowerCase().startsWith('memory-')) {
                               setTagInput('');
                               return;
                             }
@@ -794,6 +852,7 @@ export const Editor: React.FC<EditorProps> = ({
                 value={content}
                 onChange={(value) => setContent(value)}
                 extensions={extensions}
+                theme="none"
                 basicSetup={{
                   lineNumbers: true,
                   highlightActiveLineGutter: true,
@@ -803,7 +862,7 @@ export const Editor: React.FC<EditorProps> = ({
                   dropCursor: true,
                   allowMultipleSelections: false,
                   indentOnInput: true,
-                  syntaxHighlighting: true,
+                  syntaxHighlighting: false,
                   bracketMatching: true,
                   closeBrackets: true,
                   autocompletion: true,

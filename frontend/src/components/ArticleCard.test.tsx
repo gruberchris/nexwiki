@@ -10,7 +10,7 @@ const mockArt: Article = {
   title: 'Go Programming Guide',
   slug: 'go-programming-guide',
   created_at: '2024-01-01T00:00:00Z',
-  updated_at: '2024-01-15T12:00:00Z',
+  timestamp: '2024-01-15T12:00:00Z',
   version: 1,
   tags: ['golang', 'backend'],
 };
@@ -64,5 +64,16 @@ describe('ArticleCard', () => {
     const agentTagArt = { ...mockArt, tags: ['aiagent-plan', 'notes'] };
     const { container } = render(<ArticleCard art={agentTagArt} onNavigate={vi.fn()} statusTags={statusTags} />);
     expect(container.textContent).toContain('aiagent-plan');
+  });
+
+  it('renders the description when present', () => {
+    const describedArt = { ...mockArt, description: 'A concise guide to Go fundamentals' };
+    render(<ArticleCard art={describedArt} onNavigate={vi.fn()} statusTags={statusTags} />);
+    expect(screen.getByText('A concise guide to Go fundamentals')).toBeInTheDocument();
+  });
+
+  it('renders without a description', () => {
+    render(<ArticleCard art={mockArt} onNavigate={vi.fn()} statusTags={statusTags} />);
+    expect(screen.getByText('Go Programming Guide')).toBeInTheDocument();
   });
 });

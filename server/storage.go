@@ -15,19 +15,31 @@ import (
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
+	"gopkg.in/yaml.v3"
 )
 
-// Article represents a wiki article page, containing metadata in a front matter block and content body.
+// Article represents a wiki article page. On disk, it is a conformant OKF v0.1 concept
+// document: a real YAML front-matter block plus a Markdown content body. The OKF canonical
+// keys are type/title/description/resource/tags/timestamp; NexWiki's proprietary metadata
+// (slug, created_at, version, edit_summary, source, archived_at) rides as OKF custom keys.
 type Article struct {
+	Type        string    `json:"type"` // OKF doc-class: Wiki, AI-Agent-Memory, AI-Agent-Plan, or AI-Agent-Skill
 	Title       string    `json:"title"`
 	Slug        string    `json:"slug"`
 	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Timestamp   time.Time `json:"timestamp"` // Canonical modified-time (OKF), replaces updated_at
 	Content     string    `json:"content,omitempty"`
+	Description string    `json:"description,omitempty"`  // OKF one-line summary shown in indexes
+	Resource    string    `json:"resource,omitempty"`     // OKF canonical URI of what the concept *is*
+	Source      string    `json:"source,omitempty"`       // Provenance: where the knowledge *came from* (OKF citation)
 	Version     int       `json:"version,omitempty"`      // Version number
 	EditSummary string    `json:"edit_summary,omitempty"` // Summary of edits
-	Tags        []string  `json:"tags,omitempty"`         // Tags list
+	Tags        []string  `json:"tags,omitempty"`         // Tags list (system and free user tags)
 	ArchivedAt  time.Time `json:"archived_at,omitempty"`  // When the article was archived
+
+	// ContentPreview holds the first content line during metadata-only parses
+	// (used as a description fallback in indexes); never serialized.
+	ContentPreview string `json:"-"`
 }
 
 // Storage manages persistent article files and uploaded assets on disk.
@@ -158,7 +170,7 @@ func (s *Storage) ListArticles() ([]Article, error) {
 	// Sort articles: updated_at descending
 	for i := 0; i < len(articles); i++ {
 		for j := i + 1; j < len(articles); j++ {
-			if articles[i].UpdatedAt.Before(articles[j].UpdatedAt) {
+			if articles[i].Timestamp.Before(articles[j].Timestamp) {
 				articles[i], articles[j] = articles[j], articles[i]
 			}
 		}
@@ -187,7 +199,9 @@ func (s *Storage) GetArticle(slug string) (*Article, error) {
 }
 
 // SaveArticle writes article Markdown to disk, handling potential slug changes and compressing a copy in gzip version history.
-func (s *Storage) SaveArticle(oldSlug string, title string, content string, editSummary string, tags []string) (*Article, error) {
+// Description, source, and resource are written as given (callers preserve existing values by passing them through).
+// articleType sets the OKF document class; pass "" to preserve an existing article's type (or default a new one to Wiki).
+func (s *Storage) SaveArticle(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string) (*Article, error) {
 	newSlug := Slugify(title)
 	if newSlug == "" {
 		return nil, fmt.Errorf("article title must contain valid characters to generate a slug")
@@ -195,6 +209,8 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 
 	var art *Article
 	now := time.Now()
+	resolvedType := normalizeType(articleType) // empty/unknown → Wiki
+	renamedFromSlug := ""                      // set when a slug rename occurs, to heal inbound WikiLinks
 
 	// If updating an existing article
 	if oldSlug != "" {
@@ -205,12 +221,17 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 		if err == nil {
 			existingArt, parseErr := parseArticleFile(existingData, false)
 			if parseErr == nil {
+				// Preserve the existing document class unless the caller explicitly supplied one.
+				if articleType == "" {
+					resolvedType = existingArt.Type
+				}
 				art = &Article{
+					Type:       resolvedType,
 					Title:      title,
 					Slug:       newSlug,
 					CreatedAt:  existingArt.CreatedAt,
 					ArchivedAt: existingArt.ArchivedAt,
-					UpdatedAt:  now,
+					Timestamp:  now,
 					Content:    content,
 					Tags:       tags,
 				}
@@ -219,6 +240,7 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 
 		// If the slug has changed, rename files and move assets
 		if oldSlug != newSlug {
+			renamedFromSlug = oldSlug
 			newPath := filepath.Join(s.ArticleDir, newSlug+".md")
 			// Check if target slug already exists
 			if _, err := os.Stat(newPath); err == nil {
@@ -283,9 +305,7 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 		}
 	}
 
-	// Clean up newlines from edit summary to keep YAML parsing clean
-	editSummary = strings.ReplaceAll(editSummary, "\n", " ")
-	editSummary = strings.ReplaceAll(editSummary, "\r", "")
+	// YAML front matter handles escaping/multi-line values natively, so no value flattening is needed.
 	editSummary = strings.TrimSpace(editSummary)
 
 	if editSummary == "" {
@@ -299,16 +319,20 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 	// Create new article object if not populated above
 	if art == nil {
 		art = &Article{
+			Type:      resolvedType,
 			Title:     title,
 			Slug:      newSlug,
 			CreatedAt: now,
-			UpdatedAt: now,
+			Timestamp: now,
 			Content:   content,
 			Tags:      tags,
 		}
 	} else {
 		art.Tags = tags
 	}
+	art.Description = description
+	art.Source = source
+	art.Resource = resource
 
 	// Set ArchivedAt if the article is being tagged as archived for the first time
 	if art.ArchivedAt.IsZero() {
@@ -344,7 +368,37 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, edit
 		_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to index article '%s' in search engine: %v\n", newSlug, err)
 	}
 
+	// Best-effort link healing: when a slug changed, rewrite inbound WikiLinks so they keep
+	// resolving. Failures here are logged and never block the rename that already succeeded.
+	if renamedFromSlug != "" {
+		s.healRenamedLinks(renamedFromSlug, newSlug, art.Title)
+	}
+
 	return art, nil
+}
+
+// healRenamedLinks rewrites every article that links to oldSlug via a WikiLink so it points
+// at the renamed article's new title. Best-effort: any per-article failure is logged and skipped.
+func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
+	backlinks, err := s.GetBacklinks(oldSlug)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: link-heal scan failed after renaming '%s'→'%s': %v\n", oldSlug, newSlug, err)
+		return
+	}
+	for _, bl := range backlinks {
+		linker, err := s.GetArticle(bl.Slug)
+		if err != nil {
+			continue
+		}
+		rewritten, changed := RewriteWikiLinks(linker.Content, oldSlug, newTitle)
+		if !changed {
+			continue
+		}
+		summary := fmt.Sprintf("Auto-healed WikiLink: '%s' renamed to '%s'", oldSlug, newSlug)
+		if _, err := s.SaveArticle(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to heal links in '%s' after rename: %v\n", linker.Slug, err)
+		}
+	}
 }
 
 // DeleteArticle deletes the article's Markdown file, all its assets, and all version history on disk.
@@ -462,11 +516,29 @@ This wiki is built using **Go** for the backend server and **React + TypeScript 
 *   Click the **New Page** button in the sidebar or search index to create a new page.
 *   Try inserting a link to a new page using the double-bracket syntax: ` + "`" + `[[My Draft Page]]` + "`" + `. Click it to create the article on the fly!
 `
-	_, err = s.SaveArticle("", "Home", defaultHomeContent, "Initial version", nil)
+	_, err = s.SaveArticle("", "Home", defaultHomeContent, "", "", "", "Initial version", nil, ContentTypeWiki)
 	return err
 }
 
-// parseArticleFile parses front matter block and Markdown body using standard Go libraries.
+// articleFrontMatter is the on-disk OKF YAML front-matter schema. The field order here
+// determines the emitted key order: OKF canonical keys first, then NexWiki custom keys.
+// Times are stored as RFC3339 strings for stable, controlled formatting.
+type articleFrontMatter struct {
+	Type        string   `yaml:"type"`
+	Title       string   `yaml:"title"`
+	Slug        string   `yaml:"slug"`
+	Description string   `yaml:"description,omitempty"`
+	Resource    string   `yaml:"resource,omitempty"`
+	Tags        []string `yaml:"tags,omitempty"`
+	Timestamp   string   `yaml:"timestamp,omitempty"`
+	CreatedAt   string   `yaml:"created_at,omitempty"`
+	Version     int      `yaml:"version,omitempty"`
+	EditSummary string   `yaml:"edit_summary,omitempty"`
+	Source      string   `yaml:"source,omitempty"`
+	ArchivedAt  string   `yaml:"archived_at,omitempty"`
+}
+
+// parseArticleFile parses the OKF YAML front-matter block and Markdown body.
 func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 	// Normalize Windows line endings
 	str := strings.ReplaceAll(string(fileContent), "\r\n", "\n")
@@ -483,58 +555,37 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 	metaSection := parts[1]
 	bodySection := strings.TrimSpace(parts[2])
 
-	art := &Article{}
-	lines := strings.Split(metaSection, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		partsLine := strings.SplitN(line, ":", 2)
-		if len(partsLine) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(partsLine[0])
-		val := strings.TrimSpace(partsLine[1])
+	var fm articleFrontMatter
+	if err := yaml.Unmarshal([]byte(metaSection), &fm); err != nil {
+		return nil, fmt.Errorf("invalid format: front matter is not valid YAML: %w", err)
+	}
 
-		// Strip quotes if they were added (e.g., title: "Home Page")
-		val = strings.Trim(val, `"'`)
-
-		switch key {
-		case "title":
-			art.Title = val
-		case "slug":
-			art.Slug = val
-		case "created_at":
-			t, err := time.Parse(time.RFC3339, val)
-			if err == nil {
-				art.CreatedAt = t
-			}
-		case "updated_at":
-			t, err := time.Parse(time.RFC3339, val)
-			if err == nil {
-				art.UpdatedAt = t
-			}
-		case "version":
-			if v, err := strconv.Atoi(val); err == nil {
-				art.Version = v
-			}
-		case "edit_summary":
-			art.EditSummary = val
-		case "tags":
-			var tags []string
-			for _, t := range strings.Split(val, ",") {
-				t = strings.TrimSpace(t)
-				if t != "" {
-					tags = append(tags, t)
-				}
-			}
-			art.Tags = tags
-		case "archived_at":
-			t, err := time.Parse(time.RFC3339, val)
-			if err == nil {
-				art.ArchivedAt = t
-			}
+	art := &Article{
+		Type:        normalizeType(fm.Type),
+		Title:       fm.Title,
+		Slug:        fm.Slug,
+		Description: fm.Description,
+		Resource:    fm.Resource,
+		Source:      fm.Source,
+		Version:     fm.Version,
+		EditSummary: fm.EditSummary,
+	}
+	// Clean and copy the tag list (drop blanks).
+	for _, t := range fm.Tags {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			art.Tags = append(art.Tags, t)
+		}
+	}
+	if t, err := time.Parse(time.RFC3339, fm.CreatedAt); err == nil {
+		art.CreatedAt = t
+	}
+	if t, err := time.Parse(time.RFC3339, fm.Timestamp); err == nil {
+		art.Timestamp = t
+	}
+	if fm.ArchivedAt != "" {
+		if t, err := time.Parse(time.RFC3339, fm.ArchivedAt); err == nil {
+			art.ArchivedAt = t
 		}
 	}
 
@@ -545,31 +596,61 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 
 	if loadContent {
 		art.Content = bodySection
+	} else {
+		art.ContentPreview = extractContentPreview(bodySection)
 	}
 
 	return art, nil
 }
 
-// serializeFrontMatter converts article metadata into the front matter block.
+// extractContentPreview returns the first meaningful content line of a Markdown body,
+// stripped of heading markers and WikiLink brackets, truncated to 120 runes.
+func extractContentPreview(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#"))
+		if line == "" || line == "---" {
+			continue
+		}
+		line = strings.ReplaceAll(line, "[[", "")
+		line = strings.ReplaceAll(line, "]]", "")
+		runes := []rune(line)
+		if len(runes) > 120 {
+			return string(runes[:120]) + "..."
+		}
+		return line
+	}
+	return ""
+}
+
+// serializeFrontMatter converts article metadata into a conformant OKF YAML front-matter block.
 func serializeFrontMatter(art *Article) string {
-	var tagsStr string
-	if len(art.Tags) > 0 {
-		tagsStr = fmt.Sprintf("\ntags: %s", strings.Join(art.Tags, ", "))
+	fm := articleFrontMatter{
+		Type:        normalizeType(art.Type),
+		Title:       art.Title,
+		Slug:        art.Slug,
+		Description: art.Description,
+		Resource:    art.Resource,
+		Tags:        art.Tags,
+		Version:     art.Version,
+		EditSummary: art.EditSummary,
+		Source:      art.Source,
 	}
-	var archivedAtStr string
+	if !art.Timestamp.IsZero() {
+		fm.Timestamp = art.Timestamp.Format(time.RFC3339)
+	}
+	if !art.CreatedAt.IsZero() {
+		fm.CreatedAt = art.CreatedAt.Format(time.RFC3339)
+	}
 	if !art.ArchivedAt.IsZero() {
-		archivedAtStr = fmt.Sprintf("\narchived_at: %s", art.ArchivedAt.Format(time.RFC3339))
+		fm.ArchivedAt = art.ArchivedAt.Format(time.RFC3339)
 	}
-	return fmt.Sprintf("---\ntitle: %s\nslug: %s\ncreated_at: %s\nupdated_at: %s\nversion: %d\nedit_summary: %s%s%s\n---\n",
-		art.Title,
-		art.Slug,
-		art.CreatedAt.Format(time.RFC3339),
-		art.UpdatedAt.Format(time.RFC3339),
-		art.Version,
-		art.EditSummary,
-		tagsStr,
-		archivedAtStr,
-	)
+
+	out, err := yaml.Marshal(&fm)
+	if err != nil {
+		// yaml.Marshal of a plain struct does not realistically fail; fall back to a minimal block.
+		return fmt.Sprintf("---\ntype: %s\ntitle: %s\nslug: %s\n---\n", fm.Type, fm.Title, fm.Slug)
+	}
+	return "---\n" + string(out) + "---\n"
 }
 
 // IndexArticle adds or updates a single article inside the Bleve search index.
@@ -634,7 +715,7 @@ type SearchResult struct {
 	Title     string    `json:"title"`
 	Slug      string    `json:"slug"`
 	Score     float64   `json:"score"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Timestamp time.Time `json:"timestamp"`
 	Snippets  []string  `json:"snippets"`
 	Tags      []string  `json:"tags,omitempty"`
 }
@@ -662,8 +743,10 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 		return nil, fmt.Errorf("bleve search failed: %w", err)
 	}
 
-	// Check if the query explicitly mentions "aiagent-" (case-insensitive)
-	allowAgentMemories := strings.Contains(strings.ToLower(queryStr), "aiagent-")
+	queryLower := strings.ToLower(queryStr)
+	// A query that names the agent doc-class (legacy 'aiagent-' or the OKF 'ai-agent' type)
+	// globally opts every agent document back into the results.
+	allowAgentDocs := strings.Contains(queryLower, "aiagent") || strings.Contains(queryLower, "ai-agent")
 
 	var results []SearchResult
 	for _, hit := range searchResults.Hits {
@@ -688,63 +771,31 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 				}
 			}
 		}
-		if isArchived && !strings.Contains(strings.ToLower(queryStr), "archived") {
+		if isArchived && !strings.Contains(queryLower, "archived") {
 			continue
 		}
 
-		// Filter out articles with agent tags (starting with "aiagent-") unless explicitly requested
-		if !allowAgentMemories {
-			hasAgentTag := false
-			isSkill := false
-			isPlan := false
-			isMemory := false
-			var agentTags []string
+		// Filter out agent documents (memories/plans/skills, by OKF type) unless explicitly requested.
+		if !allowAgentDocs && art.Type != ContentTypeWiki {
+			bypass := false
 
-			for _, tag := range art.Tags {
-				tagLower := strings.ToLower(tag)
-				if strings.HasPrefix(tagLower, "aiagent-") {
-					hasAgentTag = true
-					agentTags = append(agentTags, tagLower)
-					if tagLower == "aiagent-skill" {
-						isSkill = true
-					} else if tagLower == "aiagent-plan" {
-						isPlan = true
-					} else if strings.HasPrefix(tagLower, "aiagent-memory") {
-						isMemory = true
-					}
+			// 1. Explicitly searching for the doc by slug/title name (exact match)
+			if strings.EqualFold(art.Slug, queryStr) || strings.EqualFold(art.Title, queryStr) {
+				bypass = true
+			} else {
+				// 2. Or the query references the doc-class by name.
+				switch art.Type {
+				case ContentTypeSkill:
+					bypass = strings.Contains(queryLower, "skill")
+				case ContentTypePlan:
+					bypass = strings.Contains(queryLower, "plan")
+				case ContentTypeMemory:
+					bypass = strings.Contains(queryLower, "memory") || strings.Contains(queryLower, "memories")
 				}
 			}
 
-			if hasAgentTag {
-				bypass := false
-				queryLower := strings.ToLower(queryStr)
-
-				// 1. Explicitly searching for them by slug/title name (exact match)
-				if strings.EqualFold(art.Slug, queryStr) || strings.EqualFold(art.Title, queryStr) {
-					bypass = true
-				} else {
-					// 2. Or searching by explicit aiagent- tag names
-					for _, aTag := range agentTags {
-						if strings.Contains(queryLower, aTag) {
-							bypass = true
-							break
-						}
-					}
-					// 3. Or if the query includes "aiagent-skill" for skills, "aiagent-plan" for plans, or "aiagent-memory" for memories
-					if !bypass {
-						if isSkill && (strings.Contains(queryLower, "aiagent-skill") || strings.Contains(queryLower, "skill")) {
-							bypass = true
-						} else if isPlan && (strings.Contains(queryLower, "aiagent-plan") || strings.Contains(queryLower, "plan")) {
-							bypass = true
-						} else if isMemory && strings.Contains(queryLower, "aiagent-memory") {
-							bypass = true
-						}
-					}
-				}
-
-				if !bypass {
-					continue
-				}
+			if !bypass {
+				continue
 			}
 		}
 
@@ -769,7 +820,7 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 			Title:     art.Title,
 			Slug:      art.Slug,
 			Score:     hit.Score,
-			UpdatedAt: art.UpdatedAt,
+			Timestamp: art.Timestamp,
 			Snippets:  snippets,
 			Tags:      art.Tags,
 		})
@@ -880,7 +931,7 @@ func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 	}
 
 	summary := fmt.Sprintf("Reverted to version %d", version)
-	return s.SaveArticle(slug, histArt.Title, histArt.Content, summary, histArt.Tags)
+	return s.SaveArticle(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, histArt.Tags, histArt.Type)
 }
 
 // UpdateArticleTags updates only the tag array for an article without modifying the title or content.
@@ -898,7 +949,7 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 		editSummary = "Updated article tags"
 	}
 
-	return s.SaveArticle(slug, art.Title, art.Content, editSummary, tags)
+	return s.SaveArticle(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, tags, art.Type)
 }
 
 // Close releases resources held by the Storage, including the Bleve search index.
@@ -961,11 +1012,11 @@ func (s *Storage) CleanupArchivedArticles() error {
 }
 
 // DeleteTagGlobally removes a tag from all articles in the wiki.
-// Enforces validation: it returns an error if the tag is protected (starts with "aiagent-").
+// Enforces validation: it returns an error if the tag is a tool-managed memory-scope tag.
 func (s *Storage) DeleteTagGlobally(tag string) error {
 	tagLower := strings.ToLower(tag)
-	if strings.HasPrefix(tagLower, "aiagent-") {
-		return fmt.Errorf("cannot delete protected AI agent tag: %s", tag)
+	if strings.HasPrefix(tagLower, MemoryScopeTagPrefix) {
+		return fmt.Errorf("cannot delete protected memory-scope tag: %s", tag)
 	}
 
 	articles, err := s.ListArticles()
@@ -992,7 +1043,7 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 			// Remove the tag
 			newTags := append(art.Tags[:tagIndex], art.Tags[tagIndex+1:]...)
 			// Save the updated article
-			_, err = s.SaveArticle(art.Slug, art.Title, art.Content, fmt.Sprintf("Removed tag '%s' globally", tag), newTags)
+			_, err = s.SaveArticle(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type)
 			if err != nil {
 				return fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
 			}

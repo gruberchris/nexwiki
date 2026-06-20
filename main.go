@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 //go:embed frontend/dist/*
@@ -33,7 +34,14 @@ func main() {
 	wikiName := flag.String("name", "NexWiki", "The custom name/title of your wiki displayed in the UI")
 	theme := flag.String("theme", "default", "The default theme of your wiki")
 	themeScheduling := flag.Bool("theme-scheduling", false, "Enable opt-in seasonal theme scheduling auto-swaps")
+	mcpOnly := flag.Bool("mcp-only", false, "Run as a pure stdio MCP server (skip the web port bind entirely)")
 	flag.Parse()
+
+	// NEXWIKI_MCP_ONLY env overrides the flag (e.g., set in a Claude Desktop spawn config).
+	mcpOnlyMode := *mcpOnly
+	if envMCP := os.Getenv("NEXWIKI_MCP_ONLY"); envMCP != "" {
+		mcpOnlyMode = envMCP == "true" || envMCP == "1"
+	}
 
 	// Environment variable NEXWIKI_NAME takes precedence over command line flag
 	name := *wikiName
@@ -70,6 +78,40 @@ func main() {
 	// Initialize server instance with configured name, theme, event bus, and scheduling settings
 	srv := server.NewServer(storage, name, defaultTheme, themeSchedulingEnabled, eventBus, Version, *port)
 
+	// In -MCP-only mode, this process never binds the web port. Check if a web server is already running:
+	//   - web server running → this is a sidecar; it forwards events to the web server so only one
+	//     process ever writes the activity log file.
+	//   - no web server → run standalone and persist the activity log directly from this process.
+	// In normal mode, this process always runs the web server itself (it binds the port or halts below).
+	if mcpOnlyMode && probeForPrimary(*port) {
+		srv.IsSecondaryProcess = true
+		log.Printf("-mcp-only: web server detected on port %s; forwarding activity events to it.", *port)
+	} else if mcpOnlyMode {
+		log.Printf("-mcp-only: no web server detected; running standalone and persisting activity directly.")
+	}
+
+	// Persist activity events durably to data/activity.jsonl.
+	// When running as a mcp-only sidecar alongside a web server, events are forwarded via HTTP
+	// instead of written here — this prevents two processes writing the same file concurrently.
+	if activityLog, err := server.OpenActivityLog(*dataDir); err != nil {
+		log.Printf("Warning: activity log persistence disabled: %v", err)
+	} else {
+		eventBus.SetPersist(func(ev server.LogEvent) {
+			if !srv.IsSecondaryProcess {
+				if err := activityLog.Append(ev); err != nil {
+					log.Printf("Warning: failed to persist activity event: %v", err)
+				}
+			}
+		})
+	}
+
+	// In -mcp-only mode, run the stdio MCP server in the foreground and never bind the web port.
+	if mcpOnlyMode {
+		log.Printf("Running in stdio MCP-only mode (no web server). All MCP tools operate against the in-process storage layer.")
+		srv.StartMCPServer() // blocks until stdin EOF
+		return
+	}
+
 	// Spin up the stdio MCP JSON-RPC server in a background goroutine!
 	go srv.StartMCPServer()
 
@@ -92,13 +134,17 @@ func main() {
 	mux.HandleFunc("DELETE /api/articles/{slug}", srv.HandleDeleteArticle)
 	mux.HandleFunc("POST /api/articles/{slug}/assets", srv.HandleUploadAsset)
 	mux.HandleFunc("GET /api/assets/{slug}/{filename}", srv.HandleGetAsset)
+	mux.HandleFunc("GET /api/articles/{slug}/backlinks", srv.HandleGetBacklinks)
 	mux.HandleFunc("GET /api/articles/{slug}/history", srv.HandleGetArticleHistory)
 	mux.HandleFunc("GET /api/articles/{slug}/history/{version}", srv.HandleGetArticleVersion)
 	mux.HandleFunc("POST /api/articles/{slug}/revert", srv.HandleRevertArticle)
 	mux.HandleFunc("DELETE /api/tags/{tag}", srv.HandleDeleteTagGlobally)
 	mux.HandleFunc("GET /api/activity/stream", srv.HandleActivityStream)
+	mux.HandleFunc("GET /api/activity/log", srv.HandleGetActivityLog)
 	mux.HandleFunc("POST /api/activity/log", srv.HandlePostActivityLog)
 	mux.HandleFunc("GET /api/wiki/stats", srv.HandleGetWikiStats)
+	mux.HandleFunc("GET /api/okf/export", srv.HandleExportOKFBundle)
+	mux.HandleFunc("POST /api/okf/import", srv.HandleImportOKFBundle)
 
 	// Register AI Skills registry endpoints
 	mux.HandleFunc("GET /api/skills", srv.HandleListSkills)
@@ -136,14 +182,27 @@ func main() {
 	addr := fmt.Sprintf(":%s", *port)
 	log.Printf("NexWiki web server is running on http://localhost%s", addr)
 
+	// Bind-or-halt: a normal launch IS the web server. If the port is already in use or
+	// misconfigured, it halts rather than silently falling back. To run a stdio MCP server
+	// alongside an already-running web server, use -mcp-only instead.
 	if err := http.ListenAndServe(addr, handler); err != nil {
-		// If port is already in use, don't crash in case we are running as a secondary stdio MCP server!
-		log.Printf("Web server ListenAndServe notice: %v", err)
-		log.Printf("Continuing execution for Stdio MCP server loop...")
-		srv.IsSecondaryProcess = true
-		// Keep the process alive so the background Stdio server continues handling agent requests!
-		select {}
+		log.Fatalf("Fatal: could not bind web server to %s: %v\nIf you intended to run a stdio MCP server alongside an existing web server, relaunch with the -mcp-only flag (or NEXWIKI_MCP_ONLY=true).", addr, err)
 	}
+}
+
+// probeForPrimary reports whether a NexWiki web server is already running on the given port,
+// by issuing a short GET /api/config against the loopback interface.
+func probeForPrimary(port string) bool {
+	if port == "" {
+		port = "8080"
+	}
+	client := &http.Client{Timeout: 750 * time.Millisecond}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%s/api/config", port))
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // SPAFrontendHandler serves static files from the React build directory,

@@ -43,7 +43,7 @@ describe('SearchResults', () => {
         title: 'Go Guide',
         slug: 'go-guide',
         score: 0.95,
-        updated_at: '2024-01-15T00:00:00Z',
+        timestamp: '2024-01-15T00:00:00Z',
         snippets: ['A **guide** for Go programming'],
       },
     ];
@@ -64,7 +64,7 @@ describe('SearchResults', () => {
   it('calls onNavigate when result is clicked', async () => {
     const onNavigate = vi.fn();
     const mockResults = [
-      { title: 'Go Guide', slug: 'go-guide', score: 0.9, updated_at: '2024-01-15T00:00:00Z', snippets: [] },
+      { title: 'Go Guide', slug: 'go-guide', score: 0.9, timestamp: '2024-01-15T00:00:00Z', snippets: [] },
     ];
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,

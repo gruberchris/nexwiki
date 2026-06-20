@@ -1,9 +1,12 @@
 package server
 
 import (
-	"strings"
 	"time"
 )
+
+// MemoryScopeTagPrefix marks the scope facet of an AI Agent Memory (e.g. "memory-nexwiki").
+// The document class itself is carried by the OKF `type` field, not by tags.
+const MemoryScopeTagPrefix = "memory-"
 
 // LogEvent represents an entry in the live activity log (MCP tool or REST API call).
 type LogEvent struct {
@@ -28,19 +31,16 @@ type WikiUpdate struct {
 	DirectoryCount int      `json:"directory_count"`
 }
 
-// getArticleDirectory maps a list of tags to a UI category bucket name.
-func getArticleDirectory(tags []string) string {
-	for _, tag := range tags {
-		lowerTag := strings.ToLower(tag)
-		if strings.HasPrefix(lowerTag, "aiagent-memory") {
-			return "aimemories"
-		}
-		if lowerTag == "aiagent-plan" {
-			return "aiplans"
-		}
-		if lowerTag == "aiagent-skill" {
-			return "aiskills"
-		}
+// getArticleDirectory maps a document's OKF `type` to a UI category bucket name.
+func getArticleDirectory(articleType string) string {
+	switch normalizeType(articleType) {
+	case ContentTypeMemory:
+		return "aimemories"
+	case ContentTypePlan:
+		return "aiplans"
+	case ContentTypeSkill:
+		return "aiskills"
+	default:
+		return "wiki"
 	}
-	return "wiki"
 }

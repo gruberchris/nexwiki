@@ -15,7 +15,7 @@ func TestArchivedTagFunctionality(t *testing.T) {
 	t.Cleanup(func() { _ = storage.Close() })
 
 	// 1. Test saving article with archived tag
-	article, err := storage.SaveArticle("", "Archived Page", "# Archived Content", "Initial commit", []string{"archived"})
+	article, err := storage.SaveArticle("", "Archived Page", "# Archived Content", "", "", "", "Initial commit", []string{"archived"}, "")
 	if err != nil {
 		t.Fatalf("SaveArticle failed: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestArchivedTagFunctionality(t *testing.T) {
 	}
 
 	// 4. Test updating article tags to add the archived tag
-	article2, err := storage.SaveArticle("", "Another Page", "# Another Content", "Initial commit", []string{"draft"})
+	article2, err := storage.SaveArticle("", "Another Page", "# Another Content", "", "", "", "Initial commit", []string{"draft"}, "")
 	if err != nil {
 		t.Fatalf("SaveArticle failed: %v", err)
 	}

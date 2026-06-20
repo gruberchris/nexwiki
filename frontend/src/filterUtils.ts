@@ -4,7 +4,8 @@ import type { LogEvent } from './context/SSEContextObject';
 export function getTagPriority(tag: string, statusTags: Set<string>): number {
   const lower = tag.toLowerCase();
   if (statusTags.has(lower)) return 0;
-  if (lower.startsWith('aiagent-')) return 2;
+  // Tool-managed memory-scope tags sort after free user tags (the doc class lives in `type`).
+  if (lower.startsWith('memory-')) return 2;
   return 1;
 }
 
@@ -303,7 +304,7 @@ export function buildSuggestionsFromArticles(articles: Article[], searchTerm: st
     if (art.tags) {
       art.tags.forEach(tag => {
         const lowerTag = tag.toLowerCase();
-        if (!lowerTag.startsWith('aiagent-') &&
+        if (!lowerTag.startsWith('memory-') &&
             lowerTag.includes(lowerSearch) &&
             !seenValues.has(tag)) {
           seenValues.add(tag);

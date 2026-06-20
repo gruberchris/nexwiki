@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { Slugify, formatRelativeTime, generateDocxContent, formatThemeName } from './utils';
+import { Slugify, formatRelativeTime, formatActivityTimestamp, generateDocxContent, formatThemeName } from './utils';
 
 describe('Slugify', () => {
   it('returns empty string for empty/falsy input', () => {
@@ -143,5 +143,26 @@ describe('generateDocxContent', () => {
   it('includes lang="en" on html element', () => {
     const result = generateDocxContent('Title', 'Body');
     expect(result).toContain('lang="en"');
+  });
+});
+
+describe('formatActivityTimestamp', () => {
+  it('labels today with "Today,"', () => {
+    const now = new Date();
+    expect(formatActivityTimestamp(now.toISOString())).toMatch(/^Today, /);
+  });
+
+  it('labels yesterday with "Yesterday,"', () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    expect(formatActivityTimestamp(d.toISOString())).toMatch(/^Yesterday, /);
+  });
+
+  it('labels older dates with a month/day and time', () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 10);
+    const out = formatActivityTimestamp(d.toISOString());
+    expect(out).not.toMatch(/^Today|^Yesterday/);
+    expect(out).toMatch(/,/); // "Mon D, h:mm AM"
   });
 });

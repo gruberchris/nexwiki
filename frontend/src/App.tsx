@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import type { Article, ThemeMode } from './types';
+import { ContentTypes, isAgentDoc, isSkill, isPlan, typeLabel } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Viewer } from './components/Viewer';
+import { BacklinksPanel } from './components/BacklinksPanel';
 import { Editor } from './components/Editor';
 import { TOC } from './components/TOC';
 import { Hero } from './components/Hero';
@@ -151,20 +153,19 @@ export const App: React.FC = () => {
     if (routeInfo.route === 'new') {
       setEditorSlug('');
       
-      let initialTags: string[];
+      // Reserved AI-Agent-* types are assigned only by the agent tools, so UI-created documents are
+      // always Wiki articles. The plan/skill scaffolds remain as content templates without class tags.
+      const initialTags: string[] = [];
       let defaultContent: string;
       let defaultTitle = routeInfo.prefillTitle || '';
-      
+
       if (routeInfo.prefillType === 'plan') {
-        initialTags = ['aiagent-plan'];
         defaultContent = `# New Collaborative Plan\n\n## Overview\nProvide a description of the goal and milestones.\n\n## Tasks\n- [ ] Task 1: Audit codebase\n- [ ] Task 2: Implement core logic\n- [ ] Task 3: Run validation tests`;
         if (!defaultTitle) defaultTitle = 'New Collaborative Plan';
       } else if (routeInfo.prefillType === 'skill') {
-        initialTags = ['aiagent-skill'];
         defaultContent = `# New Custom AI Skill\n\n## Overview\nGuides the agent on how to perform a specialized task.\n\n## When to Use\nDescribe the triggers for this skill.\n\n## Instructions\n1. Step 1\n2. Step 2`;
         if (!defaultTitle) defaultTitle = 'New Custom AI Skill';
       } else {
-        initialTags = [];
         if (!defaultTitle) defaultTitle = 'New Page';
         defaultContent = '# ' + defaultTitle + '\n\nStart typing content here...';
       }
@@ -457,14 +458,17 @@ export const App: React.FC = () => {
   };
 
   // CRUD: Saving Article edits/creates
-  const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[]) => {
+  const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string) => {
     const targetSlug = editorSlug; // empty if new
     const isNew = targetSlug === '';
     const newComputedSlug = Slugify(title);
 
-    const payload = { 
-      title, 
+    const payload = {
+      title,
       content,
+      description,
+      source,
+      resource,
       edit_summary: editSummary,
       loaded_version: currentArticle ? currentArticle.version : 0,
       tags
@@ -765,6 +769,10 @@ export const App: React.FC = () => {
           initialTitle={editorTitle}
           initialContent={editorContent}
           initialTags={editorSlug === '' ? editorTags : (currentArticle ? currentArticle.tags : [])}
+          initialDescription={editorSlug !== '' && currentArticle ? currentArticle.description : ''}
+          initialSource={editorSlug !== '' && currentArticle ? currentArticle.source : ''}
+          initialResource={editorSlug !== '' && currentArticle ? currentArticle.resource : ''}
+          articleType={editorSlug !== '' && currentArticle ? currentArticle.type : undefined}
           slug={editorSlug}
           onSave={handleSaveArticle}
           onCancel={() => {
@@ -792,7 +800,7 @@ export const App: React.FC = () => {
           wikiName={wikiName}
         />
       ) : routeInfo.route === '404' ? (
-        // 404 Page Template
+        // 404-Page Template
         <div className="flex-1 h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950/40 p-8 select-none">
           <BookOpen size={48} className="text-slate-300 dark:text-slate-700 animate-bounce mb-4" />
           <h1 className="text-2xl font-black text-slate-800 dark:text-white">Page Not Found</h1>
@@ -847,64 +855,67 @@ export const App: React.FC = () => {
                         {copiedTitle ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
                       </button>
                     </div>
+                    {currentArticle.description && (
+                      <p className="text-sm text-slate-500 dark:text-slate-400 leading-snug">
+                        {currentArticle.description}
+                      </p>
+                    )}
+                    {currentArticle.source && (
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                        Source:{' '}
+                        {/^https?:\/\//i.test(currentArticle.source) ? (
+                          <a
+                            href={currentArticle.source}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-indigo-500 dark:text-indigo-400 hover:underline break-all"
+                          >
+                            {currentArticle.source}
+                          </a>
+                        ) : (
+                          <span className="break-all">{currentArticle.source}</span>
+                        )}
+                      </p>
+                    )}
                     <div className="flex flex-wrap gap-4 text-[10px] text-slate-400 dark:text-slate-500 font-semibold tracking-wide uppercase">
                       <span className="flex items-center gap-1">
                         <Calendar size={11} className="text-indigo-400" />
                         Created {formatDate(currentArticle.created_at)}
                       </span>
-                      {currentArticle.updated_at && currentArticle.updated_at !== currentArticle.created_at && (
+                      {currentArticle.timestamp && currentArticle.timestamp !== currentArticle.created_at && (
                         <span className="flex items-center gap-1">
                           <Clock size={11} className="text-emerald-400" />
-                          V{currentArticle.version || 1} Edited {formatDate(currentArticle.updated_at)}
+                          V{currentArticle.version || 1} Edited {formatDate(currentArticle.timestamp)}
                         </span>
                       )}
                     </div>
-                    {/* Visual Tag Badges */}
-                    {currentArticle.tags && currentArticle.tags.length > 0 && (
+                    {/* Read-only type badge + tag badges */}
+                    {(isAgentDoc(currentArticle) || (currentArticle.tags && currentArticle.tags.length > 0)) && (
                       <div className="flex flex-wrap gap-1.5 mt-3 select-none">
-                        {currentArticle.tags.map(tag => {
-                          const tagLower = tag.toLowerCase();
-                          const isSkillTag = tagLower === 'aiagent-skill';
-                          const isAgentTag = tagLower.startsWith('aiagent-');
-                          
-                          if (isSkillTag) {
-                            return (
-                              <span 
-                                key={tag}
-                                title="Registered AI Agent Skill Tag"
-                                className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 dark:bg-indigo-400/10 border border-indigo-500/30 dark:border-indigo-400/30 text-indigo-650 dark:text-indigo-450 shadow-sm shadow-indigo-100/30 dark:shadow-none animate-pulse-subtle"
-                              >
-                                <Wrench size={10} className="text-indigo-550 dark:text-indigo-400 shrink-0" />
-                                {tag}
-                              </span>
-                            );
-                          }
-
-                          const isPlanTag = tagLower === 'aiagent-plan';
-                          if (isPlanTag) {
-                            return (
-                              <span 
-                                key={tag}
-                                title="Registered AI Agent Plan Tag"
-                                className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/10 dark:bg-emerald-400/10 border border-emerald-500/30 dark:border-emerald-400/30 text-emerald-650 dark:text-emerald-450 shadow-sm shadow-emerald-100/30 dark:shadow-none animate-pulse-subtle"
-                              >
-                                <ClipboardList size={10} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
-                                {tag}
-                              </span>
-                            );
-                          }
-
-                          return isAgentTag ? (
-                            <span 
+                        {isAgentDoc(currentArticle) && (
+                          <span
+                            title="Document type (set by the agent tools)"
+                            className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 dark:bg-emerald-400/10 border border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400 shadow-sm"
+                          >
+                            {currentArticle.type === ContentTypes.Skill ? <Wrench size={10} className="shrink-0" />
+                              : currentArticle.type === ContentTypes.Plan ? <ClipboardList size={10} className="shrink-0" />
+                              : <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-emerald-400"></span>}
+                            {typeLabel(currentArticle.type)}
+                          </span>
+                        )}
+                        {currentArticle.tags && currentArticle.tags.map(tag => {
+                          const isScopeTag = tag.toLowerCase().startsWith('memory-');
+                          return isScopeTag ? (
+                            <span
                               key={tag}
-                              title="Protected AI Agent Memory Tag"
-                              className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 dark:bg-emerald-400/10 border border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400 shadow-sm shadow-indigo-100/50 dark:shadow-none animate-pulse"
+                              title="Tool-managed memory-scope tag"
+                              className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 dark:bg-emerald-400/10 border border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400 shadow-sm"
                             >
-                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-emerald-400 animate-ping"></span>
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-emerald-400"></span>
                               {tag}
                             </span>
                           ) : (
-                            <span 
+                            <span
                               key={tag}
                               className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 shadow-sm"
                             >
@@ -1005,7 +1016,7 @@ export const App: React.FC = () => {
 
                 {/* Rendered Markdown Body Content */}
                 <div className="pb-16 animate-fade-in space-y-6">
-                  {currentArticle.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill') && (
+                  {isSkill(currentArticle) && (
                     <div className="p-5 rounded-2xl bg-gradient-to-tr from-indigo-500/5 to-purple-500/5 border border-indigo-500/25 dark:border-indigo-500/15 text-slate-700 dark:text-slate-300 shadow-sm flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between no-print select-none backdrop-blur-sm">
                       <div className="flex items-center gap-3">
                         <div className="p-2 rounded-xl bg-indigo-500/10 dark:bg-indigo-400/10 text-indigo-600 dark:text-indigo-400 animate-pulse shrink-0">
@@ -1041,7 +1052,7 @@ export const App: React.FC = () => {
                     </div>
                   )}
 
-                  {currentArticle.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan') && (
+                  {isPlan(currentArticle) && (
                     <div className="p-5 rounded-2xl bg-gradient-to-tr from-emerald-500/5 to-teal-500/5 border border-emerald-500/25 dark:border-emerald-500/15 text-slate-700 dark:text-slate-300 shadow-sm flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between no-print select-none backdrop-blur-sm animate-fade-in">
                       <div className="flex items-center gap-3">
                         <div className="p-2 rounded-xl bg-emerald-500/10 dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-400 animate-pulse shrink-0">
@@ -1064,6 +1075,8 @@ export const App: React.FC = () => {
                     onNavigate={handleNavigate}
                     articles={articles}
                   />
+
+                  <BacklinksPanel slug={currentArticle.slug} onNavigate={handleNavigate} />
                 </div>
               </article>
             ) : (

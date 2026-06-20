@@ -213,10 +213,10 @@ describe('getTagPriority', () => {
     expect(getTagPriority('WIP', statusTags)).toBe(0);
   });
 
-  it('returns 2 for aiagent- prefixed tags', () => {
-    expect(getTagPriority('aiagent-plan', statusTags)).toBe(2);
-    expect(getTagPriority('aiagent-memory-rules', statusTags)).toBe(2);
-    expect(getTagPriority('AIAGENT-SKILL', statusTags)).toBe(2);
+  it('returns 2 for memory-scope tags', () => {
+    expect(getTagPriority('memory-nexwiki', statusTags)).toBe(2);
+    expect(getTagPriority('memory-docker', statusTags)).toBe(2);
+    expect(getTagPriority('MEMORY-RULES', statusTags)).toBe(2);
   });
 
   it('returns 1 for regular tags', () => {
@@ -232,11 +232,11 @@ describe('getTagPriority', () => {
 describe('sortCardTags', () => {
   const statusTags = new Set(['completed', 'wip', 'draft']);
 
-  it('sorts status tags first, regular second, aiagent- last', () => {
-    const tags = ['golang', 'aiagent-plan', 'completed', 'backend'];
+  it('sorts status tags first, regular second, memory-scope last', () => {
+    const tags = ['golang', 'memory-nexwiki', 'completed', 'backend'];
     const sorted = sortCardTags(tags, statusTags);
     expect(sorted[0]).toBe('completed');
-    expect(sorted[sorted.length - 1]).toBe('aiagent-plan');
+    expect(sorted[sorted.length - 1]).toBe('memory-nexwiki');
   });
 
   it('preserves order within same priority group', () => {
@@ -263,7 +263,7 @@ describe('matchesFilter', () => {
     title: 'Golang Guide',
     tags: ['programming', 'backend'],
     created_at: '',
-    updated_at: '',
+    timestamp: '',
     version: 1,
   };
 
@@ -299,7 +299,7 @@ describe('matchesSidebarFilter', () => {
     title: 'Golang Guide',
     tags: ['backend'],
     created_at: '',
-    updated_at: '',
+    timestamp: '',
     version: 1,
   };
 
@@ -359,9 +359,9 @@ describe('matchesLogEvent', () => {
 
 describe('buildSuggestionsFromArticles', () => {
   const articles = [
-    { slug: 'go-guide', title: 'Go Programming Guide', tags: ['golang', 'backend'], created_at: '', updated_at: '', version: 1 },
-    { slug: 'js-guide', title: 'JavaScript Handbook', tags: ['javascript', 'frontend', 'aiagent-skill'], created_at: '', updated_at: '', version: 1 },
-    { slug: 'rust-guide', title: 'Rust Book', tags: ['rust', 'systems'], created_at: '', updated_at: '', version: 1 },
+    { slug: 'go-guide', title: 'Go Programming Guide', tags: ['golang', 'backend'], created_at: '', timestamp: '', version: 1 },
+    { slug: 'js-guide', title: 'JavaScript Handbook', tags: ['javascript', 'frontend', 'aiagent-skill'], created_at: '', timestamp: '', version: 1 },
+    { slug: 'rust-guide', title: 'Rust Book', tags: ['rust', 'systems'], created_at: '', timestamp: '', version: 1 },
   ];
 
   it('returns empty array for empty search term', () => {
@@ -381,10 +381,10 @@ describe('buildSuggestionsFromArticles', () => {
     expect(tags).toContain('golang');
   });
 
-  it('excludes aiagent- prefixed tags', () => {
-    const results = buildSuggestionsFromArticles(articles, 'aiagent');
+  it('excludes memory-scope tags', () => {
+    const results = buildSuggestionsFromArticles(articles, 'memory');
     const tags = results.filter(r => r.type === 'tag').map(r => r.value);
-    expect(tags).not.toContain('aiagent-skill');
+    expect(tags).not.toContain('memory-nexwiki');
   });
 
   it('caps results at 8', () => {
@@ -393,7 +393,7 @@ describe('buildSuggestionsFromArticles', () => {
       title: `Test Article ${i}`,
       tags: [`tag-${i}`],
       created_at: '',
-      updated_at: '',
+      timestamp: '',
       version: 1,
     }));
     const results = buildSuggestionsFromArticles(manyArticles, 'test');
@@ -402,8 +402,8 @@ describe('buildSuggestionsFromArticles', () => {
 
   it('deduplicates suggestions', () => {
     const dupeArticles = [
-      { slug: 'a1', title: 'Go Guide', tags: ['golang'], created_at: '', updated_at: '', version: 1 },
-      { slug: 'a2', title: 'Go Guide', tags: ['golang'], created_at: '', updated_at: '', version: 1 },
+      { slug: 'a1', title: 'Go Guide', tags: ['golang'], created_at: '', timestamp: '', version: 1 },
+      { slug: 'a2', title: 'Go Guide', tags: ['golang'], created_at: '', timestamp: '', version: 1 },
     ];
     const results = buildSuggestionsFromArticles(dupeArticles, 'go');
     const titles = results.filter(r => r.type === 'title' && r.value === 'Go Guide');

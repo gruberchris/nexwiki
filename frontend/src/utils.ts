@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import type { Article } from './types';
+import { ContentTypes } from './types';
 
 /**
  * Slugify standardizes any title string into a clean, URL-safe, file-safe slug.
@@ -244,6 +245,31 @@ export function formatRelativeTime(dateStr: string): string {
 }
 
 /**
+ * Formats an activity event timestamp with a date-aware label, so events from previous days are
+ * distinguishable once older history is loaded:
+ *   today -> "Today, 3:42 PM"
+ *   yesterday -> "Yesterday, 3:42 PM"
+ *   older -> "Dec 12, 3:42 PM" (the year is added only when it is not the current year)
+ */
+export function formatActivityTimestamp(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+
+  if (dayDiff === 0) return `Today, ${time}`;
+  if (dayDiff === 1) return `Yesterday, ${time}`;
+
+  const dateOpts: Intl.DateTimeFormatOptions =
+    d.getFullYear() === now.getFullYear()
+      ? { month: 'short', day: 'numeric' }
+      : { month: 'short', day: 'numeric', year: 'numeric' };
+  return `${d.toLocaleDateString(undefined, dateOpts)}, ${time}`;
+}
+
+/**
  * Packs all articles into a zip archive and triggers browser download.
  */
 export async function exportAllContent(articles: Article[]): Promise<void> {
@@ -261,28 +287,23 @@ export async function exportAllContent(articles: Article[]): Promise<void> {
     aiskills: zip.folder('aiskills')
   };
 
-  readme += '- `wiki/` - Standard articles with no `aiagent-*` tags\n';
-  readme += '- `aiplans/` - Collaborative AI plans (`aiagent-plan`)\n';
-  readme += '- `aimemories/` - AI agent memories (`aiagent-memory`, etc.)\n';
-  readme += '- `aiskills/` - Custom AI skills (`aiagent-skill`)\n\n';
+  readme += '- `wiki/` - Standard articles (OKF type `Wiki`)\n';
+  readme += '- `aiplans/` - Collaborative AI plans (OKF type `AI-Agent-Plan`)\n';
+  readme += '- `aimemories/` - AI agent memories (OKF type `AI-Agent-Memory`)\n';
+  readme += '- `aiskills/` - Custom AI skills (OKF type `AI-Agent-Skill`)\n\n';
   readme += '## Exported Files\n\n';
 
   for (const art of articles) {
-    const tags = art.tags || [];
     let folderName: keyof typeof folders = 'wiki';
     let folderDesc = 'Standard Article';
 
-    const isSkill = tags.some(t => t.toLowerCase() === 'aiagent-skill');
-    const isPlan = tags.some(t => t.toLowerCase() === 'aiagent-plan');
-    const isAgent = tags.some(t => t.toLowerCase().startsWith('aiagent-'));
-
-    if (isSkill) {
+    if (art.type === ContentTypes.Skill) {
       folderName = 'aiskills';
       folderDesc = 'AI Skill';
-    } else if (isPlan) {
+    } else if (art.type === ContentTypes.Plan) {
       folderName = 'aiplans';
       folderDesc = 'AI Plan';
-    } else if (isAgent) {
+    } else if (art.type === ContentTypes.Memory) {
       folderName = 'aimemories';
       folderDesc = 'AI Memory';
     }
@@ -292,7 +313,7 @@ export async function exportAllContent(articles: Article[]): Promise<void> {
       if (response.ok) {
         const fullArt = await response.json() as Article;
         folders[folderName]?.file(`${art.slug}.md`, fullArt.content || '');
-        readme += '- [' + folderDesc + '] `' + folderName + '/' + art.slug + '.md` - ' + art.title + ' (Last edited: ' + formatRelativeTime(art.updated_at) + ')\n';
+        readme += '- [' + folderDesc + '] `' + folderName + '/' + art.slug + '.md` - ' + art.title + ' (Last edited: ' + formatRelativeTime(art.timestamp) + ')\n';
       }
     } catch (err) {
       console.error(`Failed to fetch and pack ${art.slug}:`, err);

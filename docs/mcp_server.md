@@ -20,7 +20,11 @@ To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools l
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes twenty powerful, semantic tools for AI agents:
+> **Native OKF storage & document `type`.** Every NexWiki `.md` file is a conformant Open Knowledge Format (OKF v0.1) concept document at rest (real YAML front matter). Each document carries a `type` — exactly one of **`Wiki`** (regular articles) or the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags remain: **status tags** (e.g. `wip`, `completed`, `inbox`) and tool-managed **memory-scope tags** (`memory-<scope>`).
+
+> **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port (and is the primary that persists the activity log); if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server, it forwards its activity events to it; with no NexWiki web server, it persists the log itself. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
+
+The NexWiki MCP server registers and exposes twenty-seven powerful tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine.
@@ -38,7 +42,7 @@ Retrieves the raw Markdown content and Yaml-style front-matter configurations of
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target article (e.g. `home` or `setup-guide`).
 * **Behavior**:
-  Reads the Markdown file on disk, parses the front-matter metadata, and returns a plain text document listing the article Title, Slug, Created timestamp, Updated timestamp, and the complete raw Markdown body.
+  Reads the Markdown file on disk, parses the front-matter metadata, and returns a plain text document listing the article Title, Slug, Created timestamp, Updated timestamp, Description and Source (when set), and the complete raw Markdown body. If other articles link to this page via WikiLinks, a `Linked from:` section is appended (capped at 15 entries) so agents can traverse the knowledge graph in reverse.
 
 ---
 
@@ -47,7 +51,7 @@ Lists all articles currently available in your knowledge base. This acts as a di
 
 * **Arguments**: None (empty object `{}`).
 * **Behavior**:
-  Scans the database and returns a bulleted plain text index containing the titles, URL-safe slugs, and last-edited timestamps for all active articles.
+  Scans the database and returns a bulleted plain text index containing the titles, URL-safe slugs, last-edited timestamps, and one-line summaries (when a `description` is set) for all active articles. For a sectioned, orientation-friendly index, prefer `get_context_overview`.
 
 ---
 
@@ -57,6 +61,8 @@ Creates a new wiki article with a given title and raw Markdown content body.
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the new article (e.g. "React Hooks Guide").
   * `content` (string, **required**): The raw Markdown content of the article body.
+  * `description` (string, **optional**): A one-line summary shown in list indexes and the context overview.
+  * `source` (string, **optional**): Provenance — the URL, document, or reference this knowledge came from. AI-created articles SHOULD cite their source.
   * `tags` (array of strings, **optional**): Status or user tags to apply to the article. Call `get_status_tags` to see the recognized status values (e.g. `draft`, `wip`). System `aiagent-*` tags are reserved and will be ignored if provided.
   * `edit_summary` (string, **optional**): A summary describing the reason for creating the page.
 * **Behavior**:
@@ -71,7 +77,9 @@ Modifies the title, Markdown content, tags, or edit the summary of an existing w
   * `slug` (string, **required**): The unique URL slug of the article to edit.
   * `title` (string, **required**): The updated title of the article.
   * `content` (string, **required**): The updated raw Markdown content of the article body.
-  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see the recognized status values (e.g. `completed`, `review`). Omit to leave existing tags unchanged.
+  * `description` (string, **optional**): New one-line summary. Omit or pass empty to preserve the existing description.
+  * `source` (string, **optional**): New provenance reference. Omit or pass empty to preserve the existing source.
+  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see the recognized status values (e.g. `completed`, `review`). Omit leaving existing tags unchanged.
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
   * `edit_summary` (string, **optional**): A summary detailing the modifications.
 * **Behavior**:
@@ -98,7 +106,7 @@ Permanently deletes an existing wiki article and its associated resources.
 * **Arguments**:
   * `slug` (string, **required**): The URL-safe slug of the article to delete.
 * **Behavior**:
-  Permanently deletes the Markdown file, all its gzip revision backups, and its uploaded media files/assets from the server. It also de-indexes the page from Bleve.
+  Permanently deletes the Markdown file, all its gzip revision backups, and its uploaded media files/assets from the server. It also de-indexes the page from Bleve. **Protected AI Agent Memories are refused** — the tool returns an error steering the agent to `delete_agent_memory`, preventing curated memories from being destroyed by bulk cleanup calls. (Human deletion via the web UI/REST API is unaffected.)
 
 ---
 
@@ -139,9 +147,12 @@ Creates a brand new protected AI Agent Memory document. The `memory_type` scopes
   * `title` (string, **required**): The human-readable title of the memory article (e.g. "NexWiki MCP Tag Preservation Rules").
   * `content` (string, **required**): The raw Markdown content of the memory document. Prefer bullet points over paragraphs. One clear insight per memory.
   * `memory_type` (string, **optional**): Scopes the memory and sets the protected tag. Use a **project name** (e.g. `nexwiki`) for project-specific knowledge, a **topic name** (e.g. `docker`) for reusable cross-project knowledge, or **omit** for general knowledge. Becomes the tag `aiagent-memory-<memory_type>`, or bare `aiagent-memory` if omitted.
+  * `description` (string, **optional**): One-line summary shown in list indexes and the context overview.
+  * `source` (string, **optional**): Provenance — where this knowledge came from (URL, document, or session context).
   * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
 * **Behavior**:
   Checks for slug collision, automatically attaches the protected tag (`aiagent-memory-<memory_type>` or bare `aiagent-memory`), saves the flat Markdown file, commits the first version snapshot, and indexes the document in the search engine.
+* **Memory hygiene**: Search for an existing memory before creating one. If a memory later becomes stale, use `edit_agent_memory` to correct it in place or `delete_agent_memory` to retire it — do not create near-duplicates.
 
 ---
 
@@ -174,6 +185,8 @@ Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by
   * `title` (string, **required**): The human-readable title of the plan (e.g., "Go 1.22 Migration Plan").
   * `content` (string, **required**): The raw Markdown content of the plan document.
   * `project_context` (string, **required**): The name of the project this plan is for (e.g. "nexwiki"). Generates a custom project tag.
+  * `description` (string, **optional**): One-line summary shown in list indexes and the context overview.
+  * `source` (string, **optional**): Provenance — where this plan originated (URL, ticket, or session context).
   * `edit_summary` (string, **optional**): Optional summary detailing the creation of the plan.
 * **Behavior**:
   Checks for slug collision, automatically attaches the whitelisted `aiagent-plan` tag, applies a custom tag for the project name, saves the flat Markdown file, commits the first version snapshot, and indexes the plan in Bleve for search.
@@ -225,6 +238,8 @@ Creates a new Custom AI Skill, automatically making it part of the custom Skills
 * **Arguments**:
   * `title` (string, **required**): The title of the skill (e.g., "Docker Container Pruning").
   * `content` (string, **required**): The raw Markdown content of the skill instructions (procedural SKILL.md format).
+  * `description` (string, **optional**): One-line summary of what the skill does, shown in list indexes and the context overview.
+  * `source` (string, **optional**): Provenance — where this skill's procedure came from.
   * `tags` (array of strings, **optional**): Optional tags to apply to the skill. Use status tags to signal the skill's state — call `get_status_tags` to see recognized values (e.g. `draft`, `ready`).
   * `edit_summary` (string, **optional**): Optional summary describing why the skill was created.
 * **Behavior**:
@@ -249,6 +264,102 @@ Returns the canonical list of recognized status tags used to indicate the lifecy
   Returns the server-authoritative list of status tag values along with usage tips. Call this before tagging articles, plans, or skills to ensure you use a recognized value. Status tags are displayed with the highest visual priority on the home dashboard. Output includes a tip about the plan completion workflow: after a plan is fully implemented, use `append_agent_plan` to add final notes, then use `edit_agent_plan` to add the `completed` status tag.
 
 * **Recognized values**: `completed`, `done`, `wip`, `draft`, `in-progress`, `archived`, `active`, `todo`, `pending`, `review`, `blocked`, `ready`
+
+---
+
+### 21. `get_context_overview`
+Returns a **cheap progressive-disclosure index** of the entire knowledge base — the recommended first call of any agent session. Each entry is one compact line: title, slug, one-line summary, tags, and updated date, grouped into Wiki Articles / Agent Memories / Agent Plans / Agent Skills sections.
+
+* **Arguments**:
+  * `type` (string, **optional**): Section filter — one of `articles`, `memories`, `plans`, or `skills`. Omit for the full overview.
+* **Behavior**:
+  Built from a single metadata-only pass over the article directory (no per-article content reads, so it stays fast at any wiki size). The summary shown per entry is the article's `description` front-matter field, falling back to the first content line when no description is set. Orient yourself with this overview, then call `read_article` on only the entries you actually need.
+
+* **Sample output**:
+```
+NexWiki Context Overview (42 articles total)
+Each line: Title (slug) — summary [tags] (updated). Use read_article(slug) to load full content.
+
+== Wiki Articles (30) ==
+- Go (go) — Compiled, statically typed language by Google [programming language] (updated 2026-06-08)
+...
+== Agent Memories (5) ==
+...
+```
+
+---
+
+### 22. `get_backlinks`
+Lists all articles whose content links to a given article via double-bracket `[[WikiLinks]]` — reverse traversal of the knowledge graph.
+
+* **Arguments**:
+  * `slug` (string, **required**): The URL-safe slug of the target article to find inbound links for.
+* **Behavior**:
+  Scans all article bodies (including the `home` dashboard) on demand for WikiLinks resolving to the target slug, skipping self-links. Returns an indexed plain-text list with titles, slugs, summaries, and updated timestamps, sorted the newest first. Useful before editing or deleting a page to see what references it. `read_article` also appends a compact `Linked from:` section automatically.
+
+---
+
+### 23. `edit_agent_memory`
+Replaces or corrects an existing protected AI Agent Memory **in place** — the core memory-hygiene tool. Prefer this over creating a near-duplicate memory when facts go stale.
+
+* **Arguments**:
+  * `slug` (string, **required**): The unique URL-safe slug of the memory to edit.
+  * `title` (string, **optional**): New title (preserves existing if omitted).
+  * `content` (string, **optional**): Full replacement of the memory's Markdown content (preserves existing if omitted; cannot be blank — use `delete_agent_memory` to retire a memory entirely). Use `append_agent_memory` to add without replacing.
+  * `description` (string, **optional**): New one-line summary (preserves existing if omitted).
+  * `source` (string, **optional**): New provenance reference (preserves existing if omitted).
+  * `tags` (array of strings, **optional**): Tags to set (replaces existing; the protected `aiagent-memory*` tag — including its scoped `-<type>` variant — is always re-applied if missing).
+  * `loaded_version` (integer, **required**): The current version number loaded by the agent, for optimistic locking.
+  * `edit_summary` (string, **optional**): Summary of what was corrected.
+* **Behavior**:
+  Verifies the target carries an `aiagent-memory*` tag, checks `loaded_version` against the disk version (conflict errors instruct the agent to re-read the memory), merges the provided fields over existing values, increments the version, snapshots history, and re-indexes.
+
+---
+
+### 24. `delete_agent_memory`
+Permanently deletes an obsolete or fully superseded protected AI Agent Memory.
+
+* **Arguments**:
+  * `slug` (string, **required**): The unique URL-safe slug of the memory to delete.
+* **Behavior**:
+  Verifies the target is actually a protected memory (refuses standard articles — use `delete_wiki_article` for those), then removes the Markdown file, history backups, and search index entry. Prefer `edit_agent_memory` to correct a memory rather than deleting and recreating it.
+
+---
+
+### 25. `get_recent_activity`
+Queries the **durable activity log** (`data/activity.jsonl`) to see what changed in the wiki and when — the "what happened since my last session?" tool.
+
+* **Arguments**:
+  * `since` (string, **optional**): Only return events newer than this. Accepts a Go duration (`30m`, `24h`, `168h`) or an RFC3339 timestamp (`2026-06-10T00:00:00Z`).
+  * `limit` (integer, **optional**): Maximum events returned, newest kept (default 50, max 500).
+  * `action` (string, **optional**): Filter by `create`, `edit`, `delete`, `read`, or `revert`.
+  * `source` (string, **optional**): Filter by origin — `mcp` (AI tool calls) or `api` (human web UI actions).
+* **Behavior**:
+  Reads the persisted JSON Lines activity log written by the primary server process (every REST and MCP mutation/read event, deduplicated within 2-second windows), **spanning the active file plus rotated archives** so durable history survives rotation. Falls back to the in-memory 200-event ring buffer when no durable log exists yet. At 10 MB the active log is rotated aside into a **non-destructive, timestamped archive** (`activity-<UTC>.jsonl`) — earlier archives are never overwritten (optional retention cap via `NEXWIKI_ACTIVITY_MAX_ARCHIVES`, default unlimited). The Activity Drawer also pages this durable history via `GET /api/activity/log` ("Load older history"). Events from a different MCP process may lag by milliseconds while being forwarded to the primary.
+
+* **Sample output**:
+```
+Recent wiki activity (3 events, oldest first):
+
+2026-06-11 14:01:07 [api/edit] web-ui → 'Go' (go) by User
+2026-06-11 14:02:33 [mcp/create] create_wiki_article → 'New Page' (new-page) by Claude
+2026-06-11 14:03:22 [mcp/edit] edit_agent_memory → 'Build Quirk' (build-quirk) by Claude
+```
+
+### 26. `export_okf_bundle`
+Exports the entire knowledge base as a conformant **Open Knowledge Format (OKF v0.1) bundle** (a `.zip`).
+
+* **Arguments**: none.
+* **Behavior**:
+  Native files are already OKF YAML, so export synthesizes the **bundle hierarchy** from each document's `type` (`wiki/`, `aimemories/`, `aiplans/`, `aiskills/`), the reserved per-directory and root `index.md` files (the root carries `okf_version: "0.1"`), a date-grouped `log.md` built from the durable activity log, and translates `[[WikiLinks]]` into bundle-relative concept paths (`/wiki/<slug>.md`, OKF §5.1). The archive is written into the data directory and its path is returned. REST equivalent: `GET /api/okf/export` (streams the `.zip` as a download).
+
+### 27. `import_okf_bundle`
+Imports an **OKF v0.1 bundle** (`.zip`) from a filesystem path into the knowledge base.
+
+* **Arguments**:
+  * `path` (string, **required**): Filesystem path to the `.zip` bundle.
+* **Behavior**:
+  Walks the bundle, parses each non-reserved `.md` as an OKF concept document, maps its `type` (reserved value → agent class; otherwise `Wiki`), translates bundle-relative Markdown links back to `[[WikiLinks]]`, and creates/updates each article via the storage layer (dedup by slug; reserved `index.md`/`log.md` are consumed). The importer is **permissive** (OKF §9): a document with a missing/unknown type defaults to `Wiki` and is flagged in the returned conformance report rather than rejected. REST equivalent: `POST /api/okf/import` (multipart `file` upload).
 
 ---
 
@@ -305,6 +416,7 @@ Add the `nexwiki` server configuration block:
     "nexwiki": {
       "command": "/path/to/your/compiled/nexwiki",
       "args": [
+        "-mcp-only",
         "-data", "/path/to/your/wiki-data",
         "-name", "My Personal Brain"
       ]
@@ -326,7 +438,7 @@ claude mcp add --transport http nexwiki http://localhost:8080/api/mcp
 
 #### Option B: Stdio Process Fallback
 ```bash
-claude mcp add nexwiki -- /path/to/your/compiled/nexwiki -data /path/to/your/wiki-data -name "My Personal Brain"
+claude mcp add nexwiki -- /path/to/your/compiled/nexwiki -mcp-only -data /path/to/your/wiki-data -name "My Personal Brain"
 ```
 
 ---
@@ -352,6 +464,7 @@ GitHub Copilot's CLI environment supports connecting to custom HTTP/SSE servers.
     "nexwiki": {
       "command": "/path/to/your/compiled/nexwiki",
       "args": [
+        "-mcp-only",
         "-data", "/path/to/your/wiki-data",
         "-name", "My Personal Brain"
       ]
