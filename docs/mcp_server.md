@@ -141,17 +141,17 @@ Scans the entire knowledge base to compile total page stats and **autonomously s
 ---
 
 ### 11. `create_agent_memory`
-Creates a brand new protected AI Agent Memory document. The `memory_type` scopes the memory and determines its protected tag. Memories must be **succinct and high-value** — they are loaded into agent context windows, so keep them short, specific, and free of repetition.
+Creates a brand new protected AI Agent Memory document. The `memory_type` scopes the memory and determines its tool-managed scope tag. Memories must be **succinct and high-value** — they are loaded into agent context windows, so keep them short, specific, and free of repetition.
 
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the memory article (e.g. "NexWiki MCP Tag Preservation Rules").
   * `content` (string, **required**): The raw Markdown content of the memory document. Prefer bullet points over paragraphs. One clear insight per memory.
-  * `memory_type` (string, **optional**): Scopes the memory and sets the protected tag. Use a **project name** (e.g. `nexwiki`) for project-specific knowledge, a **topic name** (e.g. `docker`) for reusable cross-project knowledge, or **omit** for general knowledge. Becomes the tag `aiagent-memory-<memory_type>`, or bare `aiagent-memory` if omitted.
+  * `memory_type` (string, **optional**): Scopes the memory. Use a **project name** (e.g. `nexwiki`) for project-specific knowledge, a **topic name** (e.g. `docker`) for reusable cross-project knowledge, or **omit** for general knowledge. Applies a tool-managed `memory-<memory_type>` scope tag (e.g. `memory-nexwiki`), or no scope tag if omitted. The OKF document `type` is always set to `AI-Agent-Memory` regardless.
   * `description` (string, **optional**): One-line summary shown in list indexes and the context overview.
   * `source` (string, **optional**): Provenance — where this knowledge came from (URL, document, or session context).
   * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
 * **Behavior**:
-  Checks for slug collision, automatically attaches the protected tag (`aiagent-memory-<memory_type>` or bare `aiagent-memory`), saves the flat Markdown file, commits the first version snapshot, and indexes the document in the search engine.
+  Checks for slug collision, sets the OKF `type` to `AI-Agent-Memory`, applies a tool-managed `memory-<memory_type>` scope tag if a `memory_type` was provided, saves the Markdown file, commits the first version snapshot, and indexes the document in the search engine.
 * **Memory hygiene**: Search for an existing memory before creating one. If a memory later becomes stale, use `edit_agent_memory` to correct it in place or `delete_agent_memory` to retire it — do not create near-duplicates.
 
 ---
@@ -164,7 +164,7 @@ Appends observations, subtask completions, or updates to the end of an existing 
   * `content_to_append` (string, **required**): The raw Markdown text to append.
   * `edit_summary` (string, **optional**): Optional summary outlining what was appended.
 * **Behavior**:
-  Verifies that the target article is a protected agent memory (possesses at least one tag starting with `aiagent-memory-`), appends the new text cleanly with double newlines, creates a gzipped history backup snapshot, and saves the updated active file.
+  Verifies that the target article is of OKF type `AI-Agent-Memory`, appends the new text cleanly with double newlines, creates a gzipped history backup snapshot, and saves the updated active file.
 
 ---
 
@@ -172,14 +172,14 @@ Appends observations, subtask completions, or updates to the end of an existing 
 Lists all protected AI Agent Memory articles saved in your wiki.
 
 * **Arguments**:
-  * `memory_type` (string, **optional**): Optional filter by memory type (the project name, topic name, or other free-form value used at creation). For example, `nexwiki` returns only nexwiki project memories.
+  * `memory_type` (string, **optional**): Optional filter by memory type (the project name, topic name, or other free-form value used at creation). For example, `nexwiki` returns only memories tagged `memory-nexwiki`.
 * **Behavior**:
-  Scans all active articles, isolates pages tagged with `aiagent-memory` or any `aiagent-memory-*` prefix, optionally filters by the specified type, and returns a bulleted index of matches including titles, slugs, and active tags.
+  Scans all active articles, isolates pages with OKF type `AI-Agent-Memory`, optionally filters by the `memory-<type>` scope tag, and returns a bulleted index of matches including titles, slugs, and active tags.
 
 ---
 
 ### 14. `create_agent_plan`
-Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Automatically applies the protected `aiagent-plan` tag, which must **NEVER** be removed unless explicitly instructed.
+Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Sets the OKF `type` to `AI-Agent-Plan` — the reserved type is immutable and must **NEVER** be relabelled.
 
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the plan (e.g., "Go 1.22 Migration Plan").
@@ -189,51 +189,52 @@ Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by
   * `source` (string, **optional**): Provenance — where this plan originated (URL, ticket, or session context).
   * `edit_summary` (string, **optional**): Optional summary detailing the creation of the plan.
 * **Behavior**:
-  Checks for slug collision, automatically attaches the whitelisted `aiagent-plan` tag, applies a custom tag for the project name, saves the flat Markdown file, commits the first version snapshot, and indexes the plan in Bleve for search.
+  Checks for slug collision, sets the OKF `type` to `AI-Agent-Plan`, applies a tag for the project name, saves the Markdown file, commits the first version snapshot, and indexes the plan in Bleve for search.
 * **Plan Completion Workflow**:
   After a plan is fully implemented, use `append_agent_plan` to add final notes documenting the implementation (plan deviations, files created, tools used, unexpected challenges, or other observations). Then use `edit_agent_plan` to add the `completed` status tag to mark the plan as done.
 
 ---
 
 ### 15. `append_agent_plan`
-Appends task status, observations, or checklists to an existing Collaborative AI Plan (must possess the `aiagent-plan` tag). Use this to log implementation progress as tasks are completed and to add final notes when a plan is fully implemented before marking it completed.
+Appends task status, observations, or checklists to an existing Collaborative AI Plan. Use this to log implementation progress as tasks are completed and to add final notes when a plan is fully implemented before marking it completed.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target plan.
   * `content_to_append` (string, **required**): The raw Markdown text to append to the end of the plan.
   * `edit_summary` (string, **optional**): Optional summary outlining the updates.
 * **Behavior**:
-  Verifies that the target article possesses the `aiagent-plan` tag, appends the new text cleanly with double newlines, creates a gzipped history backup snapshot, and saves the updated plan.
+  Verifies that the target article is of OKF type `AI-Agent-Plan`, appends the new text cleanly with double newlines, creates a gzipped history backup snapshot, and saves the updated plan.
 
 ---
 
 ### 16. `edit_agent_plan`
-Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts. The `aiagent-plan` protected tag is strictly preserved and must **NEVER** be removed. Use this to mark a plan as `completed` after implementation by adding the `completed` status tag.
+Modifies the title, content, tags, or edit summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts. The reserved `AI-Agent-Plan` OKF type is immutable and must **NEVER** be relabelled. Use this to correct or rewrite plan content in-place, or to mark a plan as `completed` after implementation by adding the `completed` status tag.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the plan to edit.
   * `title` (string, **optional**): The updated title of the plan (preserves existing title if omitted).
-  * `tags` (array of strings, **optional**): Tags to set on the plan (replaces existing tags; `aiagent-plan` is always preserved). Use status tags to signal plan state — call `get_status_tags` to see recognized values (e.g. `completed`, `wip`, `blocked`).
+  * `content` (string, **optional**): Replacement Markdown body. Omit to preserve existing content. Use `append_agent_plan` to add progress notes without replacing.
+  * `tags` (array of strings, **optional**): Tags to set on the plan (replaces existing tags; the `AI-Agent-Plan` OKF type is always preserved). Use status tags to signal plan state — call `get_status_tags` to see recognized values (e.g. `completed`, `wip`, `blocked`).
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent for optimistic locking checks.
   * `edit_summary` (string, **optional**): Description summarizing what changed.
 * **Behavior**:
-  Verifies that the target article possesses the `aiagent-plan` tag, checks `loaded_version` against the disk version for optimistic locking, updates title/tags while preserving `aiagent-plan`, increments the version number, creates a gzipped history backup snapshot, and updates the Bleve search index.
+  Verifies that the target article is an AI-Agent-Plan, checks `loaded_version` against the disk version for optimistic locking, updates title/content/tags while preserving the plan type, increments the version number, creates a gzipped history backup snapshot, and updates the Bleve search index.
 
 ---
 
 ### 17. `list_agent_plans`
-Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved inside the knowledge base.
+Lists all Collaborative AI Plans (OKF type `AI-Agent-Plan`) currently saved inside the knowledge base.
 
 * **Arguments**:
   * `project_context` (string, **optional**): An optional project context name to filter plans by.
   * `tag` (string, **optional**): An optional tag to filter plans by. Use a status tag to find plans in a specific state (e.g. `completed`, `wip`). Call `get_status_tags` to see all recognized status values.
 * **Behavior**:
-  Scans all active articles, isolates pages that possess the `aiagent-plan` tag, filters them by project context tag and/or additional tags if provided, and returns a bulleted index of matching plans.
+  Scans all active articles, isolates pages of OKF type `AI-Agent-Plan`, filters them by project context tag and/or additional tags if provided, and returns a bulleted index of matching plans.
 
 ---
 
 ### 18. `create_agent_skill`
-Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry. Automatically applies the protected `aiagent-skill` tag, which must **NEVER** be removed unless explicitly instructed.
+Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry. Sets the OKF `type` to `AI-Agent-Skill` — the reserved type is immutable and must **NEVER** be relabelled.
 
 * **Arguments**:
   * `title` (string, **required**): The title of the skill (e.g., "Docker Container Pruning").
@@ -243,16 +244,16 @@ Creates a new Custom AI Skill, automatically making it part of the custom Skills
   * `tags` (array of strings, **optional**): Optional tags to apply to the skill. Use status tags to signal the skill's state — call `get_status_tags` to see recognized values (e.g. `draft`, `ready`).
   * `edit_summary` (string, **optional**): Optional summary describing why the skill was created.
 * **Behavior**:
-  Checks for slug collision, automatically attaches the `aiagent-skill` tag, applies any additional user tags, saves the flat Markdown file, commits the first version snapshot, and indexes the skill in Bleve.
+  Checks for slug collision, sets the OKF `type` to `AI-Agent-Skill`, applies any user-provided tags, saves the Markdown file, commits the first version snapshot, and indexes the skill in Bleve.
 
 ---
 
 ### 19. `list_agent_skills`
-Lists all Custom AI Skills (tagged with `aiagent-skill`) currently saved in the knowledge base.
+Lists all Custom AI Skills (OKF type `AI-Agent-Skill`) currently saved in the knowledge base.
 
 * **Arguments**: None (empty object `{}`).
 * **Behavior**:
-  Scans all active articles, isolates pages possessing the `aiagent-skill` tag, and returns a bulleted index of matching skills.
+  Scans all active articles, isolates pages of OKF type `AI-Agent-Skill`, and returns a bulleted index of matching skills.
 
 ---
 
@@ -308,11 +309,11 @@ Replaces or corrects an existing protected AI Agent Memory **in place** — the 
   * `content` (string, **optional**): Full replacement of the memory's Markdown content (preserves existing if omitted; cannot be blank — use `delete_agent_memory` to retire a memory entirely). Use `append_agent_memory` to add without replacing.
   * `description` (string, **optional**): New one-line summary (preserves existing if omitted).
   * `source` (string, **optional**): New provenance reference (preserves existing if omitted).
-  * `tags` (array of strings, **optional**): Tags to set (replaces existing; the protected `aiagent-memory*` tag — including its scoped `-<type>` variant — is always re-applied if missing).
+  * `tags` (array of strings, **optional**): Tags to set (replaces existing user tags; tool-managed `memory-<scope>` tags are always preserved).
   * `loaded_version` (integer, **required**): The current version number loaded by the agent, for optimistic locking.
   * `edit_summary` (string, **optional**): Summary of what was corrected.
 * **Behavior**:
-  Verifies the target carries an `aiagent-memory*` tag, checks `loaded_version` against the disk version (conflict errors instruct the agent to re-read the memory), merges the provided fields over existing values, increments the version, snapshots history, and re-indexes.
+  Verifies the target is of OKF type `AI-Agent-Memory`, checks `loaded_version` against the disk version (conflict errors instruct the agent to re-read the memory), merges the provided fields over existing values, preserves tool-managed `memory-<scope>` tags, increments the version, snapshots history, and re-indexes.
 
 ---
 

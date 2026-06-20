@@ -219,7 +219,7 @@ Creates a brand new protected AI Agent Memory document. The `memory_type` scopes
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the memory article (e.g. "NexWiki MCP Tag Preservation Rules").
   * `content` (string, **required**): The raw Markdown content of the memory document. Prefer bullet points over paragraphs. One clear insight per memory.
-  * `memory_type` (string, **optional**): Scopes the memory and sets the protected tag. Use a **project name** (e.g. `nexwiki`) for project-specific knowledge, a **topic name** (e.g. `docker`) for reusable cross-project knowledge, or **omit** for general knowledge. Becomes the tag `aiagent-memory-<memory_type>`, or bare `aiagent-memory` if omitted.
+  * `memory_type` (string, **optional**): Scopes the memory. Use a **project name** (e.g. `nexwiki`) for project-specific knowledge, a **topic name** (e.g. `docker`) for reusable cross-project knowledge, or **omit** for general knowledge. Applies a tool-managed `memory-<memory_type>` scope tag (e.g. `memory-nexwiki`), or no scope tag if omitted. The OKF document `type` is always set to `AI-Agent-Memory` regardless.
   * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
 * **Output Format**:
   A structured, human-readable success message with slug, creation timestamp, version, and applied tags.
@@ -227,7 +227,7 @@ Creates a brand new protected AI Agent Memory document. The `memory_type` scopes
 ---
 
 ### 12. `append_agent_memory`
-Appends observations, subtask completions, or updates to the end of an existing protected AI Agent Memory page (must be tagged with an `aiagent-memory-` prefix).
+Appends observations, subtask completions, or updates to the end of an existing protected AI Agent Memory page (must be of OKF type `AI-Agent-Memory`).
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target memory article.
@@ -249,7 +249,7 @@ Lists all protected AI Agent Memory articles saved in your wiki.
 ---
 
 ### 14. `create_agent_plan`
-Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Automatically applies the protected `aiagent-plan` tag, which must **NEVER** be removed unless explicitly instructed.
+Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Sets the OKF `type` to `AI-Agent-Plan` — the reserved type is immutable and must **NEVER** be relabelled.
 
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the plan (e.g., "Go 1.22 Migration Plan").
@@ -257,14 +257,14 @@ Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by
   * `project_context` (string, **required**): The name of the project this plan is for (e.g. "nexwiki"). Generates a custom project tag.
   * `edit_summary` (string, **optional**): Optional summary detailing the creation of the plan.
 * **Output Format**:
-  A success message containing the title, slug, version, creation timestamp, and all applied tags (including the auto-applied `aiagent-plan` tag).
+  A success message containing the title, slug, OKF type, version, creation timestamp, and all applied tags.
 * **Plan Completion Workflow**:
   After a plan is fully implemented, use `append_agent_plan` to add final notes documenting the implementation (plan deviations, files created, tools used, unexpected challenges, or other observations). Then use `edit_agent_plan` to add the `completed` status tag to mark the plan as done.
 
 ---
 
 ### 15. `append_agent_plan`
-Appends task status, observations, or checklists to an existing Collaborative AI Plan (must possess the `aiagent-plan` tag). Use this to log implementation progress as tasks are completed and to add final notes when a plan is fully implemented before marking it completed.
+Appends task status, observations, or checklists to an existing Collaborative AI Plan (must be of OKF type `AI-Agent-Plan`). Use this to log implementation progress as tasks are completed and to add final notes when a plan is fully implemented before marking it completed.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target plan.
@@ -276,12 +276,13 @@ Appends task status, observations, or checklists to an existing Collaborative AI
 ---
 
 ### 16. `edit_agent_plan`
-Modifies the title, tags, or edit the summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts. The `aiagent-plan` protected tag is strictly preserved and must **NEVER** be removed. Use this to mark a plan as `completed` after implementation by adding the `completed` status tag.
+Modifies the title, content, tags, or edit summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts. The reserved `AI-Agent-Plan` OKF type is immutable and must **NEVER** be relabelled. Use this to correct or rewrite plan content in-place, or to mark a plan as `completed` after implementation by adding the `completed` status tag.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the plan to edit.
   * `title` (string, **optional**): The updated title of the plan (preserves existing title if omitted).
-  * `tags` (array of strings, **optional**): Array of tags to set (replaces existing tags; 'aiagent-plan' is always auto-applied and preserved).
+  * `content` (string, **optional**): Replacement Markdown body. Omit to preserve existing content. Use `append_agent_plan` to add progress notes without replacing.
+  * `tags` (array of strings, **optional**): Array of tags to set (replaces existing tags; the `AI-Agent-Plan` OKF type is always preserved).
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent for optimistic locking checks.
   * `edit_summary` (string, **optional**): Description summarizing what changed.
 * **Output Format**:
@@ -290,7 +291,7 @@ Modifies the title, tags, or edit the summary of an existing Collaborative AI Pl
 ---
 
 ### 17. `list_agent_plans`
-Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved inside the knowledge base.
+Lists all Collaborative AI Plans (OKF type `AI-Agent-Plan`) currently saved inside the knowledge base.
 
 * **Arguments**:
   * `project_context` (string, **optional**): An optional project context name to filter plans by.
@@ -301,7 +302,7 @@ Lists all Collaborative AI Plans (tagged with `aiagent-plan`) currently saved in
 ---
 
 ### 18. `create_agent_skill`
-Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry. Automatically applies the protected `aiagent-skill` tag, which must **NEVER** be removed unless explicitly instructed.
+Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry. Sets the OKF `type` to `AI-Agent-Skill` — the reserved type is immutable and must **NEVER** be relabelled.
 
 * **Arguments**:
   * `title` (string, **required**): The title of the skill (e.g., "Docker Container Pruning").
@@ -309,12 +310,12 @@ Creates a new Custom AI Skill, automatically making it part of the custom Skills
   * `tags` (array of strings, **optional**): Optional user tags to apply to the skill.
   * `edit_summary` (string, **optional**): Optional summary describing why the skill was created.
 * **Output Format**:
-  A success message containing the title, slug, version, creation timestamp, and all applied tags (including the auto-applied `aiagent-skill` tag).
+  A success message containing the title, slug, OKF type, version, creation timestamp, and all applied tags.
 
 ---
 
 ### 19. `list_agent_skills`
-Lists all Custom AI Skills (tagged with `aiagent-skill`) currently saved in the knowledge base.
+Lists all Custom AI Skills (OKF type `AI-Agent-Skill`) currently saved in the knowledge base.
 
 * **Arguments**: None (empty object `{}`).
 * **Output Format**:
@@ -355,7 +356,7 @@ Guides the agent to collaboratively outline a new development plan with the user
   * `title` (string, **required**): The title of the Collaborative Plan (e.g. "Go 1.22 Migration Plan").
   * `project` (string, **required**): The project context name (e.g. `nexwiki`).
 * **Behavior**:
-  Instructs the agent to collaboratively outline goals, technical requirements, and task checklists with the user, save the initial plan immediately with `create_agent_plan`, report the slug to the user, and use `append_agent_plan` to log progress as tasks are completed. After full implementation, the agent must append final notes and mark the plan as `completed` using `edit_agent_plan`. The `aiagent-plan` protected tag must never be removed.
+  Instructs the agent to collaboratively outline goals, technical requirements, and task checklists with the user, save the initial plan immediately with `create_agent_plan`, report the slug to the user, and use `append_agent_plan` to log progress as tasks are completed. After full implementation, the agent must append final notes and mark the plan as `completed` using `edit_agent_plan`. The reserved `AI-Agent-Plan` OKF type must never be relabelled.
 
 ---
 

@@ -499,7 +499,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "edit_agent_plan",
-					"description": "Modify the title, tags, or edit summary of an existing Collaborative AI Plan. The reserved AI-Agent-Plan type is strictly preserved and must NEVER be relabelled. Use this to mark a plan as 'completed' after implementation by adding the 'completed' status tag.",
+					"description": "Modify the title, content, tags, or edit summary of an existing Collaborative AI Plan. The reserved AI-Agent-Plan type is strictly preserved and must NEVER be relabelled. Use this to correct or rewrite plan content in-place, or to mark a plan as 'completed' by adding the 'completed' status tag.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -510,6 +510,10 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 							"title": map[string]interface{}{
 								"type":        "string",
 								"description": "Optional new plan title (preserves existing title if omitted).",
+							},
+							"content": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional replacement Markdown body. Omit to preserve existing content. Use append_agent_plan to add progress notes without replacing.",
 							},
 							"tags": map[string]interface{}{
 								"type": "array",
@@ -1617,6 +1621,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		type EditPlanArgs struct {
 			Slug          string    `json:"slug"`
 			Title         *string   `json:"title,omitempty"`
+			Content       *string   `json:"content,omitempty"`
 			Tags          *[]string `json:"tags,omitempty"`
 			LoadedVersion int       `json:"loaded_version"`
 			EditSummary   string    `json:"edit_summary"`
@@ -1647,6 +1652,14 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			}
 		}
 
+		newContent := existing.Content
+		if eArgs.Content != nil {
+			if strings.TrimSpace(*eArgs.Content) == "" {
+				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: content cannot be empty. Use 'delete_wiki_article' to remove a plan entirely."}}}, nil
+			}
+			newContent = *eArgs.Content
+		}
+
 		newTags := existing.Tags
 		if eArgs.Tags != nil {
 			// The plan class lives in the OKF type; tags are freely settable (project + status).
@@ -1664,10 +1677,10 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 		summary := eArgs.EditSummary
 		if summary == "" {
-			summary = "Updated Collaborative AI Plan metadata"
+			summary = "Updated Collaborative AI Plan"
 		}
 
-		art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, existing.Content, existing.Description, existing.Source, existing.Resource, summary, newTags, existing.Type)
+		art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, newContent, existing.Description, existing.Source, existing.Resource, summary, newTags, existing.Type)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent plan: %v", err)}}}, nil
 		}

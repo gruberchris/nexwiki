@@ -159,6 +159,7 @@ If a style guide memory exists, read it and follow it exactly.
 Any implementation task with more than two steps must be saved as a Collaborative AI Plan 
 using `create_agent_plan` before work begins. Set `project_context` to the project name.
 Append progress using `append_agent_plan` after each major milestone.
+To correct or rewrite plan steps, use `edit_agent_plan` with a `content` field (full replacement).
 Mark plans completed with `edit_agent_plan` (add "completed" tag) once done.
 ```
 

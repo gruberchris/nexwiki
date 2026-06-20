@@ -789,6 +789,144 @@ func TestLogMCPToolCallBranches(t *testing.T) {
 	}
 }
 
+func TestMCPEditAgentPlanContentEditing(t *testing.T) {
+	srv := newMCPServer(t)
+
+	// Seed plan via the tool so version/type are set correctly.
+	toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Content Test Plan","content":"# Phase 1\n\n- [ ] Task A\n- [ ] Task B","project_context":"test"}}`)
+
+	// 1. Content replacement: body changes, version increments, OKF type preserved.
+	resp := toolCall(t, srv, `{"name":"edit_agent_plan","arguments":{"slug":"content-test-plan","content":"# Rewritten\n\n- [ ] New Step","loaded_version":1,"edit_summary":"Rewrote plan steps"}}`)
+	if resp.IsError {
+		t.Fatalf("expected success on content replacement, got: %s", resp.Content[0].Text)
+	}
+	art, _ := srv.Storage.GetArticle("content-test-plan")
+	if !strings.Contains(art.Content, "Rewritten") {
+		t.Errorf("expected rewritten content, got: %s", art.Content)
+	}
+	if strings.Contains(art.Content, "Task A") {
+		t.Errorf("old content should have been replaced, got: %s", art.Content)
+	}
+	if art.Version != 2 {
+		t.Errorf("expected version 2 after content replace, got %d", art.Version)
+	}
+	if art.Type != ContentTypePlan {
+		t.Errorf("OKF type must be preserved after content edit, got %q", art.Type)
+	}
+
+	// 2. Content preservation: omitting content leaves body unchanged.
+	resp2 := toolCall(t, srv, `{"name":"edit_agent_plan","arguments":{"slug":"content-test-plan","tags":["test","completed"],"loaded_version":2,"edit_summary":"Mark completed"}}`)
+	if resp2.IsError {
+		t.Fatalf("expected success on metadata-only edit, got: %s", resp2.Content[0].Text)
+	}
+	art2, _ := srv.Storage.GetArticle("content-test-plan")
+	if !strings.Contains(art2.Content, "Rewritten") {
+		t.Errorf("content should be preserved when omitted from edit, got: %s", art2.Content)
+	}
+	if art2.Version != 3 {
+		t.Errorf("expected version 3, got %d", art2.Version)
+	}
+
+	// 3. Empty content guard: content="" must return a tool error without saving.
+	resp3 := toolCall(t, srv, `{"name":"edit_agent_plan","arguments":{"slug":"content-test-plan","content":"","loaded_version":3}}`)
+	if !resp3.IsError {
+		t.Error("expected error when content is empty string")
+	}
+	if !strings.Contains(resp3.Content[0].Text, "cannot be empty") {
+		t.Errorf("expected 'cannot be empty' in error, got: %s", resp3.Content[0].Text)
+	}
+	// Version must not have changed (guard returned before saving).
+	artAfterGuard, _ := srv.Storage.GetArticle("content-test-plan")
+	if artAfterGuard.Version != 3 {
+		t.Errorf("version should not have changed after empty-content guard, got %d", artAfterGuard.Version)
+	}
+
+	// 4. Empty title guard: title="" must return a tool error without saving.
+	resp4 := toolCall(t, srv, `{"name":"edit_agent_plan","arguments":{"slug":"content-test-plan","title":"","loaded_version":3}}`)
+	if !resp4.IsError {
+		t.Error("expected error when title is empty string")
+	}
+	if !strings.Contains(resp4.Content[0].Text, "cannot be empty") {
+		t.Errorf("expected 'cannot be empty' in error, got: %s", resp4.Content[0].Text)
+	}
+}
+
+func TestMCPAppendAgentPlanComprehensive(t *testing.T) {
+	srv := newMCPServer(t)
+
+	// 1. Missing slug → RPC error (required argument).
+	_, rpcErr := srv.executeToolCallInternal(json.RawMessage(`{"name":"append_agent_plan","arguments":{"slug":"","content_to_append":"## Extra"}}`))
+	if rpcErr == nil {
+		t.Error("expected RPC error for empty slug")
+	}
+
+	// 2. Missing content_to_append → RPC error (required argument).
+	_, rpcErr2 := srv.executeToolCallInternal(json.RawMessage(`{"name":"append_agent_plan","arguments":{"slug":"some-plan","content_to_append":""}}`))
+	if rpcErr2 == nil {
+		t.Error("expected RPC error for empty content_to_append")
+	}
+
+	// 3. Slug not found → tool error.
+	resp3 := toolCall(t, srv, `{"name":"append_agent_plan","arguments":{"slug":"nonexistent-plan","content_to_append":"## Extra"}}`)
+	if !resp3.IsError {
+		t.Error("expected error for nonexistent plan slug")
+	}
+
+	// 4. Non-plan article → type validation error mentioning AI-Agent-Plan.
+	_, _ = srv.Storage.SaveArticle("", "Regular Doc", "# wiki content", "", "", "", "", nil, "")
+	resp4 := toolCall(t, srv, `{"name":"append_agent_plan","arguments":{"slug":"regular-doc","content_to_append":"## Injected"}}`)
+	if !resp4.IsError {
+		t.Error("expected error when appending to a non-plan article")
+	}
+	if !strings.Contains(resp4.Content[0].Text, "AI-Agent-Plan") {
+		t.Errorf("expected type validation error mentioning AI-Agent-Plan, got: %s", resp4.Content[0].Text)
+	}
+
+	// 5. Valid append: original content is preserved, new content follows a double-newline
+	//    separator, version increments, and OKF type is unchanged.
+	toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Append Target Plan","content":"# Phase 1\n\n- [ ] Task A","project_context":"test"}}`)
+
+	resp5 := toolCall(t, srv, `{"name":"append_agent_plan","arguments":{"slug":"append-target-plan","content_to_append":"## Phase 2\n\n- [ ] Task B","edit_summary":"Added phase 2"}}`)
+	if resp5.IsError {
+		t.Fatalf("expected success on valid append, got: %s", resp5.Content[0].Text)
+	}
+	art, _ := srv.Storage.GetArticle("append-target-plan")
+	if !strings.Contains(art.Content, "Phase 1") {
+		t.Errorf("original content should be preserved, got: %s", art.Content)
+	}
+	if !strings.Contains(art.Content, "Phase 2") {
+		t.Errorf("appended content should be present, got: %s", art.Content)
+	}
+	// The handler joins with "\n\n"; verify exact separator between original and appended text.
+	if !strings.Contains(art.Content, "Task A\n\n## Phase 2") {
+		t.Errorf("expected double-newline separator between original and appended content, got: %q", art.Content)
+	}
+	if art.Version != 2 {
+		t.Errorf("expected version 2 after first append, got %d", art.Version)
+	}
+	if art.Type != ContentTypePlan {
+		t.Errorf("OKF type must be preserved through append, got %q", art.Type)
+	}
+
+	// 6. Multiple sequential appends: each increments the version and stacks content.
+	toolCall(t, srv, `{"name":"append_agent_plan","arguments":{"slug":"append-target-plan","content_to_append":"## Phase 3\n\n- [ ] Task C"}}`)
+	toolCall(t, srv, `{"name":"append_agent_plan","arguments":{"slug":"append-target-plan","content_to_append":"## Final Notes\n\nImplementation complete."}}`)
+
+	artFinal, _ := srv.Storage.GetArticle("append-target-plan")
+	if !strings.Contains(artFinal.Content, "Phase 3") {
+		t.Errorf("expected phase 3 after second append, got: %s", artFinal.Content)
+	}
+	if !strings.Contains(artFinal.Content, "Final Notes") {
+		t.Errorf("expected final notes after third append, got: %s", artFinal.Content)
+	}
+	if artFinal.Version != 4 {
+		t.Errorf("expected version 4 (1 create + 3 appends), got %d", artFinal.Version)
+	}
+	if artFinal.Type != ContentTypePlan {
+		t.Errorf("OKF type must be preserved through all appends, got %q", artFinal.Type)
+	}
+}
+
 func TestHandleStreamableHTTP(t *testing.T) {
 	srv := newMCPServer(t)
 
