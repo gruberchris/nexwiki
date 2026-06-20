@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import type { Article, ThemeMode } from './types';
 import { ContentTypes, isAgentDoc, isSkill, isPlan, typeLabel } from './types';
 import { Sidebar } from './components/Sidebar';
@@ -8,7 +8,7 @@ import { Editor } from './components/Editor';
 import { TOC } from './components/TOC';
 import { Hero } from './components/Hero';
 import { SearchResults } from './components/SearchResults';
-import { Slugify, saveFile, generateDocxContent, exportAllContent } from './utils';
+import { Slugify, saveFile, generateDocxContent } from './utils';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { ThemeManagerModal } from './components/ThemeManagerModal';
 import type { Theme } from './components/ThemeManagerModal';
@@ -659,14 +659,56 @@ export const App: React.FC = () => {
     }
   };
 
-  // ZIP bulk export trigger
+  const importFileRef = useRef<HTMLInputElement>(null);
+
   const handleExportAll = async () => {
     try {
-      triggerAlert('success', 'Preparing bulk export... downloading ZIP archive.');
-      await exportAllContent(articles);
-    } catch (err) {
-      console.error('Failed to bulk export:', err);
-      triggerAlert('error', 'Failed to export all content to ZIP.');
+      triggerAlert('success', 'Preparing backup… download will start shortly.');
+      const response = await fetch('/api/okf/export');
+      if (!response.ok) {
+        triggerAlert('error', 'Failed to create backup.');
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `nexwiki-backup-${new Date().toISOString().split('T')[0]}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      triggerAlert('error', 'Failed to create backup.');
+    }
+  };
+
+  const handleImport = () => importFileRef.current?.click();
+
+  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    try {
+      triggerAlert('success', 'Restoring from backup…');
+      const form = new FormData();
+      form.append('file', file);
+      const response = await fetch('/api/okf/import', { method: 'POST', body: form });
+      if (!response.ok) {
+        triggerAlert('error', 'Restore failed. Ensure the file is a valid NexWiki backup (.zip).');
+        return;
+      }
+      const report = await response.json() as {
+        imported: number; skipped: number; missing_type: string[]; warnings: string[];
+      };
+      await fetchArticles();
+      if (report.warnings.length > 0) console.warn('Import warnings:', report.warnings);
+      const warn = report.warnings.length > 0
+        ? ` (${report.warnings.length} warning${report.warnings.length > 1 ? 's' : ''} — see console)`
+        : '';
+      triggerAlert('success', `Restored ${report.imported} article${report.imported !== 1 ? 's' : ''} from backup.${warn}`);
+    } catch {
+      triggerAlert('error', 'Restore failed. Ensure the file is a valid NexWiki backup (.zip).');
     }
   };
 
@@ -711,7 +753,9 @@ export const App: React.FC = () => {
 
   return (
     <div className="w-screen h-screen flex overflow-hidden">
-      
+
+      <input ref={importFileRef} type="file" accept=".zip" className="hidden" onChange={handleImportFileChange} />
+
       {/* Alert banner overlay */}
       {alertMsg && (
         <div className={`fixed top-4 right-4 z-[99] px-6 py-4 rounded-2xl shadow-xl backdrop-blur-md border animate-fade-in text-sm font-semibold flex items-center gap-2 no-print ${
@@ -745,6 +789,7 @@ export const App: React.FC = () => {
             onCreateNew={(type: 'article' | 'plan' | 'skill') => navigate(`/new?type=${type}`)}
             wikiName={wikiName}
             onExportAll={handleExportAll}
+            onImport={handleImport}
             onOpenActivityLog={() => setIsActivityOpen(true)}
             version={version}
           />

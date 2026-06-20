@@ -19,6 +19,7 @@ import {
   X,
   Palette,
   Archive,
+  Upload,
   Activity,
 } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
@@ -36,6 +37,7 @@ interface SidebarProps {
   onCreateNew: (type: 'article' | 'plan' | 'skill') => void;
   wikiName: string;
   onExportAll: () => void;
+  onImport: () => void;
   onOpenActivityLog: () => void;
   version?: string;
 }
@@ -50,6 +52,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCreateNew,
   wikiName,
   onExportAll,
+  onImport,
   onOpenActivityLog,
   version = '0.1.0'
 }) => {
@@ -521,15 +524,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
 
-        {/* Bulk Export Button */}
-        <div className="pt-4 border-t border-themeBorder/40">
+        {/* Backup & Restore */}
+        <div className="pt-4 border-t border-themeBorder/40 flex flex-col gap-2">
           <button
             onClick={onExportAll}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 text-xs font-bold text-themeTextSecondary bg-themeBgPrimary/40 border border-themeBorder/60 rounded-xl hover:bg-themeAccentBg/40 hover:text-themeAccent hover:border-themeAccent/30 active:scale-[0.98] transition-all select-none cursor-pointer"
-            title="Download all Wiki pages as a structured ZIP"
+            title="Download all content as an OKF v0.1 backup bundle (.zip)"
           >
             <Archive size={14} className="text-themeAccent shrink-0" />
-            <span>Download All Content (.zip)</span>
+            <span>Backup Content (.zip)</span>
+          </button>
+          <button
+            onClick={onImport}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 text-xs font-bold text-themeTextSecondary bg-themeBgPrimary/40 border border-themeBorder/60 rounded-xl hover:bg-themeAccentBg/40 hover:text-themeAccent hover:border-themeAccent/30 active:scale-[0.98] transition-all select-none cursor-pointer"
+            title="Restore content from a NexWiki OKF backup bundle (.zip)"
+          >
+            <Upload size={14} className="text-themeAccent shrink-0" />
+            <span>Restore from Backup (.zip)</span>
           </button>
         </div>
 

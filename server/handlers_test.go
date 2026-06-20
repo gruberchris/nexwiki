@@ -319,7 +319,7 @@ func TestHandleDeleteArticle(t *testing.T) {
 		t.Errorf("not found: expected 404, got %d", w2.Code)
 	}
 
-	// Valid delete
+	// Delete
 	_, _ = srv.Storage.SaveArticle("", "Delete Me", "# bye", "", "", "", "", nil, "")
 	req3 := httptest.NewRequest("DELETE", "/api/articles/delete-me", nil)
 	req3.SetPathValue("slug", "delete-me")
@@ -590,7 +590,7 @@ func TestHandleDeleteTheme(t *testing.T) {
 		t.Errorf("not found: expected 404, got %d", w3.Code)
 	}
 
-	// Valid delete: save then delete
+	// Save then delete
 	saveJSON := `{"name": "deletable-theme", "default_mode": "light", "light": {}, "dark": {}}`
 	rSave := httptest.NewRequest("POST", "/api/themes", strings.NewReader(saveJSON))
 	wSave := httptest.NewRecorder()
@@ -907,7 +907,7 @@ func TestHandleUploadAsset(t *testing.T) {
 	// Inject the file Content-Type header for the file part
 	w2 := httptest.NewRecorder()
 	srv.HandleUploadAsset(w2, req2)
-	// Should fail with unsupported type (fake PNG data doesn't have the right MIME)
+	// Should fail with unsupported type (fake PNG data doesn't have the right MIME),
 	// but the form parsing itself should succeed (400 for bad mime, not 500)
 	if w2.Code == http.StatusInternalServerError {
 		t.Errorf("multipart upload: expected 400 or 200, got 500: %s", w2.Body.String())
@@ -965,6 +965,73 @@ func TestHandleActivityStream(t *testing.T) {
 
 	if !strings.Contains(w2.Body.String(), "event: history") {
 		t.Error("expected history events in SSE output")
+	}
+}
+
+func TestHandleExportOKFBundle(t *testing.T) {
+	srv := newTestServer(t)
+	_, _ = srv.Storage.SaveArticle("", "Export Article", "# content", "desc", "", "", "init", []string{"test"}, ContentTypeWiki)
+
+	req := httptest.NewRequest("GET", "/api/okf/export", nil)
+	w := httptest.NewRecorder()
+	srv.HandleExportOKFBundle(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/zip" {
+		t.Errorf("expected Content-Type application/zip, got %q", ct)
+	}
+	if cd := w.Header().Get("Content-Disposition"); cd == "" {
+		t.Error("expected Content-Disposition header to be set")
+	}
+	if w.Body.Len() == 0 {
+		t.Error("expected non-empty zip body")
+	}
+}
+
+func TestHandleImportOKFBundle(t *testing.T) {
+	// Happy path: export from a populated store, import into a fresh one.
+	src := newTestServer(t)
+	_, _ = src.Storage.SaveArticle("", "Import Article", "# hello", "desc", "", "", "init", []string{"tag"}, ContentTypeWiki)
+	_, _ = src.Storage.SaveArticle("", "A Plan", "# plan content", "", "", "", "init", nil, ContentTypePlan)
+
+	bundle, err := src.Storage.ExportOKFBundle()
+	if err != nil {
+		t.Fatalf("export failed: %v", err)
+	}
+
+	dst := newTestServer(t)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, _ := mw.CreateFormFile("file", "bundle.zip")
+	_, _ = fw.Write(bundle)
+	_ = mw.Close()
+
+	req := httptest.NewRequest("POST", "/api/okf/import", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+	dst.HandleImportOKFBundle(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("happy path: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var report OKFImportReport
+	if err := json.Unmarshal(w.Body.Bytes(), &report); err != nil {
+		t.Fatalf("failed to parse import report: %v", err)
+	}
+	if report.Imported < 2 {
+		t.Errorf("expected >=2 articles imported, got %d (warnings: %v)", report.Imported, report.Warnings)
+	}
+
+	// Error path: empty body returns 400.
+	req2 := httptest.NewRequest("POST", "/api/okf/import", strings.NewReader(""))
+	req2.Header.Set("Content-Type", "multipart/form-data; boundary=nothing")
+	w2 := httptest.NewRecorder()
+	dst.HandleImportOKFBundle(w2, req2)
+	if w2.Code != http.StatusBadRequest {
+		t.Errorf("empty body: expected 400, got %d", w2.Code)
 	}
 }
 
