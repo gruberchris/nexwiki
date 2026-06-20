@@ -10,7 +10,7 @@ export const SSEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Keep a ref to unread buffering
   const unreadBufferRef = useRef<number>(0);
-  const bufferTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const bufferTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Buffer rapid updates in 500ms cooldown window to prevent rapid visual noise
   const triggerCumulativeUnreadBadge = (count: number) => {
@@ -29,7 +29,7 @@ export const SSEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     let eventSource: EventSource | null = null;
-    let reconnectTimeout: NodeJS.Timeout | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
     let lastConnectTime = 0;
 
     const connect = () => {

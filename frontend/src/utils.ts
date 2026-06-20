@@ -1,7 +1,3 @@
-import JSZip from 'jszip';
-import type { Article } from './types';
-import { ContentTypes } from './types';
-
 /**
  * Slugify standardizes any title string into a clean, URL-safe, file-safe slug.
  * Matches the backend Go Slugify logic exactly.
@@ -269,67 +265,4 @@ export function formatActivityTimestamp(dateStr: string): string {
   return `${d.toLocaleDateString(undefined, dateOpts)}, ${time}`;
 }
 
-/**
- * Packs all articles into a zip archive and triggers browser download.
- */
-export async function exportAllContent(articles: Article[]): Promise<void> {
-  const zip = new JSZip();
-  const dateStr = new Date().toISOString().split('T')[0];
-  
-  let readme = '# NexWiki Content Export - ' + dateStr + '\n\n';
-  readme += 'Total Articles: ' + articles.length + '\n\n';
-  readme += '## Export Directory Map\n\n';
-  
-  const folders = {
-    wiki: zip.folder('wiki'),
-    aiplans: zip.folder('aiplans'),
-    aimemories: zip.folder('aimemories'),
-    aiskills: zip.folder('aiskills')
-  };
-
-  readme += '- `wiki/` - Standard articles (OKF type `Wiki`)\n';
-  readme += '- `aiplans/` - Collaborative AI plans (OKF type `AI-Agent-Plan`)\n';
-  readme += '- `aimemories/` - AI agent memories (OKF type `AI-Agent-Memory`)\n';
-  readme += '- `aiskills/` - Custom AI skills (OKF type `AI-Agent-Skill`)\n\n';
-  readme += '## Exported Files\n\n';
-
-  for (const art of articles) {
-    let folderName: keyof typeof folders = 'wiki';
-    let folderDesc = 'Standard Article';
-
-    if (art.type === ContentTypes.Skill) {
-      folderName = 'aiskills';
-      folderDesc = 'AI Skill';
-    } else if (art.type === ContentTypes.Plan) {
-      folderName = 'aiplans';
-      folderDesc = 'AI Plan';
-    } else if (art.type === ContentTypes.Memory) {
-      folderName = 'aimemories';
-      folderDesc = 'AI Memory';
-    }
-
-    try {
-      const response = await fetch(`/api/articles/${art.slug}`);
-      if (response.ok) {
-        const fullArt = await response.json() as Article;
-        folders[folderName]?.file(`${art.slug}.md`, fullArt.content || '');
-        readme += '- [' + folderDesc + '] `' + folderName + '/' + art.slug + '.md` - ' + art.title + ' (Last edited: ' + formatRelativeTime(art.timestamp) + ')\n';
-      }
-    } catch (err) {
-      console.error(`Failed to fetch and pack ${art.slug}:`, err);
-    }
-  }
-
-  zip.file('README.md', readme);
-
-  const content = await zip.generateAsync({ type: 'blob' });
-  const url = URL.createObjectURL(content);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `nexwiki-export-${dateStr}.zip`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
 

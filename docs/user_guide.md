@@ -11,7 +11,7 @@ NexWiki is powered by flat Markdown files stored on the server. The interface ma
 ### 1. Creating Articles
 To start a new document, you have two primary options:
 * **The "New Page" Button**: Click the **New Page** button (or the `+` icon) in the sidebar or header. This opens a fresh editor screen.
-* **The Wiki Link Creator (Broken Links)**: Wikilinks targeting non-existent pages render as a **red dotted broken link** (e.g. `[[My Future Page]]`). Clicking a broken link instantly opens the editor with the title already pre-filled so you can write it immediately!
+* **The Wiki Link Creator (Broken Links)**: Wikilinks targeting non-existent pages render as a **red dotted broken link** (e.g. `[[My Future Page]]`). Clicking a broken link instantly opens the editor with the title already pre-filled, so you can write it immediately!
 
 #### Title & Clean Slugs
 When typing your **Article Title** in the editor:
@@ -45,7 +45,7 @@ If an article is no longer needed:
 1. Open the article you wish to delete.
 2. Click the compact **Delete** (rose-tinted trash bin icon) button in the page header.
 3. Confirm the prompt to delete the page.
-*Note: This permanently deletes the Markdown file and its media folder from the server, and automatically de-indexes it from full-text search.*
+*Note: This permanently deletes the Markdown file and its media folder from the server and automatically de-indexes it from full-text search.*
 
 ---
 
@@ -64,9 +64,34 @@ To easily distribute and work with your wiki articles, NexWiki provides an elega
 
 #### 📂 File System Save Selection
 To give you complete control over your filesystem:
-* NexWiki utilizes the modern browser **File System Access API (`showSaveFilePicker`)** where supported (Chrome, Edge, Safari, and Opera on macOS/Windows). 
+* NexWiki uses the modern browser **File System Access API (`showSaveFilePicker`)** where supported (Chrome, Edge, Safari, and Opera on macOS/Windows). 
 * When exporting `.docx` or `.md` files, this triggers a **native macOS / Windows "Save As" file dialog**, letting you name the file and select the exact folder on your local filesystem to save it to.
 * In unsupported browsers (such as Firefox) or non-secure contexts, it gracefully falls back to a standard browser download trigger that places the file in your default Downloads folder.
+
+---
+
+### 5. Backup & Restore
+
+NexWiki can package your entire knowledge base — wiki articles, AI memories, plans, and skills — into a single portable **OKF v0.1 bundle** (`.zip`). This bundle is the authoritative backup format: it round-trips perfectly and can be used to migrate your content to a new NexWiki instance.
+
+Both controls live at the bottom of the sidebar.
+
+#### Backup
+Click **Backup Content (.zip)**. The bundle downloads immediately to your browser's Downloads folder. Store it wherever you keep important files (local disk, cloud storage, etc.).
+
+The bundle is a standard ZIP archive containing one `.md` file per article with full OKF YAML frontmatter (title, type, tags, timestamps, wikilinks, and all metadata). It is human-readable and usable by external tools.
+
+#### Restore
+On any NexWiki instance — including a brand-new one with no existing content — click **Restore from Backup (.zip)** and select your bundle. NexWiki will:
+
+1. Parse all articles in the bundle
+2. Create any articles that don't yet exist (matched by slug)
+3. Update any articles that do exist with the bundle's content
+4. Refresh the article list automatically
+
+A confirmation toast reports how many articles were restored. If there are any conformance warnings (e.g., articles with unrecognized type fields), they are logged to the browser console.
+
+Re-importing the same bundle twice is safe — existing articles are updated in place and no duplicates are created.
 
 ---
 
@@ -81,17 +106,17 @@ WikiLinks allow you to link articles together simply by referencing their titles
   ```markdown
   Refer to [[Formatting Guide]] for advanced syntax.
   ```
-  *Renders as:* Refer to [Formatting Guide](/articles/formatting-guide) (dynamically Slugified to direct to the `formatting-guide` page).
+  *Renders as:* a clickable link — **Formatting Guide** — routed to `/articles/formatting-guide`.
 
 * **Custom Display Text (Piped WikiLink)**: If you want to customize the clickable text while pointing to a different page, use a vertical pipe `|`:
   ```markdown
   Read our [[setup-guide|Detailed Setup Instructions]].
   ```
-  *Renders as:* Read our [Detailed Setup Instructions](/articles/setup-guide).
+  *Renders as:* a clickable link — **Detailed Setup Instructions** — routed to `/articles/setup-guide`.
 
 #### 🔗 Smart Link Resolution (Broken Links)
 NexWiki keeps track of all pages. If you add a WikiLink to a page that **does not exist yet**:
-- It will render as a red dotted link with a question mark.
+- It will render as a red-dotted link with a question mark.
 - Clicking the link doesn't break the app; instead, it automatically opens the creation screen with that title pre-filled.
 - This allows you to plan your documentation structure ahead of time and fill in pages as you go!
 
@@ -129,7 +154,7 @@ You can upload images in two fast, native ways while editing:
 Upon upload, NexWiki saves the file securely under the article's specific asset directory and inserts the correct Markdown reference at your cursor position:
 
 ```markdown
-![My Uploaded Image](/api/assets/article-slug/image-filename.png)
+![My Uploaded Image](/api/assets/{article-slug}/{filename}.png)
 ```
 
 You can customize the alternative description text inside the leading brackets `![Alt Text]` to ensure web accessibility.
