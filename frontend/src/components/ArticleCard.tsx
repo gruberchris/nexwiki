@@ -1,4 +1,5 @@
 import type { Article } from '../types';
+import { isAgentDoc, typeLabel } from '../types';
 import { formatRelativeTime } from '../utils';
 import { Clock, ArrowRight } from 'lucide-react';
 import { sortCardTags } from '../filterUtils';
@@ -30,23 +31,22 @@ export function ArticleCard({ art, onNavigate, secondary = false, statusTags }: 
             {art.description}
           </p>
         )}
-        {art.tags && art.tags.length > 0 && (
+        {(isAgentDoc(art) || (art.tags && art.tags.length > 0)) && (
           <div className="flex flex-wrap gap-1">
-            {sortCardTags(art.tags, statusTags).slice(0, MAX_VISIBLE_TAGS).map((tag) => {
-              const isSystem = tag.toLowerCase().startsWith('aiagent-');
-              return (
-                <span
-                  key={tag}
-                  className={isSystem
-                    ? 'text-[10px] px-1.5 py-0.5 rounded-full bg-themeBgSecondary text-themeTextMuted border border-themeBorder'
-                    : 'text-[10px] px-1.5 py-0.5 rounded-full bg-themeAccentBg text-themeAccent font-medium'
-                  }
-                >
-                  {tag}
-                </span>
-              );
-            })}
-            {art.tags.length > MAX_VISIBLE_TAGS && (
+            {isAgentDoc(art) && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-themeBgSecondary text-themeTextMuted border border-themeBorder font-semibold">
+                {typeLabel(art.type)}
+              </span>
+            )}
+            {art.tags && sortCardTags(art.tags, statusTags).slice(0, MAX_VISIBLE_TAGS).map((tag) => (
+              <span
+                key={tag}
+                className="text-[10px] px-1.5 py-0.5 rounded-full bg-themeAccentBg text-themeAccent font-medium"
+              >
+                {tag}
+              </span>
+            ))}
+            {art.tags && art.tags.length > MAX_VISIBLE_TAGS && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-themeBgSecondary text-themeTextMuted border border-themeBorder">
                 +{art.tags.length - MAX_VISIBLE_TAGS} more
               </span>
@@ -58,7 +58,7 @@ export function ArticleCard({ art, onNavigate, secondary = false, statusTags }: 
       <div className="flex items-center justify-between border-t border-themeBorder pt-3 mt-4 text-[10px] text-themeTextMuted select-none">
         <div className="flex items-center gap-1">
           <Clock size={11} />
-          <span>Updated {formatRelativeTime(art.updated_at)}</span>
+          <span>Updated {formatRelativeTime(art.timestamp)}</span>
         </div>
         <span className={`flex items-center gap-0.5 ${accentText} font-semibold group-hover:translate-x-1 transition-transform`}>
           Open <ArrowRight size={10} />

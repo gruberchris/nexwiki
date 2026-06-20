@@ -17,10 +17,10 @@ const mockFetch = (data: unknown = { tags: ['completed', 'wip', 'draft'] }) => {
 };
 
 const mockArticles: Article[] = [
-  { title: 'Go Guide', slug: 'go-guide', tags: ['golang'], created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-15T00:00:00Z', version: 1 },
-  { title: 'AI Plan', slug: 'ai-plan', tags: ['aiagent-plan'], created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-15T00:00:00Z', version: 1 },
-  { title: 'My Skill', slug: 'my-skill', tags: ['aiagent-skill'], created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-15T00:00:00Z', version: 1 },
-  { title: 'AI Memory', slug: 'ai-memory', tags: ['aiagent-memory-rules'], created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-15T00:00:00Z', version: 1 },
+  { type: 'Wiki', title: 'Go Guide', slug: 'go-guide', tags: ['golang'], created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1 },
+  { type: 'AI-Agent-Plan', title: 'AI Plan', slug: 'ai-plan', tags: ['nexwiki'], created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1 },
+  { type: 'AI-Agent-Skill', title: 'My Skill', slug: 'my-skill', tags: [], created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1 },
+  { type: 'AI-Agent-Memory', title: 'AI Memory', slug: 'ai-memory', tags: ['memory-rules'], created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1 },
 ];
 
 describe('Hero', () => {

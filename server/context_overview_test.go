@@ -10,23 +10,23 @@ func TestMCPGetContextOverview(t *testing.T) {
 
 	// Seed one of each type: article with description, article without (preview fallback),
 	// a memory, a plan, and a skill.
-	_, err := srv.Storage.SaveArticle("", "Described Article", "# Body text", "explicit summary", "", "", []string{"notes"})
+	_, err := srv.Storage.SaveArticle("", "Described Article", "# Body text", "explicit summary", "", "", "", []string{"notes"}, "")
 	if err != nil {
 		t.Fatalf("seed 1 failed: %v", err)
 	}
-	_, err = srv.Storage.SaveArticle("", "Bare Article", "First prose line becomes the preview.\n\nMore text.", "", "", "", nil)
+	_, err = srv.Storage.SaveArticle("", "Bare Article", "First prose line becomes the preview.\n\nMore text.", "", "", "", "", nil, "")
 	if err != nil {
 		t.Fatalf("seed 2 failed: %v", err)
 	}
-	_, err = srv.Storage.SaveArticle("", "A Memory", "# remembered fact", "", "", "", []string{"aiagent-memory-nexwiki"})
+	_, err = srv.Storage.SaveArticle("", "A Memory", "# remembered fact", "", "", "", "", []string{"aiagent-memory-nexwiki"}, ContentTypeMemory)
 	if err != nil {
 		t.Fatalf("seed 3 failed: %v", err)
 	}
-	_, err = srv.Storage.SaveArticle("", "A Plan", "# plan steps", "", "", "", []string{"aiagent-plan", "nexwiki"})
+	_, err = srv.Storage.SaveArticle("", "A Plan", "# plan steps", "", "", "", "", []string{"aiagent-plan", "nexwiki"}, ContentTypePlan)
 	if err != nil {
 		t.Fatalf("seed 4 failed: %v", err)
 	}
-	_, err = srv.Storage.SaveArticle("", "A Skill", "# skill steps", "", "", "", []string{"aiagent-skill"})
+	_, err = srv.Storage.SaveArticle("", "A Skill", "# skill steps", "", "", "", "", []string{"aiagent-skill"}, ContentTypeSkill)
 	if err != nil {
 		t.Fatalf("seed 5 failed: %v", err)
 	}

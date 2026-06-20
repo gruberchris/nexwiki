@@ -43,8 +43,11 @@ func TestMCPEditAgentPlan(t *testing.T) {
 	if plan.Version != 1 {
 		t.Errorf("Expected version 1, got %d", plan.Version)
 	}
-	if len(plan.Tags) != 2 || plan.Tags[0] != "aiagent-plan" || plan.Tags[1] != "nexwiki" {
-		t.Errorf("Expected tags ['aiagent-plan', 'nexwiki'], got %v", plan.Tags)
+	if plan.Type != ContentTypePlan {
+		t.Errorf("Expected type AI-Agent-Plan, got %q", plan.Type)
+	}
+	if len(plan.Tags) != 1 || plan.Tags[0] != "nexwiki" {
+		t.Errorf("Expected tags ['nexwiki'], got %v", plan.Tags)
 	}
 
 	// 2. Perform a successful edit using edit_agent_plan
@@ -75,19 +78,12 @@ func TestMCPEditAgentPlan(t *testing.T) {
 	if updatedPlan.Version != 2 {
 		t.Errorf("Expected version 2, got %d", updatedPlan.Version)
 	}
-	// Verify that 'aiagent-plan' is preserved, even though it was not explicitly in the tags arg!
-	hasPlanTag := false
-	for _, tag := range updatedPlan.Tags {
-		if tag == "aiagent-plan" {
-			hasPlanTag = true
-			break
-		}
+	// The plan class is carried by the OKF type, which is preserved across the edit.
+	if updatedPlan.Type != ContentTypePlan {
+		t.Errorf("Expected type AI-Agent-Plan to be preserved, got %q", updatedPlan.Type)
 	}
-	if !hasPlanTag {
-		t.Errorf("Expected 'aiagent-plan' tag to be preserved in new tags list, got %v", updatedPlan.Tags)
-	}
-	if len(updatedPlan.Tags) != 3 {
-		t.Errorf("Expected 3 tags (aiagent-plan, postgres, nexwiki), got %v", updatedPlan.Tags)
+	if len(updatedPlan.Tags) != 2 || updatedPlan.Tags[0] != "postgres" || updatedPlan.Tags[1] != "nexwiki" {
+		t.Errorf("Expected tags [postgres, nexwiki], got %v", updatedPlan.Tags)
 	}
 
 	// 3. Test optimistic locking: try editing with outdated loaded_version = 1 (current disk is 2)
@@ -106,7 +102,7 @@ func TestMCPEditAgentPlan(t *testing.T) {
 	}
 
 	// 4. Test target validation: try editing a standard article (not a plan)
-	_, _ = storage.SaveArticle("", "Standard Page", "Just text", "", "", "initial", []string{"notes"})
+	_, _ = storage.SaveArticle("", "Standard Page", "Just text", "", "", "", "initial", []string{"notes"}, "")
 	invalidArgs := json.RawMessage(`{"name":"edit_agent_plan","arguments":{"slug":"standard-page","title":"Updated Title","loaded_version":1,"edit_summary":"Should fail"}}`)
 	res4, rpcErr4 := srv.executeToolCallInternal(invalidArgs)
 	if rpcErr4 != nil {
@@ -134,12 +130,12 @@ func TestMCPUpdateArticleTags(t *testing.T) {
 	srv := NewServer(storage, "Test Wiki", "light", false, eventBus, "1.0.0", "")
 
 	// 1. Create a standard article first
-	_, err = storage.SaveArticle("", "Golang Guide", "# Go content", "", "", "Initial seed", []string{"go", "backend"})
+	_, err = storage.SaveArticle("", "Golang Guide", "# Go content", "", "", "", "Initial seed", []string{"go", "backend"}, "")
 	if err != nil {
 		t.Fatalf("Failed to save article: %v", err)
 	}
 
-	// 2. Call update_article_tags via MCP tool interface
+	// 2. Call update_article_tags via the MCP tool interface
 	updateArgs := json.RawMessage(`{"name":"update_article_tags","arguments":{"slug":"golang-guide","tags":["programming","backend","language"],"loaded_version":1,"edit_summary":"MCP tag update"}}`)
 	res, rpcErr := srv.executeToolCallInternal(updateArgs)
 	if rpcErr != nil {
@@ -168,7 +164,7 @@ func TestMCPUpdateArticleTags(t *testing.T) {
 	}
 }
 
-// newMCPServer creates a server for MCP tool testing.
+// the newMCPServer creates a server for MCP tool testing.
 func newMCPServer(t *testing.T) *Server {
 	t.Helper()
 	storage, err := NewStorage(t.TempDir())
@@ -234,7 +230,7 @@ func TestMCPReadArticle(t *testing.T) {
 	}
 
 	// Valid read
-	_, _ = srv.Storage.SaveArticle("", "Readable Article", "# Content here", "", "", "", []string{"docs"})
+	_, _ = srv.Storage.SaveArticle("", "Readable Article", "# Content here", "", "", "", "", []string{"docs"}, "")
 	resp3 := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"readable-article"}}`)
 	if resp3.IsError {
 		t.Errorf("expected success, got error: %s", resp3.Content[0].Text)
@@ -258,8 +254,8 @@ func TestMCPListArticles(t *testing.T) {
 	}
 
 	// After saves
-	_, _ = srv.Storage.SaveArticle("", "First Article", "# first", "", "", "", []string{"notes"})
-	_, _ = srv.Storage.SaveArticle("", "Second Article", "# second", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "First Article", "# first", "", "", "", "", []string{"notes"}, "")
+	_, _ = srv.Storage.SaveArticle("", "Second Article", "# second", "", "", "", "", nil, "")
 	resp2 := toolCall(t, srv, `{"name":"list_articles","arguments":{}}`)
 	if resp2.IsError {
 		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
@@ -279,7 +275,7 @@ func TestMCPDeleteWikiArticle(t *testing.T) {
 	}
 
 	// Valid delete
-	_, _ = srv.Storage.SaveArticle("", "To Delete", "# bye", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "To Delete", "# bye", "", "", "", "", nil, "")
 	resp2 := toolCall(t, srv, `{"name":"delete_wiki_article","arguments":{"slug":"to-delete"}}`)
 	if resp2.IsError {
 		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
@@ -301,18 +297,21 @@ func TestMCPCreateAgentMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get created memory: %v", err)
 	}
+	if art.Type != ContentTypeMemory {
+		t.Errorf("expected type AI-Agent-Memory, got %q", art.Type)
+	}
 	hasTag := false
 	for _, tag := range art.Tags {
-		if tag == "aiagent-memory-nexwiki" {
+		if tag == "memory-nexwiki" {
 			hasTag = true
 			break
 		}
 	}
 	if !hasTag {
-		t.Errorf("expected aiagent-memory-nexwiki tag, got %v", art.Tags)
+		t.Errorf("expected memory-nexwiki scope tag, got %v", art.Tags)
 	}
 
-	// Any free-form memory_type is accepted (e.g. topic name)
+	// Any free-form memory_type is accepted (e.g., topic name)
 	resp2 := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Docker Tips","content":"# Tips","memory_type":"docker"}}`)
 	if resp2.IsError {
 		t.Errorf("expected success for topic-scoped memory, got error: %s", resp2.Content[0].Text)
@@ -323,16 +322,16 @@ func TestMCPCreateAgentMemory(t *testing.T) {
 	}
 	hasDockerTag := false
 	for _, tag := range art2.Tags {
-		if tag == "aiagent-memory-docker" {
+		if tag == "memory-docker" {
 			hasDockerTag = true
 			break
 		}
 	}
 	if !hasDockerTag {
-		t.Errorf("expected aiagent-memory-docker tag, got %v", art2.Tags)
+		t.Errorf("expected memory-docker scope tag, got %v", art2.Tags)
 	}
 
-	// Omitting memory_type produces the bare aiagent-memory tag
+	// Omitting memory_type produces a bare memory: type AI-Agent-Memory with no scope tag
 	resp3 := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"General Note","content":"# General"}}`)
 	if resp3.IsError {
 		t.Errorf("expected success for unscoped memory, got error: %s", resp3.Content[0].Text)
@@ -341,15 +340,11 @@ func TestMCPCreateAgentMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get unscoped memory: %v", err)
 	}
-	hasBareTag := false
-	for _, tag := range art3.Tags {
-		if tag == "aiagent-memory" {
-			hasBareTag = true
-			break
-		}
+	if art3.Type != ContentTypeMemory {
+		t.Errorf("expected type AI-Agent-Memory for bare memory, got %q", art3.Type)
 	}
-	if !hasBareTag {
-		t.Errorf("expected bare aiagent-memory tag, got %v", art3.Tags)
+	if len(art3.Tags) != 0 {
+		t.Errorf("expected no scope tags on a bare memory, got %v", art3.Tags)
 	}
 }
 
@@ -357,14 +352,14 @@ func TestMCPAppendAgentMemory(t *testing.T) {
 	srv := newMCPServer(t)
 
 	// Not a memory (regular article)
-	_, _ = srv.Storage.SaveArticle("", "Regular Article", "# content", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Regular Article", "# content", "", "", "", "", nil, "")
 	resp := toolCall(t, srv, `{"name":"append_agent_memory","arguments":{"slug":"regular-article","content_to_append":"## Appended"}}`)
 	if !resp.IsError {
 		t.Error("expected error for non-memory article")
 	}
 
 	// Valid append to scoped memory
-	_, _ = srv.Storage.SaveArticle("", "My Memory", "# Base content", "", "", "", []string{"aiagent-memory-nexwiki"})
+	_, _ = srv.Storage.SaveArticle("", "My Memory", "# Base content", "", "", "", "", []string{"memory-nexwiki"}, ContentTypeMemory)
 	resp2 := toolCall(t, srv, `{"name":"append_agent_memory","arguments":{"slug":"my-memory","content_to_append":"\n\n## Appended Section\n\nNew content here."}}`)
 	if resp2.IsError {
 		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
@@ -376,11 +371,11 @@ func TestMCPAppendAgentMemory(t *testing.T) {
 		t.Errorf("expected appended content, got: %s", art.Content)
 	}
 
-	// Valid append to bare aiagent-memory tagged article
-	_, _ = srv.Storage.SaveArticle("", "General Memory", "# Base", "", "", "", []string{"aiagent-memory"})
+	// Valid append to a bare (unscoped) memory document
+	_, _ = srv.Storage.SaveArticle("", "General Memory", "# Base", "", "", "", "", nil, ContentTypeMemory)
 	resp3 := toolCall(t, srv, `{"name":"append_agent_memory","arguments":{"slug":"general-memory","content_to_append":"\n\n## Extra"}}`)
 	if resp3.IsError {
-		t.Errorf("expected success appending to bare aiagent-memory article, got error: %s", resp3.Content[0].Text)
+		t.Errorf("expected success appending to bare memory document, got error: %s", resp3.Content[0].Text)
 	}
 }
 
@@ -393,20 +388,23 @@ func TestMCPCreateAgentPlan(t *testing.T) {
 		t.Errorf("expected success, got error: %s", resp.Content[0].Text)
 	}
 
-	// Verify aiagent-plan tag is present
+	// Verify the plan carries the reserved AI-Agent-Plan type and the project-context tag
 	art, err := srv.Storage.GetArticle("deploy-plan")
 	if err != nil {
 		t.Fatalf("failed to get created plan: %v", err)
 	}
+	if art.Type != ContentTypePlan {
+		t.Errorf("expected type AI-Agent-Plan, got %q", art.Type)
+	}
 	hasTag := false
 	for _, tag := range art.Tags {
-		if tag == "aiagent-plan" {
+		if tag == "nexwiki" {
 			hasTag = true
 			break
 		}
 	}
 	if !hasTag {
-		t.Errorf("expected aiagent-plan tag, got %v", art.Tags)
+		t.Errorf("expected nexwiki project tag, got %v", art.Tags)
 	}
 }
 
@@ -414,14 +412,14 @@ func TestMCPAppendAgentPlan(t *testing.T) {
 	srv := newMCPServer(t)
 
 	// Not a plan
-	_, _ = srv.Storage.SaveArticle("", "Regular Doc", "# doc", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Regular Doc", "# doc", "", "", "", "", nil, "")
 	resp := toolCall(t, srv, `{"name":"append_agent_plan","arguments":{"slug":"regular-doc","content_to_append":"\n\n## Extra"}}`)
 	if !resp.IsError {
 		t.Error("expected error for non-plan article")
 	}
 
 	// Valid append
-	_, _ = srv.Storage.SaveArticle("", "Active Plan", "# Plan\n\nStep 1", "", "", "", []string{"aiagent-plan"})
+	_, _ = srv.Storage.SaveArticle("", "Active Plan", "# Plan\n\nStep 1", "", "", "", "", []string{"aiagent-plan"}, ContentTypePlan)
 	resp2 := toolCall(t, srv, `{"name":"append_agent_plan","arguments":{"slug":"active-plan","content_to_append":"\n\n## Step 2\n\nDo the thing."}}`)
 	if resp2.IsError {
 		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
@@ -443,8 +441,8 @@ func TestMCPListAgentPlans(t *testing.T) {
 	}
 
 	// Create plans
-	_, _ = srv.Storage.SaveArticle("", "Project Alpha Plan", "# plan", "", "", "", []string{"aiagent-plan", "alpha"})
-	_, _ = srv.Storage.SaveArticle("", "Project Beta Plan", "# plan", "", "", "", []string{"aiagent-plan", "beta"})
+	_, _ = srv.Storage.SaveArticle("", "Project Alpha Plan", "# plan", "", "", "", "", []string{"aiagent-plan", "alpha"}, ContentTypePlan)
+	_, _ = srv.Storage.SaveArticle("", "Project Beta Plan", "# plan", "", "", "", "", []string{"aiagent-plan", "beta"}, ContentTypePlan)
 
 	resp2 := toolCall(t, srv, `{"name":"list_agent_plans","arguments":{}}`)
 	if resp2.IsError {
@@ -464,20 +462,13 @@ func TestMCPCreateAgentSkill(t *testing.T) {
 		t.Errorf("expected success, got error: %s", resp.Content[0].Text)
 	}
 
-	// Verify aiagent-skill tag
+	// Verify the skill carries the reserved AI-Agent-Skill type
 	art, err := srv.Storage.GetArticle("search-helper")
 	if err != nil {
 		t.Fatalf("failed to get created skill: %v", err)
 	}
-	hasTag := false
-	for _, tag := range art.Tags {
-		if tag == "aiagent-skill" {
-			hasTag = true
-			break
-		}
-	}
-	if !hasTag {
-		t.Errorf("expected aiagent-skill tag, got %v", art.Tags)
+	if art.Type != ContentTypeSkill {
+		t.Errorf("expected type AI-Agent-Skill, got %q (tags %v)", art.Type, art.Tags)
 	}
 }
 
@@ -491,7 +482,7 @@ func TestMCPListAgentSkills(t *testing.T) {
 	}
 
 	// After creating a skill
-	_, _ = srv.Storage.SaveArticle("", "My Skill", "# skill content", "", "", "", []string{"aiagent-skill"})
+	_, _ = srv.Storage.SaveArticle("", "My Skill", "# skill content", "", "", "", "", []string{"aiagent-skill"}, ContentTypeSkill)
 	resp2 := toolCall(t, srv, `{"name":"list_agent_skills","arguments":{}}`)
 	if resp2.IsError {
 		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
@@ -521,8 +512,8 @@ func TestMCPGetArticleHistory(t *testing.T) {
 	// Should return empty history or an error about no article - either is acceptable
 
 	// After creating and updating
-	_, _ = srv.Storage.SaveArticle("", "History Article", "# v1", "", "", "", nil)
-	_, _ = srv.Storage.SaveArticle("history-article", "History Article", "# v2", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "History Article", "# v1", "", "", "", "", nil, "")
+	_, _ = srv.Storage.SaveArticle("history-article", "History Article", "# v2", "", "", "", "", nil, "")
 	resp2 := toolCall(t, srv, `{"name":"get_article_history","arguments":{"slug":"history-article"}}`)
 	if resp2.IsError {
 		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
@@ -537,8 +528,8 @@ func TestMCPRevertArticleVersion(t *testing.T) {
 	srv := newMCPServer(t)
 
 	// Invalid version
-	_, _ = srv.Storage.SaveArticle("", "Revert Test", "# v1", "", "", "", nil)
-	_, _ = srv.Storage.SaveArticle("revert-test", "Revert Test", "# v2", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Revert Test", "# v1", "", "", "", "", nil, "")
+	_, _ = srv.Storage.SaveArticle("revert-test", "Revert Test", "# v2", "", "", "", "", nil, "")
 	resp := toolCall(t, srv, `{"name":"revert_article_version","arguments":{"slug":"revert-test","version":99}}`)
 	if !resp.IsError {
 		t.Error("expected error for nonexistent version")
@@ -560,7 +551,7 @@ func TestMCPGetWikiStatistics(t *testing.T) {
 	}
 
 	// Add articles and check stats appear in output
-	_, _ = srv.Storage.SaveArticle("", "Wiki Page", "# content", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Wiki Page", "# content", "", "", "", "", nil, "")
 	resp2 := toolCall(t, srv, `{"name":"get_wiki_statistics","arguments":{}}`)
 	if resp2.IsError {
 		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
@@ -724,12 +715,12 @@ func TestMCPListAgentMemories(t *testing.T) {
 		t.Errorf("expected success, got error: %s", resp.Content[0].Text)
 	}
 
-	// Create memories: scoped and bare
-	_, _ = srv.Storage.SaveArticle("", "NexWiki Notes", "# notes", "", "", "", []string{"aiagent-memory-nexwiki"})
-	_, _ = srv.Storage.SaveArticle("", "Docker Tips", "# tips", "", "", "", []string{"aiagent-memory-docker"})
-	_, _ = srv.Storage.SaveArticle("", "General Note", "# general", "", "", "", []string{"aiagent-memory"})
+	// Create memories: scoped (memory-<scope> tag) and bare (no scope tag), all of type Memory
+	_, _ = srv.Storage.SaveArticle("", "NexWiki Notes", "# notes", "", "", "", "", []string{"memory-nexwiki"}, ContentTypeMemory)
+	_, _ = srv.Storage.SaveArticle("", "Docker Tips", "# tips", "", "", "", "", []string{"memory-docker"}, ContentTypeMemory)
+	_, _ = srv.Storage.SaveArticle("", "General Note", "# general", "", "", "", "", nil, ContentTypeMemory)
 
-	// List all — bare aiagent-memory tag must be included
+	// List all — the bare (unscoped) memory must be included
 	resp2 := toolCall(t, srv, `{"name":"list_agent_memories","arguments":{}}`)
 	if resp2.IsError {
 		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
@@ -779,15 +770,15 @@ func TestLogMCPToolCallBranches(t *testing.T) {
 	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"create_wiki_article","arguments":{"title":"Log Test Article","content":"# Content"}}`))
 
 	// Covers delete_ prefix → "delete" action
-	_, _ = srv.Storage.SaveArticle("", "Log Delete Me", "# bye", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Log Delete Me", "# bye", "", "", "", "", nil, "")
 	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"delete_wiki_article","arguments":{"slug":"log-delete-me"}}`))
 
 	// Covers edit_ prefix → "edit" action
-	_, _ = srv.Storage.SaveArticle("", "Log Edit Me", "# v1", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Log Edit Me", "# v1", "", "", "", "", nil, "")
 	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"edit_wiki_article","arguments":{"slug":"log-edit-me","title":"Log Edit Me","content":"# v2","loaded_version":1}}`))
 
 	// Covers append_ prefix → "edit" action
-	_, _ = srv.Storage.SaveArticle("", "Log Append Me", "# base", "", "", "", []string{"aiagent-plan"})
+	_, _ = srv.Storage.SaveArticle("", "Log Append Me", "# base", "", "", "", "", []string{"aiagent-plan"}, ContentTypePlan)
 	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"append_agent_plan","arguments":{"slug":"log-append-me","content_to_append":"\n\n## Appended"}}`))
 
 	// Verify EventBus received events

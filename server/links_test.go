@@ -32,6 +32,28 @@ func TestExtractWikiLinkTargets(t *testing.T) {
 	}
 }
 
+func TestExtractWikiLinkTargetsIgnoresCode(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{"inline code ignored", "Use `[[nodiscard]]` here, but link [[Real Page]].", []string{"Real Page"}},
+		{"fenced block ignored", "```cpp\nint x [[maybe_unused]];\n```\nSee [[Other]].", []string{"Other"}},
+		{"tilde fence ignored", "~~~lua\nlocal s = [[multi\nline]]\n~~~\n[[Kept]]", []string{"Kept"}},
+		{"only code yields nothing", "```\n[[10, 2, 5]]\n```\nand `[[slug]]` example", nil},
+		{"prose links still work", "Plain [[A]] and [[B|alias]].", []string{"A", "B"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ExtractWikiLinkTargets(tc.content)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("ExtractWikiLinkTargets(%q) = %v, want %v", tc.content, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestGetBacklinks(t *testing.T) {
 	storage, err := NewStorage(t.TempDir())
 	if err != nil {
@@ -39,11 +61,11 @@ func TestGetBacklinks(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = storage.Close() })
 
-	_, _ = storage.SaveArticle("", "Target Page", "# Target", "", "", "", nil)
-	_, _ = storage.SaveArticle("", "Linker One", "Links to [[Target Page]] directly.", "", "", "", nil)
-	_, _ = storage.SaveArticle("", "Linker Two", "Piped link: [[target-page|see target]].", "", "", "", nil)
-	_, _ = storage.SaveArticle("", "Unrelated", "No links here.", "", "", "", nil)
-	_, _ = storage.SaveArticle("", "Self Linker", "I link to [[Self Linker]] myself.", "", "", "", nil)
+	_, _ = storage.SaveArticle("", "Target Page", "# Target", "", "", "", "", nil, "")
+	_, _ = storage.SaveArticle("", "Linker One", "Links to [[Target Page]] directly.", "", "", "", "", nil, "")
+	_, _ = storage.SaveArticle("", "Linker Two", "Piped link: [[target-page|see target]].", "", "", "", "", nil, "")
+	_, _ = storage.SaveArticle("", "Unrelated", "No links here.", "", "", "", "", nil, "")
+	_, _ = storage.SaveArticle("", "Self Linker", "I link to [[Self Linker]] myself.", "", "", "", "", nil, "")
 
 	backlinks, err := storage.GetBacklinks("target-page")
 	if err != nil {
@@ -77,7 +99,7 @@ func TestGetBacklinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetArticle home failed: %v", err)
 	}
-	_, err = storage.SaveArticle("home", home.Title, home.Content+"\n\nPinned: [[Target Page]]", "", "", "pin link", home.Tags)
+	_, err = storage.SaveArticle("home", home.Title, home.Content+"\n\nPinned: [[Target Page]]", "", "", "", "pin link", home.Tags, "")
 	if err != nil {
 		t.Fatalf("home edit failed: %v", err)
 	}
@@ -99,8 +121,8 @@ func TestGetBacklinks(t *testing.T) {
 func TestMCPGetBacklinks(t *testing.T) {
 	srv := newMCPServer(t)
 
-	_, _ = srv.Storage.SaveArticle("", "Hub Page", "# Hub", "the hub summary", "", "", nil)
-	_, _ = srv.Storage.SaveArticle("", "Spoke", "Points at [[Hub Page]].", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Hub Page", "# Hub", "the hub summary", "", "", "", nil, "")
+	_, _ = srv.Storage.SaveArticle("", "Spoke", "Points at [[Hub Page]].", "", "", "", "", nil, "")
 
 	// Missing slug
 	_, rpcErr := srv.executeToolCallInternal([]byte(`{"name":"get_backlinks","arguments":{}}`))
@@ -143,8 +165,8 @@ func TestMCPGetBacklinks(t *testing.T) {
 func TestHandleGetBacklinks(t *testing.T) {
 	srv := newTestServer(t)
 
-	_, _ = srv.Storage.SaveArticle("", "Hub", "# Hub", "", "", "", nil)
-	_, _ = srv.Storage.SaveArticle("", "Pointer", "See [[Hub]].", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Hub", "# Hub", "", "", "", "", nil, "")
+	_, _ = srv.Storage.SaveArticle("", "Pointer", "See [[Hub]].", "", "", "", "", nil, "")
 
 	// 404 for unknown article
 	req := httptest.NewRequest("GET", "/api/articles/missing/backlinks", nil)

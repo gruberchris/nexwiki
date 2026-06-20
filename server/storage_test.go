@@ -18,7 +18,7 @@ func TestStorageVersioning(t *testing.T) {
 	t.Cleanup(func() { _ = storage.Close() })
 
 	// 1. Test Saving Initial version
-	art, err := storage.SaveArticle("", "Test Page", "# Version 1 content", "", "", "Initial commit", []string{"tag1", "tag2"})
+	art, err := storage.SaveArticle("", "Test Page", "# Version 1 content", "", "", "", "Initial commit", []string{"tag1", "tag2"}, "")
 	if err != nil {
 		t.Fatalf("SaveArticle failed: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestStorageVersioning(t *testing.T) {
 	}
 
 	// 2. Test saving second version
-	art2, err := storage.SaveArticle("test-page", "Test Page", "# Version 2 content", "", "", "Typo fix", []string{"tag1", "tag2"})
+	art2, err := storage.SaveArticle("test-page", "Test Page", "# Version 2 content", "", "", "", "Typo fix", []string{"tag1", "tag2"}, "")
 	if err != nil {
 		t.Fatalf("SaveArticle update failed: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestStorageVersioning(t *testing.T) {
 	}
 
 	// 5. Test slug renaming
-	art3, err := storage.SaveArticle("test-page", "Renamed Page", "# Renamed content", "", "", "Renamed slug", []string{"tag1", "tag2", "renamed-tag"})
+	art3, err := storage.SaveArticle("test-page", "Renamed Page", "# Renamed content", "", "", "", "Renamed slug", []string{"tag1", "tag2", "renamed-tag"}, "")
 	if err != nil {
 		t.Fatalf("SaveArticle rename failed: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestStorageVersioning(t *testing.T) {
 	}
 
 	// 7. Test global tag deletion
-	art5, err := storage.SaveArticle("", "Tag Delete Test", "# Content", "", "", "Summary", []string{"tag1", "delete-me"})
+	art5, err := storage.SaveArticle("", "Tag Delete Test", "# Content", "", "", "", "Summary", []string{"tag1", "delete-me"}, "")
 	if err != nil {
 		t.Fatalf("SaveArticle for tag delete test failed: %v", err)
 	}
@@ -130,14 +130,14 @@ func TestStorageVersioning(t *testing.T) {
 		}
 	}
 
-	// Verify that protected tags cannot be deleted
-	err = storage.DeleteTagGlobally("aiagent-plan")
+	// Verify that protected tool-managed memory-scope tags cannot be deleted globally
+	err = storage.DeleteTagGlobally("memory-nexwiki")
 	if err == nil {
-		t.Errorf("Expected error deleting protected AI tag, got nil")
+		t.Errorf("Expected error deleting protected memory-scope tag, got nil")
 	}
 
-	// Verify search filtering of agent tags by default
-	_, err = storage.SaveArticle("", "AI Plan Page", "# Content", "", "", "Summary", []string{"aiagent-plan"})
+	// Verify search filtering of agent documents (by type) by default
+	_, err = storage.SaveArticle("", "AI Plan Page", "# Content", "", "", "", "Summary", nil, ContentTypePlan)
 	if err != nil {
 		t.Fatalf("SaveArticle for AI plan failed: %v", err)
 	}
@@ -153,8 +153,8 @@ func TestStorageVersioning(t *testing.T) {
 		}
 	}
 
-	// Search explicitly containing 'aiagent-' should find it
-	resultsExplicit, err := storage.SearchArticles("aiagent-plan")
+	// A query that names the plan class ('plan') opts agent plans back into the results
+	resultsExplicit, err := storage.SearchArticles("plan")
 	if err != nil {
 		t.Fatalf("SearchArticles explicit failed: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestStorageHistoryInitialization(t *testing.T) {
 	}
 
 	// 2. Perform an edit using SaveArticle (this is the first edit via storage)
-	art, err := storage.SaveArticle(slug, "Pre-existing Page", "# Edited Content", "", "", "First Edit", []string{"tag"})
+	art, err := storage.SaveArticle(slug, "Pre-existing Page", "# Edited Content", "", "", "", "First Edit", []string{"tag"}, "")
 	if err != nil {
 		t.Fatalf("SaveArticle failed: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestStorageUpdateArticleTags(t *testing.T) {
 	t.Cleanup(func() { _ = storage.Close() })
 
 	// 1. Create a page
-	art, err := storage.SaveArticle("", "Original Page", "# Body Content", "", "", "Initial commit", []string{"initial"})
+	art, err := storage.SaveArticle("", "Original Page", "# Body Content", "", "", "", "Initial commit", []string{"initial"}, "")
 	if err != nil {
 		t.Fatalf("SaveArticle failed: %v", err)
 	}

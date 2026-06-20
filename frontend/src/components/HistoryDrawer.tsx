@@ -154,7 +154,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                   </span>
                   <span className="text-[10px] text-slate-400 font-semibold tracking-wide uppercase flex items-center gap-1">
                     <Calendar size={10} />
-                    {formatDate(selectedVersion.updated_at)}
+                    {formatDate(selectedVersion.timestamp)}
                   </span>
                 </div>
                 <div className="text-xs font-medium text-slate-700 dark:text-slate-300 mt-1">
@@ -231,7 +231,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
 
                         <span className="text-[9px] text-slate-400 font-semibold tracking-wide uppercase flex items-center gap-0.5">
                           <Calendar size={9} />
-                          {formatDate(h.updated_at)}
+                          {formatDate(h.timestamp)}
                         </span>
                       </div>
                       <div className="text-xs text-slate-700 dark:text-slate-350 font-bold leading-tight">

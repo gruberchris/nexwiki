@@ -123,30 +123,44 @@ func (srv *Server) HandleGetArticle(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateArticleReq represents the payload body for creating a new article.
-// Description and Source are pointers so clients that omit them preserve existing values on update,
+// Description and Source are pointers, so clients that omit them preserve existing values on update,
 // while sending an explicit empty string clears them.
 type CreateArticleReq struct {
 	Title         string   `json:"title"`
 	Content       string   `json:"content"`
 	Description   *string  `json:"description"`    // Optional one-line summary
 	Source        *string  `json:"source"`         // Optional provenance reference
+	Resource      *string  `json:"resource"`       // Optional OKF canonical URI of the concept
 	EditSummary   string   `json:"edit_summary"`   // Summary for revision history
 	LoadedVersion int      `json:"loaded_version"` // Version loaded by client for conflict validation
 	Tags          []string `json:"tags"`           // Tags list
 }
 
-// validateAndCleanUserTags handles stripping new "aiagent-" tags while allowing removal of existing ones.
+// validateAndCleanUserTags preserves tool-managed memory-scope tags (memory-<scope>) that already
+// exist on a document and strips any the user tries to forge onto one. The document *class* is carried
+// by the OKF `type` field, not by tags, so there is no class-tag stripping here anymore. Free user tags
+// and recognized status tags pass through unchanged (deduplicated, case-insensitively).
 func validateAndCleanUserTags(incomingTags []string, existingTags []string) []string {
-	existingAgentTags := make(map[string]bool)
+	existingMemoryScope := make(map[string]bool)
 	for _, t := range existingTags {
-		tLower := strings.ToLower(t)
-		if strings.HasPrefix(tLower, "aiagent-") {
-			existingAgentTags[tLower] = true
+		tLower := strings.ToLower(strings.TrimSpace(t))
+		if strings.HasPrefix(tLower, MemoryScopeTagPrefix) {
+			existingMemoryScope[tLower] = true
 		}
 	}
 
 	var result []string
 	seen := make(map[string]bool)
+
+	// Re-assert existing memory-scope tags first so a user edit can never drop them.
+	for _, t := range existingTags {
+		tTrimmed := strings.TrimSpace(t)
+		tLower := strings.ToLower(tTrimmed)
+		if strings.HasPrefix(tLower, MemoryScopeTagPrefix) && !seen[tLower] {
+			seen[tLower] = true
+			result = append(result, tTrimmed)
+		}
+	}
 
 	for _, t := range incomingTags {
 		tTrimmed := strings.TrimSpace(t)
@@ -154,7 +168,8 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string) []st
 			continue
 		}
 		tLower := strings.ToLower(tTrimmed)
-		if strings.HasPrefix(tLower, "aiagent-") && !existingAgentTags[tLower] && tLower != "aiagent-skill" && tLower != "aiagent-plan" {
+		// Users may not forge new memory-scope tags onto a document; only pre-existing ones survive.
+		if strings.HasPrefix(tLower, MemoryScopeTagPrefix) && !existingMemoryScope[tLower] {
 			continue
 		}
 		if !seen[tLower] {
@@ -197,8 +212,13 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 	if req.Source != nil {
 		source = *req.Source
 	}
+	resource := ""
+	if req.Resource != nil {
+		resource = *req.Resource
+	}
 
-	art, err := srv.Storage.SaveArticle("", req.Title, req.Content, description, source, req.EditSummary, cleanedTags)
+	// Regular article creation always produces a Wiki document; reserved types are tool-only.
+	art, err := srv.Storage.SaveArticle("", req.Title, req.Content, description, source, resource, req.EditSummary, cleanedTags, ContentTypeWiki)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -208,10 +228,10 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 		srv.EventBus.PublishActivity("api", "create", "", art.Slug, art.Title, "User")
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
-			dir := getArticleDirectory(art.Tags)
+			dir := getArticleDirectory(art.Type)
 			dirCount := 0
 			for _, a := range articles {
-				if getArticleDirectory(a.Tags) == dir {
+				if getArticleDirectory(a.Type) == dir {
 					dirCount++
 				}
 			}
@@ -265,7 +285,7 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 	// Clean tags and preserve existing "aiagent-" tags
 	cleanedTags := validateAndCleanUserTags(req.Tags, existing.Tags)
 
-	// Omitted description/source preserve existing values; explicit empty strings clear them
+	// Omitted description/source/resource preserve existing values; explicit empty strings clear them
 	description := existing.Description
 	if req.Description != nil {
 		description = *req.Description
@@ -274,8 +294,13 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 	if req.Source != nil {
 		source = *req.Source
 	}
+	resource := existing.Resource
+	if req.Resource != nil {
+		resource = *req.Resource
+	}
 
-	art, err := srv.Storage.SaveArticle(slug, req.Title, req.Content, description, source, req.EditSummary, cleanedTags)
+	// Type is immutable on regular edits; preserve the existing document class.
+	art, err := srv.Storage.SaveArticle(slug, req.Title, req.Content, description, source, resource, req.EditSummary, cleanedTags, existing.Type)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -285,10 +310,10 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		srv.EventBus.PublishActivity("api", "edit", "", art.Slug, art.Title, "User")
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
-			dir := getArticleDirectory(art.Tags)
+			dir := getArticleDirectory(art.Type)
 			dirCount := 0
 			for _, a := range articles {
-				if getArticleDirectory(a.Tags) == dir {
+				if getArticleDirectory(a.Type) == dir {
 					dirCount++
 				}
 			}
@@ -345,7 +370,7 @@ func (srv *Server) HandleUpdateArticleTags(w http.ResponseWriter, r *http.Reques
 		summary = "Updated article tags"
 	}
 
-	art, err := srv.Storage.SaveArticle(slug, existing.Title, existing.Content, existing.Description, existing.Source, summary, cleanedTags)
+	art, err := srv.Storage.SaveArticle(slug, existing.Title, existing.Content, existing.Description, existing.Source, existing.Resource, summary, cleanedTags, existing.Type)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -355,10 +380,10 @@ func (srv *Server) HandleUpdateArticleTags(w http.ResponseWriter, r *http.Reques
 		srv.EventBus.PublishActivity("api", "edit", "update_tags", art.Slug, art.Title, "User")
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
-			dir := getArticleDirectory(art.Tags)
+			dir := getArticleDirectory(art.Type)
 			dirCount := 0
 			for _, a := range articles {
-				if getArticleDirectory(a.Tags) == dir {
+				if getArticleDirectory(a.Type) == dir {
 					dirCount++
 				}
 			}
@@ -401,10 +426,10 @@ func (srv *Server) HandleDeleteArticle(w http.ResponseWriter, r *http.Request) {
 		srv.EventBus.PublishActivity("api", "delete", "", slug, existing.Title, "User")
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
-			dir := getArticleDirectory(existing.Tags)
+			dir := getArticleDirectory(existing.Type)
 			dirCount := 0
 			for _, a := range articles {
-				if getArticleDirectory(a.Tags) == dir {
+				if getArticleDirectory(a.Type) == dir {
 					dirCount++
 				}
 			}
@@ -616,10 +641,10 @@ func (srv *Server) HandleRevertArticle(w http.ResponseWriter, r *http.Request) {
 		srv.EventBus.PublishActivity("api", "revert", "", art.Slug, art.Title, "User")
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
-			dir := getArticleDirectory(art.Tags)
+			dir := getArticleDirectory(art.Type)
 			dirCount := 0
 			for _, a := range articles {
-				if getArticleDirectory(a.Tags) == dir {
+				if getArticleDirectory(a.Type) == dir {
 					dirCount++
 				}
 			}
@@ -646,9 +671,9 @@ func (srv *Server) HandleDeleteTagGlobally(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Double-check permission
-	if strings.HasPrefix(strings.ToLower(tag), "aiagent-") {
-		writeError(w, http.StatusForbidden, "cannot delete protected AI agent tag")
+	// Double-check permission: tool-managed memory-scope tags are protected.
+	if strings.HasPrefix(strings.ToLower(tag), MemoryScopeTagPrefix) {
+		writeError(w, http.StatusForbidden, "cannot delete protected memory-scope tag")
 		return
 	}
 
@@ -804,7 +829,7 @@ func extractDescription(content string) string {
 	return ""
 }
 
-// HandleListSkills queries all pages, isolates skills possessing the 'aiagent-skill' tag,
+// HandleListSkills queries all pages, isolates skill documents (OKF type AI-Agent-Skill),
 // parses their descriptions, and exposes them as a JSON registry with fully qualified raw URLs.
 func (srv *Server) HandleListSkills(w http.ResponseWriter, r *http.Request) {
 	articles, err := srv.Storage.ListArticles()
@@ -820,36 +845,27 @@ func (srv *Server) HandleListSkills(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, art := range articles {
-		isSkill := false
-		var cleanTags []string
-		for _, tag := range art.Tags {
-			tagLower := strings.ToLower(tag)
-			if tagLower == "aiagent-skill" {
-				isSkill = true
-			} else if !strings.HasPrefix(tagLower, "aiagent-") {
-				cleanTags = append(cleanTags, tag)
-			}
+		if art.Type != ContentTypeSkill {
+			continue
 		}
 
-		if isSkill {
-			// Load full article to parse description from content body
-			fullArt, err := srv.Storage.GetArticle(art.Slug)
-			desc := ""
-			if err == nil {
-				desc = extractDescription(fullArt.Content)
-			}
-
-			rawURL := fmt.Sprintf("%s://%s/api/skills/%s/raw", scheme, r.Host, art.Slug)
-			skills = append(skills, SkillResp{
-				Name:        art.Slug,
-				Title:       art.Title,
-				Description: desc,
-				Tags:        cleanTags,
-				Version:     art.Version,
-				RawURL:      rawURL,
-				UpdatedAt:   art.UpdatedAt,
-			})
+		// Load full article to parse description from content body
+		fullArt, err := srv.Storage.GetArticle(art.Slug)
+		desc := ""
+		if err == nil {
+			desc = extractDescription(fullArt.Content)
 		}
+
+		rawURL := fmt.Sprintf("%s://%s/api/skills/%s/raw", scheme, r.Host, art.Slug)
+		skills = append(skills, SkillResp{
+			Name:        art.Slug,
+			Title:       art.Title,
+			Description: desc,
+			Tags:        art.Tags,
+			Version:     art.Version,
+			RawURL:      rawURL,
+			UpdatedAt:   art.Timestamp,
+		})
 	}
 
 	writeJSON(w, http.StatusOK, skills)
@@ -869,18 +885,7 @@ func (srv *Server) HandleGetSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isSkill := false
-	var cleanTags []string
-	for _, tag := range art.Tags {
-		tagLower := strings.ToLower(tag)
-		if tagLower == "aiagent-skill" {
-			isSkill = true
-		} else if !strings.HasPrefix(tagLower, "aiagent-") {
-			cleanTags = append(cleanTags, tag)
-		}
-	}
-
-	if !isSkill {
+	if art.Type != ContentTypeSkill {
 		writeError(w, http.StatusNotFound, "requested article is not registered as an AI skill")
 		return
 	}
@@ -895,10 +900,10 @@ func (srv *Server) HandleGetSkill(w http.ResponseWriter, r *http.Request) {
 		Name:        art.Slug,
 		Title:       art.Title,
 		Description: extractDescription(art.Content),
-		Tags:        cleanTags,
+		Tags:        art.Tags,
 		Version:     art.Version,
 		RawURL:      rawURL,
-		UpdatedAt:   art.UpdatedAt,
+		UpdatedAt:   art.Timestamp,
 	})
 }
 
@@ -922,15 +927,7 @@ func (srv *Server) HandleGetSkillRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isSkill := false
-	for _, tag := range art.Tags {
-		if strings.ToLower(tag) == "aiagent-skill" {
-			isSkill = true
-			break
-		}
-	}
-
-	if !isSkill {
+	if art.Type != ContentTypeSkill {
 		writeError(w, http.StatusNotFound, "requested article is not registered as an AI skill")
 		return
 	}
@@ -973,7 +970,7 @@ func (srv *Server) HandleGetWikiStats(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	for _, art := range articles {
-		dir := getArticleDirectory(art.Tags)
+		dir := getArticleDirectory(art.Type)
 		stats.DirectoryCounts[dir]++
 	}
 
@@ -1031,8 +1028,89 @@ func (srv *Server) HandleActivityStream(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// HandlePostActivityLog receives activity log updates from secondary processes (like stdio MCP agents)
-// and broadcasts them to the active client SSE listeners.
+// HandleExportOKFBundle streams the knowledge base as a downloadable OKF v0.1 bundle (.zip).
+func (srv *Server) HandleExportOKFBundle(w http.ResponseWriter, _ *http.Request) {
+	data, err := srv.Storage.ExportOKFBundle()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	fileName := fmt.Sprintf("nexwiki-okf-%s.zip", time.Now().UTC().Format("2006-01-02"))
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fileName))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// HandleImportOKFBundle imports an uploaded OKF bundle (.zip) and returns a conformance report.
+func (srv *Server) HandleImportOKFBundle(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "failed to parse multipart form data")
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to retrieve file parameter 'file'")
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read uploaded bundle")
+		return
+	}
+
+	report, err := srv.Storage.ImportOKFBundle(data)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// HandleGetActivityLog serves a paginated page of the durable activity log (spanning archives).
+// Query params: before (RFC3339 cursor — return events strictly older than this), limit (default 50,
+// max 500), and optional action/source filters. Events are returned newest-first for the drawer.
+func (srv *Server) HandleGetActivityLog(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	var before time.Time
+	if b := strings.TrimSpace(q.Get("before")); b != "" {
+		ts, err := time.Parse(time.RFC3339, b)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid 'before' cursor; expected RFC3339 timestamp")
+			return
+		}
+		before = ts
+	}
+
+	limit := 50
+	if l := strings.TrimSpace(q.Get("limit")); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	events, err := ReadActivityLogBefore(ActivityLogPath(srv.Storage.DataDir), before, limit, q.Get("action"), q.Get("source"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if events == nil {
+		events = []LogEvent{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"events":   events,
+		"has_more": len(events) == limit,
+	})
+}
+
+// HandlePostActivityLog receives activity events forwarded by mcp-only sidecar processes
+// and broadcasts them to active SSE listeners.
 func (srv *Server) HandlePostActivityLog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1056,21 +1134,23 @@ func (srv *Server) HandlePostActivityLog(w http.ResponseWriter, r *http.Request)
 	if srv.EventBus != nil {
 		srv.EventBus.PublishActivity(payload.Source, payload.Action, payload.Tool, payload.Slug, payload.Title, payload.Agent)
 
-		// Synchronize client list/stats reactively when secondary process mutates the wiki
+		// Synchronize client list/stats when an mcp-only sidecar mutates the wiki
 		if payload.Action != "read" {
 			articles, err := srv.Storage.ListArticles()
 			if err == nil {
 				var targetTags []string
+				targetType := ContentTypeWiki
 				if payload.Slug != "" {
 					if art, err := srv.Storage.GetArticle(payload.Slug); err == nil {
 						targetTags = art.Tags
+						targetType = art.Type
 					}
 				}
 
-				dir := getArticleDirectory(targetTags)
+				dir := getArticleDirectory(targetType)
 				dirCount := 0
 				for _, a := range articles {
-					if getArticleDirectory(a.Tags) == dir {
+					if getArticleDirectory(a.Type) == dir {
 						dirCount++
 					}
 				}

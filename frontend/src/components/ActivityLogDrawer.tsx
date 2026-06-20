@@ -1,11 +1,13 @@
 import React, { useRef, useState, useMemo } from 'react';
-import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu } from 'lucide-react';
+import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu, History } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { matchesLogEvent, getAutocompleteSearchTerm } from '../filterUtils';
 import { ActivityFilterHelpModal } from './ActivityFilterHelpModal';
 import { FilterInput } from './FilterInput';
+import { formatActivityTimestamp } from '../utils';
+import type { LogEvent } from '../context/SSEContextObject';
 
 interface ActivityLogDrawerProps {
   isOpen: boolean;
@@ -25,6 +27,45 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilterHelp, setShowFilterHelp] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
+
+  // Older history paged in from the durable activity log (beyond the live 200-event SSE ring).
+  const [olderEvents, setOlderEvents] = useState<LogEvent[]>([]);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMoreHistory, setHasMoreHistory] = useState(true);
+
+  // The live ring plus any paged-in older events, deduped by id, newest-first.
+  const combinedLog = useMemo(() => {
+    const byId = new Map<string, LogEvent>();
+    for (const ev of activityLog) byId.set(ev.id, ev);
+    for (const ev of olderEvents) if (!byId.has(ev.id)) byId.set(ev.id, ev);
+    return Array.from(byId.values()).sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+  }, [activityLog, olderEvents]);
+
+  const loadOlderHistory = async () => {
+    if (loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const oldest = combinedLog[combinedLog.length - 1];
+      const params = new URLSearchParams({ limit: '50' });
+      if (oldest) params.set('before', oldest.timestamp);
+      if (activeSource !== 'all') params.set('source', activeSource);
+      const res = await fetch(`/api/activity/log?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json() as { events: LogEvent[]; has_more: boolean };
+        const incoming = data.events || [];
+        setOlderEvents((prev) => {
+          const seen = new Set(prev.map((e) => e.id));
+          activityLog.forEach((e) => seen.add(e.id));
+          return [...prev, ...incoming.filter((e) => !seen.has(e.id))];
+        });
+        setHasMoreHistory(data.has_more);
+      }
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   // Get search term without a "!" prefix for autocomplete suggestions
   const autocompleteTerm = useMemo(() => getAutocompleteSearchTerm(searchQuery), [searchQuery]);
@@ -105,7 +146,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
     );
   };
 
-  const filteredLog = activityLog.filter((event) => {
+  const filteredLog = combinedLog.filter((event) => {
     const sourceMatch = activeSource === 'all' || event.source === activeSource;
     const queryMatch = matchesLogEvent(event, searchQuery);
     return sourceMatch && queryMatch;
@@ -258,11 +299,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
                       </span>
                     </div>
                     <span className="text-[9px] font-semibold text-slate-400 dark:text-slate-550">
-                      {new Date(event.timestamp).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                      })}
+                      {formatActivityTimestamp(event.timestamp)}
                     </span>
                   </div>
 
@@ -299,13 +336,25 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
                   </div>
                 </div>
               ))}
+
+              {/* Load older durable history beyond the live ring */}
+              {hasMoreHistory && (
+                <button
+                  onClick={loadOlderHistory}
+                  disabled={loadingOlder}
+                  className="mt-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850 text-[10px] font-bold text-slate-500 dark:text-slate-400 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <History size={12} />
+                  <span>{loadingOlder ? 'Loading…' : 'Load older history'}</span>
+                </button>
+              )}
             </div>
           )}
         </div>
 
         {/* Footer */}
         <div className="p-4 border-t border-slate-100 dark:border-slate-800/60 text-center text-[10px] text-slate-400 dark:text-slate-550 select-none font-medium">
-          Captured circular cache of last 200 operations.
+          Live stream + durable archive history.
         </div>
 
         {showFilterHelp && <ActivityFilterHelpModal onClose={() => setShowFilterHelp(false)} />}

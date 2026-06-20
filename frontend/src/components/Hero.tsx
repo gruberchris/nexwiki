@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { Article } from '../types';
+import { isAgentDoc, isMemory, isPlan, isSkill } from '../types';
 import {
   BookOpen,
   Plus,
@@ -46,16 +47,10 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
   const [plansExpanded, setPlansExpanded] = useState(false);
   const [skillsExpanded, setSkillsExpanded] = useState(false);
 
-  const wikiArticles = articles.filter(art =>
-    !art.tags?.some(tag => tag.toLowerCase().startsWith('aiagent-'))
-  );
-  const aiMemories = articles.filter(art => {
-    if (!art.tags?.some(tag => tag.toLowerCase().startsWith('aiagent-'))) return false;
-    return !art.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill') &&
-           !art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan');
-  });
-  const aiPlans = articles.filter(art => art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan'));
-  const aiSkills = articles.filter(art => art.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill'));
+  const wikiArticles = articles.filter(art => !isAgentDoc(art));
+  const aiMemories = articles.filter(art => isMemory(art));
+  const aiPlans = articles.filter(art => isPlan(art));
+  const aiSkills = articles.filter(art => isSkill(art));
 
   // Filtered lists for display (applies both category filter AND search query)
   const filteredWikiArticles = wikiArticles.filter(art => matchesFilter(art, wikiSearchQuery));

@@ -97,6 +97,7 @@ func TestActivityLogRotation(t *testing.T) {
 	activityLogRotateBytes = 100 // tiny threshold to trigger rotation
 	t.Cleanup(func() { activityLogRotateBytes = origThreshold })
 
+	// Round 1: write events, then reopen to trigger the first rotation.
 	al, err := OpenActivityLog(dataDir)
 	if err != nil {
 		t.Fatalf("OpenActivityLog failed: %v", err)
@@ -106,18 +107,34 @@ func TestActivityLogRotation(t *testing.T) {
 	}
 	_ = al.Close()
 
-	// Reopen: file exceeds the threshold, so it rotates aside
 	al2, err := OpenActivityLog(dataDir)
 	if err != nil {
 		t.Fatalf("reopen failed: %v", err)
 	}
-	t.Cleanup(func() { _ = al2.Close() })
-
-	if _, err := os.Stat(al2.Path + ".1"); err != nil {
-		t.Errorf("expected rotated .1 file to exist: %v", err)
+	if got := len(listActivityArchives(dataDir)); got != 1 {
+		t.Errorf("expected 1 archive after first rotation, got %d", got)
 	}
-	if info, err := os.Stat(al2.Path); err != nil || info.Size() != 0 {
-		t.Errorf("expected fresh empty log after rotation, got err=%v size=%d", err, info.Size())
+	if info, err := os.Stat(al2.Path); err != nil {
+		t.Errorf("expected fresh empty log after rotation, got err=%v", err)
+	} else if info.Size() != 0 {
+		t.Errorf("expected fresh empty log after rotation, got size=%d", info.Size())
+	}
+
+	// Round 2: write more events and rotate again. A second rotation must NOT destroy the
+	// first archive (the legacy one-deep rotation overwrote activity.jsonl.1 here).
+	for i := 0; i < 5; i++ {
+		_ = al2.Append(seedEvent("evt2", time.Now(), "api", "edit"))
+	}
+	_ = al2.Close()
+
+	al3, err := OpenActivityLog(dataDir)
+	if err != nil {
+		t.Fatalf("second reopen failed: %v", err)
+	}
+	t.Cleanup(func() { _ = al3.Close() })
+
+	if got := len(listActivityArchives(dataDir)); got != 2 {
+		t.Errorf("expected 2 archives after second rotation (no history destroyed), got %d", got)
 	}
 }
 

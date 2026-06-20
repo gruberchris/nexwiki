@@ -17,8 +17,8 @@ const baseProps = {
 };
 
 const mockHistory = [
-  { title: 'My Article', slug: 'my-article', version: 2, edit_summary: 'Typo fix', created_at: '2024-01-15T00:00:00Z', updated_at: '2024-01-15T00:00:00Z' },
-  { title: 'My Article', slug: 'my-article', version: 1, edit_summary: 'Initial version', created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:00:00Z' },
+  { title: 'My Article', slug: 'my-article', version: 2, edit_summary: 'Typo fix', created_at: '2024-01-15T00:00:00Z', timestamp: '2024-01-15T00:00:00Z' },
+  { title: 'My Article', slug: 'my-article', version: 1, edit_summary: 'Initial version', created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-01T00:00:00Z' },
 ];
 
 describe('HistoryDrawer', () => {

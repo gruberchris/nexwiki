@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -161,12 +162,16 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 								"type":        "string",
 								"description": "Optional provenance: the URL, document, or reference this knowledge came from. AI-created articles SHOULD cite their source.",
 							},
+							"resource": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional OKF canonical URI identifying what the concept *is* (e.g. an official spec or homepage URL). Distinct from 'source' (where the knowledge came from).",
+							},
 							"tags": map[string]interface{}{
 								"type": "array",
 								"items": map[string]interface{}{
 									"type": "string",
 								},
-								"description": "Optional status or user tags to apply to the article. Call get_status_tags to see the recognized status values (e.g. 'draft', 'wip'). System 'aiagent-*' tags are reserved and will be ignored if provided.",
+								"description": "Optional status or user tags to apply to the article. Call get_status_tags to see the recognized status values (e.g. 'draft', 'wip'). The document type (Wiki vs the reserved AI-Agent-* classes) is set automatically by the creating tool, not via tags.",
 							},
 							"edit_summary": map[string]interface{}{
 								"type":        "string",
@@ -202,12 +207,16 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 								"type":        "string",
 								"description": "Optional provenance reference. Omit or pass empty to preserve the existing source.",
 							},
+							"resource": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional OKF canonical URI of the concept. Pointer semantics: omit to preserve the existing value, pass an empty string to clear it, or a value to replace it.",
+							},
 							"tags": map[string]interface{}{
 								"type": "array",
 								"items": map[string]interface{}{
 									"type": "string",
 								},
-								"description": "Optional tags to set on the article (replaces existing user tags; existing system 'aiagent-*' tags are always preserved). Call get_status_tags to see the recognized status values (e.g. 'completed', 'review').",
+								"description": "Optional tags to set on the article (replaces existing user tags; tool-managed memory-scope tags are always preserved). Call get_status_tags to see the recognized status values (e.g. 'completed', 'review').",
 							},
 							"loaded_version": map[string]interface{}{
 								"type":        "integer",
@@ -236,7 +245,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 								"items": map[string]interface{}{
 									"type": "string",
 								},
-								"description": "The complete array of user/status tags to apply to the article (replaces existing user tags; existing system 'aiagent-*' tags are always preserved).",
+								"description": "The complete array of user/status tags to apply to the article (replaces existing user tags; tool-managed memory-scope tags are always preserved).",
 							},
 							"loaded_version": map[string]interface{}{
 								"type":        "integer",
@@ -306,7 +315,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_memory",
-					"description": "Create a brand new protected AI Agent Memory document. The 'memory_type' controls the tag applied and how the memory is scoped: use the project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for reusable cross-project knowledge, or omit it for general knowledge (tagged bare 'aiagent-memory'). Memories must be succinct and high-value — they are loaded into agent context windows, so keep them short, specific, and free of repetition. Search for an existing memory first; if one becomes stale later, use 'edit_agent_memory' to correct it or 'delete_agent_memory' to retire it rather than creating near-duplicates. The protected tag must NEVER be removed unless explicitly instructed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' before executing this tool.)",
+					"description": "Create a brand new protected AI Agent Memory document. The 'memory_type' controls the tag applied and how the memory is scoped: use the project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for reusable cross-project knowledge, or omit it for general knowledge (no scope tag). Memories must be succinct and high-value — they are loaded into agent context windows, so keep them short, specific, and free of repetition. Search for an existing memory first; if one becomes stale later, use 'edit_agent_memory' to correct it or 'delete_agent_memory' to retire it rather than creating near-duplicates. The reserved AI-Agent-Memory type must NEVER be relabelled unless explicitly instructed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' before executing this tool.)",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -320,7 +329,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 							},
 							"memory_type": map[string]interface{}{
 								"type":        "string",
-								"description": "Scopes the memory and determines its tag. Use a project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for cross-project knowledge, or omit for general knowledge. Becomes the tag 'aiagent-memory-<memory_type>' or bare 'aiagent-memory' if omitted.",
+								"description": "Scopes the memory and determines its tag. Use a project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for cross-project knowledge, or omit for general knowledge. Becomes the tool-managed scope tag 'memory-<memory_type>', or no scope tag if omitted; the document type is always AI-Agent-Memory.",
 							},
 							"description": map[string]interface{}{
 								"type":        "string",
@@ -340,7 +349,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "append_agent_memory",
-					"description": "Append logs, subtask completions, or troubleshooting observations to the end of an existing protected AI Agent Memory document (must have an 'aiagent-memory-' prefixed tag). If existing memory content is stale or wrong, use 'edit_agent_memory' to correct it in place instead of appending contradictions.",
+					"description": "Append logs, subtask completions, or troubleshooting observations to the end of an existing protected AI Agent Memory document (must be of OKF type AI-Agent-Memory). If existing memory content is stale or wrong, use 'edit_agent_memory' to correct it in place instead of appending contradictions.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -362,7 +371,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "edit_agent_memory",
-					"description": "Replace or correct an existing protected AI Agent Memory in place. Prefer this over creating a near-duplicate memory: update stale facts directly, then note what changed in edit_summary. The 'aiagent-memory' protected tag is strictly preserved. Employs optimistic locking.",
+					"description": "Replace or correct an existing protected AI Agent Memory in place. Prefer this over creating a near-duplicate memory: update stale facts directly, then note what changed in edit_summary. The reserved AI-Agent-Memory type and its memory-<scope> tag are strictly preserved. Employs optimistic locking.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -391,7 +400,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 								"items": map[string]interface{}{
 									"type": "string",
 								},
-								"description": "Optional tags to set on the memory (replaces existing tags; the protected 'aiagent-memory*' tag is always preserved).",
+								"description": "Optional tags to set on the memory (replaces existing tags; the tool-managed memory-<scope> tag is always preserved).",
 							},
 							"loaded_version": map[string]interface{}{
 								"type":        "integer",
@@ -434,7 +443,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_plan",
-					"description": "Create a brand new Collaborative AI Plan. Automatically applies the protected 'aiagent-plan' tag, which must NEVER be removed unless explicitly instructed. After a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to mark it as completed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand how plans must be saved and structured before executing this tool.)",
+					"description": "Create a brand new Collaborative AI Plan. Automatically sets the reserved AI-Agent-Plan type, which must NEVER be relabelled unless explicitly instructed. After a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to mark it as completed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand how plans must be saved and structured before executing this tool.)",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -468,7 +477,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "append_agent_plan",
-					"description": "Append task status, observations, or checklists to an existing Collaborative AI Plan (must possess the 'aiagent-plan' tag). Use this to log implementation progress, and to add final notes when a plan is fully implemented before marking it completed.",
+					"description": "Append task status, observations, or checklists to an existing Collaborative AI Plan (must be of OKF type AI-Agent-Plan). Use this to log implementation progress, and to add final notes when a plan is fully implemented before marking it completed.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -490,7 +499,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "edit_agent_plan",
-					"description": "Modify the title, tags, or edit summary of an existing Collaborative AI Plan. The 'aiagent-plan' protected tag is strictly preserved and must NEVER be removed. Use this to mark a plan as 'completed' after implementation by adding the 'completed' status tag.",
+					"description": "Modify the title, tags, or edit summary of an existing Collaborative AI Plan. The reserved AI-Agent-Plan type is strictly preserved and must NEVER be relabelled. Use this to mark a plan as 'completed' after implementation by adding the 'completed' status tag.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -507,7 +516,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 								"items": map[string]interface{}{
 									"type": "string",
 								},
-								"description": "Optional tags to set on the plan (replaces existing tags; 'aiagent-plan' is always preserved). Use status tags to signal plan state — call get_status_tags to see recognized values (e.g. 'completed', 'wip', 'blocked').",
+								"description": "Optional tags to set on the plan (replaces existing tags; the AI-Agent-Plan type is preserved). Use status tags to signal plan state — call get_status_tags to see recognized values (e.g. 'completed', 'wip', 'blocked').",
 							},
 							"loaded_version": map[string]interface{}{
 								"type":        "integer",
@@ -523,7 +532,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "list_agent_plans",
-					"description": "List all Collaborative AI Plans (tagged with 'aiagent-plan') saved inside the knowledge base.",
+					"description": "List all Collaborative AI Plans (OKF type AI-Agent-Plan) saved inside the knowledge base.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -540,7 +549,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "create_agent_skill",
-					"description": "Create a brand new Custom AI Skill. Automatically applies the protected 'aiagent-skill' tag, which must NEVER be removed unless explicitly instructed. Makes the skill part of the custom skills registry.",
+					"description": "Create a brand new Custom AI Skill. Automatically sets the reserved AI-Agent-Skill type, which must NEVER be relabelled unless explicitly instructed. Makes the skill part of the custom skills registry.",
 					"inputSchema": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -577,7 +586,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				},
 				{
 					"name":        "list_agent_skills",
-					"description": "List all Custom AI Skills (tagged with 'aiagent-skill') currently saved in the knowledge base.",
+					"description": "List all Custom AI Skills (OKF type AI-Agent-Skill) currently saved in the knowledge base.",
 					"inputSchema": map[string]interface{}{
 						"type":       "object",
 						"properties": map[string]interface{}{},
@@ -644,6 +653,28 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 								"enum":        []string{"articles", "memories", "plans", "skills"},
 							},
 						},
+					},
+				},
+				{
+					"name":        "export_okf_bundle",
+					"description": "Export the entire knowledge base as a conformant Open Knowledge Format (OKF v0.1) bundle (a .zip). The bundle hierarchy is synthesized from each document's type, with reserved index.md / log.md files and bundle-relative links. Writes the archive into the data directory and returns its path.",
+					"inputSchema": map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
+					},
+				},
+				{
+					"name":        "import_okf_bundle",
+					"description": "Import an Open Knowledge Format (OKF v0.1) bundle (.zip) from a filesystem path into the knowledge base. Each concept document is created or updated (dedup by slug), bundle-relative links are translated back to WikiLinks, and a permissive conformance report is returned (documents missing a type default to Wiki and are flagged rather than rejected).",
+					"inputSchema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"path": map[string]interface{}{
+								"type":        "string",
+								"description": "Filesystem path to the .zip OKF bundle to import.",
+							},
+						},
+						"required": []string{"path"},
 					},
 				},
 			},
@@ -748,7 +779,7 @@ Please follow these strict steps:
 6. When the plan is fully implemented, use 'append_agent_plan' to add final notes documenting anything worth noting (plan deviations, files created, tools used, unexpected challenges, or other observations).
 7. After adding final notes, use 'edit_agent_plan' to mark the plan as completed by adding the 'completed' status tag.
 
-IMPORTANT: The 'aiagent-plan' protected tag must NEVER be removed from the plan unless explicitly instructed by the user.`, project, title, project)
+IMPORTANT: The reserved AI-Agent-Plan type must NEVER be relabelled unless explicitly instructed by the user.`, project, title, project)
 
 			result = map[string]interface{}{
 				"description": "Guides the agent on how to collaboratively plan a new development task, outline subtasks, and ensure the plan is saved and updated in NexWiki.",
@@ -848,7 +879,7 @@ func (srv *Server) logMCPToolCall(params json.RawMessage) {
 
 	srv.EventBus.PublishActivity("mcp", action, tool, slug, title, agent)
 
-	// Forward to the main web server process if we are running in a secondary process
+	// When running as a mcp-only sidecar alongside a web server, forward the event to it.
 	if srv.IsSecondaryProcess {
 		go srv.forwardActivityToWebServer("mcp", action, tool, slug, title, agent)
 	}
@@ -858,16 +889,18 @@ func (srv *Server) logMCPToolCall(params json.RawMessage) {
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
 			var targetTags []string
+			targetType := ContentTypeWiki
 			if slug != "" {
 				if art, err := srv.Storage.GetArticle(slug); err == nil {
 					targetTags = art.Tags
+					targetType = art.Type
 				}
 			}
 
-			dir := getArticleDirectory(targetTags)
+			dir := getArticleDirectory(targetType)
 			dirCount := 0
 			for _, a := range articles {
-				if getArticleDirectory(a.Tags) == dir {
+				if getArticleDirectory(a.Type) == dir {
 					dirCount++
 				}
 			}
@@ -931,16 +964,16 @@ func (srv *Server) forwardActivityToWebServer(source, action, tool, slug, title,
 	_ = resp.Body.Close()
 }
 
-// hasMemoryTag reports whether a tag list marks an article as a protected AI Agent Memory
-// (bare 'aiagent-memory' or any scoped 'aiagent-memory-<type>' variant).
-func hasMemoryTag(tags []string) bool {
+// memoryScopeTags returns the tool-managed memory-scope tags (memory-<scope>) present on a tag list.
+// These are preserved across edits; the memory document *class* is carried by the OKF `type` field.
+func memoryScopeTags(tags []string) []string {
+	var out []string
 	for _, tag := range tags {
-		tagLower := strings.ToLower(tag)
-		if tagLower == "aiagent-memory" || strings.HasPrefix(tagLower, "aiagent-memory-") {
-			return true
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(tag)), MemoryScopeTagPrefix) {
+			out = append(out, tag)
 		}
 	}
-	return false
+	return out
 }
 
 // executeToolCall parses parameters and executes requested MCP tools, with automatic logging hooks.
@@ -1026,14 +1059,18 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		if art.Description != "" {
 			descStr = fmt.Sprintf("\nDescription: %s", art.Description)
 		}
+		resourceStr := ""
+		if art.Resource != "" {
+			resourceStr = fmt.Sprintf("\nResource: %s", art.Resource)
+		}
 		sourceStr := ""
 		if art.Source != "" {
 			sourceStr = fmt.Sprintf("\nSource: %s", art.Source)
 		}
 
 		// Return both front-matter configurations and full Markdown content to the agent
-		text := fmt.Sprintf("Title: %s\nSlug: %s\nCreated: %s\nUpdated: %s%s%s%s\n\n%s",
-			art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.UpdatedAt.Format(time.RFC3339), descStr, sourceStr, tagsStr, art.Content)
+		text := fmt.Sprintf("Type: %s\nTitle: %s\nSlug: %s\nCreated: %s\nUpdated: %s%s%s%s%s\n\n%s",
+			art.Type, art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Timestamp.Format(time.RFC3339), descStr, resourceStr, sourceStr, tagsStr, art.Content)
 
 		// Append inbound links for graph discoverability; never fail the read over a scan error
 		if backlinks, blErr := srv.Storage.GetBacklinks(art.Slug); blErr == nil && len(backlinks) > 0 {
@@ -1064,18 +1101,13 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			text = fmt.Sprintf("NexWiki Directory Index contains %d articles:\n\n", len(articles))
 			for i, art := range articles {
 				articleType := "Wiki Article"
-				for _, tag := range art.Tags {
-					tagLower := strings.ToLower(tag)
-					if strings.HasPrefix(tagLower, "aiagent-memory") {
-						articleType = "Agent Memory"
-						break
-					} else if tagLower == "aiagent-plan" {
-						articleType = "Agent Plan"
-						break
-					} else if tagLower == "aiagent-skill" {
-						articleType = "Agent Skill"
-						break
-					}
+				switch art.Type {
+				case ContentTypeMemory:
+					articleType = "Agent Memory"
+				case ContentTypePlan:
+					articleType = "Agent Plan"
+				case ContentTypeSkill:
+					articleType = "Agent Skill"
 				}
 
 				tagsStr := ""
@@ -1083,7 +1115,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 					tagsStr = fmt.Sprintf(" | Tags: %s", strings.Join(art.Tags, ", "))
 				}
 				text += fmt.Sprintf("[%d] %s (Slug: %s, Type: %s, Last Edited: %s%s)\n",
-					i+1, art.Title, art.Slug, articleType, art.UpdatedAt.Format("2006-01-02 15:04:05"), tagsStr)
+					i+1, art.Title, art.Slug, articleType, art.Timestamp.Format("2006-01-02 15:04:05"), tagsStr)
 				if art.Description != "" {
 					text += fmt.Sprintf("    Summary: %s\n", art.Description)
 				}
@@ -1098,6 +1130,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			Content     string   `json:"content"`
 			Description string   `json:"description"`
 			Source      string   `json:"source"`
+			Resource    string   `json:"resource"`
 			Tags        []string `json:"tags"`
 			EditSummary string   `json:"edit_summary"`
 		}
@@ -1112,7 +1145,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		}
 
 		tags := validateAndCleanUserTags(cArgs.Tags, nil)
-		art, err := srv.Storage.SaveArticle("", cArgs.Title, cArgs.Content, cArgs.Description, cArgs.Source, cArgs.EditSummary, tags)
+		// Regular article creation always produces a Wiki document; reserved types are tool-only.
+		art, err := srv.Storage.SaveArticle("", cArgs.Title, cArgs.Content, cArgs.Description, cArgs.Source, cArgs.Resource, cArgs.EditSummary, tags, ContentTypeWiki)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating article: %v", err)}}}, nil
 		}
@@ -1128,6 +1162,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			Content       string   `json:"content"`
 			Description   string   `json:"description"`
 			Source        string   `json:"source"`
+			Resource      *string  `json:"resource"`
 			Tags          []string `json:"tags"`
 			LoadedVersion int      `json:"loaded_version"`
 			EditSummary   string   `json:"edit_summary"`
@@ -1160,14 +1195,20 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		if eArgs.Source != "" {
 			source = eArgs.Source
 		}
+		// resource uses pointer semantics: omit=preserve, ""=clear, value=replace.
+		resource := existing.Resource
+		if eArgs.Resource != nil {
+			resource = *eArgs.Resource
+		}
 
-		art, err := srv.Storage.SaveArticle(eArgs.Slug, eArgs.Title, eArgs.Content, description, source, eArgs.EditSummary, tags)
+		// Type is immutable on regular edits; preserve the existing document class.
+		art, err := srv.Storage.SaveArticle(eArgs.Slug, eArgs.Title, eArgs.Content, description, source, resource, eArgs.EditSummary, tags, existing.Type)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing article: %v", err)}}}, nil
 		}
 
 		respText := fmt.Sprintf("Success! Article '%s' (slug: %s) updated successfully.\nNew Version: %d\nLast Edited: %s\n",
-			art.Title, art.Slug, art.Version, art.UpdatedAt.Format(time.RFC3339))
+			art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339))
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 
 	case "update_article_tags":
@@ -1212,7 +1253,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", dArgs.Slug)}}}, nil
 		}
 
-		if hasMemoryTag(existing.Tags) {
+		if existing.Type == ContentTypeMemory {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: this article is a protected AI Agent Memory. Use 'delete_agent_memory' to delete it intentionally, or 'edit_agent_memory' to correct it instead."}}}, nil
 		}
 
@@ -1241,13 +1282,12 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 		mType := strings.ToLower(strings.TrimSpace(mArgs.MemoryType))
 
-		var primaryTag string
-		if mType == "" {
-			primaryTag = "aiagent-memory"
-		} else {
-			primaryTag = "aiagent-memory-" + mType
+		// The OKF type carries the memory document class; the scope facet rides as a
+		// tool-managed memory-<scope> tag. A bare memory (no scope) carries no scope tag.
+		var tags []string
+		if mType != "" {
+			tags = []string{MemoryScopeTagPrefix + Slugify(mType)}
 		}
-		tags := []string{primaryTag}
 
 		title := mArgs.Title
 		slug := Slugify(title)
@@ -1265,7 +1305,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			}
 		}
 
-		art, err := srv.Storage.SaveArticle("", title, mArgs.Content, mArgs.Description, mArgs.Source, summary, tags)
+		art, err := srv.Storage.SaveArticle("", title, mArgs.Content, mArgs.Description, mArgs.Source, "", summary, tags, ContentTypeMemory)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent memory: %v", err)}}}, nil
 		}
@@ -1290,8 +1330,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", aArgs.Slug)}}}, nil
 		}
 
-		if !hasMemoryTag(existing.Tags) {
-			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a protected AI agent memory (must be tagged with an 'aiagent-memory-' prefix)."}}}, nil
+		if existing.Type != ContentTypeMemory {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a protected AI Agent Memory (type must be AI-Agent-Memory)."}}}, nil
 		}
 
 		newContent := existing.Content + "\n\n" + aArgs.ContentToAppend
@@ -1301,13 +1341,13 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			summary = "Appended AI Agent memory details"
 		}
 
-		art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, summary, existing.Tags)
+		art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, existing.Resource, summary, existing.Tags, existing.Type)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent memory: %v", err)}}}, nil
 		}
 
 		respText := fmt.Sprintf("Success! Appended memory details to '%s' (version: %d, edited: %s).\n",
-			art.Title, art.Version, art.UpdatedAt.Format(time.RFC3339))
+			art.Title, art.Version, art.Timestamp.Format(time.RFC3339))
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 
 	case "edit_agent_memory":
@@ -1331,8 +1371,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: memory with slug '%s' not found", eArgs.Slug)}}}, nil
 		}
 
-		if !hasMemoryTag(existing.Tags) {
-			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a protected AI agent memory (must be tagged with an 'aiagent-memory-' prefix)."}}}, nil
+		if existing.Type != ContentTypeMemory {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a protected AI Agent Memory (type must be AI-Agent-Memory)."}}}, nil
 		}
 
 		if existing.Version > 0 && existing.Version != eArgs.LoadedVersion {
@@ -1367,25 +1407,26 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		newTags := existing.Tags
 		if eArgs.Tags != nil {
 			var parsedTags []string
-			hasMemoryTagInNew := false
-			for _, tag := range *eArgs.Tags {
-				cleanTag := Slugify(tag)
-				if cleanTag != "" {
-					if hasMemoryTag([]string{cleanTag}) {
-						hasMemoryTagInNew = true
-					}
-					parsedTags = append(parsedTags, cleanTag)
+			seen := make(map[string]bool)
+			// Preserve the tool-managed memory-scope tag(s) first; type carries the class.
+			for _, tag := range memoryScopeTags(existing.Tags) {
+				tl := strings.ToLower(tag)
+				if !seen[tl] {
+					seen[tl] = true
+					parsedTags = append(parsedTags, tag)
 				}
 			}
-			if !hasMemoryTagInNew {
-				// Re-prepend the original protected memory tag(s), preserving the scoped variant
-				var preserved []string
-				for _, tag := range existing.Tags {
-					if hasMemoryTag([]string{tag}) {
-						preserved = append(preserved, tag)
-					}
+			for _, tag := range *eArgs.Tags {
+				cleanTag := Slugify(tag)
+				if cleanTag == "" || seen[strings.ToLower(cleanTag)] {
+					continue
 				}
-				parsedTags = append(preserved, parsedTags...)
+				// Users may not forge new memory-scope tags; only the preserved ones above survive.
+				if strings.HasPrefix(strings.ToLower(cleanTag), MemoryScopeTagPrefix) {
+					continue
+				}
+				seen[strings.ToLower(cleanTag)] = true
+				parsedTags = append(parsedTags, cleanTag)
 			}
 			newTags = parsedTags
 		}
@@ -1395,13 +1436,14 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			summary = "Updated AI Agent Memory"
 		}
 
-		art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, newContent, newDescription, newSource, summary, newTags)
+		newResource := existing.Resource
+		art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, newContent, newDescription, newSource, newResource, summary, newTags, existing.Type)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent memory: %v", err)}}}, nil
 		}
 
 		respText := fmt.Sprintf("Success! AI Agent Memory '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nTags: %s\n",
-			art.Title, art.Slug, art.Version, art.UpdatedAt.Format(time.RFC3339), strings.Join(art.Tags, ", "))
+			art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339), strings.Join(art.Tags, ", "))
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 
 	case "delete_agent_memory":
@@ -1418,8 +1460,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: memory with slug '%s' not found", dArgs.Slug)}}}, nil
 		}
 
-		if !hasMemoryTag(existing.Tags) {
-			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a protected AI agent memory. Use 'delete_wiki_article' for standard articles."}}}, nil
+		if existing.Type != ContentTypeMemory {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a protected AI Agent Memory. Use 'delete_wiki_article' for standard articles."}}}, nil
 		}
 
 		if err := srv.Storage.DeleteArticle(dArgs.Slug); err != nil {
@@ -1451,28 +1493,29 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 				continue
 			}
 
-			isAgentMemory := false
+			if art.Type != ContentTypeMemory {
+				continue
+			}
+			// Scope filtering is by the memory-<scope> tag facet.
+			memoryTags := memoryScopeTags(art.Tags)
 			matchFilter := filterType == ""
-			var memoryTags []string
-
-			for _, tag := range art.Tags {
-				tagLower := strings.ToLower(tag)
-				if tagLower == "aiagent-memory" || strings.HasPrefix(tagLower, "aiagent-memory-") {
-					isAgentMemory = true
-					memoryTags = append(memoryTags, tag)
-					if filterType != "" && strings.HasPrefix(tagLower, "aiagent-memory-"+filterType) {
+			if filterType != "" {
+				wantTag := MemoryScopeTagPrefix + filterType
+				for _, tag := range memoryTags {
+					if strings.ToLower(tag) == wantTag {
 						matchFilter = true
+						break
 					}
 				}
 			}
 
-			if isAgentMemory && matchFilter {
+			if matchFilter {
 				count++
 				if count == 1 {
 					text = "AI Agent Memories Index:\n\n"
 				}
 				text += fmt.Sprintf("[%d] %s (Slug: %s, Edited: %s)\n",
-					count, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"))
+					count, art.Title, art.Slug, art.Timestamp.Format("2006-01-02 15:04:05"))
 				if art.Description != "" {
 					text += fmt.Sprintf("    Summary: %s\n", art.Description)
 				}
@@ -1507,11 +1550,11 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		title := pArgs.Title
 		slug := Slugify(title)
 
-		tags := []string{"aiagent-plan"}
+		// The OKF type carries the plan class; tags hold only the project context + status.
+		var tags []string
 		projCtx := strings.TrimSpace(pArgs.ProjectContext)
 		if projCtx != "" {
-			contextTag := Slugify(projCtx)
-			if contextTag != "" && contextTag != "aiagent-plan" {
+			if contextTag := Slugify(projCtx); contextTag != "" {
 				tags = append(tags, contextTag)
 			}
 		}
@@ -1525,7 +1568,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			summary = "Created Collaborative AI Plan"
 		}
 
-		art, err := srv.Storage.SaveArticle("", title, pArgs.Content, pArgs.Description, pArgs.Source, summary, tags)
+		art, err := srv.Storage.SaveArticle("", title, pArgs.Content, pArgs.Description, pArgs.Source, "", summary, tags, ContentTypePlan)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent plan: %v", err)}}}, nil
 		}
@@ -1550,15 +1593,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: plan with slug '%s' not found", aArgs.Slug)}}}, nil
 		}
 
-		hasPlanTag := false
-		for _, tag := range existing.Tags {
-			if strings.ToLower(tag) == "aiagent-plan" {
-				hasPlanTag = true
-				break
-			}
-		}
-		if !hasPlanTag {
-			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a Collaborative AI Plan (must possess the 'aiagent-plan' tag)."}}}, nil
+		if existing.Type != ContentTypePlan {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a Collaborative AI Plan (type must be AI-Agent-Plan)."}}}, nil
 		}
 
 		newContent := existing.Content + "\n\n" + aArgs.ContentToAppend
@@ -1568,13 +1604,13 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			summary = "Appended Collaborative AI Plan details"
 		}
 
-		art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, summary, existing.Tags)
+		art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, existing.Resource, summary, existing.Tags, existing.Type)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent plan: %v", err)}}}, nil
 		}
 
 		respText := fmt.Sprintf("Success! Appended plan details to '%s' (version: %d, edited: %s).\n",
-			art.Title, art.Version, art.UpdatedAt.Format(time.RFC3339))
+			art.Title, art.Version, art.Timestamp.Format(time.RFC3339))
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 
 	case "edit_agent_plan":
@@ -1595,15 +1631,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: plan with slug '%s' not found", eArgs.Slug)}}}, nil
 		}
 
-		hasPlanTag := false
-		for _, tag := range existing.Tags {
-			if strings.ToLower(tag) == "aiagent-plan" {
-				hasPlanTag = true
-				break
-			}
-		}
-		if !hasPlanTag {
-			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a Collaborative AI Plan (must possess the 'aiagent-plan' tag)."}}}, nil
+		if existing.Type != ContentTypePlan {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a Collaborative AI Plan (type must be AI-Agent-Plan)."}}}, nil
 		}
 
 		if existing.Version > 0 && existing.Version != eArgs.LoadedVersion {
@@ -1620,19 +1649,15 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 		newTags := existing.Tags
 		if eArgs.Tags != nil {
+			// The plan class lives in the OKF type; tags are freely settable (project + status).
 			var parsedTags []string
-			hasPlanTagInNew := false
+			seen := make(map[string]bool)
 			for _, tag := range *eArgs.Tags {
 				cleanTag := Slugify(tag)
-				if cleanTag != "" {
-					if cleanTag == "aiagent-plan" {
-						hasPlanTagInNew = true
-					}
+				if cleanTag != "" && !seen[cleanTag] {
+					seen[cleanTag] = true
 					parsedTags = append(parsedTags, cleanTag)
 				}
-			}
-			if !hasPlanTagInNew {
-				parsedTags = append([]string{"aiagent-plan"}, parsedTags...)
 			}
 			newTags = parsedTags
 		}
@@ -1642,13 +1667,13 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			summary = "Updated Collaborative AI Plan metadata"
 		}
 
-		art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, existing.Content, existing.Description, existing.Source, summary, newTags)
+		art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, existing.Content, existing.Description, existing.Source, existing.Resource, summary, newTags, existing.Type)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent plan: %v", err)}}}, nil
 		}
 
 		respText := fmt.Sprintf("Success! Collaborative AI Plan '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nTags: %s\n",
-			art.Title, art.Slug, art.Version, art.UpdatedAt.Format(time.RFC3339), strings.Join(art.Tags, ", "))
+			art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339), strings.Join(art.Tags, ", "))
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 
 	case "list_agent_plans":
@@ -1675,15 +1700,14 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 				continue
 			}
 
-			isPlan := false
+			if art.Type != ContentTypePlan {
+				continue
+			}
 			matchProjFilter := filterProj == ""
 			matchTagFilter := filterTag == ""
 
 			for _, tag := range art.Tags {
 				tagLower := strings.ToLower(tag)
-				if tagLower == "aiagent-plan" {
-					isPlan = true
-				}
 				if filterProj != "" && tagLower == filterProj {
 					matchProjFilter = true
 				}
@@ -1692,13 +1716,13 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 				}
 			}
 
-			if isPlan && matchProjFilter && matchTagFilter {
+			if matchProjFilter && matchTagFilter {
 				count++
 				if count == 1 {
 					text = "Collaborative AI Plans Index:\n\n"
 				}
 				text += fmt.Sprintf("[%d] %s (Slug: %s, Edited: %s)\n",
-					count, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"))
+					count, art.Title, art.Slug, art.Timestamp.Format("2006-01-02 15:04:05"))
 				if art.Description != "" {
 					text += fmt.Sprintf("    Summary: %s\n", art.Description)
 				}
@@ -1737,16 +1761,8 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		title := sArgs.Title
 		slug := Slugify(title)
 
-		tags := []string{"aiagent-skill"}
-		for _, t := range sArgs.Tags {
-			tTrimmed := strings.TrimSpace(t)
-			if tTrimmed != "" {
-				tagLower := strings.ToLower(tTrimmed)
-				if tagLower != "aiagent-skill" && !strings.HasPrefix(tagLower, "aiagent-") {
-					tags = append(tags, tTrimmed)
-				}
-			}
-		}
+		// The OKF type carries the skill class; only free user/status tags ride here.
+		tags := validateAndCleanUserTags(sArgs.Tags, nil)
 
 		if _, err := srv.Storage.GetArticle(slug); err == nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: a skill with slug '%s' already exists", slug)}}}, nil
@@ -1757,7 +1773,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			summary = "Created Custom AI Agent Skill"
 		}
 
-		art, err := srv.Storage.SaveArticle("", title, sArgs.Content, sArgs.Description, sArgs.Source, summary, tags)
+		art, err := srv.Storage.SaveArticle("", title, sArgs.Content, sArgs.Description, sArgs.Source, "", summary, tags, ContentTypeSkill)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent skill: %v", err)}}}, nil
 		}
@@ -1780,21 +1796,13 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 				continue
 			}
 
-			isSkill := false
-			for _, tag := range art.Tags {
-				if strings.ToLower(tag) == "aiagent-skill" {
-					isSkill = true
-					break
-				}
-			}
-
-			if isSkill {
+			if art.Type == ContentTypeSkill {
 				count++
 				if count == 1 {
 					text = "Custom AI Agent Skills Index:\n\n"
 				}
 				text += fmt.Sprintf("[%d] %s (Slug: %s, Edited: %s)\n",
-					count, art.Title, art.Slug, art.UpdatedAt.Format("2006-01-02 15:04:05"))
+					count, art.Title, art.Slug, art.Timestamp.Format("2006-01-02 15:04:05"))
 				if art.Description != "" {
 					text += fmt.Sprintf("    Summary: %s\n", art.Description)
 				}
@@ -1816,7 +1824,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		text += "\nTips:\n"
 		text += "  • Use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"completed\").\n"
 		text += "  • When a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to add the 'completed' status tag.\n"
-		text += "  • The 'aiagent-plan' protected tag must NEVER be removed from a plan.\n"
+		text += "  • The reserved AI-Agent-Plan type must NEVER be relabelled.\n"
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
 
 	case "get_recent_activity":
@@ -1920,7 +1928,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		} else {
 			text = fmt.Sprintf("Articles linking to '%s' (%d):\n\n", target.Slug, len(backlinks))
 			for i, bl := range backlinks {
-				text += fmt.Sprintf("[%d] %s (Slug: %s, Updated: %s)\n", i+1, bl.Title, bl.Slug, bl.UpdatedAt.Format("2006-01-02 15:04:05"))
+				text += fmt.Sprintf("[%d] %s (Slug: %s, Updated: %s)\n", i+1, bl.Title, bl.Slug, bl.Timestamp.Format("2006-01-02 15:04:05"))
 				if bl.Description != "" {
 					text += fmt.Sprintf("    Summary: %s\n", bl.Description)
 				}
@@ -1965,7 +1973,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 		grouped := make(map[string][]Article)
 		for _, art := range articles {
-			dir := getArticleDirectory(art.Tags)
+			dir := getArticleDirectory(art.Type)
 			grouped[dir] = append(grouped[dir], art)
 		}
 
@@ -1989,7 +1997,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 				if len(art.Tags) > 0 {
 					line += fmt.Sprintf(" [%s]", strings.Join(art.Tags, ", "))
 				}
-				line += fmt.Sprintf(" (updated %s)", art.UpdatedAt.Format("2006-01-02"))
+				line += fmt.Sprintf(" (updated %s)", art.Timestamp.Format("2006-01-02"))
 				text += line + "\n"
 			}
 			text += "\n"
@@ -2017,7 +2025,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		} else {
 			respText = fmt.Sprintf("Revision History for '%s' (%d versions):\n\n", hArgs.Slug, len(history))
 			for _, ver := range history {
-				respText += fmt.Sprintf("Version: %d | Edited: %s\n", ver.Version, ver.UpdatedAt.Format(time.RFC3339))
+				respText += fmt.Sprintf("Version: %d | Edited: %s\n", ver.Version, ver.Timestamp.Format(time.RFC3339))
 				if ver.EditSummary != "" {
 					respText += fmt.Sprintf("  Summary: %s\n", ver.EditSummary)
 				}
@@ -2043,7 +2051,7 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 		}
 
 		respText := fmt.Sprintf("Success! Article '%s' reverted successfully to version %d.\nNew active version: %d\nLast Edited: %s\n",
-			art.Title, rArgs.Version, art.Version, art.UpdatedAt.Format(time.RFC3339))
+			art.Title, rArgs.Version, art.Version, art.Timestamp.Format(time.RFC3339))
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 
 	case "get_wiki_statistics":
@@ -2099,6 +2107,44 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			}
 		}
 
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "export_okf_bundle":
+		data, err := srv.Storage.ExportOKFBundle()
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error exporting OKF bundle: %v", err)}}}, nil
+		}
+		fileName := fmt.Sprintf("okf-export-%s.zip", time.Now().UTC().Format("2006-01-02T15-04-05Z"))
+		outPath := filepath.Join(srv.Storage.DataDir, fileName)
+		if err := os.WriteFile(outPath, data, 0644); err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error writing OKF bundle to disk: %v", err)}}}, nil
+		}
+		respText := fmt.Sprintf("Success! Exported OKF v%s bundle (%d bytes) to:\n%s\n", OKFVersion, len(data), outPath)
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+
+	case "import_okf_bundle":
+		type ImportArgs struct {
+			Path string `json:"path"`
+		}
+		var iArgs ImportArgs
+		if err := json.Unmarshal(args.Arguments, &iArgs); err != nil || strings.TrimSpace(iArgs.Path) == "" {
+			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'path' argument"}
+		}
+		data, err := os.ReadFile(iArgs.Path)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error reading bundle at '%s': %v", iArgs.Path, err)}}}, nil
+		}
+		report, err := srv.Storage.ImportOKFBundle(data)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error importing OKF bundle: %v", err)}}}, nil
+		}
+		respText := fmt.Sprintf("OKF import complete: %d imported, %d skipped.\n", report.Imported, report.Skipped)
+		if len(report.MissingType) > 0 {
+			respText += fmt.Sprintf("Documents defaulted to Wiki (missing/unknown type): %s\n", strings.Join(report.MissingType, ", "))
+		}
+		for _, wmsg := range report.Warnings {
+			respText += "Warning: " + wmsg + "\n"
+		}
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 
 	default:

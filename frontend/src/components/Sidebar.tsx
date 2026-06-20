@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import type { Article, ThemeMode } from '../types';
+import { isAgentDoc, isMemory, isPlan, isSkill } from '../types';
 import { formatRelativeTime } from '../utils';
 import {
   FileText,
@@ -60,12 +61,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [aiSkillsOpen, setAiSkillsOpen] = useState(true);
   const [aiPlansOpen, setAiPlansOpen] = useState(true);
 
-  // Parse all unique user tags (excluding "aiagent-" tags)
+  // Parse all unique user tags (excluding tool-managed memory-scope tags)
   const allUserTags = useMemo(() => {
     const tags = new Set<string>();
     articles.forEach(art => {
       art.tags?.forEach(tag => {
-        if (!tag.toLowerCase().startsWith('aiagent-')) {
+        if (!tag.toLowerCase().startsWith('memory-')) {
           tags.add(tag);
         }
       });
@@ -82,28 +83,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return buildSuggestionsFromArticles(articles, autocompleteTerm);
   }, [autocompleteTerm, articles]);
 
-  // Standard articles filter (excl. agent pages, and matching tag + search query)
+  // Standard articles filter (excl. agent docs, and matching tag + search query)
   const standardArticles = useMemo(() => {
     return articles.filter(art => {
-      const isAgent = art.tags?.some(tag => tag.toLowerCase().startsWith('aiagent-'));
-      if (isAgent) return false;
+      if (isAgentDoc(art)) return false;
 
       const matchesQuery = matchesSidebarFilter(art, filterQuery);
-      
+
       const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
 
       return matchesQuery && matchesTag;
     });
   }, [articles, filterQuery, selectedTag]);
 
-  // AI Agent memories filter (starts with aiagent- but is NOT aiagent-skill and NOT aiagent-plan)
+  // AI Agent memories filter (OKF type AI-Agent-Memory)
   const aiMemories = useMemo(() => {
     return articles.filter(art => {
-      const isAgent = art.tags?.some(tag => tag.toLowerCase().startsWith('aiagent-'));
-      if (!isAgent) return false;
-      const isSkill = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill');
-      const isPlan = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan');
-      if (isSkill || isPlan) return false;
+      if (!isMemory(art)) return false;
 
       const matchesQuery = matchesSidebarFilter(art, filterQuery);
       const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
@@ -111,11 +107,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
   }, [articles, filterQuery, selectedTag]);
 
-  // AI Agent skills filter (possesses aiagent-skill tag)
+  // AI Agent skills filter (OKF type AI-Agent-Skill)
   const aiSkills = useMemo(() => {
     return articles.filter(art => {
-      const isSkill = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-skill');
-      if (!isSkill) return false;
+      if (!isSkill(art)) return false;
 
       const matchesQuery = matchesSidebarFilter(art, filterQuery);
       const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
@@ -123,11 +118,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     });
   }, [articles, filterQuery, selectedTag]);
 
-  // AI Agent plans filter (possesses aiagent-plan tag)
+  // AI Agent plans filter (OKF type AI-Agent-Plan)
   const aiPlans = useMemo(() => {
     return articles.filter(art => {
-      const isPlan = art.tags?.some(tag => tag.toLowerCase() === 'aiagent-plan');
-      if (!isPlan) return false;
+      if (!isPlan(art)) return false;
 
       const matchesQuery = matchesSidebarFilter(art, filterQuery);
       const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
@@ -330,7 +324,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       ) : (
                         <div className="flex items-center gap-1 text-[9px] text-themeTextMuted opacity-80 group-hover:opacity-100">
                           <Clock size={9} />
-                          <span>{formatRelativeTime(art.updated_at)}</span>
+                          <span>{formatRelativeTime(art.timestamp)}</span>
                         </div>
                       )}
                     </div>
@@ -391,7 +385,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         ) : (
                           <div className="flex items-center gap-1 text-[9px] text-themeTextMuted opacity-85 group-hover:opacity-100">
                             <Clock size={9} />
-                            <span>{formatRelativeTime(art.updated_at)}</span>
+                            <span>{formatRelativeTime(art.timestamp)}</span>
                           </div>
                         )}
                       </div>
@@ -453,7 +447,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         ) : (
                           <div className="flex items-center gap-1 text-[9px] text-themeTextMuted opacity-85 group-hover:opacity-100">
                             <Clock size={9} />
-                            <span>{formatRelativeTime(art.updated_at)}</span>
+                            <span>{formatRelativeTime(art.timestamp)}</span>
                           </div>
                         )}
                       </div>
@@ -515,7 +509,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         ) : (
                           <div className="flex items-center gap-1 text-[9px] text-themeTextMuted opacity-85 group-hover:opacity-100">
                             <Clock size={9} />
-                            <span>{formatRelativeTime(art.updated_at)}</span>
+                            <span>{formatRelativeTime(art.timestamp)}</span>
                           </div>
                         )}
                       </div>

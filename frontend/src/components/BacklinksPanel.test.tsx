@@ -8,7 +8,7 @@ const mockBacklinks = [
     title: 'Linking Article',
     slug: 'linking-article',
     created_at: '2024-01-01T00:00:00Z',
-    updated_at: '2024-01-15T12:00:00Z',
+    timestamp: '2024-01-15T12:00:00Z',
     description: 'links to the target',
   },
 ];

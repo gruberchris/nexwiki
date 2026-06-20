@@ -5,7 +5,7 @@ import { Viewer } from './Viewer';
 import type { Article } from '../types';
 
 const mockArticles: Article[] = [
-  { title: 'Existing Page', slug: 'existing-page', created_at: '', updated_at: '', version: 1 },
+  { title: 'Existing Page', slug: 'existing-page', created_at: '', timestamp: '', version: 1 },
 ];
 
 const baseProps = {

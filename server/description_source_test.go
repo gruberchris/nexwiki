@@ -13,7 +13,7 @@ func TestDescriptionSourceRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = storage.Close() })
 
-	_, err = storage.SaveArticle("", "Round Trip", "# Body", "A one-line summary", "https://example.com/origin", "Initial", []string{"notes"})
+	_, err = storage.SaveArticle("", "Round Trip", "# Body", "A one-line summary", "https://example.com/origin", "", "Initial", []string{"notes"}, "")
 	if err != nil {
 		t.Fatalf("SaveArticle failed: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestDescriptionSourceRoundTrip(t *testing.T) {
 	}
 
 	// Values containing colons and quotes must survive the line-based parser
-	_, err = storage.SaveArticle("", "Tricky Values", "# Body", `Summary: with "colon" and quotes`, "see: RFC 3339", "Initial", nil)
+	_, err = storage.SaveArticle("", "Tricky Values", "# Body", `Summary: with "colon" and quotes`, "see: RFC 3339", "", "Initial", nil, "")
 	if err != nil {
 		t.Fatalf("SaveArticle tricky failed: %v", err)
 	}
@@ -46,14 +46,16 @@ func TestDescriptionSourceRoundTrip(t *testing.T) {
 	}
 }
 
-func TestDescriptionNewlinesFlattened(t *testing.T) {
+func TestDescriptionMultilinePreserved(t *testing.T) {
 	storage, err := NewStorage(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStorage failed: %v", err)
 	}
 	t.Cleanup(func() { _ = storage.Close() })
 
-	_, err = storage.SaveArticle("", "Multi Line", "# Body", "line one\nline two\r\nline three", "src\nwith newline", "Initial", nil)
+	// YAML front matter handles multi-line scalars natively, so newlines round-trip cleanly
+	// instead of being flattened (the old line-based hack).
+	_, err = storage.SaveArticle("", "Multi Line", "# Body", "line one\nline two\nline three", "src\nwith newline", "", "Initial", nil, "")
 	if err != nil {
 		t.Fatalf("SaveArticle failed: %v", err)
 	}
@@ -62,34 +64,34 @@ func TestDescriptionNewlinesFlattened(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetArticle failed: %v", err)
 	}
-	if strings.ContainsAny(art.Description, "\n\r") {
-		t.Errorf("expected flattened description, got %q", art.Description)
+	if art.Description != "line one\nline two\nline three" {
+		t.Errorf("expected multi-line description to round-trip, got %q", art.Description)
 	}
-	if art.Description != "line one line two line three" {
-		t.Errorf("unexpected flattened description: %q", art.Description)
+	if art.Source != "src\nwith newline" {
+		t.Errorf("expected multi-line source to round-trip, got %q", art.Source)
 	}
-	if strings.ContainsAny(art.Source, "\n\r") {
-		t.Errorf("expected flattened source, got %q", art.Source)
-	}
-	// The fields following description/source in the front matter must remain intact
+	// The rest of the front matter must remain intact
 	if len(art.Tags) != 0 || art.Title != "Multi Line" {
 		t.Errorf("front matter corrupted by multi-line description: %+v", art)
 	}
 }
 
-func TestParseArticleFileWithoutDescriptionBackCompat(t *testing.T) {
-	// Hand-built front matter in the pre-description on-disk format
-	raw := []byte("---\ntitle: Legacy Page\nslug: legacy-page\ncreated_at: 2025-01-02T03:04:05Z\nupdated_at: 2025-01-02T03:04:05Z\nversion: 3\nedit_summary: old format\ntags: alpha, beta\n---\n# Legacy body\n\nSome text.")
+func TestParseArticleFileYAMLFrontMatter(t *testing.T) {
+	// Native OKF YAML front matter: type + canonical/custom keys, tags as a real YAML list.
+	raw := []byte("---\ntype: Wiki\ntitle: Yaml Page\nslug: yaml-page\ndescription: a summary\nresource: https://example.com/spec\ntags:\n    - alpha\n    - beta\ntimestamp: 2025-01-02T03:04:05Z\ncreated_at: 2025-01-02T03:04:05Z\nversion: 3\nedit_summary: yaml format\n---\n# Body\n\nSome text.")
 
 	art, err := parseArticleFile(raw, true)
 	if err != nil {
-		t.Fatalf("legacy front matter failed to parse: %v", err)
+		t.Fatalf("YAML front matter failed to parse: %v", err)
 	}
-	if art.Description != "" || art.Source != "" {
-		t.Errorf("expected empty description/source on legacy file, got '%s'/'%s'", art.Description, art.Source)
+	if art.Type != ContentTypeWiki {
+		t.Errorf("expected type Wiki, got '%s'", art.Type)
 	}
-	if art.Title != "Legacy Page" || art.Version != 3 || len(art.Tags) != 2 {
-		t.Errorf("legacy fields parsed incorrectly: %+v", art)
+	if art.Title != "Yaml Page" || art.Version != 3 || len(art.Tags) != 2 {
+		t.Errorf("fields parsed incorrectly: %+v", art)
+	}
+	if art.Description != "a summary" || art.Resource != "https://example.com/spec" {
+		t.Errorf("description/resource parsed incorrectly: '%s'/'%s'", art.Description, art.Resource)
 	}
 }
 
@@ -101,7 +103,7 @@ func TestContentPreviewOnMetadataParse(t *testing.T) {
 		t.Fatalf("parse failed: %v", err)
 	}
 	// Heading-only first line is skipped in favor of... the heading text itself after '#' stripping;
-	// "# Preview Page" strips to "Preview Page" which is non-empty, so it is the preview.
+	// "# Preview Page" strips to "Preview Page", which is non-empty, so it is the preview.
 	if art.ContentPreview != "Preview Page" {
 		t.Errorf("unexpected preview: %q", art.ContentPreview)
 	}
@@ -144,7 +146,7 @@ func TestDescriptionPreservedThroughTagUpdateAndRevert(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = storage.Close() })
 
-	_, err = storage.SaveArticle("", "Keeper", "# v1", "the summary", "the source", "Initial", []string{"one"})
+	_, err = storage.SaveArticle("", "Keeper", "# v1", "the summary", "the source", "", "Initial", []string{"one"}, "")
 	if err != nil {
 		t.Fatalf("SaveArticle failed: %v", err)
 	}
@@ -160,7 +162,7 @@ func TestDescriptionPreservedThroughTagUpdateAndRevert(t *testing.T) {
 	}
 
 	// A content edit that clears the description, then a revert to v1, restores it
-	_, err = storage.SaveArticle("keeper", "Keeper", "# v3", "", "", "cleared", art.Tags)
+	_, err = storage.SaveArticle("keeper", "Keeper", "# v3", "", "", "", "cleared", art.Tags, "")
 	if err != nil {
 		t.Fatalf("clearing edit failed: %v", err)
 	}

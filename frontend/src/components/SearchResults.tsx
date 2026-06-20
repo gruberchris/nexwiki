@@ -6,7 +6,7 @@ interface SearchResult {
   title: string;
   slug: string;
   score: number;
-  updated_at: string;
+  timestamp: string;
   snippets: string[];
 }
 
@@ -182,7 +182,7 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
                   {/* Relative update stamp */}
                   <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400 dark:text-slate-500 pt-1 select-none">
                     <Clock size={10} />
-                    <span>Edited {formatRelativeTime(hit.updated_at)}</span>
+                    <span>Edited {formatRelativeTime(hit.timestamp)}</span>
                   </div>
                 </div>
               ))}

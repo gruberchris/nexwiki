@@ -16,7 +16,7 @@ Because you are using NexWiki as a global tool connected via MCP, **you cannot k
 
 ## 🏆 The Solution: Centralized Skills-Based Governance
 
-NexWiki solves this by utilizing its native **AI Agent Skills Registry** combined with **Schema-Driven Prerequisite Hooking** to implement zero-configuration, centralized governance.
+NexWiki solves this by using its native **AI Agent Skills Registry** combined with **Schema-Driven Prerequisite Hooking** to implement zero-configuration, centralized governance.
 
 ```mermaid
 graph TD
@@ -43,7 +43,7 @@ graph TD
 
 ### 1. Centralized "Wrench" Skill (`nexwiki-agent-guidelines`)
 Instead of duplicating rules in local files across countless folders, all instructions are stored centrally inside a single, live, editable page in NexWiki named **NexWiki Agent Core Guidelines** (slug: `nexwiki-agent-guidelines`). 
-* Because it is tagged with `aiagent-skill`, it is automatically registered on NexWiki's Custom AI Skills Registry.
+* Because its OKF `type` is `AI-Agent-Skill` (set automatically by `create_agent_skill`), it is registered on NexWiki's Custom AI Skills Registry.
 * You can edit these agent rules directly from your browser in the NexWiki UI. **Any changes you save are instantly propagated to all connected AI agents globally.**
 
 > **The slug must be exactly `nexwiki-agent-guidelines`.** The MCP tool schema hooks are hard-coded to reference this slug. If the article does not exist, the agent will get a `not found` error when it tries to load the guidelines and may proceed without any rules applied.
@@ -123,7 +123,7 @@ Imagine your agent has finished implementing a plan it previously created (e.g.,
 1. **Agent completes implementation**: The agent finishes all the coding tasks outlined in the plan.
 2. **Agent appends final notes**: The agent calls `append_agent_plan(slug="mysql-database-migration-plan")` to document the implementation: any plan deviations, files created, tools used, unexpected challenges, or other observations.
 3. **Agent marks plan as completed**: The agent calls `edit_agent_plan(slug="mysql-database-migration-plan", tags=["completed"], loaded_version=<current_version>)` to add the `completed` status tag.
-4. **Protected tag preserved**: The `aiagent-plan` tag is automatically preserved by the system and cannot be removed.
+4. **Protected type preserved**: The plan's OKF `type` (`AI-Agent-Plan`) is immutable on edits and cannot be relabeled to a non-reserved type.
 5. **Agent reports completion**: The agent confirms the plan is now marked as completed with final notes appended.
 
 ---
@@ -143,7 +143,7 @@ Write this skill as a numbered list of imperative directives — not prose. Agen
 At session start, call `get_context_overview` to load a compact index of the entire wiki
 (titles, slugs, one-line summaries, tags) before reading anything. Then call `read_article`
 only on the entries you actually need — do not bulk-read articles to orient yourself.
-If resuming work, call `get_recent_activity` (e.g. since: "24h") to see what changed
+If resuming work, call `get_recent_activity` (e.g., since: "24h") to see what changed
 since your last session.
 ```
 
@@ -164,7 +164,7 @@ Mark plans completed with `edit_agent_plan` (add "completed" tag) once done.
 
 **4. Tag and slug rules**
 ```markdown
-Never remove `aiagent-plan`, `aiagent-skill`, or `aiagent-memory-*` tags from any document.
+Never relabel a reserved document `type` (`AI-Agent-Plan`, `AI-Agent-Skill`, `AI-Agent-Memory`) to a non-reserved one, and never strip a tool-managed `memory-<scope>` tag.
 Article slugs must be lowercase, hyphenated, and descriptive (e.g., "go-api-database-schema").
 Use `get_status_tags` to see valid lifecycle tags (draft, wip, completed, etc.).
 ```
@@ -191,7 +191,7 @@ Avoid emoji in article titles or headers unless the existing page already uses t
 
 ### What to Exclude
 
-Keep the guidelines skill lean. Bloated context slows agents down and risks being truncated.
+Keep the guideline skill lean. Bloated context slows agents down and risks being truncated.
 
 | Do NOT include | Use instead |
 |---|---|
@@ -203,4 +203,4 @@ Keep the guidelines skill lean. Bloated context slows agents down and risks bein
 
 ### Keeping It Up to Date
 
-Because the skill is a live wiki article, you can edit and refine it directly in your browser at any time. Changes take effect immediately — the next agent session will read the updated version. There is no cache to flush and no server restart required.
+Because the skill is a live wiki article, you can edit and refine it directly in your browser at any time. Changes take effect immediately — the next agent session will read the updated version. There is no cache to flush. No server restart is required.

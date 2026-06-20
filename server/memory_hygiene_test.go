@@ -28,11 +28,11 @@ func TestMCPEditAgentMemory(t *testing.T) {
 	if art.Version != 2 {
 		t.Errorf("expected version 2, got %d", art.Version)
 	}
-	if !hasMemoryTag(art.Tags) {
-		t.Errorf("memory tag lost after edit: %v", art.Tags)
+	if art.Type != ContentTypeMemory {
+		t.Errorf("memory type lost after edit: %q", art.Type)
 	}
 
-	// Tags replacement without the protected tag re-prepends the scoped variant
+	// Tags replacement preserves the tool-managed memory-scope tag
 	edit2 := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"slug":"build-quirk","tags":["extra-topic"],"loaded_version":2}}`)
 	if edit2.IsError {
 		t.Fatalf("edit2 failed: %s", edit2.Content[0].Text)
@@ -40,12 +40,12 @@ func TestMCPEditAgentMemory(t *testing.T) {
 	art2, _ := srv.Storage.GetArticle("build-quirk")
 	foundScoped := false
 	for _, tag := range art2.Tags {
-		if tag == "aiagent-memory-nexwiki" {
+		if tag == "memory-nexwiki" {
 			foundScoped = true
 		}
 	}
 	if !foundScoped {
-		t.Errorf("expected scoped aiagent-memory-nexwiki tag preserved, got %v", art2.Tags)
+		t.Errorf("expected scoped memory-nexwiki tag preserved, got %v", art2.Tags)
 	}
 
 	// Stale loaded_version yields a conflict telling the agent to re-read
@@ -55,9 +55,9 @@ func TestMCPEditAgentMemory(t *testing.T) {
 	}
 
 	// Non-memory target is rejected
-	_, _ = srv.Storage.SaveArticle("", "Plain Article", "# plain", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Plain Article", "# plain", "", "", "", "", nil, "")
 	notMem := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"slug":"plain-article","content":"# nope","loaded_version":1}}`)
-	if !notMem.IsError || !strings.Contains(notMem.Content[0].Text, "not a protected AI agent memory") {
+	if !notMem.IsError || !strings.Contains(notMem.Content[0].Text, "not a protected AI Agent Memory") {
 		t.Errorf("expected memory validation error, got: %v", notMem)
 	}
 
@@ -78,11 +78,11 @@ func TestMCPDeleteAgentMemory(t *testing.T) {
 	srv := newMCPServer(t)
 
 	_ = toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Obsolete Memory","content":"# stale"}}`)
-	_, _ = srv.Storage.SaveArticle("", "Plain Doc", "# doc", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Plain Doc", "# doc", "", "", "", "", nil, "")
 
 	// Refuses plain articles
 	notMem := toolCall(t, srv, `{"name":"delete_agent_memory","arguments":{"slug":"plain-doc"}}`)
-	if !notMem.IsError || !strings.Contains(notMem.Content[0].Text, "not a protected AI agent memory") {
+	if !notMem.IsError || !strings.Contains(notMem.Content[0].Text, "not a protected AI Agent Memory") {
 		t.Errorf("expected refusal for plain article, got: %v", notMem)
 	}
 
@@ -100,7 +100,7 @@ func TestMCPDeleteWikiArticleRefusesMemories(t *testing.T) {
 	srv := newMCPServer(t)
 
 	_ = toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Guarded Memory","content":"# keep"}}`)
-	_, _ = srv.Storage.SaveArticle("", "Deletable Doc", "# doc", "", "", "", nil)
+	_, _ = srv.Storage.SaveArticle("", "Deletable Doc", "# doc", "", "", "", "", nil, "")
 
 	// delete_wiki_article refuses the memory and points to delete_agent_memory
 	refused := toolCall(t, srv, `{"name":"delete_wiki_article","arguments":{"slug":"guarded-memory"}}`)
@@ -111,7 +111,7 @@ func TestMCPDeleteWikiArticleRefusesMemories(t *testing.T) {
 		t.Error("memory should still exist after refused delete")
 	}
 
-	// Plain articles still delete fine
+	// Plain articles still are deleted fine
 	ok := toolCall(t, srv, `{"name":"delete_wiki_article","arguments":{"slug":"deletable-doc"}}`)
 	if ok.IsError {
 		t.Fatalf("plain delete failed: %s", ok.Content[0].Text)

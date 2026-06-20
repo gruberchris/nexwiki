@@ -20,7 +20,11 @@ To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools l
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes twenty-five powerful tools for AI agents:
+> **Native OKF storage & document `type`.** Every NexWiki `.md` file is a conformant Open Knowledge Format (OKF v0.1) concept document at rest (real YAML front matter). Each document carries a `type` — exactly one of **`Wiki`** (regular articles) or the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags remain: **status tags** (e.g. `wip`, `completed`, `inbox`) and tool-managed **memory-scope tags** (`memory-<scope>`).
+
+> **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port (and is the primary that persists the activity log); if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server, it forwards its activity events to it; with no NexWiki web server, it persists the log itself. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
+
+The NexWiki MCP server registers and exposes twenty-seven powerful tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine.
@@ -75,7 +79,7 @@ Modifies the title, Markdown content, tags, or edit the summary of an existing w
   * `content` (string, **required**): The updated raw Markdown content of the article body.
   * `description` (string, **optional**): New one-line summary. Omit or pass empty to preserve the existing description.
   * `source` (string, **optional**): New provenance reference. Omit or pass empty to preserve the existing source.
-  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see the recognized status values (e.g. `completed`, `review`). Omit to leave existing tags unchanged.
+  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see the recognized status values (e.g. `completed`, `review`). Omit leaving existing tags unchanged.
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
   * `edit_summary` (string, **optional**): A summary detailing the modifications.
 * **Behavior**:
@@ -291,7 +295,7 @@ Lists all articles whose content links to a given article via double-bracket `[[
 * **Arguments**:
   * `slug` (string, **required**): The URL-safe slug of the target article to find inbound links for.
 * **Behavior**:
-  Scans all article bodies (including the `home` dashboard) on demand for WikiLinks resolving to the target slug, skipping self-links. Returns an indexed plain-text list with titles, slugs, summaries, and updated timestamps, sorted newest first. Useful before editing or deleting a page to see what references it. `read_article` also appends a compact `Linked from:` section automatically.
+  Scans all article bodies (including the `home` dashboard) on demand for WikiLinks resolving to the target slug, skipping self-links. Returns an indexed plain-text list with titles, slugs, summaries, and updated timestamps, sorted the newest first. Useful before editing or deleting a page to see what references it. `read_article` also appends a compact `Linked from:` section automatically.
 
 ---
 
@@ -331,7 +335,7 @@ Queries the **durable activity log** (`data/activity.jsonl`) to see what changed
   * `action` (string, **optional**): Filter by `create`, `edit`, `delete`, `read`, or `revert`.
   * `source` (string, **optional**): Filter by origin — `mcp` (AI tool calls) or `api` (human web UI actions).
 * **Behavior**:
-  Reads the persisted JSON Lines activity log written by the primary server process (every REST and MCP mutation/read event, deduplicated within 2-second windows). Falls back to the in-memory 200-event ring buffer when no durable log exists yet. The log rotates once at 10 MB (`activity.jsonl` → `activity.jsonl.1`). Events from a different MCP process may lag by milliseconds while being forwarded to the primary.
+  Reads the persisted JSON Lines activity log written by the primary server process (every REST and MCP mutation/read event, deduplicated within 2-second windows), **spanning the active file plus rotated archives** so durable history survives rotation. Falls back to the in-memory 200-event ring buffer when no durable log exists yet. At 10 MB the active log is rotated aside into a **non-destructive, timestamped archive** (`activity-<UTC>.jsonl`) — earlier archives are never overwritten (optional retention cap via `NEXWIKI_ACTIVITY_MAX_ARCHIVES`, default unlimited). The Activity Drawer also pages this durable history via `GET /api/activity/log` ("Load older history"). Events from a different MCP process may lag by milliseconds while being forwarded to the primary.
 
 * **Sample output**:
 ```
@@ -341,6 +345,21 @@ Recent wiki activity (3 events, oldest first):
 2026-06-11 14:02:33 [mcp/create] create_wiki_article → 'New Page' (new-page) by Claude
 2026-06-11 14:03:22 [mcp/edit] edit_agent_memory → 'Build Quirk' (build-quirk) by Claude
 ```
+
+### 26. `export_okf_bundle`
+Exports the entire knowledge base as a conformant **Open Knowledge Format (OKF v0.1) bundle** (a `.zip`).
+
+* **Arguments**: none.
+* **Behavior**:
+  Native files are already OKF YAML, so export synthesizes the **bundle hierarchy** from each document's `type` (`wiki/`, `aimemories/`, `aiplans/`, `aiskills/`), the reserved per-directory and root `index.md` files (the root carries `okf_version: "0.1"`), a date-grouped `log.md` built from the durable activity log, and translates `[[WikiLinks]]` into bundle-relative concept paths (`/wiki/<slug>.md`, OKF §5.1). The archive is written into the data directory and its path is returned. REST equivalent: `GET /api/okf/export` (streams the `.zip` as a download).
+
+### 27. `import_okf_bundle`
+Imports an **OKF v0.1 bundle** (`.zip`) from a filesystem path into the knowledge base.
+
+* **Arguments**:
+  * `path` (string, **required**): Filesystem path to the `.zip` bundle.
+* **Behavior**:
+  Walks the bundle, parses each non-reserved `.md` as an OKF concept document, maps its `type` (reserved value → agent class; otherwise `Wiki`), translates bundle-relative Markdown links back to `[[WikiLinks]]`, and creates/updates each article via the storage layer (dedup by slug; reserved `index.md`/`log.md` are consumed). The importer is **permissive** (OKF §9): a document with a missing/unknown type defaults to `Wiki` and is flagged in the returned conformance report rather than rejected. REST equivalent: `POST /api/okf/import` (multipart `file` upload).
 
 ---
 
@@ -397,6 +416,7 @@ Add the `nexwiki` server configuration block:
     "nexwiki": {
       "command": "/path/to/your/compiled/nexwiki",
       "args": [
+        "-mcp-only",
         "-data", "/path/to/your/wiki-data",
         "-name", "My Personal Brain"
       ]
@@ -418,7 +438,7 @@ claude mcp add --transport http nexwiki http://localhost:8080/api/mcp
 
 #### Option B: Stdio Process Fallback
 ```bash
-claude mcp add nexwiki -- /path/to/your/compiled/nexwiki -data /path/to/your/wiki-data -name "My Personal Brain"
+claude mcp add nexwiki -- /path/to/your/compiled/nexwiki -mcp-only -data /path/to/your/wiki-data -name "My Personal Brain"
 ```
 
 ---
@@ -444,6 +464,7 @@ GitHub Copilot's CLI environment supports connecting to custom HTTP/SSE servers.
     "nexwiki": {
       "command": "/path/to/your/compiled/nexwiki",
       "args": [
+        "-mcp-only",
         "-data", "/path/to/your/wiki-data",
         "-name", "My Personal Brain"
       ]
