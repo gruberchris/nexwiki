@@ -76,6 +76,8 @@ When you give the agent a multi-step task, the governance rules force it to:
 2. **`append_agent_plan`** progress notes after each milestone.
 3. On completion: append final notes (deviations, files created, surprises), then **`edit_agent_plan`** to add the `completed` status tag.
 
+> **Correcting plan steps:** Use `edit_agent_plan` with a `content` field to rewrite plan content in-place (full replacement with optimistic locking). Use `append_agent_plan` for additive progress notes only.
+
 You watch all of this live in the Activity Drawer, and the plan is a normal wiki page you can read, edit, and build on later.
 
 ### Step 4 — Capture knowledge as it's earned
