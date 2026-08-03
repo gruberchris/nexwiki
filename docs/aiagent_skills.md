@@ -22,7 +22,7 @@ A typical skill folder in standard registries (like the `JetBrains/skills` repos
 1. **`SKILL.md`**: Standardized Markdown file featuring YAML frontmatter metadata (`name`, `description`, `tags`) and a Markdown body detailing the agent's procedural directives.
 2. **References & Scripts (Optional)**: Accompanying scripts or reference files.
 
-NexWiki replicates this structure seamlessly. By tagging any wiki page with `aiagent-skill`, that article is instantly compiled into a registry-ready skill that AI agents can consume via REST APIs.
+NexWiki replicates this structure seamlessly. Any document carrying the reserved OKF `type: AI-Agent-Skill` is instantly compiled into a registry-ready skill that AI agents can consume via REST APIs.
 
 ---
 
@@ -33,7 +33,7 @@ NexWiki makes creating and managing AI Skills extremely easy:
 ### 1. Creating a Skill
 To create a Custom AI Skill inside NexWiki:
 - Click the **AI Skill** button in the sidebar (under the Create New Page buttons), or click the **Create Custom Skill** card on the dashboard homepage.
-- This opens the editor in **Custom AI Skill Mode** (marked by a premium indigo Wrench badge). The `aiagent-skill` tag is automatically pre-filled and locked for the document.
+- This opens the editor in **Custom AI Skill Mode** (marked by a premium indigo Wrench badge). The document's OKF `type` is set to `AI-Agent-Skill` automatically — there is no tag to apply, and the type is immutable on subsequent edits. AI agents create skills the same way via the `create_agent_skill` MCP tool.
 - Write your skill instructions (in standard `SKILL.md` format) and click **Save Page**.
 
 ### 2. Collapsible Sidebar Folder
@@ -48,13 +48,14 @@ When viewing any page registered as an AI skill, NexWiki renders a beautiful, gl
 
 ## 🔍 How AI Skills Interact with Search
 
-To keep your standard wiki searches focused, **AI skills do not appear in standard wiki search results by default.** They are filtered out of quick search just like AI Memories.
+To keep your standard wiki searches focused, **AI skills do not appear in standard wiki search results by default.** Search returns only documents of type `Wiki`, so skills are filtered out alongside AI Memories and Plans.
 
 However, NexWiki includes a smart **Explicit Search Bypass** rule:
 If you are explicitly looking for a skill, it will appear in your search results *only* if:
-1. Your search query contains `"skill"` or `"aiagent-skill"`.
+1. Your search query contains `aiagent` or `ai-agent` (e.g. `ai-agent docker`). This opts **every** agent-typed document — skills, plans, and memories — back into the results.
 2. Your search query matches the skill's **title** or **slug** (e.g. `docker-clean`).
-3. Your search query matches one of the skill's **associated tags** exactly (e.g., searching for the `git` tag will show your git skills).
+
+You can also enumerate skills directly, bypassing search entirely, with the `list_agent_skills` MCP tool or `GET /api/skills`.
 
 ---
 

@@ -20,7 +20,7 @@ Designed as an **AI-ready second brain**, NexWiki bridges the gap between human 
 - 🧠 **Progressive Disclosure, Provenance & Backlinks**: Every article supports optional one-line `description`, a `source` (citation) field, and an OKF `resource` (the canonical URI of the concept). The `get_context_overview` MCP tool serves a compact sectioned index of the whole wiki so agents orient cheaply before reading selectively, and `get_backlinks` + a "Linked from" viewer panel make `[[WikiLink]]` graph traversal bidirectional. Renaming an article auto-heals inbound WikiLinks.
 - 🪵 **Durable Activity Log**: All REST and MCP activity events persist to an append-only `data/activity.jsonl` (JSON Lines) with **non-destructive, timestamped archives** on rotation (no history lost). The `get_recent_activity` MCP tool and the paginated Activity Drawer ("Load older history", `GET /api/activity/log`) read across archives so agents and humans can ask "what changed since my last session?" with duration/timestamp, action, and source filters.
 - **🔍 Blazing-Fast Full-Text Search**: Powered by the robust `github.com/blevesearch/bleve/v2` engine. Supports advanced query parsing, scoring, and text snippet highlighting.
-- **📂 Flat-File Markdown Storage**: Wiki pages are stored on disk as plain Markdown files with YAML-like front matter metadata. Your files remain completely portable and easily readable by external editors.
+- **📂 Flat-File Markdown Storage**: Wiki pages are stored on disk as plain Markdown files with real YAML front matter metadata (OKF v0.1). Your files remain completely portable and easily readable by external editors.
 - 🕒 **Gzipped Flat-File Versioning**: Built-in revision engine that saves highly efficient compressed `.md.gz` gzip snapshots of your article history. Review historical changes side-by-side using interactive **Split Pane** or **Unified Inline** diff modes, roll back changes instantly, and prevent session write conflicts with automatic optimistic locking guards.
 - 📤 **Export, Share, Copy & Backup/Restore**: Export any wiki article directly to a professional print-styled PDF, Microsoft Word (`.docx`), or standard Markdown (`.md`). Instantly copy raw body text or page URLs from a glassmorphic dropdown. **Backup** your entire wiki — all articles, AI memories, plans, and skills — as a portable OKF v0.1 bundle (`.zip`) in one click from the sidebar, and **Restore** it on any NexWiki instance (including a fresh install) using the companion Restore button. The bundle round-trips perfectly: all metadata, tags, types, and WikiLinks are preserved.
 - 🖼️ **Asset & Image Uploads**: Built-in support for uploading and referencing media assets (such as PNG, JPEG, GIF, SVG, and WebP) directly within articles.
@@ -89,7 +89,11 @@ All settings can be set via CLI flags. The `NEXWIKI_NAME`, `NEXWIKI_THEME`, and 
 | Wiki name | `-name` | `NEXWIKI_NAME` | `NexWiki` | Title displayed in the UI and HTML headers |
 | Default theme | `-theme` | `NEXWIKI_THEME` | `default` | Initial active color theme |
 | Seasonal themes | `-theme-scheduling` | `NEXWIKI_THEME_SCHEDULING` | `false` | Enable automatic annual seasonal theme switching |
+| Stdio MCP-only mode | `-mcp-only` | `NEXWIKI_MCP_ONLY` | `false` | Run as a pure stdio MCP server, skipping the web port bind entirely. Required when spawning a stdio MCP subprocess alongside an already-running web server |
 | Archive auto-delete | — | `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Days after archiving before an article is permanently deleted on startup |
+| Activity archive cap | — | `NEXWIKI_ACTIVITY_MAX_ARCHIVES` | unlimited | Maximum number of rotated `activity-<UTC>.jsonl` archives to retain |
+
+> **Bind-or-halt:** a normal launch *is* the web server — it binds the port or exits rather than silently falling back. To run a stdio MCP server next to an already-running instance, use `-mcp-only`.
 
 ### 5. Examples
 
@@ -191,7 +195,7 @@ The `/app/data` directory inside the container holds all persistent state:
 - `articles/` — All your Markdown wiki files.
 - `assets/` — Uploaded images and media attachments grouped by article.
 - `search.bleve/` — The Bleve full-text search index database.
-- `activity.jsonl` — The durable activity event log (rotated once at 10 MB).
+- `activity.jsonl` — The durable activity event log. At 10 MB it is rotated into a timestamped `activity-<UTC>.jsonl` archive; rotation repeats as needed and never overwrites earlier archives.
 
 Always mount this path to a persistent local directory or named Docker volume to preserve your data across container restarts and upgrades.
 
@@ -202,9 +206,11 @@ Always mount this path to a persistent local directory or named Docker volume to
 | `NEXWIKI_NAME` | `NexWiki` | Title displayed in the UI and HTML headers |
 | `NEXWIKI_THEME` | `default` | Initial active color theme |
 | `NEXWIKI_THEME_SCHEDULING` | `false` | Set to `true` to enable seasonal auto theme switching |
+| `NEXWIKI_MCP_ONLY` | `false` | Run as a pure stdio MCP server, skipping the web port bind |
 | `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Days after archiving before an article is permanently deleted on startup |
+| `NEXWIKI_ACTIVITY_MAX_ARCHIVES` | unlimited | Maximum number of rotated `activity-<UTC>.jsonl` archives to retain |
 
-The port and data directory are fixed to `8080` and `/app/data` inside the container; adjust the `-p` host mapping and volume mount to change them on the host side.
+The image ENTRYPOINT defaults to `-port=8080 -data=/app/data`. The simplest approach is to leave both alone and adjust the `-p` host mapping and volume mount instead. If you do need a different in-container port, append `-port=<n>` after the image name (as shown above) — trailing flags override the ENTRYPOINT defaults — and update `-p` to match.
 
 ---
 
@@ -254,7 +260,7 @@ The Docker container maps `/app/data` to your local machine (`./my-wiki-data` in
 - `articles/` - All your Markdown wiki files (e.g., `home.md`, `setup-guide.md`).
 - `assets/` - Uploaded images and media attachments grouped by article.
 - `search.bleve/` - The Bleve full-text search index database.
-- `activity.jsonl` - The durable activity event log (rotated once at 10 MB).
+- `activity.jsonl` - The durable activity event log. At 10 MB it is rotated into a timestamped `activity-<UTC>.jsonl` archive; rotation repeats as needed and never overwrites earlier archives.
 
 ---
 
@@ -373,8 +379,24 @@ All cross-compiled binaries are saved inside the `./bin/` directory:
 
 Because NexWiki contains an embedded Model Context Protocol (MCP) server, you can attach it to your favorite AI tools to query your personal wiki.
 
+### Connecting over Streamable HTTP (Recommended)
+
+NexWiki supports Streamable HTTP transport ([2025 Spec](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http)) at `/api/mcp`. This allows modern MCP clients to connect over the network rather than stdio pipes — reusing the single running server process and avoiding search-index lock contention entirely.
+
+```json
+{
+  "mcpServers": {
+    "nexwiki": {
+      "url": "http://localhost:8080/api/mcp"
+    }
+  }
+}
+```
+
 ### Connecting Claude Desktop (Stdio)
-To allow Claude Desktop to search and read your wiki pages, add the following to your Claude Desktop configuration file (typically located at `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS or `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
+Use stdio only when you are not running the web interface, or when your client cannot speak HTTP. Add the following to your Claude Desktop configuration file (typically located at `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS or `%APPDATA%\Claude\claude_desktop_config.json` on Windows).
+
+> ⚠️ **`-mcp-only` is required.** A normal launch binds the web port or halts. Without this flag the spawned subprocess collides with your running instance and exits with `Fatal: could not bind web server`.
 
 **Option A: Running via Docker**
 ```json
@@ -382,11 +404,12 @@ To allow Claude Desktop to search and read your wiki pages, add the following to
   "mcpServers": {
     "nexwiki": {
       "command": "docker",
-      "args": ["exec", "-i", "personal-wiki", "/app/nexwiki"]
+      "args": ["exec", "-i", "personal-wiki", "/app/nexwiki", "-mcp-only", "-data", "/app/data"]
     }
   }
 }
 ```
+`docker exec` bypasses the image ENTRYPOINT, so `-mcp-only` and `-data` must both be passed explicitly.
 
 **Option B: Running the Go Binary directly**
 ```json
@@ -394,15 +417,11 @@ To allow Claude Desktop to search and read your wiki pages, add the following to
   "mcpServers": {
     "nexwiki": {
       "command": "/path/to/your/compiled/nexwiki",
-      "args": ["-data", "/path/to/your/wiki-data"]
+      "args": ["-mcp-only", "-data", "/path/to/your/wiki-data"]
     }
   }
 }
 ```
-
-### Connecting over Streamable HTTP
-
-NexWiki supports Streamable HTTP transport ([2025 Spec](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http)) at `/api/mcp`. This allows modern MCP clients to connect over the network rather than stdio pipes.
 
 ### The NexWiki Agent Skill (works with any agent CLI)
 
@@ -446,8 +465,6 @@ When deploying NexWiki for production use, containerized deployments are highly 
 Create a `docker-compose.prod.yml` behind a reverse proxy:
 
 ```yaml
-version: '3.8'
-
 services:
   wiki:
     image: nexwiki:latest  # Or pull from your container registry
@@ -474,7 +491,7 @@ wiki.yourdomain.com {
 }
 ```
 
-If using **Nginx**, make sure to enable SSE headers for the `/api/mcp` endpoint if you plan to query the MCP server over HTTP:
+If using **Nginx**, you must bypass proxy buffering for NexWiki's two streaming endpoints: `/api/mcp` (Streamable HTTP MCP transport) and `/api/activity/stream` (the `EventSource` feed powering the live Activity Drawer and zero-refresh dashboard sync). Without this, both silently stall behind Nginx's default buffering:
 
 ```nginx
 server {
@@ -487,10 +504,12 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
     }
 
-    # Enable Server-Sent Events (SSE) buffering bypass for HTTP MCP
-    location /api/mcp {
+    # Streaming endpoints: disable buffering for Streamable HTTP MCP
+    # and the live activity SSE stream.
+    location ~ ^/api/(mcp|activity/stream)$ {
         proxy_pass http://localhost:8080;
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
         proxy_buffering off;
         proxy_cache off;
         proxy_set_header Connection '';

@@ -12,15 +12,15 @@ The workflow combines three ideas from the second-brain literature (captured in 
 
 ## 🚀 One-Time Setup
 
-### 1. Deploy a build with the 25-tool MCP surface
+### 1. Deploy a build with the 27-tool MCP surface
 
-The second-brain tools (`get_context_overview`, `get_backlinks`, `edit_agent_memory`, `delete_agent_memory`, `get_recent_activity`, plus the `description`/`source` front-matter fields) require a current build. If you run the Docker container, rebuild and redeploy:
+The second-brain tools (`get_context_overview`, `get_backlinks`, `edit_agent_memory`, `delete_agent_memory`, `get_recent_activity`, `export_okf_bundle`, `import_okf_bundle`, plus the `description`/`source` front-matter fields) require a current build. If you run the Docker container, rebuild and redeploy:
 
 ```bash
 docker compose up -d --build
 ```
 
-**Verify**: ask your agent to list NexWiki's tools — you should see **25**, including `get_context_overview` and `get_recent_activity`.
+**Verify**: ask your agent to list NexWiki's tools — you should see **27**, including `get_context_overview` and `get_recent_activity`.
 
 ### 2. Connect your CLI over Streamable HTTP
 
@@ -161,7 +161,7 @@ That sequence exercises every piece of the system: the ingest skill, overview + 
 
 ## 📚 Related Guides
 
-* [MCP Server Guide](./mcp_server.md) — all 25 tools in detail, client connection configs
+* [MCP Server Guide](./mcp_server.md) — all 27 tools in detail, client connection configs
 * [AI Agent Integration & SOP Guide](./agent_integration_guide.md) — governance layers and the guidelines skill
 * [Tags & AI Agent Memories Guide](./tags.md) — protected tags and memory isolation
 * [AI Agent Skills & Custom Registry Guide](./aiagent_skills.md) — the skills registry powering `ingest-source`

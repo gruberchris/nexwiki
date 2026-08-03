@@ -282,7 +282,7 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clean tags and preserve existing "aiagent-" tags
+	// Clean tags and preserve existing tool-managed "memory-<scope>" tags
 	cleanedTags := validateAndCleanUserTags(req.Tags, existing.Tags)
 
 	// Omitted description/source/resource preserve existing values; explicit empty strings clear them
@@ -362,7 +362,7 @@ func (srv *Server) HandleUpdateArticleTags(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Clean tags and preserve existing "aiagent-" tags
+	// Clean tags and preserve existing tool-managed "memory-<scope>" tags
 	cleanedTags := validateAndCleanUserTags(req.Tags, existing.Tags)
 
 	summary := req.EditSummary

@@ -8,15 +8,16 @@ NexWiki provides powerful tools for combining human editing and programmatic AI 
 
 ## 🤖 Programmatic Plan Metadata Updates
 
-Collaborative AI plans are saved on disk with standard YAML front matter containing their tags, titles, and edit summaries. Previously, AI agents could create plans or append content but could not edit existing metadata such as tags or titles without using the frontend GUI. 
+Collaborative AI plans are saved on disk as OKF documents with real YAML front matter carrying their `type`, tags, titles, and edit summaries. Previously, AI agents could create plans or append content but could not edit existing metadata such as tags or titles without using the frontend GUI. 
 
-The new **`edit_agent_plan`** MCP tool bridges this gap, allowing AI agents to programmatically rename plans, adjust tag classifications, and perform bulk metadata updates safely.
+The **`edit_agent_plan`** MCP tool bridges this gap, allowing AI agents to programmatically rename plans, replace plan content, adjust tag classifications, and perform bulk metadata updates safely.
 
 ### 🔒 Governance & Protections
 To maintain workspace integrity and prevent conflict:
 * **Optimistic Locking**: Just like standard article edits, `edit_agent_plan` requires a positive `loaded_version` parameter. If a concurrent session has committed updates to disk in the meantime, the tool rejects the operation with a version conflict error, preventing overwrite collisions.
-* **Tag Preservation**: The tool strictly enforces the preservation of the protected `aiagent-plan` tag. Even if an agent submits a new tags list that omits it, NexWiki automatically prepends `aiagent-plan` to the tag set before saving.
-* **Plan Verification**: The target page must possess the `aiagent-plan` tag. The tool will reject requests targeting standard wiki articles or other memory types.
+* **Type Preservation**: The document's reserved OKF `type: AI-Agent-Plan` is preserved through every edit, regardless of the tags array submitted. The type is the class discriminator and is immutable — it can never be relabelled to a non-reserved type. (Older NexWiki builds enforced this with a protected `aiagent-plan` *tag*; that tag no longer exists.)
+* **Plan Verification**: The target document must be of type `AI-Agent-Plan`. The tool rejects requests targeting standard wiki articles, memories, or skills.
+* **Content Replacement**: Passing `content` fully replaces the plan body. Omit it to preserve the existing body, and use `append_agent_plan` when you only want to add progress notes.
 
 ### 🔌 Tool Arguments & Signature
 ```json

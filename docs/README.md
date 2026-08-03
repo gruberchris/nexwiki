@@ -25,19 +25,19 @@ An advanced technical and user guide covering the flat-file gzipped backup and c
 ### 3. [NexWiki Model Context Protocol (MCP) Server Guide](./mcp_server.md)
 A comprehensive technical manual describing the always-on Go MCP engine:
 * **Transport Layers**: Connecting AI clients over standard input/output (Stdio) or Streamable HTTP network streams.
-* **Exposed Tools**: In-depth explanations of all twenty-five exposed tools including read, search, context overview, backlinks, memory lifecycle, optimistic locked writes, reverts, tag management, status tags, activity history, and dead WikiLink scanners.
+* **Exposed Tools**: In-depth explanations of all twenty-seven exposed tools including read, search, context overview, backlinks, memory lifecycle, optimistic locked writes, reverts, tag management, status tags, activity history, OKF bundle import/export, and dead WikiLink scanners.
 * **Client Configurations**: Step-by-step setup guides for Claude Desktop and Cursor IDE.
 
 ### 4. [NexWiki Tags & AI Agent Memories Guide](./tags.md)
 An advanced user and developer manual designed to help you organize content and understand protected AI memories:
 * **User Tag Management**: Creating, applying, and globally deleting standard user tags.
 * **Tag Editor & Badges**: Managing tags in the split-editor and viewing responsive color-coded tag badges.
-* **AI Agent Memory System**: Protected `aiagent-` prefixed tags and the dedicated collapsible sidebar directory.
-* **Search & Index Isolation**: How NexWiki auto-excludes agent-created memories from standard browsing/searches by default, keeping your workspace clean.
+* **AI Agent Memory System**: The reserved `AI-Agent-Memory` document `type`, tool-managed `memory-<scope>` tags, and the dedicated collapsible sidebar directory.
+* **Search & Index Isolation**: How NexWiki auto-excludes agent-created documents from standard browsing/searches by document `type`, keeping your workspace clean.
 
 ### 5. [NexWiki AI Agent Skills & Custom Registry Guide](./aiagent_skills.md)
 A comprehensive technical manual describing the custom AI skills registry and management engine:
-* **UI Management & Tags**: Toggling pages as skills and understanding the `aiagent-skill` tag.
+* **UI Management & Types**: Creating skill pages and understanding the reserved `AI-Agent-Skill` document `type`.
 * **Registry REST APIs**: Details on the `/api/skills`, `/api/skills/{slug}`, and raw `SKILL.md` endpoints.
 * **Search Isolation**: How skills are isolated in search by default, and how to trigger explicit search bypass.
 * **Integrations**: Connecting JetBrains editors and other custom AI agent systems to NexWiki as a custom skills registry.
@@ -70,7 +70,7 @@ A detailed guide explaining how to programmatically manage plan metadata and vie
 
 ### 10. [NexWiki Second Brain Workflow Guide](./second_brain_workflow_guide.md)
 A step-by-step walkthrough of using NexWiki as an AI second brain with your agent CLI (Claude Code, Cursor, Copilot CLI):
-* **One-Time Setup**: Deploying the 25-tool build, connecting over Streamable HTTP, and activating session-start orientation via `CLAUDE.md`.
+* **One-Time Setup**: Deploying the 27-tool build, connecting over Streamable HTTP, and activating session-start orientation via `CLAUDE.md`.
 * **The Session Loop**: Progressive disclosure with `get_context_overview`, catching up via `get_recent_activity`, selective reads with backlinks, plan lifecycle, and memory hygiene.
 * **Capture-and-Compile**: The `inbox` tag convention and the `ingest-source` skill implementing the one-source-at-a-time Karpathy ingestion loop.
 * **Tuning Tips**: Activity log filtering, description/source discipline, and transport caveats.

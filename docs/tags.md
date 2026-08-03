@@ -1,8 +1,8 @@
 # NexWiki Tags & AI Agent Memories Guide 🏷️🤖
 
-NexWiki supports a dual-layer **Tagging System** designed to keep standard user notes organized while providing a completely isolated, protected storage layer for **AI Agent Memories** (such as plans, troubleshooting notes, conceptual memories, ADRs, todos, and rules).
+NexWiki organizes content along two independent axes: a free-form **Tagging System** for categorizing and filtering your notes, and an OKF document **`type`** that provides a completely isolated, protected storage layer for **AI-managed documents** (memories, collaborative plans, and agent skills).
 
-This guide teaches you how standard and protected tags work in NexWiki and provides useful, practical examples for both humans and AI agents.
+This guide teaches you how tags and document types work in NexWiki and provides useful, practical examples for both humans and AI agents.
 
 ---
 
@@ -17,18 +17,25 @@ When editing any wiki article inside the split-pane **Editor**:
 3. Press **Enter** or type a **comma (`,`)** to commit the tag.
 4. Click **Save Page** to write the tags to the article's front-matter.
 
-Tags are saved directly inside the flat-file Markdown front-matter:
+Tags are saved directly inside the flat-file Markdown front-matter, which is real YAML conforming to the **Open Knowledge Format (OKF v0.1)**:
 ```yaml
 ---
+type: Wiki
 title: Database Configuration
 slug: database-configuration
-created_at: 2026-05-31T15:00:00Z
-updated_at: 2026-05-31T15:30:00Z
+description: Connection pooling and credential setup for the production database.
+tags:
+    - database
+    - backend
+    - production
+timestamp: "2026-05-31T15:30:00Z"
+created_at: "2026-05-31T15:00:00Z"
 version: 3
 edit_summary: Updated connection pool size
-tags: database, backend, production
 ---
 ```
+
+> The `type` key is the document's **class discriminator** and is managed by NexWiki — see [Protected AI Documents](#-protected-ai-agent-memories-plans--skills) below. `timestamp` is the last-modified time; there is no `updated_at` key.
 
 ### 2. Removing and Deleting Tags
 * **Remove a tag from an article**: Click the tiny `×` on the tag badge in the Editor, then save the page.
@@ -63,6 +70,7 @@ NexWiki recognizes a fixed set of **status tags** that signal the lifecycle stat
 | `completed` | Fully implemented or resolved |
 | `done` | Equivalent to `completed` |
 | `archived` | Retired — kept for reference, no longer active |
+| `inbox` | Raw, unprocessed capture awaiting compilation into the wiki |
 
 ### How Status Tags Work
 
@@ -99,28 +107,49 @@ export NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS=30
 
 ---
 
-## 🤖 Protected AI Agent Memories & Collaborative Plans
+## 🤖 Protected AI Agent Memories, Plans & Skills
 
-NexWiki separates AI-driven note-taking into three distinct, structured models:
-1. **AI Agent Memories (`aiagent-memory-<type>`)**: Strictly AI-originated (e.g., troubleshooting logs, decision files, todos). While standard users can view and delete them, they are protected from manual creation in the UI.
-2. **AI Agent Skills (`aiagent-skill`)**: Reusable agent instructions (`SKILL.md` format) that standard users can create, edit, and manage. Exposed as a custom Skills Registry.
-3. **Collaborative AI Plans (`aiagent-plan`)**: Roadmap files that can be created, edited, and completed by **either** the user or the AI agent.
+AI-driven documents are **not** distinguished by tags. Every NexWiki document carries an OKF **`type`** front-matter key — its class discriminator — and that is what separates regular articles from AI-managed ones.
 
-### 🛡️ Secure Tag Rules & Validation
-To preserve the integrity of AI memory systems while maintaining collaborative flexibility:
-1. **Protected Memories**: Standard users **cannot manually create or add any new** tags starting with `aiagent-memory-`. These are reserved for agents.
-2. **Locked Mode-Defining Tags**: Standard users create Custom Skills and AI Plans explicitly using the dedicated creation interface, which automatically applies and locks the corresponding `aiagent-skill` or `aiagent-plan` tag. These core type tags cannot be removed in the tag editor, protecting the integrity of the document type.
-3. **Freedom to Edit & Delete**: Standard users **can fully edit, append, and delete** any AI-created memory or plan document, along with removing existing tags as they see fit.
+There are exactly four types:
 
-### 🧹 Default Search & Sidebar Exclusion
-To keep your personal workspace tidy, AI agent pages are cleanly isolated:
-* **Sidebar Directories**: The sidebar separates articles into four directories:
-  * **📚 Articles**: Shows standard wiki pages (hiding all `aiagent-` prefixed tags).
-  * **📋 AI plans**: Collapsible folder listing collaborative roadmaps (tagged with `aiagent-plan`).
-  * **🛠️ AI skills**: Collapsible folder listing custom agent skills (tagged with `aiagent-skill`).
-  * **🤖 AI memories**: Collapsible folder listing standard memory logs (tagged with `aiagent-memory-` prefix).
-* **Default Search**: Running a standard search will **auto-exclude** all articles possessing `aiagent-` tags—even if they share common project tags with standard wiki pages.
-* **Explicit Search Bypassing**: The exclusion is bypassed only if you search by exact case-insensitive slug/title, or if the search query explicitly includes `aiagent-plan` (or `plan`), `aiagent-skill` (or `skill`), or `aiagent-memory`.
+| `type` | Created by | Description |
+|---|---|---|
+| `Wiki` | `create_wiki_article` / the web UI | The default for all regular articles. The only non-reserved type. |
+| `AI-Agent-Memory` | `create_agent_memory` | Durable agent knowledge (troubleshooting logs, decisions, conventions, rules). Protected from bulk deletion. |
+| `AI-Agent-Plan` | `create_agent_plan` | Roadmaps that **either** you or the agent can create, edit, and complete. |
+| `AI-Agent-Skill` | `create_agent_skill` / the UI Skill button | Reusable procedural agent instructions (`SKILL.md` format). Exposed as a custom Skills Registry. |
+
+> **Historical note:** earlier versions of NexWiki keyed these classes off `aiagent-*` tag prefixes. Those class tags were removed when NexWiki adopted OKF — the class now lives in `type`. You will not find `aiagent-plan` or `aiagent-memory-*` tags on current documents.
+
+### 🧷 Memory scope tags
+
+The one system tag that remains is the **memory-scope tag**, `memory-<scope>`. It is set from the `memory_type` argument of `create_agent_memory` and narrows a memory to a project or topic:
+
+| `memory_type` | Scope tag applied | Use for |
+|---|---|---|
+| `nexwiki` (any project name) | `memory-nexwiki` | Knowledge that only applies to that project |
+| `docker`, `golang` (any topic) | `memory-docker` | Reusable knowledge across projects |
+| *(omitted)* | *(none)* | Knowledge with no clear project or topic home |
+
+Scope tags are **tool-managed**: preserved automatically by `edit_agent_memory` and `update_article_tags`, hidden from the sidebar tag cloud, and not freely assignable by users to non-memory documents. Filter memories by scope with `list_agent_memories(memory_type: "nexwiki")`.
+
+### 🛡️ Type rules & validation
+To preserve integrity while keeping documents fully collaborative:
+1. **Types are tool-assigned.** There is no user-facing type picker. The reserved `AI-Agent-*` values are set solely by `create_agent_memory` / `_plan` / `_skill`.
+2. **Types are immutable on edit.** A reserved type is preserved through every edit and may **never** be relabelled to a non-reserved type. `update_article_tags` never touches `type` at all.
+3. **Memories resist bulk deletion.** `delete_wiki_article` refuses a document of type `AI-Agent-Memory` and steers the agent to `delete_agent_memory`, so curated memories survive cleanup sweeps.
+4. **Freedom to edit & delete.** You can still fully edit, append to, and delete any AI-created document from the web UI, and add or remove its free user tags however you like.
+
+### 🧹 Default search & sidebar isolation
+AI documents are isolated by **type**, keeping your personal workspace tidy:
+* **Sidebar directories** — the sidebar splits documents into four sections by `type`:
+  * **📚 Articles** — documents of type `Wiki`.
+  * **📋 AI plans** — collapsible folder, type `AI-Agent-Plan`.
+  * **🛠️ AI skills** — collapsible folder, type `AI-Agent-Skill`.
+  * **🤖 AI memories** — collapsible folder, type `AI-Agent-Memory`.
+* **Default search** — a standard search returns only `Wiki` documents. Everything with a reserved type is excluded, even when it shares project tags with your regular pages.
+* **Explicit search bypass** — include `aiagent` or `ai-agent` anywhere in the query to opt every agent document back into the results (e.g. `ai-agent build error`). Searching an exact slug or title also resolves the document directly.
 
 ---
 
@@ -134,8 +163,8 @@ Imagine you are building a full-stack web application. You can use standard tagg
 
 To see all your frontend guides, click the `frontend` tag pill in your sidebar tag cloud.
 
-### 2. Collaborative Plan Tracking (`aiagent-plan`)
-When you launch a complex project, either you or your connected AI assistant can create an implementation roadmap (which is automatically tagged with `aiagent-plan` and a custom project tag like `nexwiki`):
+### 2. Collaborative Plan Tracking (type `AI-Agent-Plan`)
+When you launch a complex project, either you or your connected AI assistant can create an implementation roadmap. `create_agent_plan` sets `type: AI-Agent-Plan` and applies a project tag from its `project_context` argument (e.g. `nexwiki`):
 ```markdown
 # Migration to Go 1.22 Plan 🚀
 
@@ -145,9 +174,12 @@ When you launch a complex project, either you or your connected AI assistant can
 ```
 The page slug is named directly after the feature (e.g. `migration-to-go-122`). Both you and your AI agent can collaboratively edit, check tasks, and complete this plan. The page remains safely stored under your **📋 AI plans** directory, keeping your main wiki page list clean.
 
-### 3. AI-Driven Troubleshooting Log (`aiagent-memory-troubleshooting`)
-If a server build fails, the agent can document the investigation:
+When the work is finished, the agent appends closing notes with `append_agent_plan` and then adds the `completed` status tag via `edit_agent_plan` — the `AI-Agent-Plan` type is preserved through both operations.
+
+### 3. AI-Driven Troubleshooting Log (type `AI-Agent-Memory`)
+If a server build fails, the agent can document the investigation with `create_agent_memory`:
 * **Title**: `Go Build Error May 2026`
-* **Tags (Auto-applied)**: `aiagent-memory-troubleshooting`, `backend`
+* **`memory_type`**: `nexwiki` → applies the tool-managed scope tag `memory-nexwiki`
+* **Additional user tags**: `backend`
 * **Content**: Logs the specific error message, hypotheses tested, steps taken, and the final solution (e.g., importing the missing `strings` package).
-* **Benefit**: The next time a build error occurs, the agent (or you!) can explicitly search for `aiagent-memory-troubleshooting` or `backend` to find past resolutions instantly, avoiding repeated debugging.
+* **Benefit**: The next time a build error occurs, the agent (or you!) can run `list_agent_memories(memory_type: "nexwiki")`, or search `ai-agent build error`, to find past resolutions instantly — avoiding repeated debugging.
