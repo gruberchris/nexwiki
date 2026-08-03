@@ -99,6 +99,13 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 				"name":    "NexWiki MCP Server",
 				"version": srv.Version,
 			},
+			// Connect-time hint surfaced by MCP clients as a system-prompt-style nudge, so
+			// the agent reaches for NexWiki as a second brain without explicit prompting.
+			"instructions": "This NexWiki server is the user's persistent second brain. Use it to store plans and " +
+				"memories and to look up prior knowledge — do not keep that only in chat. At session start, load the " +
+				"operating rules with read_article(slug: \"" + AgentGuidelinesSlug + "\"), then get_context_overview " +
+				"and get_recent_activity(since: \"48h\") to orient. Save multi-step work with create_agent_plan, " +
+				"durable facts with create_agent_memory (setting description and source), and search before writing.",
 		}
 
 	case "tools/list":

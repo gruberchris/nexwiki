@@ -4,7 +4,8 @@
 # Compiled binaries
 wiki-app
 wiki-dev-bin
-nexwiki
+# Anchor to the repo-root binary only, so it doesn't also ignore agent-skill/nexwiki/
+/nexwiki
 *.exe
 *.exe~
 *.dll

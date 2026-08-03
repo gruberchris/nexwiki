@@ -112,6 +112,10 @@ func main() {
 		return
 	}
 
+	// Ensure the governance skill the MCP tool-description hooks reference actually exists,
+	// so agents can load nexwiki-agent-guidelines out of the box. Idempotent.
+	srv.SeedAgentGuidelinesIfMissing()
+
 	// Spin up the stdio MCP JSON-RPC server in a background goroutine!
 	go srv.StartMCPServer()
 
