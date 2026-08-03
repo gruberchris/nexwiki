@@ -404,6 +404,32 @@ To allow Claude Desktop to search and read your wiki pages, add the following to
 
 NexWiki supports Streamable HTTP transport ([2025 Spec](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http)) at `/api/mcp`. This allows modern MCP clients to connect over the network rather than stdio pipes.
 
+### The NexWiki Agent Skill (works with any agent CLI)
+
+Connecting the MCP server gives your agent the *tools*. The **agent skill** is what makes it actually reach for them — storing plans and memories, and looking things up — without you prompting it every time.
+
+The skill is a single folder, [`agent-skill/nexwiki/`](./agent-skill/nexwiki), following the vendor-neutral [Agent Skills](https://agentskills.io) standard (a `SKILL.md` in its own folder). The same folder works across Claude Code, GitHub Copilot CLI, opencode, OpenAI Codex, and Google Antigravity.
+
+1. **Connect the MCP server** (above), e.g. `claude mcp add --transport http nexwiki http://localhost:8080/api/mcp`.
+2. **Copy the `agent-skill/nexwiki/` folder** into your agent's `skills/` directory — project scope to share it with a repo, or home scope to reuse it everywhere:
+
+| Agent CLI | Project scope | Home scope (reuse everywhere) |
+|---|---|---|
+| **Claude Code** | `.claude/skills/nexwiki/` | `~/.claude/skills/nexwiki/` |
+| **GitHub Copilot CLI** | `.github/skills/nexwiki/` | `~/.copilot/skills/nexwiki/` |
+| **opencode** | `.opencode/skills/nexwiki/` | `~/.config/opencode/skills/nexwiki/` |
+| **OpenAI Codex** | `.codex/skills/nexwiki/` | `~/.codex/skills/nexwiki/` |
+| **Google Antigravity** (`agy`) | `.agents/skills/nexwiki/` | `~/.gemini/antigravity-cli/skills/nexwiki/` |
+
+```bash
+# reuse across all your Claude Code projects
+mkdir -p ~/.claude/skills && cp -r agent-skill/nexwiki ~/.claude/skills/
+```
+
+Agents load it automatically when relevant, or invoke it explicitly with `/nexwiki` (Claude Code, Copilot CLI). Because the `skills/` convention is shared, `~/.claude/skills/nexwiki/` alone is picked up by Claude Code, Copilot CLI, and opencode. Full per-tool paths and tips: [`agent-skill/README.md`](./agent-skill/README.md).
+
+**To change how agents behave, don't edit the copied skill.** It points every agent at a live wiki page — `nexwiki-agent-guidelines` — which NexWiki seeds automatically on first start. Edit it in your browser and the change reaches every connected agent immediately, with no re-copying and no restart.
+
 ---
 
 ## 🚢 Production Deployment

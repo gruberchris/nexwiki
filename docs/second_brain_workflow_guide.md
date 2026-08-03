@@ -32,20 +32,35 @@ claude mcp add --transport http nexwiki http://localhost:8080/api/mcp
 
 (See the [MCP Server Guide](./mcp_server.md) for Cursor, Claude Desktop, and Copilot CLI equivalents.)
 
-### 3. Activate the workflow at session start
+### 3. Install the agent skill (once, for all projects)
 
-The MCP tool schemas already force agents to load the governance skill before any create operation, but making orientation automatic is better. Add one block to your global `~/.claude/CLAUDE.md` (or a per-project `CLAUDE.md`):
+Instead of pasting a rule into every project, install the provided **Agent Skill** — the
+folder [`agent-skill/nexwiki/`](../agent-skill/nexwiki) — into your agent's `skills/`
+directory. Use **home scope** to reuse it across every project:
 
-```markdown
-At session start, call nexwiki's read_article(slug: "nexwiki-agent-guidelines"),
-then get_context_overview, then get_recent_activity(since: "48h").
+| Agent CLI | Home scope | Project scope |
+|---|---|---|
+| **Claude Code** | `~/.claude/skills/nexwiki/` | `.claude/skills/nexwiki/` |
+| **Copilot CLI** | `~/.copilot/skills/nexwiki/` | `.github/skills/nexwiki/` |
+| **opencode** | `~/.config/opencode/skills/nexwiki/` | `.opencode/skills/nexwiki/` |
+| **Codex** | `~/.codex/skills/nexwiki/` | `.codex/skills/nexwiki/` |
+| **Antigravity** (`agy`) | `~/.gemini/antigravity-cli/skills/nexwiki/` | `.agents/skills/nexwiki/` |
+
+```bash
+mkdir -p ~/.claude/skills && cp -r agent-skill/nexwiki ~/.claude/skills/
 ```
 
-That single block activates the whole workflow — the guidelines skill chains to everything else (style checks, plan auto-saving, memory hygiene).
+The skill (a `SKILL.md` in its own folder, per the [Agent Skills](https://agentskills.io)
+standard) activates the whole workflow — load `nexwiki-agent-guidelines`,
+`get_context_overview`, `get_recent_activity(since: "48h")` at session start — which in turn
+drives style checks, plan auto-saving, and memory hygiene. Agents load it automatically when
+relevant, or you can invoke it with `/nexwiki`. NexWiki also sends a short "you are a second
+brain" hint to any MCP client on connect, so agents get a nudge even before the skill loads.
+Full per-tool paths and tips: [`agent-skill/README.md`](../agent-skill/README.md).
 
-### 4. Confirm the governance skill exists
+### 4. The governance skill is seeded for you
 
-The wiki article with slug `nexwiki-agent-guidelines` (tagged `aiagent-skill`) is the system's "schema file" — the equivalent of Karpathy's `CLAUDE.md`. If it doesn't exist yet, create it before connecting agents; see [Crafting Your nexwiki-agent-guidelines Skill](./agent_integration_guide.md#-crafting-your-nexwiki-agent-guidelines-skill).
+The wiki article with slug `nexwiki-agent-guidelines` (OKF type `AI-Agent-Skill`) is the system's "schema file" — the equivalent of Karpathy's `CLAUDE.md`. NexWiki **seeds a default version automatically the first time the server starts**, so the MCP hooks resolve out of the box. Refine it in the wiki UI at any time — changes reach every agent immediately. To author it from scratch, see [Crafting Your nexwiki-agent-guidelines Skill](./agent_integration_guide.md#-crafting-your-nexwiki-agent-guidelines-skill).
 
 ---
 

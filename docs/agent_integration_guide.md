@@ -42,7 +42,7 @@ graph TD
 ## 🛠️ How Skills-Based Governance Works Dynamically
 
 ### 1. Centralized "Wrench" Skill (`nexwiki-agent-guidelines`)
-Instead of duplicating rules in local files across countless folders, all instructions are stored centrally inside a single, live, editable page in NexWiki named **NexWiki Agent Core Guidelines** (slug: `nexwiki-agent-guidelines`). 
+Instead of duplicating rules in local files across countless folders, all instructions are stored centrally inside a single, live, editable page in NexWiki named **NexWiki Agent Guidelines** (slug: `nexwiki-agent-guidelines`). NexWiki seeds a default version of this page automatically the first time the server starts, so the hooks below resolve out of the box; you then refine it in the UI. 
 * Because its OKF `type` is `AI-Agent-Skill` (set automatically by `create_agent_skill`), it is registered on NexWiki's Custom AI Skills Registry.
 * You can edit these agent rules directly from your browser in the NexWiki UI. **Any changes you save are instantly propagated to all connected AI agents globally.**
 
@@ -132,7 +132,7 @@ Imagine your agent has finished implementing a plan it previously created (e.g.,
 
 This skill is the single most important document in your NexWiki instance when using AI agents. If it does not exist, the schema hooks in `create_wiki_article`, `create_agent_memory`, and `create_agent_plan` will fail silently — the agent will get a not-found error and proceed without any governance at all.
 
-**Create it immediately after setting up NexWiki**, before connecting any AI agent. Use the **AI Skill** button in the sidebar and set the title to `NexWiki Agent Core Guidelines` (the slug auto-generates as `nexwiki-agent-guidelines`).
+NexWiki **seeds a default version automatically** the first time the server starts, so it exists before you connect any agent — you just refine it. To (re)create it manually, use the **AI Skill** button in the sidebar and set the title to `NexWiki Agent Guidelines` (which slugifies to `nexwiki-agent-guidelines`; do not add extra words like "Core" or the slug won't match the hooks).
 
 ### What to Include
 
