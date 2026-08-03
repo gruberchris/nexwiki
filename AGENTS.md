@@ -11,11 +11,12 @@ This protocol acts as a standardized bridge allowing AI agents (like Claude Desk
 If you are a developer or an AI agent interacting with this repository, please observe the following documentation hierarchy:
 * **Developer Setup & Quickstart**: Refer to the root [README.md](./README.md) for everything needed to get NexWiki up and running for local development, compilation, and building.
 * **Technical & Content Guides**: Technical documentation, user manuals, and content guides are located in the [docs/](./docs) directory (e.g., the [docs/user_guide.md](./docs/user_guide.md)).
-* **AI & MCP Agent Specifications**: This file ([AGENTS.md](./AGENTS.md)) is strictly reserved for documenting the Model Context Protocol details, exposed AI tools, and integration configurations.
+* **MCP Tool Reference**: [docs/mcp_server.md](./docs/mcp_server.md) is the **single canonical reference** for every exposed MCP tool. This file (AGENTS.md) covers MCP architecture, prompts, client configuration, and agent design guidance — it deliberately does **not** duplicate the tool reference.
 * **Documentation Integrity Rule ⚠️**: When new features are created in NexWiki:
   1. The feature must be added to the feature list in the root [README.md](./README.md).
   2. A new, detailed user guide document must be created inside the [docs/](./docs) folder. All user guides must teach the user how to use the feature and provide useful, practical examples.
   3. A reference and link to this new document must be added directly into the [docs/README.md](./docs/README.md) hub page.
+  4. **If the feature adds or removes an MCP tool**: document it in [docs/mcp_server.md](./docs/mcp_server.md) (the canonical reference) and update the tool count in **every** place it is stated — currently [README.md](./README.md), [docs/README.md](./docs/README.md), [docs/second_brain_workflow_guide.md](./docs/second_brain_workflow_guide.md), and this file. Never restate the full tool list outside `docs/mcp_server.md`.
 
 ---
 
@@ -54,283 +55,31 @@ To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools l
 ### 🌐 Environment Variables Prefixing Rule
 To prevent name collisions, improve system modularity, and establish unified system governance, **all custom environment variables supported or created for NexWiki must be prefixed exclusively with `NEXWIKI_`** (for example, `NEXWIKI_NAME` and `NEXWIKI_THEME`).
 
+### 🔀 Process Model: Bind-or-Halt vs. `-mcp-only`
+A **normal launch is the web server**: it binds the configured port or halts (it never silently falls back). It also owns the durable activity log.
+
+To run a **stdio MCP server next to an already-running web primary** — which is exactly what a Claude Desktop subprocess does — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`). That skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server it forwards activity events to it; with no web server it persists the log itself.
+
+> ⚠️ **Every stdio client config below must pass `-mcp-only`.** Without it, the spawned process tries to bind the web port, collides with your running instance, and exits with `Fatal: could not bind web server`.
+
 ---
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes twenty powerful, semantic tools for AI agents:
+The NexWiki MCP server registers and exposes **twenty-seven** semantic tools for AI agents, covering search and reads, article writes with optimistic locking, revision history and reverts, tag management, AI memory lifecycle, collaborative plans, the custom skills registry, progressive-disclosure orientation, backlink traversal, activity history, and OKF bundle import/export.
 
-### 1. `search_wiki`
-Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine. It supports advanced queries (wildcards, exact phrase quotes, and logical operators).
+📖 **The complete reference — every tool, argument, and behavior — lives in [docs/mcp_server.md](./docs/mcp_server.md).** It is kept in lockstep with `server/mcp.go`; this file intentionally does not duplicate it.
 
-* **Arguments**:
-  * `query` (string, **required**): The search keywords or query string.
-* **Output Format**:
-  A structured, human-readable summary containing scored matches, slug identifiers, and content snippets. To optimize LLM context usage, all HTML `<mark>` search highlight tags are automatically converted to clean Markdown bold formatting (`**`).
+Agents can also enumerate tools at runtime with the standard `tools/list` MCP method:
 
-* **Example Call (JSON-RPC)**:
-  ```json
-  {
-    "jsonrpc": "2.0",
-    "method": "tools/call",
-    "params": {
-      "name": "search_wiki",
-      "arguments": {
-        "query": "setup guide"
-      }
-    },
-    "id": 1
-  }
-  ```
+```bash
+curl -X POST http://localhost:8080/api/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}'
+```
 
----
-
-### 2. `read_article`
-Retrieves the raw Markdown content and Yaml-style front-matter configurations of a specific article using its URL-safe slug.
-
-* **Arguments**:
-  * `slug` (string, **required**): The clean, URL-safe slug of the target article (e.g. `home` or `setup-guide`).
-* **Output Format**:
-  A plain text document listing the article Title, Slug, Created timestamp, Updated timestamp, and the complete raw Markdown content.
-
-* **Example Call (JSON-RPC)**:
-  ```json
-  {
-    "jsonrpc": "2.0",
-    "method": "tools/call",
-    "params": {
-      "name": "read_article",
-      "arguments": {
-        "slug": "setup-guide"
-      }
-    },
-    "id": 2
-  }
-  ```
-
----
-
-### 3. `list_articles`
-Lists all articles currently available in your knowledge base. This acts as a directory index for the agent to understand what documentation exists.
-
-* **Arguments**: None (empty object `{}`).
-* **Output Format**:
-  A bulleted plain text index containing the titles, URL-safe slugs, and last-edited timestamps for all active articles.
-
-* **Example Call (JSON-RPC)**:
-  ```json
-  {
-    "jsonrpc": "2.0",
-    "method": "tools/call",
-    "params": {
-      "name": "list_articles",
-      "arguments": {}
-    },
-    "id": 3
-  }
-  ```
-
----
-
-### 4. `create_wiki_article`
-Creates a brand-new wiki article with a given title and raw Markdown content body. Automatically handles title slugification, checks for slug collision, and indexes the new article for search.
-
-* **Arguments**:
-  * `title` (string, **required**): The human-readable title of the new article (e.g. "React Hooks Guide").
-  * `content` (string, **required**): The raw Markdown content of the article body.
-  * `tags` (array of strings, **optional**): Status or user tags to apply to the article. Call `get_status_tags` to see recognized status values (e.g. `draft`, `wip`). System `aiagent-*` tags are reserved and will be ignored if provided.
-  * `edit_summary` (string, **optional**): A summary describing the reason for creating the page.
-* **Output Format**:
-  A confirmation string detailing the title, generated URL slug, creation timestamp, and initial version number.
-
----
-
-### 5. `edit_wiki_article`
-Modifies the title, Markdown content, or edit a summary of an existing wiki article. Uses **optimistic locking** to prevent write collision conflicts.
-
-* **Arguments**:
-  * `slug` (string, **required**): The unique URL slug of the article to edit.
-  * `title` (string, **required**): The updated title of the article.
-  * `content` (string, **required**): The updated raw Markdown content of the article body.
-  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see recognized status values. Omit to leave existing tags unchanged.
-  * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
-  * `edit_summary` (string, **optional**): A summary detailing the modifications.
-* **Output Format**:
-  A success message containing the slug, new active version number, and last-edited timestamp.
-
----
-
-### 6. `update_article_tags`
-Directly updates the tags array of an existing wiki article. This is fast, token-efficient, and prevents modifying the page content body, ensuring security and performance.
-
-* **Arguments**:
-  * `slug` (string, **required**): The unique URL slug of the article to update tags for.
-  * `tags` (array of strings, **required**): The complete array of user/status tags to apply to the article (replaces existing user tags; system `aiagent-*` tags are always preserved).
-  * `loaded_version` (integer, **optional**): The active version number of the article loaded by the client (helps detect multi-session edit collisions).
-  * `edit_summary` (string, **optional**): Optional summary explaining the tag updates.
-* **Output Format**:
-  A success message confirming the new version number and updated tags list.
-
----
-
-### 7. `delete_wiki_article`
-Permanently deletes an existing wiki article, all its revision backups, and its uploaded media files from disk.
-
-* **Arguments**:
-  * `slug` (string, **required**): The URL-safe slug of the article to delete.
-* **Output Format**:
-  A success confirmation.
-
----
-
-### 8. `get_article_history`
-Retrieves the full revision history log of a wiki page, showing version numbers, timestamps, and edit summaries.
-
-* **Arguments**:
-  * `slug` (string, **required**): The URL-safe slug of the target article.
-* **Output Format**:
-  A structured, bulleted plain text revision list.
-
----
-
-### 9. `revert_article_version`
-Reverts the active state of an article to a specific historical version number.
-
-* **Arguments**:
-  * `slug` (string, **required**): The URL slug of the target article.
-  * `version` (integer, **required**): The historical version number to restore.
-* **Output Format**:
-  A success message confirming the new active version.
-
----
-
-### 10. `get_wiki_statistics`
-Scans the entire knowledge base to compile total page stats and **autonomously scan for dead or broken internal WikiLinks** (e.g., `[[Missing Page]]`).
-
-* **Arguments**: None (empty object `{}`).
-* **Output Format**:
-  A summary text listing total articles, total WikiLinks scanned, total dead links, and details on exactly which pages contain broken links so the AI agent can autonomously fix them!
-
----
-
-### 11. `create_agent_memory`
-Creates a brand new protected AI Agent Memory document. The `memory_type` scopes the memory and determines its protected tag. Memories must be **succinct and high-value** — they are loaded into agent context windows, so keep them short, specific, and free of repetition.
-
-* **Arguments**:
-  * `title` (string, **required**): The human-readable title of the memory article (e.g. "NexWiki MCP Tag Preservation Rules").
-  * `content` (string, **required**): The raw Markdown content of the memory document. Prefer bullet points over paragraphs. One clear insight per memory.
-  * `memory_type` (string, **optional**): Scopes the memory. Use a **project name** (e.g. `nexwiki`) for project-specific knowledge, a **topic name** (e.g. `docker`) for reusable cross-project knowledge, or **omit** for general knowledge. Applies a tool-managed `memory-<memory_type>` scope tag (e.g. `memory-nexwiki`), or no scope tag if omitted. The OKF document `type` is always set to `AI-Agent-Memory` regardless.
-  * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
-* **Output Format**:
-  A structured, human-readable success message with slug, creation timestamp, version, and applied tags.
-
----
-
-### 12. `append_agent_memory`
-Appends observations, subtask completions, or updates to the end of an existing protected AI Agent Memory page (must be of OKF type `AI-Agent-Memory`).
-
-* **Arguments**:
-  * `slug` (string, **required**): The unique URL-safe slug of the target memory article.
-  * `content_to_append` (string, **required**): The raw Markdown text to append.
-  * `edit_summary` (string, **optional**): Optional summary outlining what was appended.
-* **Output Format**:
-  A success message with the new version and update timestamp.
-
----
-
-### 13. `list_agent_memories`
-Lists all protected AI Agent Memory articles saved in your wiki.
-
-* **Arguments**:
-  * `memory_type` (string, **optional**): Optional filter by memory type (the project name, topic name, or other free-form value used at creation). For example, `nexwiki` returns only nexwiki project memories.
-* **Output Format**:
-  A bulleted plain text index containing the titles, URL-safe slugs, active tags, and edit summaries of matching memory documents.
-
----
-
-### 14. `create_agent_plan`
-Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by both the user and the agent. Sets the OKF `type` to `AI-Agent-Plan` — the reserved type is immutable and must **NEVER** be relabelled.
-
-* **Arguments**:
-  * `title` (string, **required**): The human-readable title of the plan (e.g., "Go 1.22 Migration Plan").
-  * `content` (string, **required**): The raw Markdown content of the plan document.
-  * `project_context` (string, **required**): The name of the project this plan is for (e.g. "nexwiki"). Generates a custom project tag.
-  * `edit_summary` (string, **optional**): Optional summary detailing the creation of the plan.
-* **Output Format**:
-  A success message containing the title, slug, OKF type, version, creation timestamp, and all applied tags.
-* **Plan Completion Workflow**:
-  After a plan is fully implemented, use `append_agent_plan` to add final notes documenting the implementation (plan deviations, files created, tools used, unexpected challenges, or other observations). Then use `edit_agent_plan` to add the `completed` status tag to mark the plan as done.
-
----
-
-### 15. `append_agent_plan`
-Appends task status, observations, or checklists to an existing Collaborative AI Plan (must be of OKF type `AI-Agent-Plan`). Use this to log implementation progress as tasks are completed and to add final notes when a plan is fully implemented before marking it completed.
-
-* **Arguments**:
-  * `slug` (string, **required**): The unique URL-safe slug of the target plan.
-  * `content_to_append` (string, **required**): The raw Markdown text to append to the end of the plan.
-  * `edit_summary` (string, **optional**): Optional summary outlining the updates.
-* **Output Format**:
-  A success message confirming the new plan version and update timestamp.
-
----
-
-### 16. `edit_agent_plan`
-Modifies the title, content, tags, or edit summary of an existing Collaborative AI Plan. Uses optimistic locking to prevent concurrent edit conflicts. The reserved `AI-Agent-Plan` OKF type is immutable and must **NEVER** be relabelled. Use this to correct or rewrite plan content in-place, or to mark a plan as `completed` after implementation by adding the `completed` status tag.
-
-* **Arguments**:
-  * `slug` (string, **required**): The unique URL slug of the plan to edit.
-  * `title` (string, **optional**): The updated title of the plan (preserves existing title if omitted).
-  * `content` (string, **optional**): Replacement Markdown body. Omit to preserve existing content. Use `append_agent_plan` to add progress notes without replacing.
-  * `tags` (array of strings, **optional**): Array of tags to set (replaces existing tags; the `AI-Agent-Plan` OKF type is always preserved).
-  * `loaded_version` (integer, **required**): The current version number loaded by the AI agent for optimistic locking checks.
-  * `edit_summary` (string, **optional**): Description summarizing what changed.
-* **Output Format**:
-  A success message confirming the new plan version, last-edited timestamp, and applied tags list.
-
----
-
-### 17. `list_agent_plans`
-Lists all Collaborative AI Plans (OKF type `AI-Agent-Plan`) currently saved inside the knowledge base.
-
-* **Arguments**:
-  * `project_context` (string, **optional**): An optional project context name to filter plans by.
-  * `tag` (string, **optional**): An optional tag name to filter plans by (e.g., `completed`). Only plans with this tag will be returned.
-* **Output Format**:
-  A bulleted index of all collaborative plans with titles, slugs, and active tags.
-
----
-
-### 18. `create_agent_skill`
-Creates a new Custom AI Skill, automatically making it part of the custom Skills Registry. Sets the OKF `type` to `AI-Agent-Skill` — the reserved type is immutable and must **NEVER** be relabelled.
-
-* **Arguments**:
-  * `title` (string, **required**): The title of the skill (e.g., "Docker Container Pruning").
-  * `content` (string, **required**): The raw Markdown content of the skill instructions (procedural SKILL.md format).
-  * `tags` (array of strings, **optional**): Optional user tags to apply to the skill.
-  * `edit_summary` (string, **optional**): Optional summary describing why the skill was created.
-* **Output Format**:
-  A success message containing the title, slug, OKF type, version, creation timestamp, and all applied tags.
-
----
-
-### 19. `list_agent_skills`
-Lists all Custom AI Skills (OKF type `AI-Agent-Skill`) currently saved in the knowledge base.
-
-* **Arguments**: None (empty object `{}`).
-* **Output Format**:
-  A bulleted plain text index containing the titles, slugs, and tags of all registered skills.
-
----
-
-### 20. `get_status_tags`
-Returns the canonical list of recognized status tags used to indicate the lifecycle state of wiki articles and AI plans.
-
-* **Arguments**: None (empty object `{}`).
-* **Output Format**:
-  A plain text listing of all recognized status tag values and tips on how to use them. Status tags are displayed with the highest visual priority on the home dashboard. Call this before tagging articles, plans, or skills to ensure you use a recognized value. Output includes a tip about the plan completion workflow.
-
-* **Recognized values**: `completed`, `done`, `wip`, `draft`, `in-progress`, `archived`, `active`, `todo`, `pending`, `review`, `blocked`, `ready`
+### Document types and system tags
+Every NexWiki `.md` file is a conformant **Open Knowledge Format (OKF v0.1)** concept document at rest (real YAML front matter). Each carries a `type` — exactly one of **`Wiki`** or the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags that remain: **status tags** (`get_status_tags`) and tool-managed **memory-scope tags** (`memory-<scope>`).
 
 ---
 
@@ -362,27 +111,42 @@ Guides the agent to collaboratively outline a new development plan with the user
 
 ## 🔌 Connecting Popular AI Clients
 
-### 1. Claude Desktop (Stdio Connection)
-You can configure your local Claude Desktop app to talk directly to your NexWiki instance. Locate your Claude Desktop configuration file:
+> **Prefer Streamable HTTP.** It reuses the single running server process, avoids spawning extra binaries, and completely sidesteps search-index file lock contention. Use stdio only when you are not running the web interface, or when your client cannot speak HTTP.
+
+### 1. Claude Desktop
+
+Locate your Claude Desktop configuration file:
 * **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 * **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 Add the `nexwiki` server block inside the `mcpServers` object:
 
-#### Option A: Connection via Running Docker Container (Recommended)
+#### Option A: Streamable HTTP (Recommended)
+```json
+{
+  "mcpServers": {
+    "nexwiki": {
+      "url": "http://localhost:8080/api/mcp"
+    }
+  }
+}
+```
+
+#### Option B: Stdio via Running Docker Container
 If you run NexWiki via Docker with the container name `personal-wiki`:
 ```json
 {
   "mcpServers": {
     "nexwiki": {
       "command": "docker",
-      "args": ["exec", "-i", "personal-wiki", "/app/nexwiki"]
+      "args": ["exec", "-i", "personal-wiki", "/app/nexwiki", "-mcp-only", "-data", "/app/data"]
     }
   }
 }
 ```
+`docker exec` bypasses the image ENTRYPOINT, so `-mcp-only` and `-data` must be passed explicitly — otherwise the process inherits the `:8080` default and collides with the container's own web server.
 
-#### Option B: Connection via Local Go Binary
+#### Option C: Stdio via Local Go Binary
 If you compiled the binary on your local machine:
 ```json
 {
@@ -390,6 +154,7 @@ If you compiled the binary on your local machine:
     "nexwiki": {
       "command": "/path/to/your/compiled/nexwiki",
       "args": [
+        "-mcp-only",
         "-data", "/path/to/your/wiki-data",
         "-name", "My Personal Brain"
       ]
@@ -398,7 +163,7 @@ If you compiled the binary on your local machine:
 }
 ```
 
-Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat window, confirming that all twenty NexWiki MCP tools are ready to use!
+Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat window, confirming that all twenty-seven NexWiki MCP tools are ready to use!
 
 ---
 
@@ -414,7 +179,9 @@ NexWiki implements the modern **Streamable HTTP** transport (2025 Spec) at `/api
    * **URL**: `http://localhost:8080/api/mcp` (or your production domain e.g. `https://wiki.yourdomain.com/api/mcp`)
 5. Click **Save**.
 
-Cursor will establish a stream connection and immediately list all twenty NexWiki tools in the sidebar. You can now use Cursor Composer or chat (`Cmd+K` / `Ctrl+K`) and reference your wiki directly during code generation!
+Cursor will establish a stream connection and immediately list all twenty-seven NexWiki tools in the sidebar. You can now use Cursor Composer or chat (`Cmd+K` / `Ctrl+K`) and reference your wiki directly during code generation!
+
+> Per-client setup for **Claude Code**, **GitHub Copilot CLI**, and other agent CLIs is documented in [docs/mcp_server.md](./docs/mcp_server.md#-connecting-clients).
 
 ---
 
@@ -428,10 +195,12 @@ import asyncio
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-# Define the server parameters
+# Define the server parameters.
+# -mcp-only is required: it skips the web port bind so this subprocess
+# does not collide with the container's own running web server.
 server_params = StdioServerParameters(
     command="docker",
-    args=["exec", "-i", "personal-wiki", "/app/nexwiki"]
+    args=["exec", "-i", "personal-wiki", "/app/nexwiki", "-mcp-only", "-data", "/app/data"]
 )
 
 async def query_wiki():
@@ -473,7 +242,9 @@ curl -X POST http://localhost:8080/api/mcp \
 ## 🧠 Design Tips for AI Agents Interacting with NexWiki
 
 If you are prompting or building an agent to work with NexWiki, teach it these best practices:
-1. **Explore First**: Start by running `list_articles` to see an index of what is available, or use `search_wiki` to query specific keywords.
+1. **Orient First (Progressive Disclosure)**: Start a session with `get_context_overview` — a compact index of the whole wiki (title, slug, one-line summary, tags, updated date) for a few hundred tokens. Then `read_article` only the entries you actually need. Use `get_recent_activity(since: "48h")` to catch up on what changed.
 2. **Resolve Slugs Intelligently**: When linking or reading, always use the URL-safe slug (e.g. `setup-guide`) rather than the raw article title.
-3. **Handle WikiLinks**: NexWiki files contain internal `[[Double Bracket]]` links. When displaying these to users, agents should resolve them to clean relative links `/articles/target-slug` or explain them as references.
-4. **Context Management**: Raw Markdown files can occasionally grow large. Prefer searching first to locate key headings/sections before reading the entire article if context window limits are a concern.
+3. **Handle WikiLinks**: NexWiki files contain internal `[[Double Bracket]]` links. When displaying these to users, agents should resolve them to clean relative links `/articles/target-slug` or explain them as references. Use `get_backlinks` to traverse the graph in reverse before editing or deleting a page.
+4. **Context Management**: Raw Markdown files can occasionally grow large. Prefer `get_context_overview` or `search_wiki` to locate key articles/sections before reading an entire article if context window limits are a concern.
+5. **Respect Reserved Types**: Never relabel a reserved `AI-Agent-*` document `type` to a non-reserved one, and never strip a tool-managed `memory-<scope>` tag. Call `get_status_tags` before applying lifecycle tags.
+6. **Load the Governance Skill**: Before creating or editing content, read the live `nexwiki-agent-guidelines` skill page — it is the user's editable rulebook and overrides generic defaults.

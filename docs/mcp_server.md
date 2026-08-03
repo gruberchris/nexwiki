@@ -63,7 +63,7 @@ Creates a new wiki article with a given title and raw Markdown content body.
   * `content` (string, **required**): The raw Markdown content of the article body.
   * `description` (string, **optional**): A one-line summary shown in list indexes and the context overview.
   * `source` (string, **optional**): Provenance — the URL, document, or reference this knowledge came from. AI-created articles SHOULD cite their source.
-  * `tags` (array of strings, **optional**): Status or user tags to apply to the article. Call `get_status_tags` to see the recognized status values (e.g. `draft`, `wip`). System `aiagent-*` tags are reserved and will be ignored if provided.
+  * `tags` (array of strings, **optional**): Status or user tags to apply to the article. Call `get_status_tags` to see the recognized status values (e.g. `draft`, `wip`). Tool-managed `memory-<scope>` tags are reserved and will be ignored if provided.
   * `edit_summary` (string, **optional**): A summary describing the reason for creating the page.
 * **Behavior**:
   Automatically handles title slugification, checks for slug collisions, serializes the metadata block, commits the first version backup snapshot, saves the flat Markdown file on disk, and indexes the new article in Bleve for search.
@@ -79,7 +79,7 @@ Modifies the title, Markdown content, tags, or edit the summary of an existing w
   * `content` (string, **required**): The updated raw Markdown content of the article body.
   * `description` (string, **optional**): New one-line summary. Omit or pass empty to preserve the existing description.
   * `source` (string, **optional**): New provenance reference. Omit or pass empty to preserve the existing source.
-  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see the recognized status values (e.g. `completed`, `review`). Omit leaving existing tags unchanged.
+  * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; tool-managed `memory-<scope>` tags are always preserved). Call `get_status_tags` to see the recognized status values (e.g. `completed`, `review`). Omit to leave existing tags unchanged.
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
   * `edit_summary` (string, **optional**): A summary detailing the modifications.
 * **Behavior**:
@@ -92,11 +92,11 @@ Directly updates the tags array of an existing wiki article without modifying it
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the article to update tags for.
-  * `tags` (array of strings, **required**): The complete array of user/status tags to apply (replaces existing user tags; existing system `aiagent-*` tags are always preserved). Call `get_status_tags` to see recognized status values.
+  * `tags` (array of strings, **required**): The complete array of user/status tags to apply (replaces existing user tags; tool-managed `memory-<scope>` tags are always preserved). Call `get_status_tags` to see recognized status values.
   * `loaded_version` (integer, **optional**): The active version number of the article loaded by the client (helps detect multi-session edit collisions).
   * `edit_summary` (string, **optional**): Optional summary explaining the tag updates.
 * **Behavior**:
-  Validates and cleans the supplied tags (stripping reserved `aiagent-*` prefixes from the user-supplied list while preserving any existing system tags), applies optimistic locking if `loaded_version` is provided, increments the version, and saves the updated front-matter without touching the Markdown body.
+  Validates and cleans the supplied tags (stripping reserved `memory-<scope>` prefixes from the user-supplied list while preserving any existing tool-managed tags), applies optimistic locking if `loaded_version` is provided, increments the version, and saves the updated front-matter without touching the Markdown body. The document's OKF `type` is never altered.
 
 ---
 
@@ -264,7 +264,7 @@ Returns the canonical list of recognized status tags used to indicate the lifecy
 * **Behavior**:
   Returns the server-authoritative list of status tag values along with usage tips. Call this before tagging articles, plans, or skills to ensure you use a recognized value. Status tags are displayed with the highest visual priority on the home dashboard. Output includes a tip about the plan completion workflow: after a plan is fully implemented, use `append_agent_plan` to add final notes, then use `edit_agent_plan` to add the `completed` status tag.
 
-* **Recognized values**: `completed`, `done`, `wip`, `draft`, `in-progress`, `archived`, `active`, `todo`, `pending`, `review`, `blocked`, `ready`
+* **Recognized values**: `completed`, `done`, `wip`, `draft`, `in-progress`, `archived`, `active`, `todo`, `pending`, `review`, `blocked`, `ready`, `inbox`
 
 ---
 

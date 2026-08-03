@@ -69,12 +69,15 @@ Open your global Claude Desktop configuration:
 * **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 Add a custom instruction rule prompting the agent to fetch the guidelines:
+
+> ⚠️ **`-mcp-only` is required** on any stdio config. A normal launch binds the web port or halts; `docker exec` bypasses the image ENTRYPOINT, so `-mcp-only` and `-data` must both be passed explicitly or the subprocess collides with the container's own web server.
+
 ```json
 {
   "mcpServers": {
     "nexwiki": {
       "command": "docker",
-      "args": ["exec", "-i", "personal-wiki", "/app/nexwiki"],
+      "args": ["exec", "-i", "personal-wiki", "/app/nexwiki", "-mcp-only", "-data", "/app/data"],
       "env": {
         "NEXWIKI_SYSTEM_PROMPT_MODIFIER": "You have the NexWiki MCP server registered. At the beginning of the session, always read the global operational guidelines using 'read_article(slug: \"nexwiki-agent-guidelines\")' to align on style guide lookups and task planning."
       }
