@@ -94,6 +94,14 @@ jobs:
           go-version: "1.26"
           cache: true
 
+      # frontend/dist is gitignored, so //go:embed frontend/dist/* fails to typecheck on a fresh
+      # checkout. Linting Go doesn't need the real assets, so stub the directory rather than
+      # paying for an npm ci + vite build here.
+      - name: Stub embedded frontend assets
+        run: |
+          mkdir -p frontend/dist
+          echo '<!doctype html><title>lint stub</title>' > frontend/dist/index.html
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
