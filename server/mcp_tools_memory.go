@@ -382,6 +382,7 @@ var listAgentMemoriesTool = toolDef{
 			},
 		},
 	},
+	Output:   documentListOutputSchema("Matching agent memories. Scope lives in the memory-<scope> tags."),
 	Handler:  (*Server).toolListAgentMemories,
 	Behavior: toolBehavior{Title: "List Agent Memories", ReadOnly: true},
 }
@@ -402,6 +403,7 @@ func (srv *Server) toolListAgentMemories(args json.RawMessage) (interface{}, *JS
 
 	var text string
 	count := 0
+	matched := []Article{}
 	// ListArticles already returns the type, tags, and description this loop needs, so it
 	// reads the metadata directly rather than re-reading and re-parsing every file.
 	for _, art := range articles {
@@ -423,6 +425,7 @@ func (srv *Server) toolListAgentMemories(args json.RawMessage) (interface{}, *JS
 
 		if matchFilter {
 			count++
+			matched = append(matched, art)
 			if count == 1 {
 				text = "AI Agent Memories Index:\n\n"
 			}
@@ -443,5 +446,8 @@ func (srv *Server) toolListAgentMemories(args json.RawMessage) (interface{}, *JS
 		}
 	}
 
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+	return ToolResponse{
+		Content:           []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: DocumentListOutput{Count: count, Documents: matched},
+	}, nil
 }

@@ -13,6 +13,10 @@ import (
 type toolDef struct {
 	// Schema is the entry emitted by tools/list (name, description, inputSchema).
 	Schema map[string]interface{}
+	// Output is the tool's outputSchema: the JSON Schema of the structuredContent it returns.
+	// Nil for tools that answer only in prose. A tool that declares one MUST populate
+	// ToolResponse.StructuredContent on success — see mcp_tool_output.go.
+	Output map[string]interface{}
 	// Handler receives the raw "arguments" object from tools/call.
 	Handler func(*Server, json.RawMessage) (interface{}, *JSONRPCError)
 	// Behavior tells clients what calling this tool does, so they can auto-approve safe reads
@@ -129,6 +133,9 @@ var listedTools = func() []map[string]interface{} {
 		// annotations in earlier ones. Emitting both keeps every era's clients correct.
 		if t.Behavior.Title != "" {
 			entry["title"] = t.Behavior.Title
+		}
+		if t.Output != nil {
+			entry["outputSchema"] = t.Output
 		}
 		entry["annotations"] = t.Behavior.annotations()
 		schemas = append(schemas, entry)

@@ -1,0 +1,275 @@
+package server
+
+import "time"
+
+// This file holds the structured-output half of the tool contract: the Go types a read tool
+// returns as `structuredContent`, and the JSON Schema each one publishes as `outputSchema`.
+//
+// The two live side by side deliberately. A schema that drifts from the struct it describes is
+// worse than no schema at all — an agent that trusts `outputSchema` enough to skip parsing the
+// prose has no way to discover the mismatch, so it reads a field that is never populated and
+// concludes the knowledge is absent. Keeping the pair adjacent (and asserting the pairing in
+// TestStructuredOutputMatchesSchema) is the same reasoning that put schema and handler together
+// in toolDef.
+//
+// Why structured output at all: every tool used to answer only in prose, so an agent wanting the
+// version number to pass as `loaded_version` had to scrape an integer out of a sentence. The
+// text is still emitted — the spec asks for it, and it is what a human reading a transcript
+// wants — but it is now derived from the same value the structured payload carries, so the two
+// cannot disagree.
+
+// SearchHit is one `search_wiki` match.
+//
+// Snippets differ from the SearchResult they come from: those carry HTML (entity-escaped text
+// with <mark> highlights) because the browser renders them as HTML. Handing an agent HTML it did
+// not ask for invites it to paste markup into an article, so the highlights become Markdown bold
+// and the entities are unescaped — the same conversion the prose path already performed.
+type SearchHit struct {
+	Title     string    `json:"title"`
+	Slug      string    `json:"slug"`
+	Type      string    `json:"type"`
+	Score     float64   `json:"score"`
+	Timestamp time.Time `json:"timestamp"`
+	Tags      []string  `json:"tags,omitempty"`
+	Snippets  []string  `json:"snippets,omitempty"`
+}
+
+// SearchOutput is the `search_wiki` payload. Query and the applied facets are echoed back so an
+// agent reading only the structured half can still tell "no such knowledge" from "my filter
+// excluded it" — the same distinction the prose spells out.
+type SearchOutput struct {
+	Query           string      `json:"query"`
+	Count           int         `json:"count"`
+	Types           []string    `json:"type,omitempty"`
+	Tags            []string    `json:"tags,omitempty"`
+	IncludeArchived bool        `json:"include_archived"`
+	Results         []SearchHit `json:"results"`
+}
+
+// DocumentLink is a bare title/slug reference, used where a full document summary would be noise.
+type DocumentLink struct {
+	Title string `json:"title"`
+	Slug  string `json:"slug"`
+}
+
+// ArticleOutput is the `read_article` payload. The embedded Article carries `version`, which is
+// what `edit_wiki_article` requires as `loaded_version` — the single most valuable field to hand
+// over as a number rather than as prose.
+type ArticleOutput struct {
+	Article   Article        `json:"article"`
+	Backlinks []DocumentLink `json:"backlinks"`
+}
+
+// DocumentListOutput is the shared payload of every list-shaped tool: list_articles,
+// list_agent_memories, list_agent_plans, and list_agent_skills. One shape for all four means an
+// agent learns to read a NexWiki listing once.
+type DocumentListOutput struct {
+	Count     int       `json:"count"`
+	Documents []Article `json:"documents"`
+}
+
+// BacklinksOutput is the `get_backlinks` payload.
+type BacklinksOutput struct {
+	Slug      string    `json:"slug"`
+	Count     int       `json:"count"`
+	Backlinks []Article `json:"backlinks"`
+}
+
+// RevisionRef is one entry in an article's revision history. Deliberately not a full Article:
+// history entries would otherwise repeat every field of every past version, and the useful
+// content of a history listing is which version to revert to and why.
+type RevisionRef struct {
+	Version     int       `json:"version"`
+	Timestamp   time.Time `json:"timestamp"`
+	EditSummary string    `json:"edit_summary,omitempty"`
+}
+
+// HistoryOutput is the `get_article_history` payload, newest version first.
+type HistoryOutput struct {
+	Slug     string        `json:"slug"`
+	Count    int           `json:"count"`
+	Versions []RevisionRef `json:"versions"`
+}
+
+// BrokenLinkRef is a WikiLink whose target does not exist. TargetSlug is the Slugify'd form the
+// link actually resolves to, which is the name a fix has to create.
+type BrokenLinkRef struct {
+	FromSlug   string `json:"from_slug"`
+	Target     string `json:"target"`
+	TargetSlug string `json:"target_slug"`
+}
+
+// StatisticsOutput is the `get_wiki_statistics` payload.
+type StatisticsOutput struct {
+	TotalArticles   int             `json:"total_articles"`
+	TotalLinks      int             `json:"total_links"`
+	BrokenLinkCount int             `json:"broken_link_count"`
+	BrokenLinks     []BrokenLinkRef `json:"broken_links"`
+}
+
+// StatusTagsOutput is the `get_status_tags` payload.
+type StatusTagsOutput struct {
+	StatusTags []string `json:"status_tags"`
+}
+
+// ActivityOutput is the `get_recent_activity` payload, oldest event first to match the prose.
+type ActivityOutput struct {
+	Count  int        `json:"count"`
+	Events []LogEvent `json:"events"`
+}
+
+// --- JSON Schema construction -------------------------------------------------------------
+//
+// Each helper returns a freshly built map rather than a shared package-level value. The registry
+// merges tool schemas into the tools/list payload, and a map shared between two tools would let a
+// mutation in one surface in the other.
+
+func schemaOf(typ, description string) map[string]interface{} {
+	return map[string]interface{}{"type": typ, "description": description}
+}
+
+func schemaArrayOf(items map[string]interface{}, description string) map[string]interface{} {
+	return map[string]interface{}{"type": "array", "items": items, "description": description}
+}
+
+func schemaStringArray(description string) map[string]interface{} {
+	return schemaArrayOf(map[string]interface{}{"type": "string"}, description)
+}
+
+func schemaObject(properties map[string]interface{}, required ...string) map[string]interface{} {
+	obj := map[string]interface{}{
+		"type":       "object",
+		"properties": properties,
+	}
+	if len(required) > 0 {
+		obj["required"] = required
+	}
+	return obj
+}
+
+// articleSchema describes an Article as it appears in structured output. Field names are
+// Article's own JSON tags, so a document read over MCP and the same document read from
+// /api/articles have identical keys — an agent that has seen one already knows the other.
+func articleSchema(withContent bool) map[string]interface{} {
+	props := map[string]interface{}{
+		"type":         schemaOf("string", "OKF document class: Wiki, AI-Agent-Memory, AI-Agent-Plan, or AI-Agent-Skill."),
+		"title":        schemaOf("string", "Human-readable document title."),
+		"slug":         schemaOf("string", "URL-safe identifier; the key every other tool takes."),
+		"created_at":   schemaOf("string", "RFC3339 creation time."),
+		"timestamp":    schemaOf("string", "RFC3339 last-modified time (OKF canonical modified time)."),
+		"description":  schemaOf("string", "One-line summary shown in indexes."),
+		"resource":     schemaOf("string", "OKF canonical URI of what the concept is."),
+		"source":       schemaOf("string", "Provenance: where the knowledge came from."),
+		"version":      schemaOf("integer", "Current revision number. Pass this as 'loaded_version' when editing."),
+		"edit_summary": schemaOf("string", "Summary of the most recent edit."),
+		"tags":         schemaStringArray("Tags carried by the document, including status and memory-scope tags."),
+		"archived_at":  schemaOf("string", "RFC3339 archival time; absent unless the document is archived."),
+	}
+	if withContent {
+		props["content"] = schemaOf("string", "Full raw Markdown body.")
+	}
+	return schemaObject(props, "type", "title", "slug", "timestamp")
+}
+
+func documentLinkSchema() map[string]interface{} {
+	return schemaObject(map[string]interface{}{
+		"title": schemaOf("string", "Title of the linking document."),
+		"slug":  schemaOf("string", "Slug of the linking document."),
+	}, "title", "slug")
+}
+
+func searchOutputSchema() map[string]interface{} {
+	hit := schemaObject(map[string]interface{}{
+		"title":     schemaOf("string", "Title of the matching document."),
+		"slug":      schemaOf("string", "Slug of the matching document."),
+		"type":      schemaOf("string", "OKF document class of the hit."),
+		"score":     schemaOf("number", "Bleve relevance score; higher is a better match."),
+		"timestamp": schemaOf("string", "RFC3339 last-modified time."),
+		"tags":      schemaStringArray("Tags carried by the matching document."),
+		"snippets":  schemaStringArray("Matching excerpts as plain text, with matched terms in Markdown bold."),
+	}, "title", "slug", "type", "score", "timestamp")
+
+	return schemaObject(map[string]interface{}{
+		"query":            schemaOf("string", "The query that was run."),
+		"count":            schemaOf("integer", "Number of results returned."),
+		"type":             schemaStringArray("Document types the search was restricted to; absent when unrestricted."),
+		"tags":             schemaStringArray("Tags every result was required to carry; absent when unfiltered."),
+		"include_archived": schemaOf("boolean", "Whether archived documents were included."),
+		"results":          schemaArrayOf(hit, "Matches, highest scoring first."),
+	}, "query", "count", "results")
+}
+
+func articleOutputSchema() map[string]interface{} {
+	return schemaObject(map[string]interface{}{
+		"article":   articleSchema(true),
+		"backlinks": schemaArrayOf(documentLinkSchema(), "Documents whose body links here via a WikiLink."),
+	}, "article", "backlinks")
+}
+
+func documentListOutputSchema(documentsDescription string) map[string]interface{} {
+	return schemaObject(map[string]interface{}{
+		"count":     schemaOf("integer", "Number of documents returned."),
+		"documents": schemaArrayOf(articleSchema(false), documentsDescription),
+	}, "count", "documents")
+}
+
+func backlinksOutputSchema() map[string]interface{} {
+	return schemaObject(map[string]interface{}{
+		"slug":      schemaOf("string", "The slug whose inbound links were requested."),
+		"count":     schemaOf("integer", "Number of inbound links found."),
+		"backlinks": schemaArrayOf(articleSchema(false), "Documents linking to the target, most recently updated first."),
+	}, "slug", "count", "backlinks")
+}
+
+func historyOutputSchema() map[string]interface{} {
+	revision := schemaObject(map[string]interface{}{
+		"version":      schemaOf("integer", "Revision number, usable with revert_article_version."),
+		"timestamp":    schemaOf("string", "RFC3339 time the revision was written."),
+		"edit_summary": schemaOf("string", "Summary recorded with the edit."),
+	}, "version", "timestamp")
+
+	return schemaObject(map[string]interface{}{
+		"slug":     schemaOf("string", "The article whose history was requested."),
+		"count":    schemaOf("integer", "Number of stored revisions."),
+		"versions": schemaArrayOf(revision, "Revisions, newest version first."),
+	}, "slug", "count", "versions")
+}
+
+func statisticsOutputSchema() map[string]interface{} {
+	broken := schemaObject(map[string]interface{}{
+		"from_slug":   schemaOf("string", "Document containing the broken link."),
+		"target":      schemaOf("string", "Raw link target as written between the double brackets."),
+		"target_slug": schemaOf("string", "Slug the target resolves to; this is the page to create."),
+	}, "from_slug", "target", "target_slug")
+
+	return schemaObject(map[string]interface{}{
+		"total_articles":    schemaOf("integer", "Number of documents in the knowledge base."),
+		"total_links":       schemaOf("integer", "Number of WikiLinks scanned."),
+		"broken_link_count": schemaOf("integer", "Number of WikiLinks with no destination."),
+		"broken_links":      schemaArrayOf(broken, "Every WikiLink whose target does not exist."),
+	}, "total_articles", "total_links", "broken_link_count", "broken_links")
+}
+
+func statusTagsOutputSchema() map[string]interface{} {
+	return schemaObject(map[string]interface{}{
+		"status_tags": schemaStringArray("Canonical lifecycle tags recognized by NexWiki."),
+	}, "status_tags")
+}
+
+func activityOutputSchema() map[string]interface{} {
+	event := schemaObject(map[string]interface{}{
+		"id":        schemaOf("string", "Event identifier."),
+		"timestamp": schemaOf("string", "RFC3339 time the event occurred."),
+		"source":    schemaOf("string", "'mcp' for AI tool calls, 'api' for web UI actions."),
+		"action":    schemaOf("string", "create, edit, delete, read, or revert."),
+		"tool":      schemaOf("string", "MCP tool name; empty for REST API actions."),
+		"slug":      schemaOf("string", "Slug of the affected document."),
+		"title":     schemaOf("string", "Title of the affected document."),
+		"agent":     schemaOf("string", "Who performed the action."),
+	}, "timestamp", "source", "action")
+
+	return schemaObject(map[string]interface{}{
+		"count":  schemaOf("integer", "Number of events returned."),
+		"events": schemaArrayOf(event, "Matching events, oldest first."),
+	}, "count", "events")
+}

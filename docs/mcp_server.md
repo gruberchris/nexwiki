@@ -104,6 +104,43 @@ This matters because the spec's defaults are **pessimistic**: an unannotated too
 >
 > Note that every successful call — reads included — appends to the durable activity log. That is server-side audit bookkeeping, not a change to the content the tool operates on, so it does not disqualify `readOnlyHint`.
 
+### 📤 Structured output — parse data, don't scrape prose
+
+Eleven read tools declare an **`outputSchema`** and return a **`structuredContent`** object alongside their text. An agent that needs an article's version number to pass as `loaded_version` reads an integer instead of pulling one out of a sentence.
+
+| | |
+|---|---|
+| Tools with `outputSchema` | `search_wiki` · `read_article` · `list_articles` · `list_agent_memories` · `list_agent_plans` · `list_agent_skills` · `get_backlinks` · `get_article_history` · `get_wiki_statistics` · `get_status_tags` · `get_recent_activity` |
+| Prose only | every write tool, plus `get_context_overview` (progressive-disclosure prose is its whole purpose), `export_okf_bundle`, and `import_okf_bundle` |
+
+Three properties hold across all of them:
+
+- **The text is still there.** `structuredContent` is emitted *in addition to* `content`, and both are rendered from the same value, so they cannot disagree. A client that predates structured output sees no change.
+- **Error results carry no `structuredContent`.** A payload that fails its own published schema is worse than no payload: every consumer would have to handle a shape the schema says cannot occur.
+- **Field names match the REST API.** A document read over MCP and the same document read from `GET /api/articles` have identical keys, so an agent that has seen one already knows the other.
+
+Document listings share one shape — `{ "count": N, "documents": [ … ] }` — across `list_articles` and the three `list_agent_*` tools, so a NexWiki listing is learned once. Listings carry metadata only; the body is what `read_article` is for.
+
+```jsonc
+// tools/call → read_article {"slug": "home"}
+{
+  "content": [{ "type": "text", "text": "Type: Wiki\nTitle: Home\n…" }],
+  "structuredContent": {
+    "article": {
+      "type": "Wiki", "title": "Home", "slug": "home",
+      "version": 4,                       // pass this as loaded_version when editing
+      "timestamp": "2026-08-09T12:00:00Z",
+      "tags": ["index"], "content": "# Home\n\n…"
+    },
+    "backlinks": [{ "title": "Guides", "slug": "guides" }]
+  }
+}
+```
+
+> `search_wiki`'s structured snippets are **plain text with Markdown bold**, not the HTML the browser sidebar renders. Handing an agent `<mark>` markup invites it to paste that markup back into an article.
+>
+> The structured payload also echoes the applied facets (`type`, `tags`, `include_archived`), so an agent can tell "no such knowledge" from "my filter excluded it" without re-reading the prose.
+
 ## 📎 Resources — `@`-mention a wiki page
 
 Tools are *model*-controlled: the agent decides to call them. **Resources are application-driven** — your client surfaces them for *you* to pick, which is what makes `@`-mentioning a wiki page work in Claude Desktop or Cursor. That path costs no tool call and no tokens spent on tool-result prose, so it is a different affordance from `read_article`, not a duplicate.
@@ -247,6 +284,7 @@ Performs a high-speed, full-text search across the **entire** knowledge base usi
 // In-flight plans, newest handful
 { "query": "migration", "type": ["plans"], "tags": ["wip"], "limit": 5 }
 ```
+* **Structured output**: `structuredContent` as `{query, count, type, tags, include_archived, results[]}`. Each result carries `title`, `slug`, `type`, `score`, `timestamp`, `tags`, and plain-text `snippets`.
 
 ---
 
@@ -257,6 +295,7 @@ Retrieves the raw Markdown content and Yaml-style front-matter configurations of
   * `slug` (string, **required**): The unique URL-safe slug of the target article (e.g. `home` or `setup-guide`).
 * **Behavior**:
   Reads the Markdown file on disk, parses the front-matter metadata, and returns a plain text document listing the article Title, Slug, Created timestamp, Updated timestamp, Description and Source (when set), and the complete raw Markdown body. If other articles link to this page via WikiLinks, a `Linked from:` section is appended (capped at 15 entries) so agents can traverse the knowledge graph in reverse.
+* **Structured output**: `structuredContent` as `{article, backlinks[]}`. The article includes `version` — pass it straight to `edit_wiki_article` as `loaded_version`. Unlike the prose, `backlinks` is not capped at 15.
 
 ---
 
@@ -266,6 +305,7 @@ Lists all articles currently available in your knowledge base. This acts as a di
 * **Arguments**: None (empty object `{}`).
 * **Behavior**:
   Scans the database and returns a bulleted plain text index containing the titles, URL-safe slugs, last-edited timestamps, and one-line summaries (when a `description` is set) for all active articles. For a sectioned, orientation-friendly index, prefer `get_context_overview`.
+* **Structured output**: `structuredContent` as `{count, documents[]}`, the shared listing shape. Metadata only; bodies come from `read_article`.
 
 ---
 
@@ -331,6 +371,7 @@ Retrieves the full revision history log of a wiki page, showing version numbers,
   * `slug` (string, **required**): The URL-safe slug of the target article.
 * **Behavior**:
   Scans the gzip history directory and returns a structured, bulleted plain text revision list of all historical edits made to the page.
+* **Structured output**: `structuredContent` as `{slug, count, versions[]}`, each version carrying `version`, `timestamp`, and `edit_summary` — the three fields a revert decision needs.
 
 ---
 
@@ -351,6 +392,7 @@ Scans the entire knowledge base to compile total page stats and **autonomously s
 * **Arguments**: None (empty object `{}`).
 * **Behavior**:
   Scans the raw content of all wiki articles for double-bracket WikiLink references. It normalizes targets into slugs and matches them against active articles. It returns a summary text listing total pages, total WikiLinks, total broken links, and details on exactly which pages contain dead references so the AI agent can autonomously fix them!
+* **Structured output**: `structuredContent` as `{total_articles, total_links, broken_link_count, broken_links[]}`. Each broken link names `from_slug`, the raw `target`, and the `target_slug` a fix has to create.
 
 ---
 
@@ -389,6 +431,7 @@ Lists all protected AI Agent Memory articles saved in your wiki.
   * `memory_type` (string, **optional**): Optional filter by memory type (the project name, topic name, or other free-form value used at creation). For example, `nexwiki` returns only memories tagged `memory-nexwiki`.
 * **Behavior**:
   Scans all active articles, isolates pages with OKF type `AI-Agent-Memory`, optionally filters by the `memory-<type>` scope tag, and returns a bulleted index of matches including titles, slugs, and active tags.
+* **Structured output**: `structuredContent` as `{count, documents[]}`, the shared listing shape. Scope lives in each document's `memory-<scope>` tags.
 
 ---
 
@@ -444,6 +487,7 @@ Lists all Collaborative AI Plans (OKF type `AI-Agent-Plan`) currently saved insi
   * `tag` (string, **optional**): An optional tag to filter plans by. Use a status tag to find plans in a specific state (e.g. `completed`, `wip`). Call `get_status_tags` to see all recognized status values.
 * **Behavior**:
   Scans all active articles, isolates pages of OKF type `AI-Agent-Plan`, filters them by project context tag and/or additional tags if provided, and returns a bulleted index of matching plans.
+* **Structured output**: `structuredContent` as `{count, documents[]}`, the shared listing shape. Lifecycle state lives in each document's status tags.
 
 ---
 
@@ -468,6 +512,7 @@ Lists all Custom AI Skills (OKF type `AI-Agent-Skill`) currently saved in the kn
 * **Arguments**: None (empty object `{}`).
 * **Behavior**:
   Scans all active articles, isolates pages of OKF type `AI-Agent-Skill`, and returns a bulleted index of matching skills.
+* **Structured output**: `structuredContent` as `{count, documents[]}`, the shared listing shape.
 
 ---
 
@@ -479,6 +524,7 @@ Returns the canonical list of recognized status tags used to indicate the lifecy
   Returns the server-authoritative list of status tag values along with usage tips. Call this before tagging articles, plans, or skills to ensure you use a recognized value. Status tags are displayed with the highest visual priority on the home dashboard. Output includes a tip about the plan completion workflow: after a plan is fully implemented, use `append_agent_plan` to add final notes, then use `edit_agent_plan` to add the `completed` status tag.
 
 * **Recognized values**: `completed`, `done`, `wip`, `draft`, `in-progress`, `archived`, `active`, `todo`, `pending`, `review`, `blocked`, `ready`, `inbox`
+* **Structured output**: `structuredContent` as `{status_tags[]}`.
 
 ---
 
@@ -511,6 +557,7 @@ Lists all articles whose content links to a given article via double-bracket `[[
   * `slug` (string, **required**): The URL-safe slug of the target article to find inbound links for.
 * **Behavior**:
   Scans all article bodies (including the `home` dashboard) on demand for WikiLinks resolving to the target slug, skipping self-links. Returns an indexed plain-text list with titles, slugs, summaries, and updated timestamps, sorted the newest first. Useful before editing or deleting a page to see what references it. `read_article` also appends a compact `Linked from:` section automatically.
+* **Structured output**: `structuredContent` as `{slug, count, backlinks[]}`.
 
 ---
 
@@ -538,6 +585,7 @@ Permanently deletes an obsolete or fully superseded protected AI Agent Memory.
   * `slug` (string, **required**): The unique URL-safe slug of the memory to delete.
 * **Behavior**:
   Verifies the target is actually a protected memory (refuses standard articles — use `delete_wiki_article` for those), then removes the Markdown file, history backups, and search index entry. Prefer `edit_agent_memory` to correct a memory rather than deleting and recreating it.
+* **Structured output**: `structuredContent` as `{count, events[]}`, each event carrying `timestamp`, `source`, `action`, `tool`, `slug`, `title`, and `agent`.
 
 ---
 

@@ -53,6 +53,13 @@ type ToolContent struct {
 type ToolResponse struct {
 	Content []ToolContent `json:"content"`
 	IsError bool          `json:"isError,omitempty"`
+	// StructuredContent is the machine-readable half of the result, conforming to the tool's
+	// declared outputSchema. Set only by tools that declare one, and never on an error result —
+	// a payload that fails its own schema is worse for a client than no payload at all.
+	//
+	// omitempty keeps every prose-only tool byte-identical on the wire, so clients that predate
+	// structured output see no change at all.
+	StructuredContent interface{} `json:"structuredContent,omitempty"`
 }
 
 // StartMCPServer runs the stdio MCP JSON-RPC protocol loop in a non-blocking background goroutine.

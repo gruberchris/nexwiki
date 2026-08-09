@@ -52,6 +52,7 @@ var searchWikiTool = toolDef{
 			"required": []string{"query"},
 		},
 	},
+	Output:   searchOutputSchema(),
 	Handler:  (*Server).toolSearchWiki,
 	Behavior: toolBehavior{Title: "Search Wiki", ReadOnly: true},
 }
@@ -109,31 +110,64 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		facetStr = fmt.Sprintf(" [filtered by %s]", strings.Join(facets, "; "))
 	}
 
-	// Convert structured search results to friendly readable text for AI agents
+	// Build the structured payload first, then render the prose from it, so the two halves of
+	// the answer are the same data and cannot disagree.
+	hits := make([]SearchHit, 0, len(results))
+	for _, res := range results {
+		snippets := make([]string, 0, len(res.Snippets))
+		for _, snippet := range res.Snippets {
+			snippets = append(snippets, plainSnippet(snippet))
+		}
+		hits = append(hits, SearchHit{
+			Title:     res.Title,
+			Slug:      res.Slug,
+			Type:      res.Type,
+			Score:     res.Score,
+			Timestamp: res.Timestamp,
+			Tags:      res.Tags,
+			Snippets:  snippets,
+		})
+	}
+
 	var text string
-	if len(results) == 0 {
+	if len(hits) == 0 {
 		text = fmt.Sprintf("No documents found matching query: '%s'%s\n", searchArgs.Query, facetStr)
 	} else {
-		text = fmt.Sprintf("Found %d matching documents in NexWiki%s:\n\n", len(results), facetStr)
-		for i, res := range results {
+		text = fmt.Sprintf("Found %d matching documents in NexWiki%s:\n\n", len(hits), facetStr)
+		for i, hit := range hits {
 			tagsStr := ""
-			if len(res.Tags) > 0 {
-				tagsStr = fmt.Sprintf(" | Tags: %s", strings.Join(res.Tags, ", "))
+			if len(hit.Tags) > 0 {
+				tagsStr = fmt.Sprintf(" | Tags: %s", strings.Join(hit.Tags, ", "))
 			}
 			text += fmt.Sprintf("[%d] %s (Slug: %s, Type: %s, Score: %.3f%s)\n",
-				i+1, res.Title, res.Slug, res.Type, res.Score, tagsStr)
-			for _, snippet := range res.Snippets {
-				// Snippets are HTML (escaped text + <mark> highlights). Convert the marks to
-				// Markdown bold, then unescape the entities so the agent reads plain prose.
-				cleanSnippet := strings.ReplaceAll(snippet, "<mark>", "**")
-				cleanSnippet = strings.ReplaceAll(cleanSnippet, "</mark>", "**")
-				text += fmt.Sprintf("    Snippet: ... %s ...\n", html.UnescapeString(cleanSnippet))
+				i+1, hit.Title, hit.Slug, hit.Type, hit.Score, tagsStr)
+			for _, snippet := range hit.Snippets {
+				text += fmt.Sprintf("    Snippet: ... %s ...\n", snippet)
 			}
 			text += "\n"
 		}
 	}
 
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+	return ToolResponse{
+		Content: []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: SearchOutput{
+			Query:           searchArgs.Query,
+			Count:           len(hits),
+			Types:           searchArgs.Types,
+			Tags:            searchArgs.Tags,
+			IncludeArchived: searchArgs.IncludeArchived,
+			Results:         hits,
+		},
+	}, nil
+}
+
+// plainSnippet converts a search snippet from the HTML the browser renders (entity-escaped text
+// with <mark> highlights) into plain prose with Markdown bold. Handing an agent HTML it did not
+// ask for invites it to paste markup back into an article.
+func plainSnippet(snippet string) string {
+	s := strings.ReplaceAll(snippet, "<mark>", "**")
+	s = strings.ReplaceAll(s, "</mark>", "**")
+	return html.UnescapeString(s)
 }
 
 var readArticleTool = toolDef{
@@ -151,6 +185,7 @@ var readArticleTool = toolDef{
 			"required": []string{"slug"},
 		},
 	},
+	Output:   articleOutputSchema(),
 	Handler:  (*Server).toolReadArticle,
 	Behavior: toolBehavior{Title: "Read Article", ReadOnly: true},
 }
@@ -195,20 +230,29 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		art.Type, art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Timestamp.Format(time.RFC3339), descStr, resourceStr, sourceStr, tagsStr, art.Content)
 
 	// Append inbound links for graph discoverability; never fail the read over a scan error
+	links := []DocumentLink{}
 	if backlinks, blErr := srv.Storage.GetBacklinks(art.Slug); blErr == nil && len(backlinks) > 0 {
 		const maxShownBacklinks = 15
 		var refs []string
 		for i, bl := range backlinks {
+			// The structured payload carries every backlink. Only the prose is truncated,
+			// because that cap exists to keep a read from burying the article in a link list.
+			links = append(links, DocumentLink{Title: bl.Title, Slug: bl.Slug})
 			if i >= maxShownBacklinks {
-				refs = append(refs, fmt.Sprintf("and %d more", len(backlinks)-maxShownBacklinks))
-				break
+				continue
 			}
 			refs = append(refs, fmt.Sprintf("%s (%s)", bl.Title, bl.Slug))
+		}
+		if len(backlinks) > maxShownBacklinks {
+			refs = append(refs[:maxShownBacklinks], fmt.Sprintf("and %d more", len(backlinks)-maxShownBacklinks))
 		}
 		text += fmt.Sprintf("\n\n---\nLinked from: %s", strings.Join(refs, ", "))
 	}
 
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+	return ToolResponse{
+		Content:           []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: ArticleOutput{Article: *art, Backlinks: links},
+	}, nil
 }
 
 var listArticlesTool = toolDef{
@@ -220,6 +264,7 @@ var listArticlesTool = toolDef{
 			"properties": map[string]interface{}{},
 		},
 	},
+	Output:   documentListOutputSchema("Every document in the knowledge base, most recently updated first."),
 	Handler:  (*Server).toolListArticles,
 	Behavior: toolBehavior{Title: "List Articles", ReadOnly: true},
 }
@@ -258,7 +303,20 @@ func (srv *Server) toolListArticles(args json.RawMessage) (interface{}, *JSONRPC
 		}
 	}
 
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+	return ToolResponse{
+		Content:           []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: DocumentListOutput{Count: len(articles), Documents: nonNilDocuments(articles)},
+	}, nil
+}
+
+// nonNilDocuments guarantees an empty listing serializes as [] rather than null. A schema
+// declaring `"type": "array"` does not match null, so a client validating structuredContent
+// against the published outputSchema would reject an empty wiki.
+func nonNilDocuments(articles []Article) []Article {
+	if articles == nil {
+		return []Article{}
+	}
+	return articles
 }
 
 var createWikiArticleTool = toolDef{
@@ -587,6 +645,7 @@ var getArticleHistoryTool = toolDef{
 			"required": []string{"slug"},
 		},
 	},
+	Output:   historyOutputSchema(),
 	Handler:  (*Server).toolGetArticleHistory,
 	Behavior: toolBehavior{Title: "Get Article History", ReadOnly: true},
 }
@@ -608,12 +667,23 @@ func (srv *Server) toolGetArticleHistory(args json.RawMessage) (interface{}, *JS
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error loading history for '%s': %v", hArgs.Slug, err)}}}, nil
 	}
 
+	// A revision listing exists to answer "which version do I revert to, and why", so the
+	// structured form carries those three fields rather than a full copy of every past version.
+	versions := make([]RevisionRef, 0, len(history))
+	for _, ver := range history {
+		versions = append(versions, RevisionRef{
+			Version:     ver.Version,
+			Timestamp:   ver.Timestamp,
+			EditSummary: ver.EditSummary,
+		})
+	}
+
 	var respText string
-	if len(history) == 0 {
+	if len(versions) == 0 {
 		respText = fmt.Sprintf("No historical versions found for article '%s'\n", hArgs.Slug)
 	} else {
-		respText = fmt.Sprintf("Revision History for '%s' (%d versions):\n\n", hArgs.Slug, len(history))
-		for _, ver := range history {
+		respText = fmt.Sprintf("Revision History for '%s' (%d versions):\n\n", hArgs.Slug, len(versions))
+		for _, ver := range versions {
 			respText += fmt.Sprintf("Version: %d | Edited: %s\n", ver.Version, ver.Timestamp.Format(time.RFC3339))
 			if ver.EditSummary != "" {
 				respText += fmt.Sprintf("  Summary: %s\n", ver.EditSummary)
@@ -622,7 +692,10 @@ func (srv *Server) toolGetArticleHistory(args json.RawMessage) (interface{}, *JS
 		}
 	}
 
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+	return ToolResponse{
+		Content:           []ToolContent{{Type: "text", Text: respText}},
+		StructuredContent: HistoryOutput{Slug: Slugify(hArgs.Slug), Count: len(versions), Versions: versions},
+	}, nil
 }
 
 var revertArticleVersionTool = toolDef{
@@ -686,6 +759,7 @@ var getBacklinksTool = toolDef{
 			"required": []string{"slug"},
 		},
 	},
+	Output:   backlinksOutputSchema(),
 	Handler:  (*Server).toolGetBacklinks,
 	Behavior: toolBehavior{Title: "Get Backlinks", ReadOnly: true},
 }
@@ -725,7 +799,14 @@ func (srv *Server) toolGetBacklinks(args json.RawMessage) (interface{}, *JSONRPC
 		}
 	}
 
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+	return ToolResponse{
+		Content: []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: BacklinksOutput{
+			Slug:      target.Slug,
+			Count:     len(backlinks),
+			Backlinks: nonNilDocuments(backlinks),
+		},
+	}, nil
 }
 
 var getContextOverviewTool = toolDef{

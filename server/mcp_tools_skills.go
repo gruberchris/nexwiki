@@ -104,6 +104,7 @@ var listAgentSkillsTool = toolDef{
 			"properties": map[string]interface{}{},
 		},
 	},
+	Output:   documentListOutputSchema("Every custom agent skill in the knowledge base."),
 	Handler:  (*Server).toolListAgentSkills,
 	Behavior: toolBehavior{Title: "List Agent Skills", ReadOnly: true},
 }
@@ -116,6 +117,7 @@ func (srv *Server) toolListAgentSkills(args json.RawMessage) (interface{}, *JSON
 
 	var text string
 	count := 0
+	matched := []Article{}
 	for _, artMeta := range articles {
 		art, err := srv.Storage.GetArticle(artMeta.Slug)
 		if err != nil {
@@ -124,6 +126,10 @@ func (srv *Server) toolListAgentSkills(args json.RawMessage) (interface{}, *JSON
 
 		if art.Type == ContentTypeSkill {
 			count++
+			// Metadata only; the body is what read_article is for.
+			meta := *art
+			meta.Content = ""
+			matched = append(matched, meta)
 			if count == 1 {
 				text = "Custom AI Agent Skills Index:\n\n"
 			}
@@ -140,5 +146,8 @@ func (srv *Server) toolListAgentSkills(args json.RawMessage) (interface{}, *JSON
 		text = "No Custom AI Agent Skills found inside the knowledge base.\n"
 	}
 
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+	return ToolResponse{
+		Content:           []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: DocumentListOutput{Count: count, Documents: matched},
+	}, nil
 }
