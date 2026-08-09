@@ -276,7 +276,14 @@ func main() {
 		}
 	}()
 
-	log.Printf("NexWiki web server is running on http://localhost%s", addr)
+	// The banner has to name a host someone can paste into a browser. addr is "host:port", so
+	// concatenating it onto "http://localhost" only reads correctly when -bind is unset and the
+	// host half is empty: with -bind 127.0.0.1 it printed "http://localhost127.0.0.1:8137".
+	displayHost := bindHost
+	if displayHost == "" {
+		displayHost = "localhost" // all interfaces: localhost is the address that works locally
+	}
+	log.Printf("NexWiki web server is running on http://%s:%s", displayHost, *port)
 
 	// Bind-or-halt: a normal launch IS the web server. If the port is already in use or
 	// misconfigured, it halts rather than silently falling back. To run a stdio MCP server

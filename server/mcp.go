@@ -494,7 +494,12 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 		// Read body
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+			// LimitRequestBodies caps this endpoint at 8 MB, and overrunning that cap surfaces
+			// here as a read failure. Reporting it as a flat 400 told a client its request was
+			// malformed when the request was fine and merely too big — the same misdirection
+			// §2.8 fixed for the REST handlers, which all route through writeDecodeError. The
+			// MCP endpoint was the one that never got it, so it answers 413 naming the limit.
+			writeDecodeError(w, err)
 			return
 		}
 		defer func() { _ = r.Body.Close() }()

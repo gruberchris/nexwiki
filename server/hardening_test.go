@@ -219,3 +219,49 @@ func TestApplyArticleEditPreservesTagsWhenNil(t *testing.T) {
 		t.Errorf("expected ErrVersionConflict for a stale version, got %v", err)
 	}
 }
+
+// TestMCPEndpointReturns413ForOversizedBody pins the gap the REST handlers never had: the MCP
+// endpoint read its body directly and reported any failure as a flat 400 "Failed to read request
+// body", so an oversized payload was described as malformed when it was well-formed and merely
+// too big. An agent told its JSON is invalid rewrites the JSON; the actual fix is to send less.
+//
+// The endpoint is the one place on the server where that mattered most, since it is the surface
+// an automated client hammers without a human reading the error.
+func TestMCPEndpointReturns413ForOversizedBody(t *testing.T) {
+	srv := newMCPServer(t)
+	handler := LimitRequestBodies(http.HandlerFunc(srv.HandleStreamableHTTP))
+
+	oversized := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_wiki_article",` +
+		`"arguments":{"title":"Huge","content":"` + strings.Repeat("x", int(maxJSONBodyBytes)+1024) + `"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/mcp", strings.NewReader(oversized))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized MCP body: expected 413, got %d (%s)", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+	// The message has to name the ceiling, or the client has nothing to act on.
+	if !strings.Contains(w.Body.String(), "MB limit") {
+		t.Errorf("413 should name the limit, got %q", strings.TrimSpace(w.Body.String()))
+	}
+
+	// A well-formed request of normal size still works, and genuinely malformed JSON still gets
+	// the JSON-RPC parse error rather than being swept into the size path.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Errorf("normal MCP request: expected 200, got %d", w2.Code)
+	}
+
+	req3 := httptest.NewRequest(http.MethodPost, "/api/mcp", strings.NewReader(`{not json`))
+	req3.Header.Set("Content-Type", "application/json")
+	w3 := httptest.NewRecorder()
+	handler.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusBadRequest || !strings.Contains(w3.Body.String(), "-32700") {
+		t.Errorf("malformed JSON should still be a -32700 parse error, got %d (%s)",
+			w3.Code, strings.TrimSpace(w3.Body.String()))
+	}
+}
