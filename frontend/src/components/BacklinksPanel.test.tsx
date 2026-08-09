@@ -68,3 +68,42 @@ describe('BacklinksPanel', () => {
     expect(onNavigate).toHaveBeenCalledWith('linking-article');
   });
 });
+
+describe('BacklinksPanel slug changes', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('never shows a previous article\'s backlinks after navigating', async () => {
+    // Results are tagged with the slug they were fetched for. Previously the component cleared
+    // state synchronously at the top of the effect to achieve this, which forced an extra render
+    // pass on every navigation; the tagging does the same job without one.
+    let resolveFirst: (v: unknown) => void = () => {};
+    const first = new Promise((r) => { resolveFirst = r; });
+
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(first)
+      .mockResolvedValueOnce({ ok: true, json: async () => [] });
+
+    const { rerender } = render(<BacklinksPanel slug="page-a" onNavigate={vi.fn()} />);
+    rerender(<BacklinksPanel slug="page-b" onNavigate={vi.fn()} />);
+
+    // page-a's response lands *after* we already navigated to page-b.
+    resolveFirst({ ok: true, json: async () => mockBacklinks });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Linking Article')).not.toBeInTheDocument();
+    });
+  });
+
+  it('renders backlinks for the current slug', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValue({ ok: true, json: async () => mockBacklinks });
+
+    render(<BacklinksPanel slug="page-a" onNavigate={vi.fn()} />);
+    expect(await screen.findByText('Linking Article')).toBeInTheDocument();
+  });
+});

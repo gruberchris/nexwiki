@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Slugify } from '../utils';
 import { AlignLeft } from 'lucide-react';
 
@@ -45,7 +45,7 @@ function parseHeadings(markdown: string): HeadingItem[] {
     const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
     if (headingMatch) {
       const hashes = headingMatch[1];
-      const text = headingMatch[2].replace(/[#*`_\[\]]/g, '').trim(); // Remove formatting symbols
+      const text = headingMatch[2].replace(/[#*`_[\]]/g, '').trim(); // Remove formatting symbols
       const level = hashes.length;
       const id = Slugify(text);
       
@@ -59,12 +59,11 @@ function parseHeadings(markdown: string): HeadingItem[] {
 }
 
 export const TOC: React.FC<TOCProps> = ({ content }) => {
-  const [headings, setHeadings] = useState<HeadingItem[]>([]);
+  // Headings are derived purely from the content prop, so they are memoized rather than mirrored
+  // into state by an effect. The effect form re-rendered twice for every content change and is
+  // the "you might not need an effect" anti-pattern.
+  const headings = useMemo(() => parseHeadings(content), [content]);
   const [activeId, setActiveId] = useState<string>('');
-
-  useEffect(() => {
-    setHeadings(parseHeadings(content));
-  }, [content]);
 
   // Track active heading on scroll using IntersectionObserver
   useEffect(() => {
