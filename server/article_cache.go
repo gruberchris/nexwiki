@@ -31,9 +31,10 @@ type articleCacheEntry struct {
 
 	// meta is the metadata-only parse (no body), matching what ListArticles returns.
 	meta Article
-	// linkTargets are the outbound WikiLink targets in the body, already Slugify-resolved.
-	// Populated lazily: only backlink scans need them, and they require reading the body.
-	linkTargets []string
+	// links are the outbound WikiLinks in the body, each carrying both the raw target as
+	// written and the slug it resolves to. Populated lazily: only link scans need them, and
+	// they require reading the body.
+	links       []WikiLinkRef
 	linksLoaded bool
 }
 
@@ -71,20 +72,20 @@ func (c *articleCache) store(path string, info fs.FileInfo, meta Article) *artic
 	return entry
 }
 
-// setLinks attaches the outbound link targets to an entry, under the cache lock so a concurrent
-// reader never observes a half-populated slice.
-func (c *articleCache) setLinks(entry *articleCacheEntry, targets []string) {
+// setLinks attaches the outbound links to an entry, under the cache lock so a concurrent reader
+// never observes a half-populated slice.
+func (c *articleCache) setLinks(entry *articleCacheEntry, refs []WikiLinkRef) {
 	c.mu.Lock()
-	entry.linkTargets = targets
+	entry.links = refs
 	entry.linksLoaded = true
 	c.mu.Unlock()
 }
 
-// links reads an entry's cached link targets, reporting whether they have been populated.
-func (c *articleCache) links(entry *articleCacheEntry) ([]string, bool) {
+// links reads an entry's cached outbound links, reporting whether they have been populated.
+func (c *articleCache) links(entry *articleCacheEntry) ([]WikiLinkRef, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return entry.linkTargets, entry.linksLoaded
+	return entry.links, entry.linksLoaded
 }
 
 // prune drops entries for files that no longer exist, so a long-lived process does not accumulate
@@ -132,16 +133,16 @@ func (a Article) clone() Article {
 	return dup
 }
 
-// cachedLinkTargets returns the outbound WikiLink targets for one article, reading the body only
-// when the file changed or the links have not been scanned yet. Backlink lookups are O(articles)
-// scans by nature; caching the parse keeps repeated lookups from re-reading the whole wiki.
-func (s *Storage) cachedLinkTargets(path string, info fs.FileInfo) ([]string, error) {
+// cachedLinkTargets returns the outbound WikiLinks for one article, reading the body only when the
+// file changed or the links have not been scanned yet. Link scans are O(articles) by nature;
+// caching the parse keeps repeated lookups from re-reading the whole wiki.
+func (s *Storage) cachedLinkTargets(path string, info fs.FileInfo) ([]WikiLinkRef, error) {
 	entry, _, err := s.cachedMeta(path, info)
 	if err != nil {
 		return nil, err
 	}
-	if targets, ok := s.cache.links(entry); ok {
-		return targets, nil
+	if refs, ok := s.cache.links(entry); ok {
+		return refs, nil
 	}
 
 	data, err := os.ReadFile(path)
@@ -153,16 +154,15 @@ func (s *Storage) cachedLinkTargets(path string, info fs.FileInfo) ([]string, er
 		return nil, err
 	}
 
-	// Store resolved slugs rather than raw targets: every consumer compares against a slug, and
-	// resolving once here keeps Slugify off the hot path of each backlink query.
+	// Resolve each target once here, so Slugify stays off the hot path of every lookup. The raw
+	// target is kept alongside it because a broken-link report has to name the link as the author
+	// wrote it — "[[Search Design]]" is what they have to find in the file to fix it.
 	raw := ExtractWikiLinkTargets(full.Content)
-	targets := make([]string, 0, len(raw))
+	refs := make([]WikiLinkRef, 0, len(raw))
 	for _, target := range raw {
-		if slug := Slugify(target); slug != "" {
-			targets = append(targets, slug)
-		}
+		refs = append(refs, WikiLinkRef{Target: target, Slug: Slugify(target)})
 	}
 
-	s.cache.setLinks(entry, targets)
-	return targets, nil
+	s.cache.setLinks(entry, refs)
+	return refs, nil
 }

@@ -106,6 +106,7 @@ var mcpToolRegistry = []toolDef{
 	getContextOverviewTool,
 	exportOkfBundleTool,
 	importOkfBundleTool,
+	wikiHealthTool,
 }
 
 // toolsByName indexes the registry for O(1) dispatch. Built once at init from the same slice

@@ -41,19 +41,24 @@ type SearchOptions struct {
 	legacyQueryHeuristics bool
 }
 
-// allowsArchived reports whether an archived document should survive filtering. A document counts
-// as archived either by its archived_at timestamp or by carrying the "archived" tag.
-func (o SearchOptions) allowsArchived(art *Article, queryLower string) bool {
-	isArchived := !art.ArchivedAt.IsZero()
-	if !isArchived {
-		for _, tag := range art.Tags {
-			if strings.EqualFold(tag, "archived") {
-				isArchived = true
-				break
-			}
+// IsArchived reports whether a document counts as archived: either by its archived_at timestamp
+// or by carrying the "archived" tag. Both forms exist because the browser archives by tag while
+// the storage layer records a timestamp, and a caller that checks only one silently misses half.
+func IsArchived(art *Article) bool {
+	if !art.ArchivedAt.IsZero() {
+		return true
+	}
+	for _, tag := range art.Tags {
+		if strings.EqualFold(tag, "archived") {
+			return true
 		}
 	}
-	if !isArchived {
+	return false
+}
+
+// allowsArchived reports whether an archived document should survive filtering.
+func (o SearchOptions) allowsArchived(art *Article, queryLower string) bool {
+	if !IsArchived(art) {
 		return true
 	}
 	if o.IncludeArchived {
