@@ -251,11 +251,15 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 			continue
 		}
 
-		// Permissive typing: an unrecognized/missing type is defaulted to Wiki and flagged.
-		if normalizeType(art.Type) == ContentTypeWiki && strings.TrimSpace(art.Type) != ContentTypeWiki && strings.TrimSpace(art.Type) != "" {
-			report.MissingType = append(report.MissingType, art.Slug)
-		}
-		if strings.TrimSpace(art.Type) == "" {
+		// Permissive typing (OKF §9): an unrecognized or missing type is defaulted to Wiki and
+		// flagged rather than rejected.
+		//
+		// This reads DeclaredType, the raw front-matter value, not Type. parseArticleFile
+		// normalizes Type on the way out, so by the time the document arrives here Type is always
+		// one of the four canonical values — the checks below used to compare against it and could
+		// therefore never fire, leaving MissingType permanently empty. The coercion happened; only
+		// the report of it was missing, which is the half that makes permissiveness auditable.
+		if art.DeclaredType == "" || normalizeType(art.DeclaredType) != art.DeclaredType {
 			report.MissingType = append(report.MissingType, art.Slug)
 		}
 

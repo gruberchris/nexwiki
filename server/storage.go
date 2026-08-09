@@ -42,6 +42,13 @@ type Article struct {
 	// ContentPreview holds the first content line during metadata-only parses
 	// (used as a description fallback in indexes); never serialized.
 	ContentPreview string `json:"-"`
+
+	// DeclaredType is the raw `type` exactly as it appeared in the front matter, before
+	// normalization coerced it. Type above is always one of the four canonical values, so it
+	// cannot tell an explicit "Wiki" from a missing or unrecognized type — which is precisely the
+	// distinction the OKF import report has to make when it flags a coerced document. Never
+	// serialized; empty for documents built in memory rather than parsed.
+	DeclaredType string `json:"-"`
 }
 
 // Storage manages persistent article files and uploaded assets on disk.
@@ -640,14 +647,15 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 	}
 
 	art := &Article{
-		Type:        normalizeType(fm.Type),
-		Title:       fm.Title,
-		Slug:        fm.Slug,
-		Description: fm.Description,
-		Resource:    fm.Resource,
-		Source:      fm.Source,
-		Version:     fm.Version,
-		EditSummary: fm.EditSummary,
+		Type:         normalizeType(fm.Type),
+		DeclaredType: strings.TrimSpace(fm.Type),
+		Title:        fm.Title,
+		Slug:         fm.Slug,
+		Description:  fm.Description,
+		Resource:     fm.Resource,
+		Source:       fm.Source,
+		Version:      fm.Version,
+		EditSummary:  fm.EditSummary,
 	}
 	// Clean and copy the tag list (drop blanks).
 	for _, t := range fm.Tags {
@@ -668,9 +676,23 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 		}
 	}
 
-	// Basic check
+	// `slug` is a NexWiki *custom* front-matter key, not an OKF canonical one, so a conformant
+	// bundle produced by any other tool will not carry it. Requiring it here meant
+	// import_okf_bundle rejected every document in a third-party bundle — the interoperability
+	// feature only worked against NexWiki's own exports.
+	//
+	// Deriving it is exact rather than a guess: saveArticleLocked writes every article as
+	// Slugify(title).md and stores that same value in the front matter, so on disk the two can
+	// never disagree. A document that omits it therefore gets precisely the slug it would have
+	// been written with.
+	if art.Slug == "" {
+		art.Slug = Slugify(art.Title)
+	}
+
+	// Basic check. `title` stays required — it is an OKF canonical key, and without it there is
+	// nothing to derive a slug from either.
 	if art.Title == "" || art.Slug == "" {
-		return nil, fmt.Errorf("invalid format: title and slug are required in front matter")
+		return nil, fmt.Errorf("invalid format: front matter must carry a title (and a slug, or a title that yields one)")
 	}
 
 	if loadContent {
