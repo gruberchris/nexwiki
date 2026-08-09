@@ -73,6 +73,8 @@ To run a **stdio MCP server next to an already-running web primary** — which i
 
 The NexWiki MCP server registers and exposes **twenty-seven** semantic tools for AI agents, covering search and reads, article writes with optimistic locking, revision history and reverts, tag management, AI memory lifecycle, collaborative plans, the custom skills registry, progressive-disclosure orientation, backlink traversal, activity history, and OKF bundle import/export.
 
+NexWiki also exposes **Resources** (`nexwiki://article/{slug}`) so a user can `@`-mention a wiki page directly, and **`subscriptions/listen`** so an agent is notified the moment a document is edited or the document set changes — see [docs/mcp_server.md](./docs/mcp_server.md#-resources---mention-a-wiki-page).
+
 Every tool carries MCP **annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`) so clients can auto-approve safe reads and confirm destructive writes. `openWorldHint` is `false` on all 27 — the entire surface is local. See [docs/mcp_server.md](./docs/mcp_server.md#-tool-annotations--fewer-approval-prompts).
 
 📖 **The complete reference — every tool, argument, and behavior — lives in [docs/mcp_server.md](./docs/mcp_server.md).** It is kept in lockstep with `server/mcp.go`; this file intentionally does not duplicate it.

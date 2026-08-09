@@ -157,16 +157,23 @@ func TestServerDiscover(t *testing.T) {
 	if !ok {
 		t.Fatalf("discover must report capabilities, got %v", result["capabilities"])
 	}
-	for _, want := range []string{"tools", "prompts"} {
+	for _, want := range []string{"tools", "prompts", "resources"} {
 		if _, ok := caps[want]; !ok {
 			t.Errorf("capabilities should advertise %q", want)
 		}
 	}
-	// Capabilities NexWiki does not implement must not be advertised.
-	for _, unwanted := range []string{"resources", "subscriptions"} {
-		if _, ok := caps[unwanted]; ok {
-			t.Errorf("capabilities must not advertise unimplemented %q", unwanted)
-		}
+	// The resources sub-features are claimed only because they are genuinely served: articles
+	// are created and deleted (listChanged) and edited (subscribe).
+	resources, ok := caps["resources"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("resources capability should be an object, got %T", caps["resources"])
+	}
+	if resources["listChanged"] != true || resources["subscribe"] != true {
+		t.Errorf("resources capability should claim listChanged and subscribe, got %v", resources)
+	}
+	// A capability NexWiki does not serve must not be advertised.
+	if _, ok := caps["completions"]; ok {
+		t.Error("capabilities must not advertise unimplemented completions")
 	}
 	if _, ok := result["instructions"].(string); !ok {
 		t.Error("discover should carry instructions for the agent")

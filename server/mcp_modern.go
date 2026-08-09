@@ -29,6 +29,7 @@ const (
 	metaClientInfo         = "io.modelcontextprotocol/clientInfo"
 	metaClientCapabilities = "io.modelcontextprotocol/clientCapabilities"
 	metaServerInfo         = "io.modelcontextprotocol/serverInfo"
+	metaSubscriptionID     = "io.modelcontextprotocol/subscriptionId"
 )
 
 // MCP-defined error codes in the specification's reserved -32020..-32099 sub-range.
@@ -38,6 +39,7 @@ const (
 	errCodeUnsupportedProtocolVersion = -32022
 	errCodeMethodNotFound             = -32601
 	errCodeInvalidParams              = -32602
+	errCodeInternal                   = -32603
 )
 
 // requestMeta holds the per-request protocol fields a modern client sends in `params._meta`.
@@ -222,12 +224,14 @@ func (srv *Server) implementation() map[string]interface{} {
 	}
 }
 
-// serverCapabilities lists what NexWiki implements. Resources and subscriptions are deliberately
-// absent — advertising a capability the server does not serve is worse than omitting it.
+// serverCapabilities lists what NexWiki implements. A capability is advertised only when it is
+// genuinely served: `resources` claims listChanged and subscribe because articles really are
+// created, deleted, and edited, and the EventBus really does report it.
 func serverCapabilities() map[string]interface{} {
 	return map[string]interface{}{
-		"tools":   map[string]interface{}{},
-		"prompts": map[string]interface{}{},
+		"tools":     map[string]interface{}{},
+		"prompts":   map[string]interface{}{},
+		"resources": resourceCapability(),
 	}
 }
 
@@ -266,6 +270,15 @@ func (srv *Server) handleModernMethod(method string, env paramsEnvelope) (interf
 
 	case "prompts/get":
 		return srv.getPrompt(env.Raw)
+
+	case "resources/list":
+		return srv.listResources()
+
+	case "resources/templates/list":
+		return srv.listResourceTemplates()
+
+	case "resources/read":
+		return srv.readResource(env.Raw)
 
 	default:
 		return nil, &JSONRPCError{
