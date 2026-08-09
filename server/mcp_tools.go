@@ -1,6 +1,11 @@
 package server
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+)
 
 // toolDef pairs an MCP tool's JSON schema with the handler that executes it. Keeping them in
 // one value is the point of the registry: previously the schema lived in a 760-line literal and
@@ -134,4 +139,56 @@ var listedTools = func() []map[string]interface{} {
 // toolSchemas projects the registry into the tools/list payload.
 func toolSchemas() []map[string]interface{} {
 	return listedTools
+}
+
+// decodeToolArgs unmarshals a tool's "arguments" object, reporting a malformed payload as its own
+// distinct error.
+//
+// Handlers used to fold this into their required-field check —
+// `if err := json.Unmarshal(...); err != nil || args.Slug == ""` — which blames whichever field
+// the handler happens to name first no matter what actually went wrong. Passing search_wiki a
+// string `type` (the schema wants an array) reported "Missing or invalid 'query' argument" for a
+// request whose query was present and fine, sending the agent to fix the one argument that was
+// already correct. A wrong type is exactly the mistake a model makes reading a schema, so the
+// message it gets back needs to name the field it really got wrong.
+func decodeToolArgs(args json.RawMessage, dst interface{}) *JSONRPCError {
+	if err := json.Unmarshal(args, dst); err != nil {
+		return &JSONRPCError{Code: -32602, Message: "Invalid arguments: " + describeDecodeError(err)}
+	}
+	return nil
+}
+
+// describeDecodeError renders a JSON decode failure in terms of the offending argument, falling
+// back to the decoder's own text when the error carries no field information.
+func describeDecodeError(err error) string {
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) && typeErr.Field != "" {
+		return fmt.Sprintf("'%s' expects %s, got %s", typeErr.Field, schemaTypeName(typeErr.Type), typeErr.Value)
+	}
+	return err.Error()
+}
+
+// schemaTypeName names a Go type the way the tool's JSON Schema does. The caller is an agent that
+// read `"type": "array"` from tools/list, so answering with Go's `[]string` describes the mistake
+// in a vocabulary the agent has no reason to recognize.
+func schemaTypeName(t reflect.Type) string {
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array:
+		return "array"
+	case reflect.Map, reflect.Struct:
+		return "object"
+	case reflect.String:
+		return "string"
+	case reflect.Bool:
+		return "boolean"
+	case reflect.Float32, reflect.Float64:
+		return "number"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "integer"
+	case reflect.Ptr:
+		return schemaTypeName(t.Elem())
+	default:
+		return t.String()
+	}
 }

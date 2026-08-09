@@ -267,7 +267,10 @@ func (srv *Server) toolImportOkfBundle(args json.RawMessage) (interface{}, *JSON
 		Path string `json:"path"`
 	}
 	var iArgs ImportArgs
-	if err := json.Unmarshal(args, &iArgs); err != nil || strings.TrimSpace(iArgs.Path) == "" {
+	if e := decodeToolArgs(args, &iArgs); e != nil {
+		return nil, e
+	}
+	if strings.TrimSpace(iArgs.Path) == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'path' argument"}
 	}
 	data, err := os.ReadFile(iArgs.Path)
