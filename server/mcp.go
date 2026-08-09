@@ -448,6 +448,8 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 			select {
 			case <-notify:
 				return
+			case <-srv.shutdownSignal():
+				return // let the process shut down instead of holding the connection open
 			case <-ticker.C:
 				_, _ = fmt.Fprint(w, ": keepalive\n\n")
 				flusher.Flush()

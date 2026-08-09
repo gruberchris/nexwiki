@@ -260,7 +260,16 @@ func main() {
 		sig := <-sigCh
 		log.Printf("Received %s: shutting down gracefully...", sig)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		// Tell open response streams to end first. http.Server.Shutdown waits for connections to
+		// go *idle*, and an SSE stream never does — a single browser tab on the wiki would
+		// otherwise hold shutdown open until the deadline.
+		srv.BeginShutdown()
+
+		// The deadline sits below a container runtime's default 10s stop grace (docker stop,
+		// Kubernetes terminationGracePeriodSeconds) on purpose: if shutdown overruns it, the
+		// supervisor SIGKILLs the process before closeResources() can close the search index,
+		// which is the corruption this whole path exists to avoid.
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if err := httpServer.Shutdown(ctx); err != nil {
 			log.Printf("Warning: graceful shutdown timed out: %v", err)
@@ -282,6 +291,10 @@ func main() {
 	closeResources()
 	log.Printf("NexWiki shut down cleanly.")
 }
+
+// shutdownTimeout bounds graceful shutdown. Deliberately under the 10s stop grace period a
+// container runtime allows by default, so the index is always closed before any SIGKILL.
+const shutdownTimeout = 5 * time.Second
 
 // storageOpenTimeout bounds how long startup waits for the search-index lock before concluding
 // another process holds it. Generous enough for a cold index rebuild on slow disks, short enough
