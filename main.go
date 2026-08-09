@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"embed"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -10,8 +12,10 @@ import (
 	"net/http"
 	"nexwiki/server"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -93,9 +97,11 @@ func main() {
 	// Persist activity events durably to data/activity.jsonl.
 	// When running as a mcp-only sidecar alongside a web server, events are forwarded via HTTP
 	// instead of written here — this prevents two processes writing the same file concurrently.
+	var openActivityLog *server.ActivityLog
 	if activityLog, err := server.OpenActivityLog(*dataDir); err != nil {
 		log.Printf("Warning: activity log persistence disabled: %v", err)
 	} else {
+		openActivityLog = activityLog
 		eventBus.SetPersist(func(ev server.LogEvent) {
 			if !srv.IsSecondaryProcess {
 				if err := activityLog.Append(ev); err != nil {
@@ -105,10 +111,25 @@ func main() {
 		})
 	}
 
+	// closeResources releases the Bleve index and the activity log file handle. Skipping this on
+	// exit is what leaves the search index inconsistent after a `docker stop`, so every exit path
+	// below routes through it.
+	closeResources := func() {
+		if openActivityLog != nil {
+			if err := openActivityLog.Close(); err != nil {
+				log.Printf("Warning: failed to close activity log: %v", err)
+			}
+		}
+		if err := storage.Close(); err != nil {
+			log.Printf("Warning: failed to close storage: %v", err)
+		}
+	}
+
 	// In -mcp-only mode, run the stdio MCP server in the foreground and never bind the web port.
 	if mcpOnlyMode {
 		log.Printf("Running in stdio MCP-only mode (no web server). All MCP tools operate against the in-process storage layer.")
 		srv.StartMCPServer() // blocks until stdin EOF
+		closeResources()
 		return
 	}
 
@@ -184,14 +205,49 @@ func main() {
 	handler := server.EnableCORS(mux)
 
 	addr := fmt.Sprintf(":%s", *port)
+
+	// Explicit timeouts: the zero-value http.Server has none, leaving the process open to
+	// Slowloris-style connection exhaustion. WriteTimeout stays 0 because /api/mcp and
+	// /api/activity/stream are long-lived streams that a write deadline would sever.
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
+	// Shut down cleanly on SIGINT/SIGTERM (i.e. Ctrl-C and `docker stop`) so in-flight requests
+	// finish and, critically, the Bleve index and activity log are closed rather than killed.
+	shutdownDone := make(chan struct{})
+	go func() {
+		defer close(shutdownDone)
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		sig := <-sigCh
+		log.Printf("Received %s: shutting down gracefully...", sig)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(ctx); err != nil {
+			log.Printf("Warning: graceful shutdown timed out: %v", err)
+		}
+	}()
+
 	log.Printf("NexWiki web server is running on http://localhost%s", addr)
 
 	// Bind-or-halt: a normal launch IS the web server. If the port is already in use or
 	// misconfigured, it halts rather than silently falling back. To run a stdio MCP server
 	// alongside an already-running web server, use -mcp-only instead.
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	err = httpServer.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		closeResources()
 		log.Fatalf("Fatal: could not bind web server to %s: %v\nIf you intended to run a stdio MCP server alongside an existing web server, relaunch with the -mcp-only flag (or NEXWIKI_MCP_ONLY=true).", addr, err)
 	}
+
+	<-shutdownDone
+	closeResources()
+	log.Printf("NexWiki shut down cleanly.")
 }
 
 // probeForPrimary reports whether a NexWiki web server is already running on the given port,

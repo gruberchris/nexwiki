@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -263,5 +265,100 @@ func TestStorageUpdateArticleTags(t *testing.T) {
 	_, err = storage.UpdateArticleTags(art.Slug, []string{"fail"}, 1, "Should conflict")
 	if err == nil {
 		t.Errorf("Expected version conflict error, got nil")
+	}
+}
+
+// TestSearchSnippetsAreHTMLEscaped guards the search-snippet XSS sink: the frontend renders
+// SearchResult.Snippets with dangerouslySetInnerHTML, so every snippet the server emits must be
+// entity-escaped. Bleve escapes the fragments it produces; the empty-fragment fallback path in
+// SearchArticles must do the same for the raw article body it slices.
+func TestSearchSnippetsAreHTMLEscaped(t *testing.T) {
+	storage, err := NewStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("Failed to initialize storage: %v", err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+
+	payload := `<img src=x onerror="alert(1)">`
+	art, err := storage.SaveArticle("", "Xss Probe Page", payload+"\n\nzqxjrare body text",
+		"", "", "", "seed", nil, "")
+	if err != nil {
+		t.Fatalf("SaveArticle failed: %v", err)
+	}
+	if err := storage.IndexArticle(art); err != nil {
+		t.Fatalf("IndexArticle failed: %v", err)
+	}
+
+	// Query by exact title so the agent-type filter does not exclude the hit, and so Bleve is
+	// likely to match on the title field (the path that yields no content fragments).
+	results, err := storage.SearchArticles("Xss Probe Page")
+	if err != nil {
+		t.Fatalf("SearchArticles failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one search result")
+	}
+
+	for _, res := range results {
+		for _, snippet := range res.Snippets {
+			// <mark>/</mark> are the highlighter's own tags and are the only markup allowed
+			// through; any other raw tag means article text reached the DOM unescaped.
+			stripped := strings.NewReplacer("<mark>", "", "</mark>", "").Replace(snippet)
+			if strings.Contains(stripped, "<") {
+				t.Errorf("snippet contains unescaped markup and would execute in the browser: %q", snippet)
+			}
+		}
+	}
+}
+
+// TestConcurrentSavesDoNotLoseRevisions guards the version-assignment race. SaveArticle picks the
+// next revision number by scanning the history directory and then writes it; without writeMu, two
+// writers can both observe the same highest version, compute the same successor, and have one
+// silently overwrite the other's gzip snapshot. Run with -race.
+func TestConcurrentSavesDoNotLoseRevisions(t *testing.T) {
+	storage, err := NewStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("Failed to initialize storage: %v", err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+
+	if _, err := storage.SaveArticle("", "Race Page", "v1", "", "", "", "seed", nil, ""); err != nil {
+		t.Fatalf("seed SaveArticle failed: %v", err)
+	}
+
+	const writers = 12
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	for i := 0; i < writers; i++ {
+		go func(n int) {
+			defer wg.Done()
+			_, _ = storage.SaveArticle("race-page", "Race Page", fmt.Sprintf("body %d", n),
+				"", "", "", fmt.Sprintf("edit %d", n), nil, "")
+		}(i)
+	}
+	wg.Wait()
+
+	// Each of the seed + concurrent writes must have produced its own history snapshot, numbered
+	// contiguously from 1. A gap or a short count means a revision was overwritten.
+	history, err := storage.GetArticleHistory("race-page")
+	if err != nil {
+		t.Fatalf("GetArticleHistory failed: %v", err)
+	}
+	want := writers + 1
+	if len(history) != want {
+		t.Errorf("expected %d distinct revisions, got %d — a concurrent write clobbered a snapshot", want, len(history))
+	}
+
+	seen := make(map[int]bool, len(history))
+	for _, h := range history {
+		if seen[h.Version] {
+			t.Errorf("duplicate revision number %d in history", h.Version)
+		}
+		seen[h.Version] = true
+	}
+	for v := 1; v <= want; v++ {
+		if !seen[v] {
+			t.Errorf("revision %d missing from history (versions are not contiguous)", v)
+		}
 	}
 }

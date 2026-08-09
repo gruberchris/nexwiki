@@ -4,6 +4,7 @@ NexWiki is an elegant, lightning-fast personal and collaborative knowledge base 
 
 Designed as an **AI-ready second brain**, NexWiki bridges the gap between human notes and artificial intelligence. Beyond serving as a traditional wiki, it runs an always-on Model Context Protocol (MCP) server supporting standard Stdio and the modern Streamable HTTP transport (2025 Spec). This lets AI agents (like Claude, Cursor, and custom tools) instantly query, read, and explore your knowledge base using twenty-seven built-in tools. With first-class workflows for secure AI memories, collaborative plans, and a dynamic custom AI skills registry, NexWiki transforms your personal wiki into an active, collaborative environment where AI assistants can reason, learn, and work directly with you.
 
+<!--suppress CheckImageSize -->
 <img src="images/home-view.png" alt="NexWiki Home View" width="800" />
 
 ---
@@ -92,8 +93,11 @@ All settings can be set via CLI flags. The `NEXWIKI_NAME`, `NEXWIKI_THEME`, and 
 | Stdio MCP-only mode | `-mcp-only` | `NEXWIKI_MCP_ONLY` | `false` | Run as a pure stdio MCP server, skipping the web port bind entirely. Required when spawning a stdio MCP subprocess alongside an already-running web server |
 | Archive auto-delete | — | `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Days after archiving before an article is permanently deleted on startup |
 | Activity archive cap | — | `NEXWIKI_ACTIVITY_MAX_ARCHIVES` | unlimited | Maximum number of rotated `activity-<UTC>.jsonl` archives to retain |
+| Extra browser origins | — | `NEXWIKI_ALLOWED_ORIGINS` | (loopback only) | Comma-separated origins allowed to call the API from a browser, e.g. `https://wiki.example.com`. Needed only when serving NexWiki from a DNS name |
 
 > **Bind-or-halt:** a normal launch *is* the web server — it binds the port or exits rather than silently falling back. To run a stdio MCP server next to an already-running instance, use `-mcp-only`.
+
+> 🔒 **Trust model — NexWiki is unauthenticated.** There are no accounts or passwords: anyone who can reach the port has full read/write/delete access to your wiki *and* to every MCP tool. NexWiki is built for a single user on a trusted machine or private network. Don't put it on the public internet without a VPN or an authenticating proxy in front of it. Browser requests from unknown origins are rejected by default; see [SECURITY.md](./SECURITY.md).
 
 ### 5. Examples
 
@@ -209,6 +213,7 @@ Always mount this path to a persistent local directory or named Docker volume to
 | `NEXWIKI_MCP_ONLY` | `false` | Run as a pure stdio MCP server, skipping the web port bind |
 | `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Days after archiving before an article is permanently deleted on startup |
 | `NEXWIKI_ACTIVITY_MAX_ARCHIVES` | unlimited | Maximum number of rotated `activity-<UTC>.jsonl` archives to retain |
+| `NEXWIKI_ALLOWED_ORIGINS` | (loopback only) | Comma-separated browser origins allowed to call the API, e.g. `https://wiki.example.com`. Needed only when serving NexWiki from a DNS name |
 
 The image ENTRYPOINT defaults to `-port=8080 -data=/app/data`. The simplest approach is to leave both alone and adjust the `-p` host mapping and volume mount instead. If you do need a different in-container port, append `-port=<n>` after the image name (as shown above) — trailing flags override the ENTRYPOINT defaults — and update `-p` to match.
 
@@ -455,6 +460,10 @@ Agents load it automatically when relevant, or invoke it explicitly with `/nexwi
 
 When deploying NexWiki for production use, containerized deployments are highly recommended due to the zero-dependency nature of the single compiled binary.
 
+> 🔒 **Before you deploy: NexWiki has no authentication.** No accounts, no passwords, no API tokens. Anyone who can reach the port can read, edit, and delete every article and drive every MCP tool. The TLS/reverse-proxy configurations below encrypt traffic — they do **not** restrict who may connect.
+>
+> If NexWiki needs to be reachable beyond your own machine, put an authenticating layer in front of it: a VPN (Tailscale, WireGuard), an identity-aware proxy, or your reverse proxy's own auth (Caddy `basic_auth`, `oauth2-proxy`). When serving from a domain, also set `NEXWIKI_ALLOWED_ORIGINS` to that origin so browser requests are accepted. See [SECURITY.md](./SECURITY.md) for the full trust model.
+
 ### 1. Core Deployment Requirements
 - **Persistent Volume**: Since NexWiki stores articles as flat files and hosts the Bleve database on disk, **you must mount a persistent volume** to `/app/data`. If using cloud platforms (like AWS ECS, GCP Cloud Run, fly.io, or DigitalOcean), make sure to attach a persistent block store or network file share (like EFS or GCP Persistent Disk).
 - **Environment Variables**:
@@ -487,9 +496,17 @@ It is highly recommended to terminate SSL (HTTPS) before requests reach the NexW
 
 ```caddy
 wiki.yourdomain.com {
+    # NexWiki has no authentication of its own — the proxy must provide it.
+    # Generate the hash with: caddy hash-password
+    basic_auth {
+        yourname $2a$14$replace.with.your.own.bcrypt.hash
+    }
+
     reverse_proxy localhost:8080
 }
 ```
+
+Run NexWiki with `NEXWIKI_ALLOWED_ORIGINS=https://wiki.yourdomain.com` so browser requests from that domain are accepted.
 
 If using **Nginx**, you must bypass proxy buffering for NexWiki's two streaming endpoints: `/api/mcp` (Streamable HTTP MCP transport) and `/api/activity/stream` (the `EventSource` feed powering the live Activity Drawer and zero-refresh dashboard sync). Without this, both silently stall behind Nginx's default buffering:
 

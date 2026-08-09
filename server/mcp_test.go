@@ -930,15 +930,26 @@ func TestMCPAppendAgentPlanComprehensive(t *testing.T) {
 func TestHandleStreamableHTTP(t *testing.T) {
 	srv := newMCPServer(t)
 
-	// OPTIONS pre-flight
+	// OPTIONS pre-flight from the wiki's own loopback UI: allowed, origin echoed back verbatim.
 	req := httptest.NewRequest("OPTIONS", "/mcp", nil)
+	req.Header.Set("Origin", "http://localhost:8080")
 	w := httptest.NewRecorder()
 	srv.HandleStreamableHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("OPTIONS: expected 200, got %d", w.Code)
 	}
-	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("missing CORS header on OPTIONS")
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:8080" {
+		t.Errorf("OPTIONS: expected echoed loopback origin, got %q", got)
+	}
+
+	// A cross-site page must not be able to drive MCP tools against the unauthenticated server.
+	reqEvil := httptest.NewRequest("POST", "/mcp",
+		strings.NewReader(`{"jsonrpc":"2.0","method":"tools/list","id":1}`))
+	reqEvil.Header.Set("Origin", "https://evil.example")
+	wEvil := httptest.NewRecorder()
+	srv.HandleStreamableHTTP(wEvil, reqEvil)
+	if wEvil.Code != http.StatusForbidden {
+		t.Errorf("cross-site MCP POST: expected 403, got %d", wEvil.Code)
 	}
 
 	// Unsupported method
