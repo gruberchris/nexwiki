@@ -127,7 +127,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
     if (source.toLowerCase() === 'mcp') {
       return (
         <span
-          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-500/10 border border-indigo-550/20 text-indigo-650 dark:text-indigo-400 animate-pulse-subtle shadow-sm select-none"
+          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-500/10 border border-indigo-550/20 text-indigo-650 dark:text-indigo-400 animate-pulse-subtle shadow-xs select-none"
           title="Model Context Protocol AI Agent Tool Execution"
         >
           <Terminal size={10} />
@@ -137,7 +137,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
     }
     return (
       <span
-        className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold bg-slate-500/10 border border-slate-550/20 text-slate-650 dark:text-slate-400 shadow-sm select-none"
+        className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold bg-slate-500/10 border border-slate-550/20 text-slate-650 dark:text-slate-400 shadow-xs select-none"
         title="REST Client Web Interface Operation"
       >
         <User size={10} />
@@ -204,7 +204,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
               onClick={() => setActiveSource('all')}
               className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
                 activeSource === 'all'
-                  ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-600 dark:text-indigo-400 shadow-sm ring-1 ring-indigo-500/20'
+                  ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-600 dark:text-indigo-400 shadow-xs ring-1 ring-indigo-500/20'
                   : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-850'
               }`}
             >
@@ -215,7 +215,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
               onClick={() => setActiveSource('api')}
               className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
                 activeSource === 'api'
-                  ? 'bg-slate-500/10 border-slate-500/30 text-slate-600 dark:text-slate-400 shadow-sm ring-1 ring-slate-500/20'
+                  ? 'bg-slate-500/10 border-slate-500/30 text-slate-600 dark:text-slate-400 shadow-xs ring-1 ring-slate-500/20'
                   : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-850'
               }`}
             >
@@ -226,7 +226,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
               onClick={() => setActiveSource('mcp')}
               className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
                 activeSource === 'mcp'
-                  ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-600 dark:text-indigo-400 shadow-sm ring-1 ring-indigo-500/20'
+                  ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-600 dark:text-indigo-400 shadow-xs ring-1 ring-indigo-500/20'
                   : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-850'
               }`}
             >
@@ -241,7 +241,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
             suggestions={logSuggestions}
             placeholder="Filter by action, agent, tool..."
             onOpenHelp={() => setShowFilterHelp(true)}
-            inputClassName="bg-themeBgSecondary shadow-sm"
+            inputClassName="bg-themeBgSecondary shadow-xs"
           />
         </div>
 

@@ -9,6 +9,12 @@ import (
 )
 
 // ThemeColors defines the color palette mapping for a single mode (light or dark).
+// themeColorFieldCount is how many colours make up a theme variant. It is asserted rather than
+// derived because the same ten names are restated in four places that must agree: this struct,
+// the frontend's ThemeColors interface, the `:root` defaults in index.css, and the Tailwind theme
+// that exposes each one as a utility colour. Changing the set means changing all four.
+const themeColorFieldCount = 10
+
 type ThemeColors struct {
 	BgPrimary       string `json:"bg_primary"`
 	BgSecondary     string `json:"bg_secondary"`

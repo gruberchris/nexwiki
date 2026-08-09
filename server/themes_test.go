@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -315,4 +316,87 @@ func TestOverlappingHolidayDatesAreDeterministic(t *testing.T) {
 // date builds a time.Time for a given month and day in the year 2024.
 func date(month, day int) time.Time {
 	return time.Date(2024, time.Month(month), day, 12, 0, 0, 0, time.UTC)
+}
+
+// TestEveryBuiltInThemeDefinesEveryColor is one half of the guard around the Tailwind v4
+// migration. NexWiki ships 16 built-in themes, each with a light and a dark variant, and every
+// colour reaches the browser as a CSS custom property projected from these fields. A variant that
+// leaves one blank renders that property as the empty string, which silently falls back to
+// whatever :root last set — a broken theme no unit test would otherwise notice, in a theme nobody
+// loads for months.
+//
+// The migration moves the colour mappings out of tailwind.config.js and into CSS `@theme`, so the
+// value of pinning this now is that it is a *pre-migration* baseline: it fails if the port drops a
+// field, rather than only if someone edits a theme by hand.
+func TestEveryBuiltInThemeDefinesEveryColor(t *testing.T) {
+	// Field-by-field rather than reflection, so adding a colour to ThemeColors fails here until
+	// it is deliberately covered — the same reason TestRegistryCoversEveryTool hardcodes a count.
+	fields := func(c ThemeColors) map[string]string {
+		return map[string]string{
+			"bg_primary":       c.BgPrimary,
+			"bg_secondary":     c.BgSecondary,
+			"text_primary":     c.TextPrimary,
+			"text_secondary":   c.TextSecondary,
+			"text_muted":       c.TextMuted,
+			"border_color":     c.BorderColor,
+			"accent_primary":   c.AccentPrimary,
+			"accent_secondary": c.AccentSecondary,
+			"accent_hover":     c.AccentHover,
+			"accent_bg":        c.AccentBg,
+		}
+	}
+
+	if got := len(fields(ThemeColors{})); got != themeColorFieldCount {
+		t.Fatalf("ThemeColors has %d colours mapped here but the contract says %d — update both this "+
+			"test and the frontend's ThemeColors interface, index.css :root, and the Tailwind theme",
+			got, themeColorFieldCount)
+	}
+
+	if len(DefaultThemes) == 0 {
+		t.Fatal("no built-in themes are defined")
+	}
+
+	for _, theme := range DefaultThemes {
+		for _, variant := range []struct {
+			mode   string
+			colors ThemeColors
+		}{{"light", theme.Light}, {"dark", theme.Dark}} {
+			for name, value := range fields(variant.colors) {
+				if strings.TrimSpace(value) == "" {
+					t.Errorf("theme %q (%s): colour %q is empty — it would render as an unset CSS "+
+						"custom property", theme.Name, variant.mode, name)
+				}
+			}
+		}
+	}
+}
+
+// TestThemeColorsSerializeToTheExpectedCSSVariableNames pins the naming contract the whole theme
+// system rests on: useTheme derives each CSS custom property from the JSON field name by replacing
+// underscores with hyphens (`bg_primary` -> `--bg-primary`). Renaming a JSON tag here would
+// silently retarget a CSS variable that index.css and the Tailwind theme still reference by the
+// old name, so the utility keeps resolving — to nothing.
+func TestThemeColorsSerializeToTheExpectedCSSVariableNames(t *testing.T) {
+	raw, err := json.Marshal(ThemeColors{})
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	want := []string{
+		"bg_primary", "bg_secondary", "text_primary", "text_secondary", "text_muted",
+		"border_color", "accent_primary", "accent_secondary", "accent_hover", "accent_bg",
+	}
+	if len(decoded) != len(want) {
+		t.Errorf("ThemeColors serializes %d fields, expected %d: %v", len(decoded), len(want), decoded)
+	}
+	for _, key := range want {
+		if _, ok := decoded[key]; !ok {
+			t.Errorf("ThemeColors is missing the JSON field %q, which the frontend turns into --%s",
+				key, strings.ReplaceAll(key, "_", "-"))
+		}
+	}
 }

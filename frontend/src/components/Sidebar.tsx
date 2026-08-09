@@ -163,7 +163,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <Activity size={14} className="text-indigo-500" />
             {unreadCount > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-500 text-[8px] font-extrabold text-white animate-pulse shadow-sm">
+              <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-500 text-[8px] font-extrabold text-white animate-pulse shadow-xs">
                 +{unreadCount}
               </span>
             )}
@@ -261,7 +261,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onClick={() => setSelectedTag(isSelected ? null : tag)}
                   className={`text-[10px] px-2.5 py-0.5 rounded-full border transition-all cursor-pointer font-medium hover:scale-102 ${
                     isSelected
-                      ? 'bg-themeAccent border-themeAccent text-white font-bold shadow-sm'
+                      ? 'bg-themeAccent border-themeAccent text-white font-bold shadow-xs'
                       : 'bg-themeBgPrimary border-themeBorder text-themeTextMuted hover:bg-themeBgSecondary hover:text-themeTextSecondary'
                   }`}
                 >

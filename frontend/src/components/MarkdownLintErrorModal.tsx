@@ -128,7 +128,7 @@ export const MarkdownLintErrorModal: React.FC<MarkdownLintErrorModalProps> = ({
                 onClick={() => setFilter(t)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all cursor-pointer ${
                   filter === t
-                    ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-sm'
+                    ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-xs'
                     : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-400'
                 }`}
               >

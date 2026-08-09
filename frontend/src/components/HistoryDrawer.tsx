@@ -146,7 +146,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
             </button>
             
             {/* Version revision information banner */}
-            <div className="p-4 rounded-2xl bg-white dark:bg-slate-950 border border-slate-200/50 dark:border-slate-850 shadow-sm flex items-center justify-between gap-4 select-none">
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-950 border border-slate-200/50 dark:border-slate-850 shadow-xs flex items-center justify-between gap-4 select-none">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[10px] font-extrabold font-mono uppercase">
@@ -210,7 +210,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                       isLatest
                         ? 'border-indigo-500/30 dark:border-emerald-500/20 bg-indigo-500/[0.02] dark:bg-emerald-500/[0.01]'
                         : 'border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-950/20'
-                    } hover:border-indigo-500/30 dark:hover:border-indigo-400/20 hover:scale-[1.01] shadow-sm`}
+                    } hover:border-indigo-500/30 dark:hover:border-indigo-400/20 hover:scale-[1.01] shadow-xs`}
                   >
                     {/* Visual left timeline bullet line */}
                     {isLatest && (
@@ -248,7 +248,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                     <div className="flex items-center gap-1.5 shrink-0 select-none">
                       <button
                         onClick={() => handleViewVersion(h.version!)}
-                        className="flex items-center gap-1 py-1.5 px-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-55 dark:hover:bg-slate-800 text-indigo-600 dark:text-indigo-400 font-bold text-[10px] active:scale-95 transition-all shadow-sm"
+                        className="flex items-center gap-1 py-1.5 px-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-55 dark:hover:bg-slate-800 text-indigo-600 dark:text-indigo-400 font-bold text-[10px] active:scale-95 transition-all shadow-xs"
                         title="Compare Diffs"
                       >
                         <Eye size={11} />

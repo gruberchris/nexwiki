@@ -20,7 +20,7 @@ export function ArticleCard({ art, onNavigate, secondary = false, statusTags }: 
   return (
     <div
       onClick={() => onNavigate(art.slug)}
-      className="p-5 rounded-2xl border border-themeBorder bg-themeBgSecondary/40 hover:bg-themeBgSecondary hover:border-themeBorder shadow-sm hover:shadow-md cursor-pointer group flex flex-col justify-between min-h-[120px] transition-all duration-200"
+      className="p-5 rounded-2xl border border-themeBorder bg-themeBgSecondary/40 hover:bg-themeBgSecondary hover:border-themeBorder shadow-xs hover:shadow-md cursor-pointer group flex flex-col justify-between min-h-[120px] transition-all duration-200"
     >
       <div className="space-y-1.5">
         <h3 className={`text-sm font-bold text-themeTextSecondary ${accentHover} truncate transition-colors`}>

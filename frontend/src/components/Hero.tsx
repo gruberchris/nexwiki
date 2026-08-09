@@ -104,7 +104,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                   placeholder={`Search ${wikiName} for articles, keywords, or topics...`}
                   value={ftsQuery}
                   onChange={(e) => setFtsQuery(e.target.value)}
-                  className="w-full pl-12 pr-11 py-4 rounded-2xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-sm shadow-md text-themeTextSecondary placeholder:text-themeTextMuted transition-all font-medium"
+                  className="w-full pl-12 pr-11 py-4 rounded-2xl bg-themeBgSecondary border border-themeBorder focus:outline-hidden focus:ring-2 focus:ring-themeAccent text-sm shadow-md text-themeTextSecondary placeholder:text-themeTextMuted transition-all font-medium"
                 />
                 {ftsQuery && (
                   <button
@@ -119,10 +119,10 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
               </div>
             </div>
             <div className="flex justify-center gap-3">
-              <button type="submit" className="py-2.5 px-6 rounded-xl bg-themeBgPrimary hover:opacity-90 text-themeTextSecondary font-bold text-xs shadow-sm hover:scale-[1.01] active:scale-95 transition-all select-none border border-themeBorder">
+              <button type="submit" className="py-2.5 px-6 rounded-xl bg-themeBgPrimary hover:opacity-90 text-themeTextSecondary font-bold text-xs shadow-xs hover:scale-[1.01] active:scale-95 transition-all select-none border border-themeBorder">
                 Search {wikiName}
               </button>
-              <button type="button" onClick={() => onNavigate('new?title=Markdown%20Playground')} className="py-2.5 px-6 rounded-xl bg-themeBgPrimary hover:opacity-90 text-themeTextSecondary font-bold text-xs shadow-sm hover:scale-[1.01] active:scale-95 transition-all select-none border border-themeBorder">
+              <button type="button" onClick={() => onNavigate('new?title=Markdown%20Playground')} className="py-2.5 px-6 rounded-xl bg-themeBgPrimary hover:opacity-90 text-themeTextSecondary font-bold text-xs shadow-xs hover:scale-[1.01] active:scale-95 transition-all select-none border border-themeBorder">
                 Draft Sandbox
               </button>
             </div>

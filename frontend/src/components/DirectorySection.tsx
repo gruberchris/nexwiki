@@ -60,7 +60,7 @@ export function DirectorySection({
         <button
           onClick={onToggle}
           aria-expanded={isExpanded}
-          className={`flex items-center gap-2 text-lg font-bold text-themeTextSecondary ${accentHover} transition-colors select-none group focus:outline-none`}
+          className={`flex items-center gap-2 text-lg font-bold text-themeTextSecondary ${accentHover} transition-colors select-none group focus:outline-hidden`}
         >
           <ChevronDown
             size={18}
@@ -80,7 +80,7 @@ export function DirectorySection({
             suggestions={suggestions}
             placeholder={filterPlaceholder}
             onOpenHelp={onOpenFilterHelp}
-            inputClassName="bg-themeBgSecondary shadow-sm"
+            inputClassName="bg-themeBgSecondary shadow-xs"
             className="w-full sm:w-80"
             accentRingClass={accentRing}
             accentHoverClass={accentHover}
