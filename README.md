@@ -2,7 +2,7 @@
 
 NexWiki is an elegant, lightning-fast personal and collaborative knowledge base written in **Go** with a modern embedded **React + TypeScript** frontend. It serves as a zero-dependency, self-contained wiki server that preserves your content as standard, human-readable Markdown files.
 
-Designed as an **AI-ready second brain**, NexWiki bridges the gap between human notes and artificial intelligence. Beyond serving as a traditional wiki, it runs an always-on Model Context Protocol (MCP) server supporting standard Stdio and the modern Streamable HTTP transport (2025 Spec). This lets AI agents (like Claude, Cursor, and custom tools) instantly query, read, and explore your knowledge base using twenty-seven built-in tools. With first-class workflows for secure AI memories, collaborative plans, and a dynamic custom AI skills registry, NexWiki transforms your personal wiki into an active, collaborative environment where AI assistants can reason, learn, and work directly with you.
+Designed as an **AI-ready second brain**, NexWiki bridges the gap between human notes and artificial intelligence. Beyond serving as a traditional wiki, it runs an always-on Model Context Protocol (MCP) server supporting standard Stdio and the modern Streamable HTTP transport — serving both the current `2026-07-28` protocol revision and older initialize-based clients on the same endpoint. This lets AI agents (like Claude, Cursor, and custom tools) instantly query, read, and explore your knowledge base using twenty-seven built-in tools. With first-class workflows for secure AI memories, collaborative plans, and a dynamic custom AI skills registry, NexWiki transforms your personal wiki into an active, collaborative environment where AI assistants can reason, learn, and work directly with you.
 
 <!--suppress CheckImageSize -->
 <img src="images/home-view.png" alt="NexWiki Home View" width="800" />
@@ -93,6 +93,7 @@ All settings can be set via CLI flags. The `NEXWIKI_NAME`, `NEXWIKI_THEME`, and 
 | Stdio MCP-only mode | `-mcp-only` | `NEXWIKI_MCP_ONLY` | `false` | Run as a pure stdio MCP server, skipping the web port bind entirely. Required when spawning a stdio MCP subprocess alongside an already-running web server |
 | Archive auto-delete | — | `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Days after archiving before an article is permanently deleted on startup |
 | Activity archive cap | — | `NEXWIKI_ACTIVITY_MAX_ARCHIVES` | unlimited | Maximum number of rotated `activity-<UTC>.jsonl` archives to retain |
+| Bind interface | `-bind` | `NEXWIKI_BIND` | (all interfaces) | Network interface to bind, e.g. `127.0.0.1` to accept only local connections. Leave unset for Docker |
 | Extra browser origins | — | `NEXWIKI_ALLOWED_ORIGINS` | (loopback only) | Comma-separated origins allowed to call the API from a browser, e.g. `https://wiki.example.com`. Needed only when serving NexWiki from a DNS name |
 
 > **Bind-or-halt:** a normal launch *is* the web server — it binds the port or exits rather than silently falling back. To run a stdio MCP server next to an already-running instance, use `-mcp-only`.
@@ -386,7 +387,7 @@ Because NexWiki contains an embedded Model Context Protocol (MCP) server, you ca
 
 ### Connecting over Streamable HTTP (Recommended)
 
-NexWiki supports Streamable HTTP transport ([2025 Spec](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http)) at `/api/mcp`. This allows modern MCP clients to connect over the network rather than stdio pipes — reusing the single running server process and avoiding search-index lock contention entirely.
+NexWiki supports the [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http) at `/api/mcp`, and is **dual-era**: it serves the current `2026-07-28` protocol revision *and* older initialize-based clients on the same endpoint, with no configuration. This allows modern MCP clients to connect over the network rather than stdio pipes — reusing the single running server process and avoiding search-index lock contention entirely.
 
 ```json
 {

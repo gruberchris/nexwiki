@@ -39,6 +39,7 @@ func main() {
 	theme := flag.String("theme", "default", "The default theme of your wiki")
 	themeScheduling := flag.Bool("theme-scheduling", false, "Enable opt-in seasonal theme scheduling auto-swaps")
 	mcpOnly := flag.Bool("mcp-only", false, "Run as a pure stdio MCP server (skip the web port bind entirely)")
+	bindAddr := flag.String("bind", "", "Network interface to bind (e.g. 127.0.0.1 to accept only local connections). Empty binds all interfaces")
 	flag.Parse()
 
 	// NEXWIKI_MCP_ONLY env overrides the flag (e.g., set in a Claude Desktop spawn config).
@@ -226,7 +227,15 @@ func main() {
 	// and cap request body sizes so a single request cannot exhaust memory or disk.
 	handler := server.EnableCORS(server.LimitRequestBodies(mux))
 
-	addr := fmt.Sprintf(":%s", *port)
+	// The MCP spec recommends local servers bind loopback only. That cannot be the default here:
+	// inside a container, binding 127.0.0.1 makes the wiki unreachable from the host, which would
+	// break every existing Docker deployment. So all interfaces stays the default and -bind (or
+	// NEXWIKI_BIND) is the opt-in for people running the binary directly on a shared network.
+	bindHost := *bindAddr
+	if envBind := os.Getenv("NEXWIKI_BIND"); envBind != "" {
+		bindHost = envBind
+	}
+	addr := fmt.Sprintf("%s:%s", bindHost, *port)
 
 	// Explicit timeouts: the zero-value http.Server has none, leaving the process open to
 	// Slowloris-style connection exhaustion. WriteTimeout stays 0 because /api/mcp and
