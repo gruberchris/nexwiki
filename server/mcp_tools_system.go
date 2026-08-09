@@ -28,50 +28,32 @@ var getWikiStatisticsTool = toolDef{
 }
 
 func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JSONRPCError) {
+	// Total Articles counts what a listing shows, which excludes the home dashboard — the same
+	// number every other tool reports. Link scanning below deliberately does include home.
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
 	}
 
-	var fullArticles []*Article
-	var activeSlugs = make(map[string]bool)
-	activeSlugs["home"] = true // Implicitly exists
-
-	for _, artMeta := range articles {
-		art, err := srv.Storage.GetArticle(artMeta.Slug)
-		if err == nil {
-			fullArticles = append(fullArticles, art)
-			activeSlugs[art.Slug] = true
-		}
-	}
-
-	brokenLinks := []BrokenLinkRef{}
-	totalLinks := 0
-
-	for _, art := range fullArticles {
-		for _, target := range ExtractWikiLinkTargets(art.Content) {
-			totalLinks++
-			if !activeSlugs[Slugify(target)] {
-				brokenLinks = append(brokenLinks, BrokenLinkRef{
-					FromSlug:   art.Slug,
-					Target:     target,
-					TargetSlug: Slugify(target),
-				})
-			}
-		}
+	// One cached pass replaces the read-every-file-in-full loop this used to run: the graph is
+	// built from mtime-validated metadata and link caches, and wiki_health shares it rather than
+	// traversing the wiki a second time.
+	graph, err := srv.Storage.ScanLinkGraph()
+	if err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error scanning WikiLinks: %v", err)}}}, nil
 	}
 
 	var respText string
 	respText = "NexWiki Knowledge Base Statistics:\n"
 	respText += fmt.Sprintf("- Total Articles: %d\n", len(articles))
-	respText += fmt.Sprintf("- Total WikiLinks Scanned: %d\n", totalLinks)
-	respText += fmt.Sprintf("- Total Broken/Dead WikiLinks: %d\n\n", len(brokenLinks))
+	respText += fmt.Sprintf("- Total WikiLinks Scanned: %d\n", graph.TotalLinks)
+	respText += fmt.Sprintf("- Total Broken/Dead WikiLinks: %d\n\n", len(graph.Broken))
 
-	if len(brokenLinks) == 0 {
+	if len(graph.Broken) == 0 {
 		respText += "Excellent! All double-bracket WikiLinks are healthy and fully connected! 🎉\n"
 	} else {
 		respText += "Broken/Dead WikiLinks Detected (AI suggestion: create these pages to heal the wiki!):\n"
-		for _, bl := range brokenLinks {
+		for _, bl := range graph.Broken {
 			respText += fmt.Sprintf("  - Link '[[%s]]' inside article '/articles/%s' (Target slug: '%s' is missing)\n",
 				bl.Target, bl.FromSlug, bl.TargetSlug)
 		}
@@ -81,9 +63,9 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 		Content: []ToolContent{{Type: "text", Text: respText}},
 		StructuredContent: StatisticsOutput{
 			TotalArticles:   len(articles),
-			TotalLinks:      totalLinks,
-			BrokenLinkCount: len(brokenLinks),
-			BrokenLinks:     brokenLinks,
+			TotalLinks:      graph.TotalLinks,
+			BrokenLinkCount: len(graph.Broken),
+			BrokenLinks:     graph.Broken,
 		},
 	}, nil
 }

@@ -50,6 +50,7 @@ func structuredCalls() map[string]string {
 		"get_wiki_statistics": `{"name":"get_wiki_statistics","arguments":{}}`,
 		"get_status_tags":     `{"name":"get_status_tags","arguments":{}}`,
 		"get_recent_activity": `{"name":"get_recent_activity","arguments":{}}`,
+		"wiki_health":         `{"name":"wiki_health","arguments":{}}`,
 	}
 }
 

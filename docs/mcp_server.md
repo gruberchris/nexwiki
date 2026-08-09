@@ -26,7 +26,7 @@ The MCP specification changed shape in revision **`2026-07-28`**. NexWiki implem
 | Results | carry `resultType: "complete"` | bare result object |
 | Protocol errors | real HTTP status (`400`/`404`) | `200` with an error body |
 
-**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 27 tools and the same 2 prompts — only the envelope differs.
+**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 28 tools and the same 2 prompts — only the envelope differs.
 
 #### Modern-era requirements
 
@@ -84,17 +84,17 @@ curl -X POST http://localhost:8080/api/mcp \
 
 Every tool carries MCP `annotations` telling your client what calling it actually does. Clients use these to **auto-approve safe reads and confirm destructive writes**, so an agent isn't interrupting you to run `get_context_overview` — the tool the agent skill says to call first in every session.
 
-This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 27 tools might destroy data and reach arbitrary external systems.
+This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 28 tools might destroy data and reach arbitrary external systems.
 
 | Hint | NexWiki's values |
 |---|---|
-| `readOnlyHint` | `true` on **13** tools that never modify the wiki |
+| `readOnlyHint` | `true` on **14** tools that never modify the wiki |
 | `destructiveHint` | `false` for creates and appends; `true` for edits, deletes, tag replacement, revert, and bundle import |
 | `idempotentHint` | `true` on the deletes — deleting an already-deleted document changes nothing further |
 | `openWorldHint` | **`false` on every tool, without exception.** The entire surface operates on the local wiki directory and never reaches an external system |
 | `title` | A human-readable display name, e.g. `Get Context Overview` |
 
-**Read-only (13):** `search_wiki` · `read_article` · `list_articles` · `get_article_history` · `get_wiki_statistics` · `list_agent_memories` · `list_agent_plans` · `list_agent_skills` · `get_status_tags` · `get_recent_activity` · `get_backlinks` · `get_context_overview` · `export_okf_bundle`
+**Read-only (14):** `search_wiki` · `read_article` · `list_articles` · `get_article_history` · `get_wiki_statistics` · `list_agent_memories` · `list_agent_plans` · `list_agent_skills` · `get_status_tags` · `get_recent_activity` · `get_backlinks` · `get_context_overview` · `export_okf_bundle` · `wiki_health`
 
 **Additive writes (6)** — create new content, never overwrite: the four `create_*` tools plus `append_agent_memory` and `append_agent_plan`.
 
@@ -106,11 +106,11 @@ This matters because the spec's defaults are **pessimistic**: an unannotated too
 
 ### 📤 Structured output — parse data, don't scrape prose
 
-Eleven read tools declare an **`outputSchema`** and return a **`structuredContent`** object alongside their text. An agent that needs an article's version number to pass as `loaded_version` reads an integer instead of pulling one out of a sentence.
+Twelve read tools declare an **`outputSchema`** and return a **`structuredContent`** object alongside their text. An agent that needs an article's version number to pass as `loaded_version` reads an integer instead of pulling one out of a sentence.
 
 | | |
 |---|---|
-| Tools with `outputSchema` | `search_wiki` · `read_article` · `list_articles` · `list_agent_memories` · `list_agent_plans` · `list_agent_skills` · `get_backlinks` · `get_article_history` · `get_wiki_statistics` · `get_status_tags` · `get_recent_activity` |
+| Tools with `outputSchema` | `search_wiki` · `read_article` · `list_articles` · `list_agent_memories` · `list_agent_plans` · `list_agent_skills` · `get_backlinks` · `get_article_history` · `get_wiki_statistics` · `get_status_tags` · `get_recent_activity` · `wiki_health` |
 | Prose only | every write tool, plus `get_context_overview` (progressive-disclosure prose is its whole purpose), `export_okf_bundle`, and `import_okf_bundle` |
 
 Three properties hold across all of them:
@@ -256,7 +256,7 @@ Exceeding the cap is **not recoverable**: the read loop ends and the stdio chann
 
 > **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port (and is the primary that persists the activity log); if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server, it forwards its activity events to it; with no NexWiki web server, it persists the log itself. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
 
-The NexWiki MCP server registers and exposes twenty-seven powerful tools for AI agents:
+The NexWiki MCP server registers and exposes twenty-eight powerful tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across the **entire** knowledge base using the built-in **Bleve Search** engine — wiki articles *and* your agent memories, plans, and skills.
@@ -623,6 +623,44 @@ Imports an **OKF v0.1 bundle** (`.zip`) from a filesystem path into the knowledg
   * `path` (string, **required**): Filesystem path to the `.zip` bundle.
 * **Behavior**:
   Walks the bundle, parses each non-reserved `.md` as an OKF concept document, maps its `type` (reserved value → agent class; otherwise `Wiki`), translates bundle-relative Markdown links back to `[[WikiLinks]]`, and creates/updates each article via the storage layer (dedup by slug; reserved `index.md`/`log.md` are consumed). The importer is **permissive** (OKF §9): a document with a missing/unknown type defaults to `Wiki` and is flagged in the returned conformance report rather than rejected. REST equivalent: `POST /api/okf/import` (multipart `file` upload).
+
+---
+
+### 28. `wiki_health`
+Audits the knowledge base for maintenance work in one call. Everything it reports is something the wiki already knows but never volunteers.
+
+* **Arguments**:
+  * `stale_days` (integer, *optional*): How many days an in-flight plan may go untouched before counting as stale. Default `30`.
+  * `limit` (integer, *optional*): Maximum items reported **per category**. Default `50`, maximum `500`. Counts are always complete even when the lists are capped.
+* **Behavior**:
+  Runs four checks over a single cached pass of the article directory — the same `LinkGraph` scan `get_wiki_statistics` uses, so the two tools can never disagree about the same wiki:
+
+  | Check | Finds | Why it matters |
+  |---|---|---|
+  | **Orphan pages** | A **wiki article** no other article links to | Unreachable by graph traversal, so an agent following WikiLinks will never find it |
+  | **Broken WikiLinks** | The target does not exist | Names the `target_slug` a fix has to create |
+  | **Memories with no `source`** | An `AI-Agent-Memory` with empty provenance | A fact that cannot be re-verified later |
+  | **Stale plans** | An `AI-Agent-Plan` untouched for `stale_days` and never marked finished | Work that quietly stopped |
+
+  Four rules keep the report actionable rather than noisy:
+
+  * **Archived documents are skipped entirely.** Archiving is you saying "this is done"; reporting it as needing attention inverts that.
+  * **Orphan detection covers wiki articles only.** Memories, plans, and skills are reached through their own list tools, the search facets, and `get_context_overview` — nobody WikiLinks a memory, so flagging every one of them is noise. On an 83-document corpus, scanning every type produced 70 findings, 27 of which were agent documents behaving exactly as designed.
+  * **`home` is never an orphan.** Nothing links to a front page.
+  * **A plan tagged `completed`, `done`, or `superseded` is never stale**, however old, even if it still also carries `wip`. The terminal tag wins.
+
+  A stale plan does **not** need an in-flight tag. Requiring `wip` sounds tidier but makes the check incapable of firing on a real wiki, where plans typically carry a project tag and nothing else — what matters is that the plan was never marked finished and nobody has touched it since. When an in-flight tag (`wip`, `in-progress`, `draft`, `active`, `todo`, `pending`, `review`, `blocked`) *is* present, the report names it.
+* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], stale_plan_count, stale_plans[]}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut.
+
+**Examples**
+
+```jsonc
+// The default audit
+{}
+
+// Only flag plans that have been idle for a quarter, and keep the report short
+{ "stale_days": 90, "limit": 10 }
+```
 
 ---
 

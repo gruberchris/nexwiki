@@ -77,6 +77,104 @@ func ExtractWikiLinkTargets(content string) []string {
 	return targets
 }
 
+// WikiLinkRef is one outbound WikiLink: the raw target as the author wrote it between the double
+// brackets, and the slug it resolves to. Both matter — comparisons use the slug, but a report an
+// author has to act on has to name the text they actually typed.
+type WikiLinkRef struct {
+	Target string
+	Slug   string
+}
+
+// LinkGraph is the whole wiki's WikiLink structure from a single cached pass over the article
+// directory: who links to whom, in both directions, plus the links that go nowhere.
+//
+// One pass, one shape. Broken-link detection and orphan detection need the same traversal in
+// opposite directions, and building it twice would double both the cost and the number of places
+// a subtle rule (home is included, code fences are not links) has to be repeated.
+type LinkGraph struct {
+	// Meta is every document's metadata by slug, including home, which listings exclude.
+	Meta map[string]Article
+	// Outbound is each document's WikiLinks, keyed by the slug of the document holding them.
+	Outbound map[string][]WikiLinkRef
+	// InboundCount is how many *other* documents link to each slug. Self-links do not count:
+	// a page that only links to itself is still an orphan.
+	InboundCount map[string]int
+	// Broken lists every WikiLink whose target does not exist, in document then document order.
+	Broken []BrokenLinkRef
+	// TotalLinks is every WikiLink scanned, broken or not.
+	TotalLinks int
+}
+
+// ScanLinkGraph walks the article directory once and builds the whole link graph.
+//
+// It walks the directory directly rather than going through ListArticles and re-reading each file:
+// metadata and link targets are both cached and validated by mtime, so an unchanged wiki costs one
+// stat per file instead of a full read and Markdown scan — the same reasoning that made
+// GetBacklinks 17.6× faster.
+//
+// home is included. It is excluded from listings, but it links to much of the wiki, so leaving it
+// out would report most of the wiki as orphaned.
+func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
+	graph := &LinkGraph{
+		Meta:         map[string]Article{},
+		Outbound:     map[string][]WikiLinkRef{},
+		InboundCount: map[string]int{},
+		Broken:       []BrokenLinkRef{},
+	}
+
+	var order []string
+	err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() || filepath.Ext(path) != ".md" {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil // unreadable file: skip rather than fail the whole scan
+		}
+		_, meta, err := s.cachedMeta(path, info)
+		if err != nil {
+			return nil
+		}
+		refs, err := s.cachedLinkTargets(path, info)
+		if err != nil {
+			return nil
+		}
+		graph.Meta[meta.Slug] = *meta
+		graph.Outbound[meta.Slug] = refs
+		order = append(order, meta.Slug)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Sorting makes the report stable across runs. Directory walk order is filesystem-dependent,
+	// and an agent diffing two health reports should see only real changes.
+	sort.Strings(order)
+
+	for _, slug := range order {
+		for _, ref := range graph.Outbound[slug] {
+			graph.TotalLinks++
+			if _, exists := graph.Meta[ref.Slug]; !exists {
+				graph.Broken = append(graph.Broken, BrokenLinkRef{
+					FromSlug:   slug,
+					Target:     ref.Target,
+					TargetSlug: ref.Slug,
+				})
+				continue
+			}
+			if ref.Slug != slug {
+				graph.InboundCount[ref.Slug]++
+			}
+		}
+	}
+
+	return graph, nil
+}
+
 // GetBacklinks scans all articles (including the home dashboard, which listings exclude)
 // and returns metadata for every article whose body links to the target slug via a WikiLink.
 // Self-links are skipped. Results are sorted by UpdatedAt descending.
@@ -111,12 +209,12 @@ func (s *Storage) GetBacklinks(targetSlug string) ([]Article, error) {
 			return nil // self-links are not backlinks
 		}
 
-		targets, err := s.cachedLinkTargets(path, info)
+		refs, err := s.cachedLinkTargets(path, info)
 		if err != nil {
 			return nil
 		}
-		for _, target := range targets {
-			if target == cleanedTarget {
+		for _, ref := range refs {
+			if ref.Slug == cleanedTarget {
 				backlinks = append(backlinks, *meta)
 				break
 			}

@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ## [Unreleased]
 
 ### Added
+- **`wiki_health` — a new 28th MCP tool.** One call audits the knowledge base for maintenance work: orphan wiki articles nothing links to, broken WikiLinks, agent memories recorded without a `source`, and plans left unfinished and untouched (`stale_days`, default 30). Archived documents are skipped, `home` is never an orphan, orphan detection covers wiki articles only (nobody WikiLinks a memory), and a plan tagged `completed`, `done`, or `superseded` is never stale however old.
 - **Structured tool output.** Eleven read tools (`search_wiki`, `read_article`, `list_articles`, the three `list_agent_*` tools, `get_backlinks`, `get_article_history`, `get_wiki_statistics`, `get_status_tags`, `get_recent_activity`) now declare an `outputSchema` and return a `structuredContent` object alongside their prose, so an agent parses data instead of scraping sentences — `read_article` hands back `version` as a number to pass straight to `edit_wiki_article` as `loaded_version`. The human-readable text is still emitted and is rendered from the same value, so the two halves cannot disagree; tools without a schema are byte-identical on the wire.
 - **Sidecar proxy mode.** A `-mcp-only` process beside a running web server now forwards MCP traffic to it instead of failing on the search-index lock, so the documented Claude Desktop stdio configuration works. Writes land in the live wiki, and subscription streams are relayed to stdout — live subscriptions a standalone stdio server cannot provide.
 - **MCP Resources.** Every document is exposed at `nexwiki://article/{slug}` via `resources/list`, `resources/read`, and `resources/templates/list`, so a user can `@`-mention a wiki page in their client instead of spending a tool call on it.
@@ -18,6 +19,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `X-Accel-Buffering: no` on SSE responses, so reverse proxies stop buffering the stream.
 
 ### Changed
+- **`get_wiki_statistics` now scans the home page's WikiLinks too.** It built its document set from the article listing, which excludes `home` — so links written on the home page, the page a user is most likely to link from, were never checked. Both it and `wiki_health` now share one cached link-graph scan, replacing a read-every-file-in-full loop.
+
 - **`search_wiki` now searches every document type by default.** Previously memories, plans, and skills were hidden unless the *query text* contained the words "memory", "plan", or "skill" — so a memory about Elasticsearch was invisible to a search for "elasticsearch". Human/browser search is unchanged and still hides agent documents.
 - Article metadata and the WikiLink graph are cached, validated by file modification time so edits made outside NexWiki are still picked up. `ListArticles` is ~7.8× faster and `GetBacklinks` ~17.6× faster on a 200-article wiki.
 - MCP tools moved to a registry that pairs each schema with its handler, so the two cannot drift apart. `server/mcp.go` dropped from 2,323 to 590 lines.
