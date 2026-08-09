@@ -38,6 +38,11 @@ var createAgentMemoryTool = toolDef{
 					"type":        "string",
 					"description": "Optional provenance: where this knowledge came from (URL, document, or session context).",
 				},
+				"tags": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Optional status or user tags to apply. Call get_status_tags to see the recognized status values (e.g. 'draft', 'review'). The tool-managed 'memory-<memory_type>' scope tag is added automatically and cannot be set here.",
+				},
 				"edit_summary": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional revision log description summarizing why this memory was created.",
@@ -52,13 +57,14 @@ var createAgentMemoryTool = toolDef{
 
 func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type CreateMemoryArgs struct {
-		Title          string `json:"title"`
-		Content        string `json:"content"`
-		MemoryType     string `json:"memory_type"`
-		ProjectContext string `json:"project_context"`
-		Description    string `json:"description"`
-		Source         string `json:"source"`
-		EditSummary    string `json:"edit_summary"`
+		Title          string   `json:"title"`
+		Content        string   `json:"content"`
+		MemoryType     string   `json:"memory_type"`
+		ProjectContext string   `json:"project_context"`
+		Description    string   `json:"description"`
+		Source         string   `json:"source"`
+		Tags           []string `json:"tags"`
+		EditSummary    string   `json:"edit_summary"`
 	}
 	var mArgs CreateMemoryArgs
 	if e := decodeToolArgs(args, &mArgs); e != nil {
@@ -72,10 +78,15 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 
 	// The OKF type carries the memory document class; the scope facet rides as a
 	// tool-managed memory-<scope> tag. A bare memory (no scope) carries no scope tag.
-	var tags []string
+	var scopeTags []string
 	if mType != "" {
-		tags = []string{MemoryScopeTagPrefix + Slugify(mType)}
+		scopeTags = []string{MemoryScopeTagPrefix + Slugify(mType)}
 	}
+
+	// Caller tags are merged on top of the tool-managed scope tag, sanitized through the same
+	// helper the REST path uses: the scope tag is re-asserted first so it cannot be displaced, and
+	// a caller cannot forge a memory-<scope> tag of its own.
+	tags := validateAndCleanUserTags(mArgs.Tags, scopeTags)
 
 	title := mArgs.Title
 	slug := Slugify(title)

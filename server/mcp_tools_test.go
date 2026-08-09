@@ -335,3 +335,108 @@ func TestSchemaTypeNameSpeaksJSONSchema(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentCreateToolsAcceptTags is the §9.2 regression. create_wiki_article and
+// create_agent_skill always took a `tags` argument; create_agent_memory and create_agent_plan did
+// not, so an agent that wanted a plan marked "wip" had to follow with update_article_tags — a tool
+// annotated destructiveHint:true, which makes a cautious client stop and ask the user to approve a
+// second call that only existed because the first tool lacked an argument its siblings had.
+func TestAgentCreateToolsAcceptTags(t *testing.T) {
+	t.Run("plan is created wip in one call", func(t *testing.T) {
+		srv := newMCPServer(t)
+		resp := toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Tagged Plan","content":"# Plan","project_context":"nexwiki","tags":["wip"]}}`)
+		if resp.IsError {
+			t.Fatalf("create failed: %s", resp.Content[0].Text)
+		}
+		art, err := srv.Storage.GetArticle("tagged-plan")
+		if err != nil {
+			t.Fatalf("GetArticle failed: %v", err)
+		}
+		if !hasTagFold(art.Tags, "wip") {
+			t.Errorf("caller tag was dropped: %v", art.Tags)
+		}
+		// The derived project tag must survive alongside it, not be replaced by it.
+		if !hasTagFold(art.Tags, "nexwiki") {
+			t.Errorf("project-context tag was lost: %v", art.Tags)
+		}
+	})
+
+	t.Run("memory keeps its tool-managed scope tag", func(t *testing.T) {
+		srv := newMCPServer(t)
+		resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Tagged Memory","content":"# M","memory_type":"nexwiki","tags":["review"]}}`)
+		if resp.IsError {
+			t.Fatalf("create failed: %s", resp.Content[0].Text)
+		}
+		art, _ := srv.Storage.GetArticle("tagged-memory")
+		if !hasTagFold(art.Tags, "review") {
+			t.Errorf("caller tag was dropped: %v", art.Tags)
+		}
+		if !hasTagFold(art.Tags, MemoryScopeTagPrefix+"nexwiki") {
+			t.Errorf("tool-managed scope tag was lost: %v", art.Tags)
+		}
+	})
+
+	t.Run("a caller cannot forge a memory scope tag", func(t *testing.T) {
+		srv := newMCPServer(t)
+		// Forging memory-<scope> would let a plan masquerade as scoped memory in list_agent_memories.
+		toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Forging Plan","content":"# P","project_context":"proj","tags":["memory-secret","wip"]}}`)
+		art, _ := srv.Storage.GetArticle("forging-plan")
+		if hasTagFold(art.Tags, MemoryScopeTagPrefix+"secret") {
+			t.Errorf("a forged memory-scope tag was accepted: %v", art.Tags)
+		}
+		if !hasTagFold(art.Tags, "wip") {
+			t.Errorf("legitimate tags must survive alongside a rejected one: %v", art.Tags)
+		}
+
+		srv2 := newMCPServer(t)
+		toolCall(t, srv2, `{"name":"create_agent_memory","arguments":{"title":"Forging Memory","content":"# M","memory_type":"real","tags":["memory-fake"]}}`)
+		art2, _ := srv2.Storage.GetArticle("forging-memory")
+		if hasTagFold(art2.Tags, MemoryScopeTagPrefix+"fake") {
+			t.Errorf("a forged memory-scope tag was accepted: %v", art2.Tags)
+		}
+		if !hasTagFold(art2.Tags, MemoryScopeTagPrefix+"real") {
+			t.Errorf("the real scope tag was lost: %v", art2.Tags)
+		}
+	})
+
+	t.Run("omitting tags is unchanged", func(t *testing.T) {
+		srv := newMCPServer(t)
+		toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Bare Plan","content":"# P","project_context":"nexwiki"}}`)
+		art, _ := srv.Storage.GetArticle("bare-plan")
+		if len(art.Tags) != 1 || !hasTagFold(art.Tags, "nexwiki") {
+			t.Errorf("expected only the project tag, got %v", art.Tags)
+		}
+	})
+
+	t.Run("a project_context that slugifies to nothing does not panic", func(t *testing.T) {
+		srv := newMCPServer(t)
+		// contextTags ends up empty here; the dedupe set must not be nil when written to.
+		resp := toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Odd Context","content":"# P","project_context":"!!!","tags":["wip"]}}`)
+		if resp.IsError {
+			t.Fatalf("create failed: %s", resp.Content[0].Text)
+		}
+		art, _ := srv.Storage.GetArticle("odd-context")
+		if !hasTagFold(art.Tags, "wip") {
+			t.Errorf("caller tag was dropped: %v", art.Tags)
+		}
+	})
+
+	t.Run("every create tool advertises tags", func(t *testing.T) {
+		for _, name := range []string{"create_wiki_article", "create_agent_skill", "create_agent_memory", "create_agent_plan"} {
+			schema := toolsByName[name].Schema["inputSchema"].(map[string]interface{})
+			props := schema["properties"].(map[string]interface{})
+			if _, ok := props["tags"]; !ok {
+				t.Errorf("%s does not advertise a tags argument", name)
+			}
+		}
+	})
+}
+
+func hasTagFold(tags []string, want string) bool {
+	for _, t := range tags {
+		if strings.EqualFold(t, want) {
+			return true
+		}
+	}
+	return false
+}
