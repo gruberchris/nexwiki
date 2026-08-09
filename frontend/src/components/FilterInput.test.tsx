@@ -90,3 +90,16 @@ describe('FilterInput', () => {
     }
   });
 });
+
+describe('FilterInput accessibility', () => {
+  it('gives the clear button an accessible name', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(<FilterInput {...baseProps} value="golang" onChange={onChange} />);
+
+    // An icon-only <X/> button is invisible to screen readers without a name.
+    const clear = screen.getByRole('button', { name: /clear filter/i });
+    await user.click(clear);
+    expect(onChange).toHaveBeenCalledWith('');
+  });
+});

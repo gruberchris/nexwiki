@@ -201,6 +201,7 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
             </div>
           </div>
           <button 
+            aria-label="Close Wiki Theme Manager"
             onClick={onClose}
             className="p-2 rounded-xl text-themeTextMuted hover:bg-themeBgPrimary hover:text-themeTextPrimary transition-all active:scale-95"
           >
