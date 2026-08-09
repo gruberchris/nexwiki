@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Save, 
   X, 
@@ -40,6 +40,7 @@ import { MarkdownSyntaxModal } from './MarkdownSyntaxModal';
 import { MarkdownLintErrorModal } from './MarkdownLintErrorModal';
 import type { Article, ContentType } from '../types';
 import { ContentTypes } from '../types';
+import { useSplitPane } from '../hooks/useSplitPane';
 
 interface EditorProps {
   initialTitle: string;
@@ -117,48 +118,8 @@ export const Editor: React.FC<EditorProps> = ({
     return () => window.removeEventListener('click', closeMenu);
   }, []);
 
-  // Split pane drag-to-resize states
-  const [splitPercentage, setSplitPercentage] = useState<number>(50);
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-
-
-  const startResizing = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  }, []);
-
-  const stopResizing = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
-  const resize = useCallback((e: MouseEvent) => {
-    if (!isDragging || !containerRef.current) return;
-
-    const containerRect = containerRef.current.getBoundingClientRect();
-    const newWidth = e.clientX - containerRect.left;
-    const percentage = (newWidth / containerRect.width) * 100;
-
-    // Constraints: keep the editor and preview within 20% to 80% bounds
-    if (percentage >= 20 && percentage <= 80) {
-      setSplitPercentage(percentage);
-    }
-  }, [isDragging]);
-
-  useEffect(() => {
-    if (isDragging) {
-      window.addEventListener('mousemove', resize);
-      window.addEventListener('mouseup', stopResizing);
-    } else {
-      window.removeEventListener('mousemove', resize);
-      window.removeEventListener('mouseup', stopResizing);
-    }
-    return () => {
-      window.removeEventListener('mousemove', resize);
-      window.removeEventListener('mouseup', stopResizing);
-    };
-  }, [isDragging, resize, stopResizing]);
+  // Drag-to-resize split view; the window-level drag listeners live in the hook.
+  const { splitPercentage, isDragging, containerRef, startResizing } = useSplitPane();
 
   // Compute diagnostics reactively on change
   const diagnostics = useMemo(() => {
