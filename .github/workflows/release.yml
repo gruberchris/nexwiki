@@ -30,9 +30,11 @@ jobs:
 
       - name: Build frontend assets
         working-directory: frontend
+        # npm ci, and no Tailwind pin: the version comes from package.json alone. A
+        # `npm install -D tailwindcss@3` here used to override the manifest, which broke this job
+        # the moment the app moved to v4.
         run: |
-          npm install
-          npm install -D tailwindcss@3
+          npm ci
           npm run build
 
       - name: Setup Go
@@ -71,11 +73,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm install
-
-      - name: Force stable Tailwind CSS v3
-        working-directory: frontend
-        run: npm install -D tailwindcss@3
+        run: npm ci
 
       - name: Build frontend
         working-directory: frontend
