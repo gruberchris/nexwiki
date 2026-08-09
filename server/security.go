@@ -1,6 +1,8 @@
 package server
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -150,4 +152,52 @@ func EnableCORS(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// Request body ceilings. Without these, every JSON endpoint reads an unbounded body into memory
+// (json.Decoder has no inherent limit) and multipart uploads spill unbounded to disk —
+// ParseMultipartForm's argument caps only how much is buffered in RAM, not the total transfer.
+// A single unauthenticated request could therefore exhaust memory or fill the data volume.
+const (
+	maxJSONBodyBytes     = int64(8 << 20)   // article/theme/tag JSON payloads
+	maxAssetUploadBytes  = int64(25 << 20)  // a single uploaded image
+	maxBundleUploadBytes = int64(100 << 20) // an OKF restore bundle (decompressed limits live in okf.go)
+)
+
+// requestBodyLimit returns the byte ceiling for a request path. Upload endpoints legitimately
+// carry more than a JSON payload, so they are widened explicitly rather than raising the default.
+func requestBodyLimit(r *http.Request) int64 {
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/api/okf/import"):
+		return maxBundleUploadBytes
+	case strings.HasSuffix(r.URL.Path, "/assets"):
+		return maxAssetUploadBytes
+	default:
+		return maxJSONBodyBytes
+	}
+}
+
+// LimitRequestBodies caps how much a client can send. Applied as middleware rather than per
+// handler so a newly added endpoint inherits the protection instead of silently omitting it.
+// Bodies over the ceiling fail at read time; writeDecodeError turns that into a 413.
+func LimitRequestBodies(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			r.Body = http.MaxBytesReader(w, r.Body, requestBodyLimit(r))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// writeDecodeError maps a body-read failure to the right status: 413 when the client exceeded
+// the size ceiling, 400 for genuinely malformed input. Distinguishing them matters — a client
+// that gets "invalid request payload" for an oversized upload has no idea what to fix.
+func writeDecodeError(w http.ResponseWriter, err error) {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		writeError(w, http.StatusRequestEntityTooLarge,
+			fmt.Sprintf("request body exceeds the %d MB limit for this endpoint", maxErr.Limit>>20))
+		return
+	}
+	writeError(w, http.StatusBadRequest, "invalid request payload")
 }

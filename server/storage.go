@@ -499,21 +499,38 @@ func (s *Storage) GetAssetPath(slug, filename string) (string, error) {
 
 	filePath := filepath.Clean(filepath.Join(s.AssetDir, cleanedSlug, safeFilename))
 
-	// Double security check to ensure it doesn't escape our asset directory
-	expectedPrefix, err := filepath.Abs(s.AssetDir)
-	if err != nil {
+	// Confirm the resolved path really is inside the asset directory. A string-prefix comparison
+	// is not sufficient here: "/data/assets-evil/x" has "/data/assets" as a prefix but escapes the
+	// directory. filepath.Rel answers containment properly — anything outside yields a path
+	// starting with "..".
+	if err := ensureWithin(s.AssetDir, filePath); err != nil {
 		return "", err
-	}
-	actualAbs, err := filepath.Abs(filePath)
-	if err != nil {
-		return "", err
-	}
-
-	if !strings.HasPrefix(actualAbs, expectedPrefix) {
-		return "", fmt.Errorf("unauthorized file access path traversal attempt")
 	}
 
 	return filePath, nil
+}
+
+// ensureWithin reports an error unless target resolves to a path inside dir. Both are made
+// absolute first so a relative DataDir cannot produce a false negative.
+func ensureWithin(dir, target string) error {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return err
+	}
+
+	rel, err := filepath.Rel(absDir, absTarget)
+	if err != nil {
+		return fmt.Errorf("unauthorized file access path traversal attempt")
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("unauthorized file access path traversal attempt")
+	}
+
+	return nil
 }
 
 // seedDefaultHome creates a default welcoming home wiki page if the articles folder is completely empty.
@@ -967,13 +984,17 @@ var ErrVersionConflict = errors.New("article has been updated in another session
 // preserve the stored value; an explicit empty string clears it. LoadedVersion enables the
 // optimistic-locking guard (0 disables it).
 type ArticleEdit struct {
-	Title         string
-	Content       string
-	Description   *string
-	Source        *string
-	Resource      *string
-	EditSummary   string
-	Tags          []string
+	Title       string
+	Content     string
+	Description *string
+	Source      *string
+	Resource    *string
+	EditSummary string
+	// Tags is a pointer so "omitted" and "explicitly empty" stay distinguishable: nil keeps the
+	// article's current tags untouched, while a non-nil (even empty) slice replaces them after
+	// memory-scope validation. Collapsing the two would make a caller that simply doesn't manage
+	// tags silently strip every free tag off the document.
+	Tags          *[]string
 	LoadedVersion int
 }
 
@@ -1010,7 +1031,10 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 	}
 
 	// Preserve tool-managed memory-scope tags a user edit must not be able to drop or forge.
-	cleanedTags := validateAndCleanUserTags(edit.Tags, existing.Tags)
+	cleanedTags := existing.Tags
+	if edit.Tags != nil {
+		cleanedTags = validateAndCleanUserTags(*edit.Tags, existing.Tags)
+	}
 
 	return s.saveArticleLocked(slug, edit.Title, edit.Content, description, source, resource,
 		edit.EditSummary, cleanedTags, existing.Type)

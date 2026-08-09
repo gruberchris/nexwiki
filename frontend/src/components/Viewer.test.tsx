@@ -80,8 +80,9 @@ describe('Viewer', () => {
   it('renders a broken wiki link as a clickable create prompt', async () => {
     const onNavigate = vi.fn();
     const { container } = render(<Viewer {...baseProps} content="See [[Missing Page]] later." onNavigate={onNavigate} />);
+    // Rendered as a <button> (not a <span>) so keyboard and screen-reader users can reach it.
     const broken = await waitFor(() => {
-      const el = container.querySelector('span.wikilink-broken');
+      const el = container.querySelector('button.wikilink-broken');
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
@@ -92,5 +93,29 @@ describe('Viewer', () => {
   it('renders empty content without crashing', () => {
     render(<Viewer {...baseProps} content="" />);
     expect(document.body).toBeInTheDocument();
+  });
+});
+
+describe('broken WikiLink accessibility', () => {
+  it('exposes a broken WikiLink as a button with an accessible name', async () => {
+    render(<Viewer {...baseProps} content="See [[Missing Page]] for details." />);
+
+    const control = await screen.findByRole('button', { name: /create missing page "Missing Page"/i });
+    expect(control).toBeInTheDocument();
+  });
+
+  it('can be activated with the keyboard alone', async () => {
+    const onNavigate = vi.fn();
+    const user = userEvent.setup();
+    render(<Viewer {...baseProps} onNavigate={onNavigate} content="See [[Missing Page]] here." />);
+
+    const control = await screen.findByRole('button', { name: /create missing page/i });
+
+    // Tab must be able to reach it — a clickable <span> is skipped entirely by keyboard users.
+    await user.tab();
+    expect(control).toHaveFocus();
+
+    await user.keyboard('{Enter}');
+    expect(onNavigate).toHaveBeenCalledWith('new?title=Missing%20Page');
   });
 });

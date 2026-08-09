@@ -163,6 +163,17 @@ func (s *Storage) buildOKFLog() string {
 	return b.String()
 }
 
+// Decompression limits for imported bundles. A zip archive can expand to orders of magnitude more
+// than its compressed size, so the *decompressed* output must be bounded independently of the
+// upload size cap — otherwise a few MB of crafted (or merely very compressible) input exhausts
+// memory. Documents larger than the per-entry cap are skipped with a warning rather than aborting
+// the whole import, matching the importer's permissive posture.
+const (
+	maxBundleEntries    = 10_000           // ceiling on concept documents in one bundle
+	maxBundleEntryBytes = 8 << 20          // 8 MB per decompressed document
+	maxBundleTotalBytes = int64(256 << 20) // 256 MB decompressed across the whole bundle
+)
+
 // OKFImportReport summarizes the outcome of importing a bundle, including a permissive conformance
 // report (OKF §9): documents missing a type are defaulted to Wiki and flagged rather than rejected.
 type OKFImportReport struct {
@@ -183,6 +194,8 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 	}
 
 	report := &OKFImportReport{}
+	var totalDecompressed int64
+	entriesSeen := 0
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() || !strings.HasSuffix(f.Name, ".md") {
 			continue
@@ -194,17 +207,40 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 			continue
 		}
 
+		entriesSeen++
+		if entriesSeen > maxBundleEntries {
+			report.Warnings = append(report.Warnings,
+				fmt.Sprintf("bundle exceeds the %d-document limit; remaining entries were not imported", maxBundleEntries))
+			report.Skipped++
+			break
+		}
+		if totalDecompressed >= maxBundleTotalBytes {
+			report.Warnings = append(report.Warnings,
+				fmt.Sprintf("bundle exceeds the %d MB decompressed limit; remaining entries were not imported", maxBundleTotalBytes>>20))
+			report.Skipped++
+			break
+		}
+
 		rc, err := f.Open()
 		if err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v", f.Name, err))
 			continue
 		}
-		raw, err := io.ReadAll(rc)
+		// Read at most one byte beyond the cap so an oversized entry is detectable, and bound the
+		// read by the decompressed size rather than trusting the archive's declared sizes.
+		raw, err := io.ReadAll(io.LimitReader(rc, maxBundleEntryBytes+1))
 		_ = rc.Close()
 		if err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v", f.Name, err))
 			continue
 		}
+		if len(raw) > maxBundleEntryBytes {
+			report.Warnings = append(report.Warnings,
+				fmt.Sprintf("%s: document exceeds the %d MB per-file limit; skipped", f.Name, maxBundleEntryBytes>>20))
+			report.Skipped++
+			continue
+		}
+		totalDecompressed += int64(len(raw))
 
 		art, err := parseArticleFile(raw, true)
 		if err != nil {

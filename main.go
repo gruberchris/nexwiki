@@ -70,9 +70,32 @@ func main() {
 	log.Printf("Default Theme: %s", defaultTheme)
 	log.Printf("Theme Scheduling Enabled: %t", themeSchedulingEnabled)
 
-	// Ensure storage is initialized
-	storage, err := server.NewStorage(*dataDir)
+	// Probe for a running web primary before opening storage, so a lock conflict can be explained
+	// rather than merely reported. Cheap (750 ms against loopback) and needed for the message below.
+	primaryDetected := mcpOnlyMode && probeForPrimary(*port)
+
+	// Ensure storage is initialized.
+	//
+	// This is bounded by a timeout because the Bleve index holds an exclusive bbolt file lock on
+	// its directory: if another NexWiki process already has this data directory open, bleve.Open
+	// blocks *forever* — no error, no timeout of its own. A `-mcp-only` sidecar pointed at a
+	// running instance's data directory therefore used to hang silently at startup and never reach
+	// the MCP loop, which is precisely the documented Claude Desktop stdio configuration.
+	storage, err := openStorageWithTimeout(*dataDir, storageOpenTimeout)
 	if err != nil {
+		if errors.Is(err, errStorageLocked) && primaryDetected {
+			log.Fatalf("Fatal: a NexWiki web server is already running on port %s and holds an exclusive "+
+				"lock on the search index in %s.\n"+
+				"A -mcp-only process cannot share a data directory with a running instance.\n"+
+				"Connect over the Streamable HTTP transport instead — point your MCP client at "+
+				"http://localhost:%s/api/mcp — or stop the web server before using stdio.",
+				*port, *dataDir, *port)
+		}
+		if errors.Is(err, errStorageLocked) {
+			log.Fatalf("Fatal: could not open the search index in %s within %s — another process is "+
+				"holding it open.\nStop any other NexWiki process using this data directory, or pass "+
+				"a different -data path.", *dataDir, storageOpenTimeout)
+		}
 		log.Fatalf("Fatal: failed to initialize storage: %v", err)
 	}
 
@@ -82,12 +105,10 @@ func main() {
 	// Initialize server instance with configured name, theme, event bus, and scheduling settings
 	srv := server.NewServer(storage, name, defaultTheme, themeSchedulingEnabled, eventBus, Version, *port)
 
-	// In -MCP-only mode, this process never binds the web port. Check if a web server is already running:
-	//   - web server running → this is a sidecar; it forwards events to the web server so only one
-	//     process ever writes the activity log file.
-	//   - no web server → run standalone and persist the activity log directly from this process.
-	// In normal mode, this process always runs the web server itself (it binds the port or halts below).
-	if mcpOnlyMode && probeForPrimary(*port) {
+	// A sidecar that got this far is using a *different* data directory than the primary (it would
+	// have failed the lock check otherwise), so it forwards activity events rather than writing the
+	// primary's log itself.
+	if primaryDetected {
 		srv.IsSecondaryProcess = true
 		log.Printf("-mcp-only: web server detected on port %s; forwarding activity events to it.", *port)
 	} else if mcpOnlyMode {
@@ -201,8 +222,9 @@ func main() {
 	// Mount frontend handler to catch all other requests
 	mux.Handle("/", frontendHandler)
 
-	// Wrap server in CORS middleware for effortless multi-port local development
-	handler := server.EnableCORS(mux)
+	// Wrap server in CORS middleware for effortless multi-port local development,
+	// and cap request body sizes so a single request cannot exhaust memory or disk.
+	handler := server.EnableCORS(server.LimitRequestBodies(mux))
 
 	addr := fmt.Sprintf(":%s", *port)
 
@@ -248,6 +270,39 @@ func main() {
 	<-shutdownDone
 	closeResources()
 	log.Printf("NexWiki shut down cleanly.")
+}
+
+// storageOpenTimeout bounds how long startup waits for the search-index lock before concluding
+// another process holds it. Generous enough for a cold index rebuild on slow disks, short enough
+// that a stdio MCP client reports a failure instead of appearing to hang.
+const storageOpenTimeout = 15 * time.Second
+
+// errStorageLocked indicates the search index could not be opened within storageOpenTimeout,
+// which in practice always means another process holds its exclusive lock.
+var errStorageLocked = errors.New("search index is locked by another process")
+
+// openStorageWithTimeout runs server.NewStorage under a deadline. bleve.Open blocks indefinitely
+// on a contended index lock rather than returning an error, so the timeout is the only way to
+// distinguish "still indexing" from "another process owns this directory". The goroutine is left
+// running on timeout; every caller treats that as fatal and exits.
+func openStorageWithTimeout(dataDir string, timeout time.Duration) (*server.Storage, error) {
+	type result struct {
+		storage *server.Storage
+		err     error
+	}
+	done := make(chan result, 1)
+
+	go func() {
+		s, err := server.NewStorage(dataDir)
+		done <- result{storage: s, err: err}
+	}()
+
+	select {
+	case res := <-done:
+		return res.storage, res.err
+	case <-time.After(timeout):
+		return nil, errStorageLocked
+	}
 }
 
 // probeForPrimary reports whether a NexWiki web server is already running on the given port,
