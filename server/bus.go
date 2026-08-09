@@ -15,6 +15,12 @@ type EventBus struct {
 	bufferLimit int
 	eventCount  int
 	persist     func(LogEvent)
+
+	// wikiSubscribers receive WikiUpdate values rather than pre-formatted SSE frames. The browser
+	// wants a ready-to-write SSE string; MCP subscribers need the structured event so they can map
+	// a slug onto a resource URI and decide which notification type it warrants. Serving both from
+	// the same pre-formatted string would mean re-parsing our own output.
+	wikiSubscribers map[chan WikiUpdate]bool
 }
 
 // SetPersist registers a callback invoked once for every published (non-deduplicated)
@@ -28,9 +34,10 @@ func (eb *EventBus) SetPersist(fn func(LogEvent)) {
 // NewEventBus builds a thread-safe pub-sub manager.
 func NewEventBus() *EventBus {
 	return &EventBus{
-		subscribers: make(map[chan string]bool),
-		buffer:      make([]LogEvent, 0, 200),
-		bufferLimit: 200,
+		subscribers:     make(map[chan string]bool),
+		wikiSubscribers: make(map[chan WikiUpdate]bool),
+		buffer:          make([]LogEvent, 0, 200),
+		bufferLimit:     200,
 	}
 }
 
@@ -51,6 +58,28 @@ func (eb *EventBus) Unsubscribe(ch chan string) {
 
 	if _, exists := eb.subscribers[ch]; exists {
 		delete(eb.subscribers, ch)
+		close(ch)
+	}
+}
+
+// SubscribeWikiUpdates registers a channel receiving structured article change events.
+// Used by MCP subscriptions/listen streams; the browser SSE path uses Subscribe instead.
+func (eb *EventBus) SubscribeWikiUpdates() chan WikiUpdate {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+
+	ch := make(chan WikiUpdate, 100)
+	eb.wikiSubscribers[ch] = true
+	return ch
+}
+
+// UnsubscribeWikiUpdates removes a structured subscriber and closes its channel.
+func (eb *EventBus) UnsubscribeWikiUpdates(ch chan WikiUpdate) {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+
+	if _, exists := eb.wikiSubscribers[ch]; exists {
+		delete(eb.wikiSubscribers, ch)
 		close(ch)
 	}
 }
@@ -111,6 +140,16 @@ func (eb *EventBus) PublishWikiUpdate(update WikiUpdate) {
 	data, err := json.Marshal(update)
 	if err == nil {
 		eb.broadcast("wiki-update", string(data))
+	}
+
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	for ch := range eb.wikiSubscribers {
+		select {
+		case ch <- update:
+		default:
+			// Drop rather than block: one stalled MCP subscriber must not wedge a wiki write.
+		}
 	}
 }
 

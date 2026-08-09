@@ -166,6 +166,21 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 	case "prompts/get":
 		result, rpcErr = srv.getPrompt(req.Params)
 
+	case "resources/list":
+		result, rpcErr = srv.listResources()
+
+	case "resources/templates/list":
+		result, rpcErr = srv.listResourceTemplates()
+
+	case "resources/read":
+		result, rpcErr = srv.readResource(req.Params)
+
+	case "subscriptions/listen":
+		// Reached only on stdio; the HTTP transport intercepts this before dispatch so it can
+		// hold the response open as a stream.
+		srv.handleStdioSubscription(w, req, parseSubscriptionParams(req.Params))
+		return http.StatusOK
+
 	default:
 		rpcErr = &JSONRPCError{
 			Code:    -32601,
@@ -501,7 +516,34 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 		// Hand the transport context to the dispatcher: the modern era verifies the mirrored
 		// HTTP headers against the body, and reports protocol failures as HTTP status codes.
 		req.Headers = r.Header
-		req.IsModern = isModernRequest(parseParamsEnvelope(req.Params))
+		env := parseParamsEnvelope(req.Params)
+		req.IsModern = isModernRequest(env)
+
+		// subscriptions/listen is intercepted before dispatch because its response *is* a stream:
+		// it stays open delivering notifications rather than producing one buffered body. Modern
+		// metadata is still validated first so a bad request fails the same way it would elsewhere.
+		if req.Method == "subscriptions/listen" && req.ID != nil {
+			if req.IsModern {
+				if rpcErr := validateModernMeta(env); rpcErr != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(modernErrorStatus(rpcErr))
+					var out bytes.Buffer
+					srv.writeResponse(&out, &req, nil, rpcErr)
+					_, _ = w.Write(out.Bytes())
+					return
+				}
+				if rpcErr := validateModernHeaders(req.Headers, req.Method, env); rpcErr != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(modernErrorStatus(rpcErr))
+					var out bytes.Buffer
+					srv.writeResponse(&out, &req, nil, rpcErr)
+					_, _ = w.Write(out.Bytes())
+					return
+				}
+			}
+			srv.streamSubscription(w, r, &req, parseSubscriptionParams(req.Params).honored())
+			return
+		}
 
 		// Render into a buffer first. Committing 200 before dispatch made every outcome a 200 —
 		// the status could never reflect a failure, and a panic or write error mid-render would

@@ -78,7 +78,7 @@ curl -X POST http://localhost:8080/api/mcp \
         "io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 
-> **What NexWiki does not implement:** MCP Resources, and `subscriptions/listen` (the modern mechanism for long-lived server→client change notifications). `capabilities` advertises only `tools` and `prompts`, because claiming a capability the server does not serve is worse than omitting it. The standalone `GET` SSE stream and `Mcp-Session-Id` were removed by the 2026-07-28 revision; NexWiki keeps the `GET` stream only for legacy-era clients that open one.
+> **Capabilities** advertise `tools`, `prompts`, and `resources` (with `listChanged` and `subscribe`) — each only because it is genuinely served. The standalone `GET` SSE stream and `Mcp-Session-Id` were removed by the 2026-07-28 revision; NexWiki ignores `Mcp-Session-Id` and keeps the `GET` stream only for legacy-era clients that open one.
 
 ### 🏷️ Tool Annotations — fewer approval prompts
 
@@ -103,6 +103,72 @@ This matters because the spec's defaults are **pessimistic**: an unannotated too
 > **Annotations are hints, not guarantees.** The specification is explicit that clients must treat them as untrusted from untrusted servers. They describe intent; the actual guards are the optimistic-locking checks and the reserved-type rules enforced inside the handlers.
 >
 > Note that every successful call — reads included — appends to the durable activity log. That is server-side audit bookkeeping, not a change to the content the tool operates on, so it does not disqualify `readOnlyHint`.
+
+## 📎 Resources — `@`-mention a wiki page
+
+Tools are *model*-controlled: the agent decides to call them. **Resources are application-driven** — your client surfaces them for *you* to pick, which is what makes `@`-mentioning a wiki page work in Claude Desktop or Cursor. That path costs no tool call and no tokens spent on tool-result prose, so it is a different affordance from `read_article`, not a duplicate.
+
+Every document — wiki articles, agent memories, plans, and skills — is exposed as a resource:
+
+| | |
+|---|---|
+| URI | `nexwiki://article/{slug}` |
+| `mimeType` | `text/markdown` |
+| `name` / `title` | slug / article title |
+| `description` | the article's description, falling back to its first line |
+| `annotations` | `lastModified`, plus `audience: [user, assistant]` |
+
+A custom scheme rather than `file://`: an article's identity here is its **slug**, not its path on disk, and encoding the path would leak the data directory layout into every client.
+
+```bash
+# List every document as a resource
+curl -X POST http://localhost:8080/api/mcp -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{}}'
+
+# Read one
+curl -X POST http://localhost:8080/api/mcp -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"nexwiki://article/home"}}'
+```
+
+`resources/templates/list` advertises `nexwiki://article/{slug}`, so a client that already knows a slug can build the URI without paging the whole list.
+
+A missing resource returns `-32602` with the URI echoed in `data` — never an empty `contents` array, which the spec forbids because it cannot be distinguished from a resource that exists but is empty.
+
+---
+
+## 📡 Subscriptions — a live, subscribable knowledge base
+
+`subscriptions/listen` opens a long-lived stream. **An agent holding one learns the moment you edit a page in the browser, or another agent writes a memory** — no polling.
+
+The events already existed: the same `EventBus` has been driving the browser's live activity drawer all along. This wires that signal to a second consumer.
+
+```bash
+curl -N -X POST http://localhost:8080/api/mcp -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":77,"method":"subscriptions/listen","params":{"notifications":{
+        "resourcesListChanged": true,
+        "resourceSubscriptions": ["nexwiki://article/bleve-decision"]}}}'
+```
+
+Edit that article in your browser, and the stream delivers:
+
+```
+notifications/subscriptions/acknowledged     sub=77
+notifications/resources/updated              sub=77  nexwiki://article/bleve-decision
+notifications/resources/list_changed         sub=77
+```
+
+| Filter field | Supported | Fires when |
+|---|---|---|
+| `resourceSubscriptions` | ✅ | one of the listed articles is edited |
+| `resourcesListChanged` | ✅ | any document is created or deleted |
+| `toolsListChanged` | ❌ | — |
+| `promptsListChanged` | ❌ | — |
+
+**Why the last two are declined rather than accepted silently:** NexWiki's tool and prompt sets are compiled into the binary and cannot change while the process runs. Acknowledging them would promise a notification that can never arrive. The acknowledgment reports only what the server will actually deliver, so a client knows immediately rather than waiting on silence. A subscription that asks *only* for those is closed gracefully with the spec's empty result instead of holding an idle socket open.
+
+Every message carries `io.modelcontextprotocol/subscriptionId` in `_meta` so concurrent subscriptions can be demultiplexed. Cancellation is closing the stream.
+
+> **Transport:** subscriptions require **Streamable HTTP**. On stdio the loop here is strictly request/response on one channel, so a stdio subscription is acknowledged and then closed gracefully rather than left waiting for notifications that will not arrive.
 
 ### 🔒 Log Safety Guarantee
 To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools like Claude Desktop), **NexWiki redirects all internal system and web application logs exclusively to standard error (`Stderr`)**. Only valid JSON-RPC envelopes are ever output to `Stdout`.
