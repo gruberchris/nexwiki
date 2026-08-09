@@ -80,6 +80,30 @@ curl -X POST http://localhost:8080/api/mcp \
 
 > **What NexWiki does not implement:** MCP Resources, and `subscriptions/listen` (the modern mechanism for long-lived server→client change notifications). `capabilities` advertises only `tools` and `prompts`, because claiming a capability the server does not serve is worse than omitting it. The standalone `GET` SSE stream and `Mcp-Session-Id` were removed by the 2026-07-28 revision; NexWiki keeps the `GET` stream only for legacy-era clients that open one.
 
+### 🏷️ Tool Annotations — fewer approval prompts
+
+Every tool carries MCP `annotations` telling your client what calling it actually does. Clients use these to **auto-approve safe reads and confirm destructive writes**, so an agent isn't interrupting you to run `get_context_overview` — the tool the agent skill says to call first in every session.
+
+This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 27 tools might destroy data and reach arbitrary external systems.
+
+| Hint | NexWiki's values |
+|---|---|
+| `readOnlyHint` | `true` on **13** tools that never modify the wiki |
+| `destructiveHint` | `false` for creates and appends; `true` for edits, deletes, tag replacement, revert, and bundle import |
+| `idempotentHint` | `true` on the deletes — deleting an already-deleted document changes nothing further |
+| `openWorldHint` | **`false` on every tool, without exception.** The entire surface operates on the local wiki directory and never reaches an external system |
+| `title` | A human-readable display name, e.g. `Get Context Overview` |
+
+**Read-only (13):** `search_wiki` · `read_article` · `list_articles` · `get_article_history` · `get_wiki_statistics` · `list_agent_memories` · `list_agent_plans` · `list_agent_skills` · `get_status_tags` · `get_recent_activity` · `get_backlinks` · `get_context_overview` · `export_okf_bundle`
+
+**Additive writes (6)** — create new content, never overwrite: the four `create_*` tools plus `append_agent_memory` and `append_agent_plan`.
+
+**Destructive writes (8)** — can overwrite or remove existing content: `edit_wiki_article` · `edit_agent_memory` · `edit_agent_plan` · `update_article_tags` · `delete_wiki_article` · `delete_agent_memory` · `revert_article_version` · `import_okf_bundle`
+
+> **Annotations are hints, not guarantees.** The specification is explicit that clients must treat them as untrusted from untrusted servers. They describe intent; the actual guards are the optimistic-locking checks and the reserved-type rules enforced inside the handlers.
+>
+> Note that every successful call — reads included — appends to the durable activity log. That is server-side audit bookkeeping, not a change to the content the tool operates on, so it does not disqualify `readOnlyHint`.
+
 ### 🔒 Log Safety Guarantee
 To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools like Claude Desktop), **NexWiki redirects all internal system and web application logs exclusively to standard error (`Stderr`)**. Only valid JSON-RPC envelopes are ever output to `Stdout`.
 

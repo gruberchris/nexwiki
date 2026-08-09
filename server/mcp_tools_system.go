@@ -22,7 +22,8 @@ var getWikiStatisticsTool = toolDef{
 			"properties": map[string]interface{}{},
 		},
 	},
-	Handler: (*Server).toolGetWikiStatistics,
+	Handler:  (*Server).toolGetWikiStatistics,
+	Behavior: toolBehavior{Title: "Get Wiki Statistics", ReadOnly: true},
 }
 
 func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -90,7 +91,8 @@ var getStatusTagsTool = toolDef{
 			"properties": map[string]interface{}{},
 		},
 	},
-	Handler: (*Server).toolGetStatusTags,
+	Handler:  (*Server).toolGetStatusTags,
+	Behavior: toolBehavior{Title: "Get Status Tags", ReadOnly: true},
 }
 
 func (srv *Server) toolGetStatusTags(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -133,7 +135,8 @@ var getRecentActivityTool = toolDef{
 			},
 		},
 	},
-	Handler: (*Server).toolGetRecentActivity,
+	Handler:  (*Server).toolGetRecentActivity,
+	Behavior: toolBehavior{Title: "Get Recent Activity", ReadOnly: true},
 }
 
 func (srv *Server) toolGetRecentActivity(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -222,7 +225,8 @@ var exportOkfBundleTool = toolDef{
 			"properties": map[string]interface{}{},
 		},
 	},
-	Handler: (*Server).toolExportOkfBundle,
+	Handler:  (*Server).toolExportOkfBundle,
+	Behavior: toolBehavior{Title: "Export OKF Bundle", ReadOnly: true},
 }
 
 func (srv *Server) toolExportOkfBundle(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -254,7 +258,8 @@ var importOkfBundleTool = toolDef{
 			"required": []string{"path"},
 		},
 	},
-	Handler: (*Server).toolImportOkfBundle,
+	Handler:  (*Server).toolImportOkfBundle,
+	Behavior: toolBehavior{Title: "Import OKF Bundle", Destructive: true, Idempotent: false},
 }
 
 func (srv *Server) toolImportOkfBundle(args json.RawMessage) (interface{}, *JSONRPCError) {

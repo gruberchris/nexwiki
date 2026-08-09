@@ -46,7 +46,8 @@ var createAgentPlanTool = toolDef{
 			"required": []string{"title", "content", "project_context"},
 		},
 	},
-	Handler: (*Server).toolCreateAgentPlan,
+	Handler:  (*Server).toolCreateAgentPlan,
+	Behavior: toolBehavior{Title: "Create Agent Plan", Destructive: false, Idempotent: false},
 }
 
 func (srv *Server) toolCreateAgentPlan(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -117,7 +118,8 @@ var appendAgentPlanTool = toolDef{
 			"required": []string{"slug", "content_to_append"},
 		},
 	},
-	Handler: (*Server).toolAppendAgentPlan,
+	Handler:  (*Server).toolAppendAgentPlan,
+	Behavior: toolBehavior{Title: "Append to Agent Plan", Destructive: false, Idempotent: false},
 }
 
 func (srv *Server) toolAppendAgentPlan(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -195,7 +197,8 @@ var editAgentPlanTool = toolDef{
 			"required": []string{"slug", "loaded_version"},
 		},
 	},
-	Handler: (*Server).toolEditAgentPlan,
+	Handler:  (*Server).toolEditAgentPlan,
+	Behavior: toolBehavior{Title: "Edit Agent Plan", Destructive: true, Idempotent: false},
 }
 
 func (srv *Server) toolEditAgentPlan(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -289,7 +292,8 @@ var listAgentPlansTool = toolDef{
 			},
 		},
 	},
-	Handler: (*Server).toolListAgentPlans,
+	Handler:  (*Server).toolListAgentPlans,
+	Behavior: toolBehavior{Title: "List Agent Plans", ReadOnly: true},
 }
 
 func (srv *Server) toolListAgentPlans(args json.RawMessage) (interface{}, *JSONRPCError) {

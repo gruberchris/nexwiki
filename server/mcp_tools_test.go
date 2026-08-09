@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -85,5 +86,167 @@ func TestUnknownToolIsReportedNotPanicked(t *testing.T) {
 	}
 	if !resp.IsError {
 		t.Error("unknown tool should produce IsError=true")
+	}
+}
+
+// TestEveryToolIsAnnotated guards the annotation surface. The specification's defaults are
+// pessimistic — an unannotated tool is assumed destructive and open-world — so a tool added
+// without a Behavior silently tells clients it might destroy data, which makes cautious clients
+// prompt the user for it. That is exactly the friction annotations exist to remove.
+func TestEveryToolIsAnnotated(t *testing.T) {
+	for _, tool := range mcpToolRegistry {
+		name := tool.Schema["name"].(string)
+		if tool.Behavior.Title == "" {
+			t.Errorf("tool %q has no Behavior.Title — add one to its toolDef", name)
+		}
+		// A read-only tool must not also claim to be destructive; the two contradict.
+		if tool.Behavior.ReadOnly && tool.Behavior.Destructive {
+			t.Errorf("tool %q is marked both ReadOnly and Destructive", name)
+		}
+	}
+}
+
+// TestAnnotationsProjectedIntoToolsList pins the wire shape: what tools/list actually emits.
+func TestAnnotationsProjectedIntoToolsList(t *testing.T) {
+	byName := make(map[string]map[string]interface{}, len(mcpToolRegistry))
+	for _, entry := range toolSchemas() {
+		byName[entry["name"].(string)] = entry
+	}
+
+	t.Run("read-only tool", func(t *testing.T) {
+		entry := byName["get_context_overview"]
+		ann := entry["annotations"].(map[string]interface{})
+
+		if ann["readOnlyHint"] != true {
+			t.Error("get_context_overview must be readOnlyHint:true — it is the first call of every session")
+		}
+		// destructiveHint/idempotentHint are defined as meaningful only for writes; emitting
+		// them here would contradict readOnlyHint.
+		if _, present := ann["destructiveHint"]; present {
+			t.Error("read-only tools should not carry destructiveHint")
+		}
+		if entry["title"] != "Get Context Overview" {
+			t.Errorf("title should also appear top-level for 2026-07-28 clients, got %v", entry["title"])
+		}
+	})
+
+	t.Run("additive write", func(t *testing.T) {
+		ann := byName["create_wiki_article"]["annotations"].(map[string]interface{})
+		if ann["readOnlyHint"] != false {
+			t.Error("create_wiki_article writes")
+		}
+		if ann["destructiveHint"] != false {
+			t.Error("creating a new article is additive, not destructive")
+		}
+	})
+
+	t.Run("destructive write", func(t *testing.T) {
+		for _, name := range []string{"delete_wiki_article", "delete_agent_memory",
+			"edit_wiki_article", "update_article_tags", "revert_article_version", "import_okf_bundle"} {
+			ann := byName[name]["annotations"].(map[string]interface{})
+			if ann["destructiveHint"] != true {
+				t.Errorf("%s can overwrite or remove existing content and must be destructiveHint:true", name)
+			}
+		}
+	})
+
+	t.Run("deletes are idempotent", func(t *testing.T) {
+		// Deleting an already-deleted article has no further effect.
+		for _, name := range []string{"delete_wiki_article", "delete_agent_memory"} {
+			ann := byName[name]["annotations"].(map[string]interface{})
+			if ann["idempotentHint"] != true {
+				t.Errorf("%s should be idempotentHint:true", name)
+			}
+		}
+	})
+
+	t.Run("the whole server is a closed world", func(t *testing.T) {
+		// Every tool operates on the local wiki directory and never reaches an external system.
+		// This is the opposite of the spec default (openWorldHint defaults to true).
+		for name, entry := range byName {
+			ann := entry["annotations"].(map[string]interface{})
+			if ann["openWorldHint"] != false {
+				t.Errorf("%s should be openWorldHint:false — NexWiki never leaves the local wiki", name)
+			}
+		}
+	})
+}
+
+// TestToolSchemasDoNotMutateRegistry pins that projecting annotations leaves the registry's own
+// Schema maps untouched — otherwise repeated tools/list calls would accumulate keys.
+func TestToolSchemasDoNotMutateRegistry(t *testing.T) {
+	for _, tool := range mcpToolRegistry {
+		if _, leaked := tool.Schema["annotations"]; leaked {
+			t.Errorf("tool %q had annotations merged into its source schema", tool.Schema["name"])
+		}
+	}
+	first := len(toolSchemas()[0])
+	_ = toolSchemas()
+	if got := len(toolSchemas()[0]); got != first {
+		t.Errorf("tools/list entry grew across calls: %d then %d keys", first, got)
+	}
+}
+
+// TestReadOnlyToolsCannotWrite is a behavioral cross-check rather than a declaration check: it
+// runs every tool marked read-only and asserts the wiki is byte-identical afterwards. An
+// annotation that merely repeats what the author believed is worth little; this verifies it.
+func TestReadOnlyToolsCannotWrite(t *testing.T) {
+	srv := newMCPServer(t)
+
+	seed, err := srv.Storage.SaveArticle("", "Annotation Probe", "body text", "desc", "", "",
+		"seed", []string{"probe"}, "")
+	if err != nil {
+		t.Fatalf("SaveArticle failed: %v", err)
+	}
+
+	snapshot := func() map[string]string {
+		t.Helper()
+		arts, err := srv.Storage.ListArticles()
+		if err != nil {
+			t.Fatalf("ListArticles failed: %v", err)
+		}
+		state := make(map[string]string, len(arts))
+		for _, a := range arts {
+			full, err := srv.Storage.GetArticle(a.Slug)
+			if err != nil {
+				continue
+			}
+			state[a.Slug] = fmt.Sprintf("%d|%s|%v|%s", full.Version, full.Title, full.Tags, full.Content)
+		}
+		return state
+	}
+
+	// Plausible arguments per read-only tool; tools with no required args get an empty object.
+	args := map[string]string{
+		"search_wiki":         `{"query":"body"}`,
+		"read_article":        fmt.Sprintf(`{"slug":%q}`, seed.Slug),
+		"get_article_history": fmt.Sprintf(`{"slug":%q}`, seed.Slug),
+		"get_backlinks":       fmt.Sprintf(`{"slug":%q}`, seed.Slug),
+		"get_recent_activity": `{"since":"24h"}`,
+	}
+
+	before := snapshot()
+	for _, tool := range mcpToolRegistry {
+		if !tool.Behavior.ReadOnly {
+			continue
+		}
+		name := tool.Schema["name"].(string)
+		raw := args[name]
+		if raw == "" {
+			raw = `{}`
+		}
+		if _, rpcErr := tool.Handler(srv, json.RawMessage(raw)); rpcErr != nil {
+			t.Errorf("%s returned a protocol error: %v", name, rpcErr)
+		}
+	}
+	after := snapshot()
+
+	if len(before) != len(after) {
+		t.Fatalf("a read-only tool changed the article count: %d -> %d", len(before), len(after))
+	}
+	for slug, state := range before {
+		if after[slug] != state {
+			t.Errorf("a read-only tool modified %q:\n  before: %s\n  after:  %s", slug, state, after[slug])
+		}
 	}
 }

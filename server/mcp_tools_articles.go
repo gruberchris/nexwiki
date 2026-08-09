@@ -52,7 +52,8 @@ var searchWikiTool = toolDef{
 			"required": []string{"query"},
 		},
 	},
-	Handler: (*Server).toolSearchWiki,
+	Handler:  (*Server).toolSearchWiki,
+	Behavior: toolBehavior{Title: "Search Wiki", ReadOnly: true},
 }
 
 func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -147,7 +148,8 @@ var readArticleTool = toolDef{
 			"required": []string{"slug"},
 		},
 	},
-	Handler: (*Server).toolReadArticle,
+	Handler:  (*Server).toolReadArticle,
+	Behavior: toolBehavior{Title: "Read Article", ReadOnly: true},
 }
 
 func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -212,7 +214,8 @@ var listArticlesTool = toolDef{
 			"properties": map[string]interface{}{},
 		},
 	},
-	Handler: (*Server).toolListArticles,
+	Handler:  (*Server).toolListArticles,
+	Behavior: toolBehavior{Title: "List Articles", ReadOnly: true},
 }
 
 func (srv *Server) toolListArticles(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -294,7 +297,8 @@ var createWikiArticleTool = toolDef{
 			"required": []string{"title", "content"},
 		},
 	},
-	Handler: (*Server).toolCreateWikiArticle,
+	Handler:  (*Server).toolCreateWikiArticle,
+	Behavior: toolBehavior{Title: "Create Wiki Article", Destructive: false, Idempotent: false},
 }
 
 func (srv *Server) toolCreateWikiArticle(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -379,7 +383,8 @@ var editWikiArticleTool = toolDef{
 			"required": []string{"slug", "title", "content", "loaded_version"},
 		},
 	},
-	Handler: (*Server).toolEditWikiArticle,
+	Handler:  (*Server).toolEditWikiArticle,
+	Behavior: toolBehavior{Title: "Edit Wiki Article", Destructive: true, Idempotent: false},
 }
 
 func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -470,7 +475,8 @@ var updateArticleTagsTool = toolDef{
 			"required": []string{"slug", "tags"},
 		},
 	},
-	Handler: (*Server).toolUpdateArticleTags,
+	Handler:  (*Server).toolUpdateArticleTags,
+	Behavior: toolBehavior{Title: "Update Article Tags", Destructive: true, Idempotent: false},
 }
 
 func (srv *Server) toolUpdateArticleTags(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -517,7 +523,8 @@ var deleteWikiArticleTool = toolDef{
 			"required": []string{"slug"},
 		},
 	},
-	Handler: (*Server).toolDeleteWikiArticle,
+	Handler:  (*Server).toolDeleteWikiArticle,
+	Behavior: toolBehavior{Title: "Delete Wiki Article", Destructive: true, Idempotent: true},
 }
 
 func (srv *Server) toolDeleteWikiArticle(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -562,7 +569,8 @@ var getArticleHistoryTool = toolDef{
 			"required": []string{"slug"},
 		},
 	},
-	Handler: (*Server).toolGetArticleHistory,
+	Handler:  (*Server).toolGetArticleHistory,
+	Behavior: toolBehavior{Title: "Get Article History", ReadOnly: true},
 }
 
 func (srv *Server) toolGetArticleHistory(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -615,7 +623,8 @@ var revertArticleVersionTool = toolDef{
 			"required": []string{"slug", "version"},
 		},
 	},
-	Handler: (*Server).toolRevertArticleVersion,
+	Handler:  (*Server).toolRevertArticleVersion,
+	Behavior: toolBehavior{Title: "Revert Article Version", Destructive: true, Idempotent: false},
 }
 
 func (srv *Server) toolRevertArticleVersion(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -653,7 +662,8 @@ var getBacklinksTool = toolDef{
 			"required": []string{"slug"},
 		},
 	},
-	Handler: (*Server).toolGetBacklinks,
+	Handler:  (*Server).toolGetBacklinks,
+	Behavior: toolBehavior{Title: "Get Backlinks", ReadOnly: true},
 }
 
 func (srv *Server) toolGetBacklinks(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -706,7 +716,8 @@ var getContextOverviewTool = toolDef{
 			},
 		},
 	},
-	Handler: (*Server).toolGetContextOverview,
+	Handler:  (*Server).toolGetContextOverview,
+	Behavior: toolBehavior{Title: "Get Context Overview", ReadOnly: true},
 }
 
 func (srv *Server) toolGetContextOverview(args json.RawMessage) (interface{}, *JSONRPCError) {

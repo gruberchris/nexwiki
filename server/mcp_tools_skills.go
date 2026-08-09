@@ -49,7 +49,8 @@ var createAgentSkillTool = toolDef{
 			"required": []string{"title", "content"},
 		},
 	},
-	Handler: (*Server).toolCreateAgentSkill,
+	Handler:  (*Server).toolCreateAgentSkill,
+	Behavior: toolBehavior{Title: "Create Agent Skill", Destructive: false, Idempotent: false},
 }
 
 func (srv *Server) toolCreateAgentSkill(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -100,7 +101,8 @@ var listAgentSkillsTool = toolDef{
 			"properties": map[string]interface{}{},
 		},
 	},
-	Handler: (*Server).toolListAgentSkills,
+	Handler:  (*Server).toolListAgentSkills,
+	Behavior: toolBehavior{Title: "List Agent Skills", ReadOnly: true},
 }
 
 func (srv *Server) toolListAgentSkills(args json.RawMessage) (interface{}, *JSONRPCError) {
