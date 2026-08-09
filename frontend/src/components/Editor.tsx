@@ -26,11 +26,7 @@ import {
 } from 'lucide-react';
 import CodeMirror from '@uiw/react-codemirror';
 import type { ReactCodeMirrorRef } from '@uiw/react-codemirror';
-import { markdown } from '@codemirror/lang-markdown';
-import { EditorView, keymap } from '@codemirror/view';
-import { linter } from '@codemirror/lint';
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
-import { tags as t } from '@lezer/highlight';
+import { EditorView } from '@codemirror/view';
 
 import { Slugify } from '../utils';
 import { Viewer } from './Viewer';
@@ -42,6 +38,7 @@ import type { Article, ContentType } from '../types';
 import { ContentTypes } from '../types';
 import { useSplitPane } from '../hooks/useSplitPane';
 import { useTagEditor } from '../hooks/useTagEditor';
+import { buildEditorExtensions } from '../utils/editorExtensions';
 
 interface EditorProps {
   initialTitle: string;
@@ -154,108 +151,11 @@ export const Editor: React.FC<EditorProps> = ({
     view.focus();
   };
 
-  // Keyboard shortcut Ctrl+/ or Cmd+/ to toggle syntax reference modal
-  const shortcutKeymap = useMemo(() => {
-    return keymap.of([
-      {
-        key: 'Mod-/',
-        run: () => {
-          setSyntaxModalOpen(prev => !prev);
-          return true;
-        }
-      }
-    ]);
-  }, []);
-
-  // Custom adaptive theme wrapping Option B (using CSS variables under the hood)
-  const editorTheme = useMemo(() => {
-    return EditorView.theme({
-      "&": {
-        color: "var(--text-secondary)",
-        backgroundColor: "var(--bg-secondary)",
-        fontSize: "14px",
-        height: "100%",
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-      },
-      ".cm-scroller": { overflow: "auto" },
-      ".cm-content": {
-        caretColor: "var(--accent-primary)",
-        padding: "24px 0",
-      },
-      ".cm-cursor": {
-        borderLeftColor: "var(--accent-primary)",
-      },
-      "&.cm-focused .cm-cursor": {
-        borderLeftColor: "var(--accent-primary)",
-      },
-      ".cm-selectionBackground, ::selection": {
-        backgroundColor: "color-mix(in srgb, var(--accent-primary) 20%, transparent) !important",
-      },
-      "&.cm-focused .cm-selectionBackground": {
-        backgroundColor: "color-mix(in srgb, var(--accent-primary) 30%, transparent) !important",
-      },
-      ".cm-gutters": {
-        backgroundColor: "var(--bg-primary)",
-        color: "var(--text-muted)",
-        borderRight: "1px solid var(--border-color)",
-        paddingTop: "24px",
-      },
-      ".cm-activeLine": {
-        backgroundColor: "color-mix(in srgb, var(--border-color) 15%, transparent)",
-      },
-      ".cm-activeLineGutter": {
-        backgroundColor: "color-mix(in srgb, var(--border-color) 30%, transparent)",
-      },
-    });
-  }, []);
-
-  // CSS-variable-driven Markdown syntax highlighting so tokens flip with light/dark automatically.
-  // (The @uiw default light HighlightStyle is disabled below via basicSetup.syntaxHighlighting=false.)
-  const highlightStyle = useMemo(() => {
-    return HighlightStyle.define([
-      { tag: t.heading, color: "var(--accent-primary)", fontWeight: "bold" },
-      { tag: t.strong, color: "var(--text-primary)", fontWeight: "bold" },
-      { tag: t.emphasis, color: "var(--text-secondary)", fontStyle: "italic" },
-      { tag: [t.link, t.url], color: "var(--accent-secondary)", textDecoration: "underline" },
-      { tag: t.monospace, color: "var(--accent-primary)" },
-      { tag: t.list, color: "var(--text-secondary)" },
-      { tag: t.quote, color: "var(--text-muted)" },
-      { tag: [t.meta, t.processingInstruction, t.contentSeparator], color: "var(--text-muted)" },
-    ]);
-  }, []);
-
-  // Dynamic linter extension integrating with CodeMirror lint layer
-  const codeMirrorLinter = useMemo(() => {
-    return linter((view) => {
-      const docText = view.state.doc.toString();
-      const rawDiags = lintMarkdown(docText, articles);
-      return rawDiags.map((d) => ({
-        from: d.from,
-        to: d.to,
-        severity: d.severity,
-        message: d.message,
-        actions: d.suggestion ? [{
-          name: `Fix: ${d.suggestion}`,
-          apply: (view, from, to) => {
-            view.dispatch({
-              changes: { from, to, insert: d.suggestion! }
-            });
-          }
-        }] : []
-      }));
-    });
-  }, [articles]);
-
-  // CodeMirror Extensions array
-  const extensions = useMemo(() => {
-    return [
-      markdown(),
-      editorTheme,
-      syntaxHighlighting(highlightStyle),
-      shortcutKeymap,
-      codeMirrorLinter
-    ];
-  }, [editorTheme, highlightStyle, shortcutKeymap, codeMirrorLinter]);
+  // Theme, highlighting, keymap, and the linter bridge all live in utils/editorExtensions.
+  const extensions = useMemo(
+    () => buildEditorExtensions(articles, () => setSyntaxModalOpen((prev) => !prev)),
+    [articles],
+  );
 
   // Handle Image uploads
   const handleImageUpload = async (file: File) => {
