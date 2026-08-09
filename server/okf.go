@@ -26,12 +26,14 @@ var okfDirLabels = map[string]string{
 // Native files are already OKF YAML, so export mainly synthesizes the bundle hierarchy (by type),
 // the reserved index.md files, a date-grouped log.md, and translates WikiLinks to bundle paths.
 func (s *Storage) ExportOKFBundle() ([]byte, error) {
+	// Export genuinely needs every body, so the GetArticle pass below is unavoidable. What is
+	// avoidable is the metadata pass: ListArticles is cache-backed now, so on a warm cache it
+	// costs a stat per file instead of a second full read and parse of the whole wiki.
 	metas, err := s.ListArticles()
 	if err != nil {
 		return nil, err
 	}
 
-	// Load full articles and compute each concept's bundle-relative path for link translation.
 	var full []*Article
 	pathForSlug := make(map[string]string)
 	for _, m := range metas {
