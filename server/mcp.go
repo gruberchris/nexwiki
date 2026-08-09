@@ -918,9 +918,10 @@ func (srv *Server) logMCPToolCall(params json.RawMessage) {
 			}
 
 			updateType := "article-edited"
-			if action == "create" {
+			switch action {
+			case "create":
 				updateType = "article-added"
-			} else if action == "delete" {
+			case "delete":
 				updateType = "article-removed"
 			}
 
@@ -2209,7 +2210,8 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if r.Method == http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
 		// Verify accept header supports text/event-stream
 		accept := r.Header.Get("Accept")
 		if accept != "" && !strings.Contains(accept, "text/event-stream") {
@@ -2245,7 +2247,7 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 				flusher.Flush()
 			}
 		}
-	} else if r.Method == http.MethodPost {
+	case http.MethodPost:
 		// Read body
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -2269,7 +2271,7 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 
 		// Execute request synchronously and write response directly to the http response writer
 		srv.handleRequest(w, &req)
-	} else {
+	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }

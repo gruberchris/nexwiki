@@ -1152,9 +1152,10 @@ func (srv *Server) HandlePostActivityLog(w http.ResponseWriter, r *http.Request)
 				}
 
 				updateType := "article-edited"
-				if payload.Action == "create" {
+				switch payload.Action {
+				case "create":
 					updateType = "article-added"
-				} else if payload.Action == "delete" {
+				case "delete":
 					updateType = "article-removed"
 				}
 
