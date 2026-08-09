@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import type { Article, ThemeMode } from './types';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import type { Article } from './types';
 import { ContentTypes, isAgentDoc, isSkill, isPlan, typeLabel } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Viewer } from './components/Viewer';
@@ -8,13 +8,14 @@ import { Editor } from './components/Editor';
 import { TOC } from './components/TOC';
 import { Hero } from './components/Hero';
 import { SearchResults } from './components/SearchResults';
-import { Slugify, saveFile, generateDocxContent } from './utils';
+import { Slugify } from './utils';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { ThemeManagerModal } from './components/ThemeManagerModal';
-import type { Theme } from './components/ThemeManagerModal';
 import { useSSE } from './hooks/useSSE';
 import { useWikiUpdates } from './hooks/useWikiUpdates';
-import { useBrowserColorScheme } from './hooks/useBrowserColorScheme';
+import { useTheme } from './hooks/useTheme';
+import { useArticleActions } from './hooks/useArticleActions';
+import { useRouter, parseRoute } from './hooks/useRouter';
 import { ActivityLogDrawer } from './components/ActivityLogDrawer';
 import { 
   Edit, 
@@ -42,10 +43,6 @@ function isNewRequest(path: string): boolean {
 }
 
 export const App: React.FC = () => {
-  // Navigation & routing state
-  const [currentPath, setCurrentPath] = useState(window.location.pathname);
-  const [currentSearch, setCurrentSearch] = useState(window.location.search);
-  
   // Articles state
   const [articles, setArticles] = useState<Article[]>([]);
   const [currentArticle, setCurrentArticle] = useState<Article | null>(null);
@@ -57,38 +54,21 @@ export const App: React.FC = () => {
   const [editorContent, setEditorContent] = useState('');
   const [editorTags, setEditorTags] = useState<string[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+
+  // Hand-rolled routing: history, back/forward, and URL parsing.
+  const closeEditorOnRouteChange = useCallback(() => setIsEditing(false), []);
+  const { currentPath, currentSearch, navigate, navigateTo: handleNavigate } =
+    useRouter(closeEditorOnRouteChange);
+
   
-  // Dropdown & Copy utility states
-  const [shareDropdownOpen, setShareDropdownOpen] = useState(false);
-  const [copiedMd, setCopiedMd] = useState(false);
-  const [copiedUrl, setCopiedUrl] = useState(false);
-  const [copiedTitle, setCopiedTitle] = useState(false);
 
   // UI state
   const [isLoading, setIsLoading] = useState(true);
   const [isArticleLoading, setIsArticleLoading] = useState(false);
-  // 'light' | 'dark' = explicit user choice (persisted); 'auto' = follow the
-  // browser's prefers-color-scheme (the default, stored as an absent key).
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    const savedTheme = localStorage.getItem('theme');
-    return savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'auto';
-  });
-  const [darkMode, setDarkMode] = useState(() => {
-    const savedTheme = localStorage.getItem('theme');
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    if (savedTheme === 'dark' || savedTheme === 'light') {
-      return savedTheme === 'dark';
-    }
-    return prefersDark;
-  });
   const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [wikiName, setWikiName] = useState('NexWiki');
   const [version, setVersion] = useState('0.1.0');
 
-  // Theme Manager states
-  const [themes, setThemes] = useState<Theme[]>([]);
-  const [activeThemeName, setActiveThemeName] = useState('default');
-  const [themeModalOpen, setThemeModalOpen] = useState(false);
 
   // Activity Log states
   const [isActivityOpen, setIsActivityOpen] = useState(false);
@@ -104,40 +84,42 @@ export const App: React.FC = () => {
     }, 4000);
   };
 
-	const { resetUnreadCount } = useSSE();
+  // All look-and-feel state (mode, palette, CSS variables) lives in useTheme.
+  const {
+    themes, activeThemeName, themeMode, darkMode,
+    themeModalOpen, setThemeModalOpen,
+    cycleThemeMode, selectTheme, saveTheme, deleteTheme,
+    initialize: initializeTheme,
+  } = useTheme(triggerAlert);
+
+  // Clipboard, export, and backup/restore actions.
+  const {
+    shareDropdownOpen, setShareDropdownOpen,
+    copiedMd, copiedUrl, copiedTitle,
+    copyMarkdown, copyShareLink, copyTitle,
+    exportPDF, exportDocx, exportMarkdown, exportAll,
+    importFileRef, triggerImport, handleImportFileChange,
+  } = useArticleActions({
+    currentArticle,
+    onAlert: triggerAlert,
+    onArticlesImported: () => fetchArticles(),
+  });
+
+	 const { resetUnreadCount } = useSSE();
 
   // Synchronize browser tab document title with configured wiki name
   useEffect(() => {
     document.title = `${wikiName} — Personal Knowledge Engine`;
   }, [wikiName]);
 
-  // Parse current route parameters memoized cleanly
+  // Route shape comes from parseRoute; whether the slug actually exists depends on the loaded
+  // article list, which parsing cannot know, so that refinement is applied here.
   const routeInfo = useMemo(() => {
-    if (currentPath === '/' || currentPath === '') {
-      return { route: 'home', slug: '' };
+    const parsed = parseRoute(currentPath, currentSearch);
+    if (parsed.route === 'article' && !isLoading && !articles.some(art => art.slug === parsed.slug)) {
+      return { route: '404', slug: '' } as typeof parsed;
     }
-    if (currentPath === '/new') {
-      const params = new URLSearchParams(currentSearch);
-      return { 
-        route: 'new', 
-        slug: '', 
-        prefillTitle: params.get('title') || '',
-        prefillType: params.get('type') || 'article'
-      };
-    }
-    if (currentPath === '/search') {
-      const params = new URLSearchParams(currentSearch);
-      return { route: 'search', slug: '', searchQuery: params.get('q') || '' };
-    }
-    if (currentPath.startsWith('/articles/')) {
-      const slug = currentPath.substring('/articles/'.length);
-      // Once booting/loading is complete, if the article slug is not present in the list, route to 404
-      if (!isLoading && !articles.some(art => art.slug === slug)) {
-        return { route: '404', slug: '' };
-      }
-      return { route: 'article', slug };
-    }
-    return { route: '404', slug: '' };
+    return parsed;
   }, [currentPath, currentSearch, isLoading, articles]);
 
   // Sync state on path/search changes during rendering (avoids useEffect cascading renders)
@@ -185,41 +167,6 @@ export const App: React.FC = () => {
       document.documentElement.classList.remove('dark');
     }
   }, [darkMode]);
-
-  // Custom navigate routing helper
-  const navigate = (fullUrl: string) => {
-    const cleanUrl = fullUrl.startsWith('/') ? fullUrl : '/' + fullUrl;
-    window.history.pushState(null, '', cleanUrl);
-    
-    const [path, search] = cleanUrl.split('?');
-    setCurrentPath(path);
-    setCurrentSearch(search ? '?' + search : '');
-    setIsEditing(false); // Close editor on navigation
-  };
-
-  // Unified smart navigation handler
-  const handleNavigate = (target: string) => {
-    if (target === 'home') {
-      navigate('/');
-    } else if (target.startsWith('new') || target.startsWith('/new')) {
-      navigate(target);
-    } else if (target.startsWith('search') || target.startsWith('/search')) {
-      navigate(target);
-    } else {
-      navigate(`/articles/${target}`);
-    }
-  };
-
-  // Sync routing state on browser back/forward buttons
-  useEffect(() => {
-    const handlePopState = () => {
-      setCurrentPath(window.location.pathname);
-      setCurrentSearch(window.location.search);
-      setIsEditing(false);
-    };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
 
   // Fetch all articles metadata on load
   const fetchArticles = async (selectSlugAfter?: string) => {
@@ -277,89 +224,6 @@ export const App: React.FC = () => {
   });
 
   // Synchronize CSS custom properties for active theme and variant
-  useEffect(() => {
-    if (themes.length === 0) return;
-    const currentTheme = themes.find(t => t.name === activeThemeName) || themes[0];
-    if (!currentTheme) return;
-
-    const variant = darkMode ? currentTheme.dark : currentTheme.light;
-    const root = document.documentElement;
-
-    // Apply is-dark or light class for standard tailwind and CodeMirror
-    if (darkMode) {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-
-    // Apply all color custom variables to root style
-    Object.entries(variant).forEach(([key, val]) => {
-      const cssVarName = `--${key.replace(/_/g, '-')}`;
-      root.style.setProperty(cssVarName, val);
-    });
-  }, [activeThemeName, themes, darkMode]);
-
-  // Theme Manager Actions
-  const fetchThemes = async () => {
-    try {
-      const res = await fetch('/api/themes');
-      if (res.ok) {
-        const data = await res.json();
-        setThemes(data || []);
-      }
-    } catch (err) {
-      console.error('Failed to fetch themes:', err);
-    }
-  };
-
-  const handleSelectTheme = (name: string) => {
-    setActiveThemeName(name);
-    localStorage.setItem('active-theme', name);
-    
-    // Automatically apply its default variant mode initially. Do not persist
-    // it to localStorage 'theme': that key marks an explicit user mode choice,
-    // and setting it would stop useBrowserColorScheme from following the OS.
-    const targetTheme = themes.find(t => t.name === name);
-    if (targetTheme) {
-      setDarkMode(targetTheme.default_mode === 'dark');
-    }
-  };
-
-  const handleSaveTheme = async (newTheme: Theme) => {
-    const res = await fetch('/api/themes', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(newTheme),
-    });
-
-    if (!res.ok) {
-      const errData = await res.json();
-      throw new Error(errData.error || 'Failed to save theme');
-    }
-
-    triggerAlert('success', `Theme "${newTheme.name}" saved successfully!`);
-    await fetchThemes();
-  };
-
-  const handleDeleteTheme = async (name: string) => {
-    const res = await fetch(`/api/themes/${encodeURIComponent(name)}`, {
-      method: 'DELETE',
-    });
-
-    if (!res.ok) {
-      const errData = await res.json();
-      throw new Error(errData.error || 'Failed to delete theme');
-    }
-
-    triggerAlert('success', `Theme "${name}" deleted successfully!`);
-    if (activeThemeName === name) {
-      handleSelectTheme('default');
-    }
-    await fetchThemes();
-  };
-
   // Initial loading boots
   useEffect(() => {
     const bootApp = async () => {
@@ -391,37 +255,12 @@ export const App: React.FC = () => {
         console.error('Failed to load wiki configurations:', err);
       }
 
-      // 2. Fetch all available themes
-      try {
-        const res = await fetch('/api/themes');
-        if (res.ok) {
-          setThemes(((await res.json()) as Theme[] | null) ?? []);
-        }
-      } catch (err) {
-        console.error('Failed to fetch themes during boot:', err);
-      }
-
-      // 3. Set the active theme based on scheduling (if active), localStorage, or default fallback
-      let finalThemeName = defaultTheme;
-      if (themeSchedulingEnabled && scheduledTheme) {
-        finalThemeName = scheduledTheme;
-      } else {
-        const savedTheme = localStorage.getItem('active-theme');
-        if (savedTheme) {
-          finalThemeName = savedTheme;
-        }
-      }
-      setActiveThemeName(finalThemeName);
-
-      // 4. Set initial dark/light variant mode. An explicit saved user choice
-      // wins; otherwise keep mirroring the browser's prefer-color-scheme
-      // (already applied by the darkMode initial state). Never write the
-      // 'theme' key here — it must only record an explicit user toggle,
-      // otherwise useBrowserColorScheme stops following OS scheme changes.
-      const activeMode = localStorage.getItem('theme');
-      if (activeMode === 'dark' || activeMode === 'light') {
-        setDarkMode(activeMode === 'dark');
-      }
+      // 2-4. Load palettes and resolve the active theme (scheduling > saved > server default).
+      await initializeTheme({
+        defaultTheme,
+        scheduledTheme,
+        schedulingEnabled: themeSchedulingEnabled,
+      });
 
       await fetchArticles();
       setIsLoading(false);
@@ -439,23 +278,6 @@ export const App: React.FC = () => {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath]);
-
-  // Follow browser prefers-color-scheme changes unless the user has explicitly chosen a mode.
-  useBrowserColorScheme(setDarkMode);
-
-  // Cycle Light → Dark → Auto. Light/Dark persist an explicit preference;
-  // Auto clears it so the mode follows the browser's prefers-color-scheme.
-  const cycleThemeMode = () => {
-    const next: ThemeMode = themeMode === 'light' ? 'dark' : themeMode === 'dark' ? 'auto' : 'light';
-    setThemeMode(next);
-    if (next === 'auto') {
-      localStorage.removeItem('theme');
-      setDarkMode(window.matchMedia('(prefers-color-scheme: dark)').matches);
-    } else {
-      localStorage.setItem('theme', next);
-      setDarkMode(next === 'dark');
-    }
-  };
 
   // CRUD: Saving Article edits/creates
   const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string) => {
@@ -537,198 +359,6 @@ export const App: React.FC = () => {
   };
 
   // Clipboard MD copying
-  const handleCopyMarkdown = async () => {
-    if (!currentArticle) return;
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(currentArticle.content || '');
-      } else {
-        const textarea = document.createElement('textarea');
-        textarea.value = currentArticle.content || '';
-        textarea.style.position = 'fixed';
-        document.body.appendChild(textarea);
-        textarea.select();
-        const cmd = 'execCommand';
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (document as any)[cmd]('copy');
-        document.body.removeChild(textarea);
-      }
-      setCopiedMd(true);
-      triggerAlert('success', 'Article Markdown copied to clipboard!');
-      setTimeout(() => setCopiedMd(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy Markdown:', err);
-      triggerAlert('error', 'Failed to copy Markdown content.');
-    }
-  };
-
-  // Clipboard Link sharing
-  const handleShareLink = async () => {
-    try {
-      const currentUrl = window.location.href;
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(currentUrl);
-      } else {
-        const textarea = document.createElement('textarea');
-        textarea.value = currentUrl;
-        textarea.style.position = 'fixed';
-        document.body.appendChild(textarea);
-        textarea.select();
-        const cmd = 'execCommand';
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (document as any)[cmd]('copy');
-        document.body.removeChild(textarea);
-      }
-      setCopiedUrl(true);
-      triggerAlert('success', 'Article URL copied to clipboard!');
-      setTimeout(() => setCopiedUrl(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy URL:', err);
-      triggerAlert('error', 'Failed to copy URL to clipboard.');
-    }
-  };
-
-  // Clipboard title copying
-  const handleCopyTitle = async () => {
-    if (!currentArticle) return;
-    try {
-      await navigator.clipboard.writeText(currentArticle.title);
-      setCopiedTitle(true);
-      triggerAlert('success', 'Article title copied to clipboard!');
-      setTimeout(() => setCopiedTitle(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy title:', err);
-      triggerAlert('error', 'Failed to copy article title.');
-    }
-  };
-
-  // PDF print export trigger
-  const handleExportPDF = () => {
-    setShareDropdownOpen(false);
-    window.print();
-  };
-
-  // DOCX file saving export trigger
-  const handleExportDocx = async () => {
-    if (!currentArticle) return;
-    setShareDropdownOpen(false);
-    
-    try {
-      const viewerEl = document.querySelector('.wiki-content');
-      const bodyHtml = viewerEl ? viewerEl.innerHTML : '';
-      
-      const docxContent = generateDocxContent(currentArticle.title, bodyHtml);
-      const suggestedName = Slugify(currentArticle.title) || 'article';
-      
-      const success = await saveFile(
-        docxContent,
-        suggestedName,
-        'application/msword',
-        'docx'
-      );
-      
-      if (success) {
-        triggerAlert('success', 'Article exported as Word successfully!');
-      }
-    } catch (err) {
-      console.error('Failed to export DOCX:', err);
-      triggerAlert('error', 'Failed to export as Word document.');
-    }
-  };
-
-  // MD file saving export trigger
-  const handleExportMd = async () => {
-    if (!currentArticle) return;
-    setShareDropdownOpen(false);
-    
-    try {
-      const suggestedName = Slugify(currentArticle.title) || 'article';
-      const success = await saveFile(
-        currentArticle.content || '',
-        suggestedName,
-        'text/markdown',
-        'md'
-      );
-      
-      if (success) {
-        triggerAlert('success', 'Article exported as Markdown successfully!');
-      }
-    } catch (err) {
-      console.error('Failed to export MD:', err);
-      triggerAlert('error', 'Failed to export as Markdown file.');
-    }
-  };
-
-  const importFileRef = useRef<HTMLInputElement>(null);
-
-  const handleExportAll = async () => {
-    try {
-      triggerAlert('success', 'Preparing backup… download will start shortly.');
-      const response = await fetch('/api/okf/export');
-      if (!response.ok) {
-        triggerAlert('error', 'Failed to create backup.');
-        return;
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `nexwiki-backup-${new Date().toISOString().split('T')[0]}.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch {
-      triggerAlert('error', 'Failed to create backup.');
-    }
-  };
-
-  const handleImport = () => importFileRef.current?.click();
-
-  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = '';
-    try {
-      triggerAlert('success', 'Restoring from backup…');
-      const form = new FormData();
-      form.append('file', file);
-      const response = await fetch('/api/okf/import', { method: 'POST', body: form });
-      if (!response.ok) {
-        triggerAlert('error', 'Restore failed. Ensure the file is a valid NexWiki backup (.zip).');
-        return;
-      }
-      const report = await response.json() as {
-        imported: number; skipped: number; missing_type: string[]; warnings: string[];
-      };
-      await fetchArticles();
-      if (report.warnings.length > 0) console.warn('Import warnings:', report.warnings);
-      const warn = report.warnings.length > 0
-        ? ` (${report.warnings.length} warning${report.warnings.length > 1 ? 's' : ''} — see console)`
-        : '';
-      triggerAlert('success', `Restored ${report.imported} article${report.imported !== 1 ? 's' : ''} from backup.${warn}`);
-    } catch {
-      triggerAlert('error', 'Restore failed. Ensure the file is a valid NexWiki backup (.zip).');
-    }
-  };
-
-  // Close dropdown on click outside
-  useEffect(() => {
-    if (!shareDropdownOpen) return;
-    
-    const handleOutsideClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest('.share-dropdown-container')) {
-        setShareDropdownOpen(false);
-      }
-    };
-    
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => {
-      document.removeEventListener('mousedown', handleOutsideClick);
-    };
-  }, [shareDropdownOpen]);
-
   // View renderer formatting dates
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '';
@@ -788,8 +418,8 @@ export const App: React.FC = () => {
             onNavigate={handleNavigate}
             onCreateNew={(type: 'article' | 'plan' | 'skill') => navigate(`/new?type=${type}`)}
             wikiName={wikiName}
-            onExportAll={handleExportAll}
-            onImport={handleImport}
+            onExportAll={exportAll}
+            onImport={triggerImport}
             onOpenActivityLog={() => setIsActivityOpen(true)}
             version={version}
           />
@@ -893,7 +523,7 @@ export const App: React.FC = () => {
                         {currentArticle.title}
                       </h1>
                       <button
-                        onClick={handleCopyTitle}
+                        onClick={copyTitle}
                         className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
                         title="Copy article title to clipboard"
                       >
@@ -1007,14 +637,14 @@ export const App: React.FC = () => {
                       {shareDropdownOpen && (
                         <div className="dropdown-menu">
                           <button
-                            onClick={handleCopyMarkdown}
+                            onClick={copyMarkdown}
                             className="dropdown-item"
                           >
                             {copiedMd ? <Check size={12} className="text-emerald-500 animate-pulse" /> : <Copy size={12} className="text-indigo-500" />}
                             <span>{copiedMd ? 'Copied Markdown!' : 'Copy Markdown'}</span>
                           </button>
                           <button
-                            onClick={handleShareLink}
+                            onClick={copyShareLink}
                             className="dropdown-item"
                           >
                             {copiedUrl ? <Check size={12} className="text-emerald-500 animate-pulse" /> : <Share2 size={12} className="text-indigo-500" />}
@@ -1024,21 +654,21 @@ export const App: React.FC = () => {
                           <div className="my-1 border-t border-slate-100 dark:border-slate-800/40" />
                           
                           <button
-                            onClick={handleExportPDF}
+                            onClick={exportPDF}
                             className="dropdown-item"
                           >
                             <Printer size={12} className="text-indigo-500" />
                             <span>Export as PDF</span>
                           </button>
                           <button
-                            onClick={handleExportDocx}
+                            onClick={exportDocx}
                             className="dropdown-item"
                           >
                             <FileText size={12} className="text-indigo-500" />
                             <span>Export as Word</span>
                           </button>
                           <button
-                            onClick={handleExportMd}
+                            onClick={exportMarkdown}
                             className="dropdown-item"
                           >
                             <FileDown size={12} className="text-indigo-500" />
@@ -1170,9 +800,9 @@ export const App: React.FC = () => {
           onClose={() => setThemeModalOpen(false)}
           themes={themes}
           activeThemeName={activeThemeName}
-          onSelectTheme={handleSelectTheme}
-          onSaveTheme={handleSaveTheme}
-          onDeleteTheme={handleDeleteTheme}
+          onSelectTheme={selectTheme}
+          onSaveTheme={saveTheme}
+          onDeleteTheme={deleteTheme}
         />
       )}
 
