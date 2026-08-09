@@ -22,6 +22,7 @@ var getWikiStatisticsTool = toolDef{
 			"properties": map[string]interface{}{},
 		},
 	},
+	Output:   statisticsOutputSchema(),
 	Handler:  (*Server).toolGetWikiStatistics,
 	Behavior: toolBehavior{Title: "Get Wiki Statistics", ReadOnly: true},
 }
@@ -44,20 +45,17 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 		}
 	}
 
-	type BrokenLink struct {
-		FromSlug   string
-		TargetLink string
-	}
-	var brokenLinks []BrokenLink
+	brokenLinks := []BrokenLinkRef{}
 	totalLinks := 0
 
 	for _, art := range fullArticles {
 		for _, target := range ExtractWikiLinkTargets(art.Content) {
 			totalLinks++
 			if !activeSlugs[Slugify(target)] {
-				brokenLinks = append(brokenLinks, BrokenLink{
+				brokenLinks = append(brokenLinks, BrokenLinkRef{
 					FromSlug:   art.Slug,
-					TargetLink: target,
+					Target:     target,
+					TargetSlug: Slugify(target),
 				})
 			}
 		}
@@ -75,11 +73,19 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 		respText += "Broken/Dead WikiLinks Detected (AI suggestion: create these pages to heal the wiki!):\n"
 		for _, bl := range brokenLinks {
 			respText += fmt.Sprintf("  - Link '[[%s]]' inside article '/articles/%s' (Target slug: '%s' is missing)\n",
-				bl.TargetLink, bl.FromSlug, Slugify(bl.TargetLink))
+				bl.Target, bl.FromSlug, bl.TargetSlug)
 		}
 	}
 
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+	return ToolResponse{
+		Content: []ToolContent{{Type: "text", Text: respText}},
+		StructuredContent: StatisticsOutput{
+			TotalArticles:   len(articles),
+			TotalLinks:      totalLinks,
+			BrokenLinkCount: len(brokenLinks),
+			BrokenLinks:     brokenLinks,
+		},
+	}, nil
 }
 
 var getStatusTagsTool = toolDef{
@@ -91,6 +97,7 @@ var getStatusTagsTool = toolDef{
 			"properties": map[string]interface{}{},
 		},
 	},
+	Output:   statusTagsOutputSchema(),
 	Handler:  (*Server).toolGetStatusTags,
 	Behavior: toolBehavior{Title: "Get Status Tags", ReadOnly: true},
 }
@@ -104,7 +111,10 @@ func (srv *Server) toolGetStatusTags(args json.RawMessage) (interface{}, *JSONRP
 	text += "  • Use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"completed\").\n"
 	text += "  • When a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to add the 'completed' status tag.\n"
 	text += "  • The reserved AI-Agent-Plan type must NEVER be relabelled.\n"
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+	return ToolResponse{
+		Content:           []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: StatusTagsOutput{StatusTags: StatusTags},
+	}, nil
 }
 
 var getRecentActivityTool = toolDef{
@@ -135,6 +145,7 @@ var getRecentActivityTool = toolDef{
 			},
 		},
 	},
+	Output:   activityOutputSchema(),
 	Handler:  (*Server).toolGetRecentActivity,
 	Behavior: toolBehavior{Title: "Get Recent Activity", ReadOnly: true},
 }
@@ -213,7 +224,13 @@ func (srv *Server) toolGetRecentActivity(args json.RawMessage) (interface{}, *JS
 		}
 	}
 
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+	if events == nil {
+		events = []LogEvent{}
+	}
+	return ToolResponse{
+		Content:           []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: ActivityOutput{Count: len(events), Events: events},
+	}, nil
 }
 
 var exportOkfBundleTool = toolDef{

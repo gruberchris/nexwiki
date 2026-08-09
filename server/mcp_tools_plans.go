@@ -301,6 +301,7 @@ var listAgentPlansTool = toolDef{
 			},
 		},
 	},
+	Output:   documentListOutputSchema("Matching agent plans. Lifecycle state lives in the status tags."),
 	Handler:  (*Server).toolListAgentPlans,
 	Behavior: toolBehavior{Title: "List Agent Plans", ReadOnly: true},
 }
@@ -323,6 +324,7 @@ func (srv *Server) toolListAgentPlans(args json.RawMessage) (interface{}, *JSONR
 
 	var text string
 	count := 0
+	matched := []Article{}
 	for _, artMeta := range articles {
 		art, err := srv.Storage.GetArticle(artMeta.Slug)
 		if err != nil {
@@ -347,6 +349,11 @@ func (srv *Server) toolListAgentPlans(args json.RawMessage) (interface{}, *JSONR
 
 		if matchProjFilter && matchTagFilter {
 			count++
+			// A listing is metadata; the body is what read_article is for. Dropping it keeps a
+			// structured index of a large wiki from being a copy of the whole wiki.
+			meta := *art
+			meta.Content = ""
+			matched = append(matched, meta)
 			if count == 1 {
 				text = "Collaborative AI Plans Index:\n\n"
 			}
@@ -371,5 +378,8 @@ func (srv *Server) toolListAgentPlans(args json.RawMessage) (interface{}, *JSONR
 		}
 	}
 
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+	return ToolResponse{
+		Content:           []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: DocumentListOutput{Count: count, Documents: matched},
+	}, nil
 }
