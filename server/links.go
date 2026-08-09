@@ -1,7 +1,9 @@
 package server
 
 import (
+	"io/fs"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -84,34 +86,45 @@ func (s *Storage) GetBacklinks(targetSlug string) ([]Article, error) {
 		return nil, nil
 	}
 
-	metas, err := s.ListArticles()
-	if err != nil {
-		return nil, err
-	}
-
-	slugs := make([]string, 0, len(metas)+1)
-	slugs = append(slugs, "home") // excluded from ListArticles but may hold links
-	for _, m := range metas {
-		slugs = append(slugs, m.Slug)
-	}
-
+	// Walk the article directory directly rather than going through ListArticles and then
+	// re-reading each file: link targets are cached alongside metadata, so an unchanged wiki
+	// costs one stat per file instead of a full read and Markdown scan.
 	var backlinks []Article
-	for _, slug := range slugs {
-		if slug == cleanedTarget {
-			continue
+	err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		art, err := s.GetArticle(slug)
+		if d.IsDir() || filepath.Ext(path) != ".md" {
+			return nil
+		}
+		info, err := d.Info()
 		if err != nil {
-			continue
+			return nil // unreadable file: skip rather than fail the whole scan
 		}
-		for _, target := range ExtractWikiLinkTargets(art.Content) {
-			if Slugify(target) == cleanedTarget {
-				meta := *art
-				meta.Content = "" // metadata only
-				backlinks = append(backlinks, meta)
+
+		_, meta, err := s.cachedMeta(path, info)
+		if err != nil {
+			return nil
+		}
+		// "home" is excluded from listings but may still hold links, so it is included here.
+		if meta.Slug == cleanedTarget {
+			return nil // self-links are not backlinks
+		}
+
+		targets, err := s.cachedLinkTargets(path, info)
+		if err != nil {
+			return nil
+		}
+		for _, target := range targets {
+			if target == cleanedTarget {
+				backlinks = append(backlinks, *meta)
 				break
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	sort.Slice(backlinks, func(i, j int) bool {

@@ -54,6 +54,10 @@ type Storage struct {
 	ThemeStore  *ThemeStore
 	closeOnce   sync.Once
 
+	// cache memoizes parsed article metadata and link targets, validated by file mtime+size so
+	// edits made outside NexWiki are still picked up. See article_cache.go.
+	cache *articleCache
+
 	// writeMu serializes every mutation of the article tree. Writers arrive concurrently from
 	// the HTTP API, the in-process MCP goroutine, and the Streamable HTTP transport; without
 	// this, two writers can both scan the history directory, compute the same next version
@@ -109,6 +113,7 @@ func NewStorage(dataDir string) (*Storage, error) {
 		HistoryDir:  historyDir,
 		SearchIndex: index,
 		ThemeStore:  NewThemeStore(dataDir),
+		cache:       newArticleCache(),
 	}
 
 	// Seed standard 'home' page if no articles exist
@@ -151,6 +156,7 @@ func Slugify(title string) string {
 func (s *Storage) ListArticles() ([]Article, error) {
 	var articles []Article
 
+	seen := make(map[string]bool)
 	err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -159,14 +165,16 @@ func (s *Storage) ListArticles() ([]Article, error) {
 			return nil
 		}
 
-		data, err := os.ReadFile(path)
+		info, err := d.Info()
 		if err != nil {
 			return err
 		}
+		seen[path] = true
 
-		art, err := parseArticleFile(data, false)
+		// Served from cache when the file is unchanged; a stat beats an open + YAML parse.
+		_, art, err := s.cachedMeta(path, info)
 		if err != nil {
-			// Skip malformed files silently or log in a production app
+			// Skip malformed or unreadable files rather than failing the whole listing.
 			return nil
 		}
 
@@ -183,12 +191,36 @@ func (s *Storage) ListArticles() ([]Article, error) {
 		return nil, fmt.Errorf("failed to list articles: %w", err)
 	}
 
+	// Drop cache entries for files that have since been deleted or renamed.
+	s.cache.prune(seen)
+
 	// Sort articles: updated_at descending
 	sort.Slice(articles, func(i, j int) bool {
 		return articles[i].Timestamp.After(articles[j].Timestamp)
 	})
 
 	return articles, nil
+}
+
+// metaBySlug returns cached metadata for one slug, reading the file only when it has changed.
+// Callers that need the Markdown body must use GetArticle.
+func (s *Storage) metaBySlug(slug string) (*Article, error) {
+	cleanedSlug := Slugify(slug)
+	if cleanedSlug == "" {
+		return nil, fmt.Errorf("invalid slug")
+	}
+
+	filePath := filepath.Join(s.ArticleDir, cleanedSlug+".md")
+	info, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("article not found: %s", slug)
+		}
+		return nil, err
+	}
+
+	_, meta, err := s.cachedMeta(filePath, info)
+	return meta, err
 }
 
 // GetArticle reads and parses a single article by slug.
@@ -829,7 +861,10 @@ func (s *Storage) SearchArticlesWithOptions(queryStr string, opts SearchOptions)
 			break
 		}
 
-		art, err := s.GetArticle(hit.ID)
+		// Metadata is enough to decide whether a hit survives filtering; only the fallback
+		// snippet below needs the body, and Bleve supplies fragments for most hits. Reading the
+		// full file for every hit up front was pure waste.
+		art, err := s.metaBySlug(hit.ID)
 		if err != nil {
 			// Skip if the physical Markdown file was deleted on disk but search index is slightly out of sync
 			continue
@@ -862,7 +897,11 @@ func (s *Storage) SearchArticlesWithOptions(queryStr string, opts SearchOptions)
 		// frontend renders snippets as raw HTML. Without it, an article body starting with
 		// <img src=x onerror=...> becomes stored XSS in the search dropdown.
 		if len(snippets) == 0 {
-			runes := []rune(art.Content)
+			body := art.ContentPreview
+			if full, err := s.GetArticle(art.Slug); err == nil {
+				body = full.Content
+			}
+			runes := []rune(body)
 			limit := 150
 			if len(runes) < limit {
 				limit = len(runes)
