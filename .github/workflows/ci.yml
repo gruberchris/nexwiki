@@ -61,6 +61,60 @@ jobs:
       - name: Verify binary compiles
         run: CGO_ENABLED=0 go build -ldflags="-w -s" -o nexwiki main.go
 
+  docker:
+    name: Container image builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # The image was previously only ever built by release.yml, on a tag push — so a Dockerfile
+      # that could not build was invisible until after the tag existed. It happened: a leftover
+      # `RUN npm install -D tailwindcss@3` silently overrode package.json, and the Tailwind v4
+      # migration broke the container build while every other check stayed green.
+      #
+      # Build only, no push: this runs on pull requests, which must not publish anything. Loading
+      # the image into the local daemon is what lets the smoke test below actually run it.
+      # The GitHub Actions cache backend needs the docker-container driver; the default `docker`
+      # driver rejects `cache-to` outright ("Cache export is not supported for the docker driver").
+      # release.yml sets buildx up for the same reason before its multi-platform build.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build the image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: nexwiki:ci
+          build-args: |
+            VERSION=ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Building is not enough — a stale or wrongly-pinned frontend toolchain produces an image
+      # that builds and then serves the wrong assets. This asserts the container actually answers
+      # and that the stylesheet it embeds is the one the source describes.
+      - name: Smoke-test the image
+        run: |
+          docker run -d --name nexwiki-ci -p 8080:8080 nexwiki:ci
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8080/api/articles >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8080/api/articles >/dev/null || {
+            echo "container never served /api/articles"; docker logs nexwiki-ci; exit 1; }
+          css_path=$(curl -sf http://127.0.0.1:8080/ | grep -o '/assets/[^"]*\.css' | head -1)
+          [ -n "$css_path" ] || { echo "index.html references no stylesheet"; exit 1; }
+          css=$(curl -sf "http://127.0.0.1:8080$css_path")
+          for token in bg-themeBgPrimary text-themeTextMuted --color-themeBgPrimary; do
+            echo "$css" | grep -q -- "$token" || {
+              echo "embedded stylesheet is missing $token — the frontend build is wrong"; exit 1; }
+          done
+          echo "container serves the expected frontend assets"
+          docker rm -f nexwiki-ci
+
   vulncheck:
     name: Vulnerability scan
     runs-on: ubuntu-latest

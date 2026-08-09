@@ -1,0 +1,29 @@
+# Build context exclusions.
+#
+# Without this file, `COPY frontend/ ./` in the Dockerfile copies the host's node_modules into the
+# image on top of the ones just installed — landing darwin-arm64 binaries (rollup, esbuild) in a
+# linux image and inflating the build context by hundreds of megabytes.
+
+# Dependencies and build output — reinstalled and rebuilt inside the image
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Go build artifacts
+nexwiki
+coverage.out
+
+# The wiki's own content: a data volume at runtime, never baked into the image
+my-wiki-data/
+
+# VCS and local tooling
+.git/
+.github/
+.idea/
+.vscode/
+*.log
+
+# Docs and review notes have no bearing on the build
+*.md
+!README.md
+images/

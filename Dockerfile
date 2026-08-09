@@ -7,14 +7,20 @@ WORKDIR /app/frontend
 # Copy dependency manifests
 COPY frontend/package*.json ./
 
-# Install packages
-RUN npm install
+# npm ci, not npm install: it installs exactly what package-lock.json pins and fails if the two
+# have drifted, so the image is built from the same dependency tree that was tested.
+RUN npm ci
 
-# Copy all source assets
+# Copy all source assets. .dockerignore keeps the host's node_modules out — without it this COPY
+# lands platform-specific binaries (darwin-arm64 rollup/esbuild) on top of the linux ones just
+# installed above.
 COPY frontend/ ./
 
-# Force stable Tailwind CSS v3 for smooth compilations
-RUN npm install -D tailwindcss@3
+# NOTE: there was a `RUN npm install -D tailwindcss@3` here, pinning Tailwind v3 regardless of what
+# package.json asked for. It silently overrode the manifest, so after the v4 migration the image
+# installed v4 and then downgraded to v3, and the build died on `@import "tailwindcss"` —
+# postcss-import tried to read tailwindcss/lib/index.js as a stylesheet and choked on "use strict".
+# The version belongs in package.json alone; do not reintroduce a pin here.
 
 # Compile production package (outputs to /app/frontend/dist)
 RUN npm run build
