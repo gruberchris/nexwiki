@@ -186,7 +186,7 @@ func schemaTypeName(t reflect.Type) string {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return "integer"
-	case reflect.Ptr:
+	case reflect.Pointer:
 		return schemaTypeName(t.Elem())
 	default:
 		return t.String()
