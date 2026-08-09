@@ -41,6 +41,7 @@ import { MarkdownLintErrorModal } from './MarkdownLintErrorModal';
 import type { Article, ContentType } from '../types';
 import { ContentTypes } from '../types';
 import { useSplitPane } from '../hooks/useSplitPane';
+import { useTagEditor } from '../hooks/useTagEditor';
 
 interface EditorProps {
   initialTitle: string;
@@ -76,8 +77,6 @@ export const Editor: React.FC<EditorProps> = ({
   const [description, setDescription] = useState(initialDescription || '');
   const [source, setSource] = useState(initialSource || '');
   const [resource, setResource] = useState(initialResource || '');
-  const [tags, setTags] = useState<string[]>(initialTags || []);
-  const [tagInput, setTagInput] = useState('');
   const [viewMode, setViewMode] = useState<'split' | 'edit' | 'preview'>('split');
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -126,39 +125,12 @@ export const Editor: React.FC<EditorProps> = ({
     return lintMarkdown(content, articles);
   }, [content, articles]);
 
-  // Aggregate all unique tags that exist across all articles in the knowledge base
-  const allExistingTags = useMemo(() => {
-    const set = new Set<string>();
-    articles.forEach(art => {
-      art.tags?.forEach(tag => {
-        // Exclude tool-managed memory-scope tags from the user tag suggestions
-        if (!tag.toLowerCase().startsWith('memory-')) {
-          set.add(tag);
-        }
-      });
-    });
-    return Array.from(set);
-  }, [articles]);
-
-  // Compute tag suggestions based on the user's current tag input value
-  const tagSuggestions = useMemo(() => {
-    const query = tagInput.trim().toLowerCase();
-    if (!query) return [];
-    return allExistingTags
-      .filter(tag => 
-        tag.toLowerCase().includes(query) && 
-        !tags.some(t => t.toLowerCase() === tag.toLowerCase())
-      )
-      .slice(0, 10); // Performance optimization: limit DOM node counts to top 10 matches
-  }, [tagInput, allExistingTags, tags]);
-
-  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
-  const [prevSuggestionsLength, setPrevSuggestionsLength] = useState(tagSuggestions.length);
-
-  if (tagSuggestions.length !== prevSuggestionsLength) {
-    setFocusedIndex(-1);
-    setPrevSuggestionsLength(tagSuggestions.length);
-  }
+  // Tag set, autocomplete, and the reserved-prefix rule all live in useTagEditor.
+  const {
+    tags, tagInput, suggestions: tagSuggestions, focusedIndex,
+    handleInputChange: handleTagInputChange, handleKeyDown: handleTagKeyDown,
+    selectSuggestion: selectTagSuggestion, removeTag,
+  } = useTagEditor(initialTags || [], articles);
 
   const errorCount = useMemo(() => diagnostics.filter(d => d.severity === 'error').length, [diagnostics]);
   const warningCount = useMemo(() => diagnostics.filter(d => d.severity === 'warning').length, [diagnostics]);
@@ -498,7 +470,7 @@ export const Editor: React.FC<EditorProps> = ({
                         {!isLockedScopeTag && (
                           <button
                             type="button"
-                            onClick={() => setTags(tags.filter(t => t !== tag))}
+                            onClick={() => removeTag(tag)}
                             className="text-slate-400 hover:text-rose-500 transition-colors ml-0.5 cursor-pointer font-bold"
                           >
                             &times;
@@ -512,45 +484,8 @@ export const Editor: React.FC<EditorProps> = ({
                       type="text"
                       placeholder="Add tag..."
                       value={tagInput}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val.toLowerCase().startsWith('memory-')) return;
-                        setTagInput(val);
-                      }}
-                      onKeyDown={(e) => {
-                        if (tagSuggestions.length > 0) {
-                          if (e.key === 'Tab') {
-                            e.preventDefault();
-                            if (e.shiftKey) {
-                              setFocusedIndex(prev => (prev <= -1 ? tagSuggestions.length - 1 : prev - 1));
-                            } else {
-                              setFocusedIndex(prev => (prev >= tagSuggestions.length - 1 ? -1 : prev + 1));
-                            }
-                            return;
-                          }
-                          if (e.key === 'Enter' && focusedIndex >= 0 && focusedIndex < tagSuggestions.length) {
-                            e.preventDefault();
-                            const selection = tagSuggestions[focusedIndex];
-                            setTags([...tags, selection]);
-                            setTagInput('');
-                            setFocusedIndex(-1);
-                            return;
-                          }
-                        }
-
-                        if (e.key === 'Enter' || e.key === ',') {
-                          e.preventDefault();
-                          const cleanTag = tagInput.trim().replace(/,/g, '');
-                          if (cleanTag && !tags.some(t => t.toLowerCase() === cleanTag.toLowerCase())) {
-                            if (cleanTag.toLowerCase().startsWith('memory-')) {
-                              setTagInput('');
-                              return;
-                            }
-                            setTags([...tags, cleanTag]);
-                          }
-                          setTagInput('');
-                        }
-                      }}
+                      onChange={(e) => handleTagInputChange(e.target.value)}
+                      onKeyDown={handleTagKeyDown}
                       className="text-[10px] py-0.5 px-2 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-200 outline-none w-20 focus:w-28 focus:ring-1 focus:ring-indigo-500 transition-all font-medium"
                     />
 
@@ -560,11 +495,7 @@ export const Editor: React.FC<EditorProps> = ({
                         {tagSuggestions.map((suggestion, idx) => (
                           <div
                             key={suggestion}
-                            onClick={() => {
-                              setTags([...tags, suggestion]);
-                              setTagInput('');
-                              setFocusedIndex(-1);
-                            }}
+                            onClick={() => selectTagSuggestion(suggestion)}
                             className={`px-3 py-1.5 cursor-pointer font-medium transition-colors ${
                               idx === focusedIndex
                                 ? 'bg-indigo-500 text-white'
