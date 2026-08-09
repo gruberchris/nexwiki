@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+- **Migrated to Tailwind CSS v4.** Configuration moves out of `tailwind.config.js` and into CSS: `@import "tailwindcss"`, an `@theme` block for the colour tokens, and `@tailwindcss/postcss` as the PostCSS plugin. `darkMode: 'class'` becomes an `@custom-variant`. Verified by diffing every class selector the built stylesheets define — v3 emits 705, v4 emits 726, and nothing v3 generated is missing. Two utilities that v4 silently redefines were renamed to preserve the old rendering: `shadow-sm` → `shadow-xs` (v4's `shadow-sm` is visibly larger) and `outline-none` → `outline-hidden` (v4's `outline-none` drops the transparent outline that keeps focus visible in forced-colors mode). The stylesheet grows 10.8 kB → 15.1 kB gzipped, all of it v4's `color-mix()` fallbacks and `@property` declarations.
+- **The 32 theme variants are now covered by tests.** 16 built-in themes × light/dark had no test at all; the ten theme colours are restated in four places that must agree, with nothing in the type system connecting them. Go asserts every theme defines every colour; the frontend asserts `:root` defaults exist, the Tailwind theme maps each one, applying a theme projects all ten onto `:root`, and every theme utility the components reference is actually declared.
+
 ### Security
 - Bumped `golang.org/x/sys` to v0.44.0 for **GO-2026-5024** (integer overflow in `NewNTUnicodeString`, Windows only). NexWiki's own code never calls the affected symbol, so it was not exploitable here, but NexWiki ships a `windows-amd64` binary and the fix is a transitive version bump.
 
