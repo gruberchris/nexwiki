@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Save, 
   X, 
@@ -26,11 +26,7 @@ import {
 } from 'lucide-react';
 import CodeMirror from '@uiw/react-codemirror';
 import type { ReactCodeMirrorRef } from '@uiw/react-codemirror';
-import { markdown } from '@codemirror/lang-markdown';
-import { EditorView, keymap } from '@codemirror/view';
-import { linter } from '@codemirror/lint';
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
-import { tags as t } from '@lezer/highlight';
+import { EditorView } from '@codemirror/view';
 
 import { Slugify } from '../utils';
 import { Viewer } from './Viewer';
@@ -40,6 +36,9 @@ import { MarkdownSyntaxModal } from './MarkdownSyntaxModal';
 import { MarkdownLintErrorModal } from './MarkdownLintErrorModal';
 import type { Article, ContentType } from '../types';
 import { ContentTypes } from '../types';
+import { useSplitPane } from '../hooks/useSplitPane';
+import { useTagEditor } from '../hooks/useTagEditor';
+import { buildEditorExtensions } from '../utils/editorExtensions';
 
 interface EditorProps {
   initialTitle: string;
@@ -75,8 +74,6 @@ export const Editor: React.FC<EditorProps> = ({
   const [description, setDescription] = useState(initialDescription || '');
   const [source, setSource] = useState(initialSource || '');
   const [resource, setResource] = useState(initialResource || '');
-  const [tags, setTags] = useState<string[]>(initialTags || []);
-  const [tagInput, setTagInput] = useState('');
   const [viewMode, setViewMode] = useState<'split' | 'edit' | 'preview'>('split');
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -117,87 +114,20 @@ export const Editor: React.FC<EditorProps> = ({
     return () => window.removeEventListener('click', closeMenu);
   }, []);
 
-  // Split pane drag-to-resize states
-  const [splitPercentage, setSplitPercentage] = useState<number>(50);
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-
-
-  const startResizing = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  }, []);
-
-  const stopResizing = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
-  const resize = useCallback((e: MouseEvent) => {
-    if (!isDragging || !containerRef.current) return;
-
-    const containerRect = containerRef.current.getBoundingClientRect();
-    const newWidth = e.clientX - containerRect.left;
-    const percentage = (newWidth / containerRect.width) * 100;
-
-    // Constraints: keep the editor and preview within 20% to 80% bounds
-    if (percentage >= 20 && percentage <= 80) {
-      setSplitPercentage(percentage);
-    }
-  }, [isDragging]);
-
-  useEffect(() => {
-    if (isDragging) {
-      window.addEventListener('mousemove', resize);
-      window.addEventListener('mouseup', stopResizing);
-    } else {
-      window.removeEventListener('mousemove', resize);
-      window.removeEventListener('mouseup', stopResizing);
-    }
-    return () => {
-      window.removeEventListener('mousemove', resize);
-      window.removeEventListener('mouseup', stopResizing);
-    };
-  }, [isDragging, resize, stopResizing]);
+  // Drag-to-resize split view; the window-level drag listeners live in the hook.
+  const { splitPercentage, isDragging, containerRef, startResizing } = useSplitPane();
 
   // Compute diagnostics reactively on change
   const diagnostics = useMemo(() => {
     return lintMarkdown(content, articles);
   }, [content, articles]);
 
-  // Aggregate all unique tags that exist across all articles in the knowledge base
-  const allExistingTags = useMemo(() => {
-    const set = new Set<string>();
-    articles.forEach(art => {
-      art.tags?.forEach(tag => {
-        // Exclude tool-managed memory-scope tags from the user tag suggestions
-        if (!tag.toLowerCase().startsWith('memory-')) {
-          set.add(tag);
-        }
-      });
-    });
-    return Array.from(set);
-  }, [articles]);
-
-  // Compute tag suggestions based on the user's current tag input value
-  const tagSuggestions = useMemo(() => {
-    const query = tagInput.trim().toLowerCase();
-    if (!query) return [];
-    return allExistingTags
-      .filter(tag => 
-        tag.toLowerCase().includes(query) && 
-        !tags.some(t => t.toLowerCase() === tag.toLowerCase())
-      )
-      .slice(0, 10); // Performance optimization: limit DOM node counts to top 10 matches
-  }, [tagInput, allExistingTags, tags]);
-
-  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
-  const [prevSuggestionsLength, setPrevSuggestionsLength] = useState(tagSuggestions.length);
-
-  if (tagSuggestions.length !== prevSuggestionsLength) {
-    setFocusedIndex(-1);
-    setPrevSuggestionsLength(tagSuggestions.length);
-  }
+  // Tag set, autocomplete, and the reserved-prefix rule all live in useTagEditor.
+  const {
+    tags, tagInput, suggestions: tagSuggestions, focusedIndex,
+    handleInputChange: handleTagInputChange, handleKeyDown: handleTagKeyDown,
+    selectSuggestion: selectTagSuggestion, removeTag,
+  } = useTagEditor(initialTags || [], articles);
 
   const errorCount = useMemo(() => diagnostics.filter(d => d.severity === 'error').length, [diagnostics]);
   const warningCount = useMemo(() => diagnostics.filter(d => d.severity === 'warning').length, [diagnostics]);
@@ -221,108 +151,11 @@ export const Editor: React.FC<EditorProps> = ({
     view.focus();
   };
 
-  // Keyboard shortcut Ctrl+/ or Cmd+/ to toggle syntax reference modal
-  const shortcutKeymap = useMemo(() => {
-    return keymap.of([
-      {
-        key: 'Mod-/',
-        run: () => {
-          setSyntaxModalOpen(prev => !prev);
-          return true;
-        }
-      }
-    ]);
-  }, []);
-
-  // Custom adaptive theme wrapping Option B (using CSS variables under the hood)
-  const editorTheme = useMemo(() => {
-    return EditorView.theme({
-      "&": {
-        color: "var(--text-secondary)",
-        backgroundColor: "var(--bg-secondary)",
-        fontSize: "14px",
-        height: "100%",
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-      },
-      ".cm-scroller": { overflow: "auto" },
-      ".cm-content": {
-        caretColor: "var(--accent-primary)",
-        padding: "24px 0",
-      },
-      ".cm-cursor": {
-        borderLeftColor: "var(--accent-primary)",
-      },
-      "&.cm-focused .cm-cursor": {
-        borderLeftColor: "var(--accent-primary)",
-      },
-      ".cm-selectionBackground, ::selection": {
-        backgroundColor: "color-mix(in srgb, var(--accent-primary) 20%, transparent) !important",
-      },
-      "&.cm-focused .cm-selectionBackground": {
-        backgroundColor: "color-mix(in srgb, var(--accent-primary) 30%, transparent) !important",
-      },
-      ".cm-gutters": {
-        backgroundColor: "var(--bg-primary)",
-        color: "var(--text-muted)",
-        borderRight: "1px solid var(--border-color)",
-        paddingTop: "24px",
-      },
-      ".cm-activeLine": {
-        backgroundColor: "color-mix(in srgb, var(--border-color) 15%, transparent)",
-      },
-      ".cm-activeLineGutter": {
-        backgroundColor: "color-mix(in srgb, var(--border-color) 30%, transparent)",
-      },
-    });
-  }, []);
-
-  // CSS-variable-driven Markdown syntax highlighting so tokens flip with light/dark automatically.
-  // (The @uiw default light HighlightStyle is disabled below via basicSetup.syntaxHighlighting=false.)
-  const highlightStyle = useMemo(() => {
-    return HighlightStyle.define([
-      { tag: t.heading, color: "var(--accent-primary)", fontWeight: "bold" },
-      { tag: t.strong, color: "var(--text-primary)", fontWeight: "bold" },
-      { tag: t.emphasis, color: "var(--text-secondary)", fontStyle: "italic" },
-      { tag: [t.link, t.url], color: "var(--accent-secondary)", textDecoration: "underline" },
-      { tag: t.monospace, color: "var(--accent-primary)" },
-      { tag: t.list, color: "var(--text-secondary)" },
-      { tag: t.quote, color: "var(--text-muted)" },
-      { tag: [t.meta, t.processingInstruction, t.contentSeparator], color: "var(--text-muted)" },
-    ]);
-  }, []);
-
-  // Dynamic linter extension integrating with CodeMirror lint layer
-  const codeMirrorLinter = useMemo(() => {
-    return linter((view) => {
-      const docText = view.state.doc.toString();
-      const rawDiags = lintMarkdown(docText, articles);
-      return rawDiags.map((d) => ({
-        from: d.from,
-        to: d.to,
-        severity: d.severity,
-        message: d.message,
-        actions: d.suggestion ? [{
-          name: `Fix: ${d.suggestion}`,
-          apply: (view, from, to) => {
-            view.dispatch({
-              changes: { from, to, insert: d.suggestion! }
-            });
-          }
-        }] : []
-      }));
-    });
-  }, [articles]);
-
-  // CodeMirror Extensions array
-  const extensions = useMemo(() => {
-    return [
-      markdown(),
-      editorTheme,
-      syntaxHighlighting(highlightStyle),
-      shortcutKeymap,
-      codeMirrorLinter
-    ];
-  }, [editorTheme, highlightStyle, shortcutKeymap, codeMirrorLinter]);
+  // Theme, highlighting, keymap, and the linter bridge all live in utils/editorExtensions.
+  const extensions = useMemo(
+    () => buildEditorExtensions(articles, () => setSyntaxModalOpen((prev) => !prev)),
+    [articles],
+  );
 
   // Handle Image uploads
   const handleImageUpload = async (file: File) => {
@@ -537,7 +370,7 @@ export const Editor: React.FC<EditorProps> = ({
                         {!isLockedScopeTag && (
                           <button
                             type="button"
-                            onClick={() => setTags(tags.filter(t => t !== tag))}
+                            onClick={() => removeTag(tag)}
                             className="text-slate-400 hover:text-rose-500 transition-colors ml-0.5 cursor-pointer font-bold"
                           >
                             &times;
@@ -551,45 +384,8 @@ export const Editor: React.FC<EditorProps> = ({
                       type="text"
                       placeholder="Add tag..."
                       value={tagInput}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val.toLowerCase().startsWith('memory-')) return;
-                        setTagInput(val);
-                      }}
-                      onKeyDown={(e) => {
-                        if (tagSuggestions.length > 0) {
-                          if (e.key === 'Tab') {
-                            e.preventDefault();
-                            if (e.shiftKey) {
-                              setFocusedIndex(prev => (prev <= -1 ? tagSuggestions.length - 1 : prev - 1));
-                            } else {
-                              setFocusedIndex(prev => (prev >= tagSuggestions.length - 1 ? -1 : prev + 1));
-                            }
-                            return;
-                          }
-                          if (e.key === 'Enter' && focusedIndex >= 0 && focusedIndex < tagSuggestions.length) {
-                            e.preventDefault();
-                            const selection = tagSuggestions[focusedIndex];
-                            setTags([...tags, selection]);
-                            setTagInput('');
-                            setFocusedIndex(-1);
-                            return;
-                          }
-                        }
-
-                        if (e.key === 'Enter' || e.key === ',') {
-                          e.preventDefault();
-                          const cleanTag = tagInput.trim().replace(/,/g, '');
-                          if (cleanTag && !tags.some(t => t.toLowerCase() === cleanTag.toLowerCase())) {
-                            if (cleanTag.toLowerCase().startsWith('memory-')) {
-                              setTagInput('');
-                              return;
-                            }
-                            setTags([...tags, cleanTag]);
-                          }
-                          setTagInput('');
-                        }
-                      }}
+                      onChange={(e) => handleTagInputChange(e.target.value)}
+                      onKeyDown={handleTagKeyDown}
                       className="text-[10px] py-0.5 px-2 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-200 outline-none w-20 focus:w-28 focus:ring-1 focus:ring-indigo-500 transition-all font-medium"
                     />
 
@@ -599,11 +395,7 @@ export const Editor: React.FC<EditorProps> = ({
                         {tagSuggestions.map((suggestion, idx) => (
                           <div
                             key={suggestion}
-                            onClick={() => {
-                              setTags([...tags, suggestion]);
-                              setTagInput('');
-                              setFocusedIndex(-1);
-                            }}
+                            onClick={() => selectTagSuggestion(suggestion)}
                             className={`px-3 py-1.5 cursor-pointer font-medium transition-colors ${
                               idx === focusedIndex
                                 ? 'bg-indigo-500 text-white'
