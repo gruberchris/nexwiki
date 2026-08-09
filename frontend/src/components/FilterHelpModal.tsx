@@ -31,6 +31,7 @@ export function FilterHelpModal({ onClose }: FilterHelpModalProps) {
             <h2 className="text-sm font-bold text-themeTextPrimary">Filter Syntax</h2>
           </div>
           <button
+            aria-label="Close Filter Syntax help"
             onClick={onClose}
             className="p-1.5 rounded-lg text-themeTextMuted hover:text-themeTextPrimary hover:bg-themeBgSecondary transition-colors"
           >

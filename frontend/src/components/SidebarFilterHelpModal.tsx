@@ -31,6 +31,7 @@ export function SidebarFilterHelpModal({ onClose }: SidebarFilterHelpModalProps)
             <h2 className="text-sm font-bold text-themeTextPrimary">Sidebar Filter Syntax</h2>
           </div>
           <button
+            aria-label="Close Sidebar Filter Syntax help"
             onClick={onClose}
             className="p-1.5 rounded-lg text-themeTextMuted hover:text-themeTextPrimary hover:bg-themeBgSecondary transition-colors"
           >

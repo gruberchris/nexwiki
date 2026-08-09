@@ -108,6 +108,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
                 />
                 {ftsQuery && (
                   <button
+                    aria-label="Clear search"
                     type="button"
                     onClick={() => setFtsQuery('')}
                     className="absolute inset-y-0 right-4 flex items-center text-themeTextMuted hover:text-rose-500 transition-colors animate-fade-in"

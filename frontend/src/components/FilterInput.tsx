@@ -97,6 +97,7 @@ export const FilterInput: React.FC<FilterInputProps> = ({
         />
         {value && (
           <button
+            aria-label="Clear filter"
             onClick={() => onChange('')}
             className="absolute inset-y-0 right-3 flex items-center text-themeTextMuted hover:text-rose-500 transition-colors animate-fade-in"
           >

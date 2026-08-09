@@ -189,6 +189,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
             </div>
           </div>
           <button
+            aria-label="Close activity log"
             onClick={onClose}
             className="p-1.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60 text-slate-500 hover:text-slate-850 dark:hover:text-white bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-all cursor-pointer"
           >

@@ -59,6 +59,7 @@ export function DirectorySection({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-themeBorder pb-3 relative z-20">
         <button
           onClick={onToggle}
+          aria-expanded={isExpanded}
           className={`flex items-center gap-2 text-lg font-bold text-themeTextSecondary ${accentHover} transition-colors select-none group focus:outline-none`}
         >
           <ChevronDown
