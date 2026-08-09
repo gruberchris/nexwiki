@@ -187,7 +187,7 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string) []st
 func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 	var req CreateArticleReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request payload")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -262,7 +262,7 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 
 	var req CreateArticleReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request payload")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -275,13 +275,15 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 	// ApplyArticleEdit. Omitted description/source/resource preserve existing values; explicit
 	// empty strings clear them. The document type is preserved.
 	art, err := srv.Storage.ApplyArticleEdit(slug, ArticleEdit{
-		Title:         req.Title,
-		Content:       req.Content,
-		Description:   req.Description,
-		Source:        req.Source,
-		Resource:      req.Resource,
-		EditSummary:   req.EditSummary,
-		Tags:          req.Tags,
+		Title:       req.Title,
+		Content:     req.Content,
+		Description: req.Description,
+		Source:      req.Source,
+		Resource:    req.Resource,
+		EditSummary: req.EditSummary,
+		// The REST editor always submits the full tag set, so tags are always replaced here
+		// (an omitted "tags" key clears them, which is the pre-existing behavior).
+		Tags:          &req.Tags,
 		LoadedVersion: req.LoadedVersion,
 	})
 	switch {
@@ -335,7 +337,7 @@ func (srv *Server) HandleUpdateArticleTags(w http.ResponseWriter, r *http.Reques
 		EditSummary   string   `json:"edit_summary"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request payload")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -446,9 +448,10 @@ func (srv *Server) HandleUploadAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse multipart form (10 MB max)
+	// Buffer up to 10 MB of the form in memory; the total transfer is capped by the
+	// LimitRequestBodies middleware, which is what stops an unbounded spill to disk.
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, "failed to parse multipart form data")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -618,7 +621,7 @@ func (srv *Server) HandleRevertArticle(w http.ResponseWriter, r *http.Request) {
 		Version int `json:"version"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request payload")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -700,7 +703,7 @@ func (srv *Server) HandleGetThemes(w http.ResponseWriter, _ *http.Request) {
 func (srv *Server) HandleSaveTheme(w http.ResponseWriter, r *http.Request) {
 	var newTheme Theme
 	if err := json.NewDecoder(r.Body).Decode(&newTheme); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request payload")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -1041,7 +1044,7 @@ func (srv *Server) HandleExportOKFBundle(w http.ResponseWriter, _ *http.Request)
 // HandleImportOKFBundle imports an uploaded OKF bundle (.zip) and returns a conformance report.
 func (srv *Server) HandleImportOKFBundle(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(50 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, "failed to parse multipart form data")
+		writeDecodeError(w, err)
 		return
 	}
 	file, _, err := r.FormFile("file")
@@ -1123,7 +1126,7 @@ func (srv *Server) HandlePostActivityLog(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 

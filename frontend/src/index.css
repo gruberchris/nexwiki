@@ -168,8 +168,11 @@
 }
 
 /* Custom internal WikiLink badge styles */
+/* Rendered as a <button> so it is keyboard-focusable and announced as a control. `inline` keeps
+   it flowing and wrapping like the surrounding prose (buttons default to inline-block, which
+   would prevent a long title from breaking across lines); `text-left` undoes the button centering. */
 .wikilink-broken {
-  @apply text-rose-500 dark:text-rose-400 font-semibold border-b-2 border-dashed border-rose-400 dark:border-rose-500 hover:text-rose-700 dark:hover:text-rose-300 transition-colors cursor-pointer;
+  @apply inline text-left text-rose-500 dark:text-rose-400 font-semibold border-b-2 border-dashed border-rose-400 dark:border-rose-500 hover:text-rose-700 dark:hover:text-rose-300 transition-colors cursor-pointer;
 }
 
 .wikilink-broken::after {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -79,6 +80,40 @@ func (srv *Server) StartMCPServer() {
 }
 
 // handleRequest dispatches JSON-RPC requests to appropriate tool handlers.
+// supportedProtocolVersions lists the MCP protocol revisions this server implements, newest
+// first. NexWiki speaks the 2025 Streamable HTTP transport, so the newer revisions are the
+// honest default — previously the server always answered "2024-11-05" regardless of what the
+// client asked for, contradicting the transport it actually serves.
+var supportedProtocolVersions = []string{"2025-06-18", "2025-03-26", "2024-11-05"}
+
+// defaultProtocolVersion is returned when a client omits protocolVersion during initialize.
+const defaultProtocolVersion = "2025-06-18"
+
+// negotiateProtocolVersion echoes the client's requested protocol revision when this server
+// supports it, per the MCP spec's version-negotiation rule. When the request names a revision we
+// do not implement, the newest supported revision is returned instead so the client can decide
+// whether to proceed or disconnect.
+func negotiateProtocolVersion(params json.RawMessage) string {
+	if len(params) == 0 {
+		return defaultProtocolVersion
+	}
+
+	var initParams struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if err := json.Unmarshal(params, &initParams); err != nil || initParams.ProtocolVersion == "" {
+		return defaultProtocolVersion
+	}
+
+	for _, supported := range supportedProtocolVersions {
+		if initParams.ProtocolVersion == supported {
+			return initParams.ProtocolVersion
+		}
+	}
+
+	return defaultProtocolVersion
+}
+
 func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 	// Notifications (requests without an ID) can be ignored or logged to stderr
 	if req.ID == nil {
@@ -91,7 +126,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 	switch req.Method {
 	case "initialize":
 		result = map[string]interface{}{
-			"protocolVersion": "2024-11-05",
+			"protocolVersion": negotiateProtocolVersion(req.Params),
 			"capabilities": map[string]interface{}{
 				"tools":   map[string]interface{}{},
 				"prompts": map[string]interface{}{},
@@ -1186,38 +1221,39 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 			return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. Requires 'slug', 'title', 'content', and positive 'loaded_version'"}
 		}
 
-		existing, err := srv.Storage.GetArticle(eArgs.Slug)
-		if err != nil {
-			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", eArgs.Slug)}}}, nil
+		// Empty/omitted description and source preserve the existing values; resource already
+		// uses pointer semantics (omit=preserve, ""=clear, value=replace). Nil tags preserve.
+		edit := ArticleEdit{
+			Title:         eArgs.Title,
+			Content:       eArgs.Content,
+			Resource:      eArgs.Resource,
+			EditSummary:   eArgs.EditSummary,
+			LoadedVersion: eArgs.LoadedVersion,
 		}
-
-		if existing.Version > 0 && existing.Version != eArgs.LoadedVersion {
-			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: Version conflict! The article was updated by another session. Disk version is %d, but you loaded version %d. Re-fetch the article and try again.", existing.Version, eArgs.LoadedVersion)}}}, nil
-		}
-
-		tags := existing.Tags
-		if eArgs.Tags != nil {
-			tags = validateAndCleanUserTags(eArgs.Tags, existing.Tags)
-		}
-
-		// Empty/omitted description and source preserve the existing values
-		description := existing.Description
 		if eArgs.Description != "" {
-			description = eArgs.Description
+			edit.Description = &eArgs.Description
 		}
-		source := existing.Source
 		if eArgs.Source != "" {
-			source = eArgs.Source
+			edit.Source = &eArgs.Source
 		}
-		// resource uses pointer semantics: omit=preserve, ""=clear, value=replace.
-		resource := existing.Resource
-		if eArgs.Resource != nil {
-			resource = *eArgs.Resource
+		if eArgs.Tags != nil {
+			edit.Tags = &eArgs.Tags
 		}
 
-		// Type is immutable on regular edits; preserve the existing document class.
-		art, err := srv.Storage.SaveArticle(eArgs.Slug, eArgs.Title, eArgs.Content, description, source, resource, eArgs.EditSummary, tags, existing.Type)
-		if err != nil {
+		// ApplyArticleEdit performs the version check and the write under one lock. Reading the
+		// article, comparing versions, and saving as three separate steps let a concurrent writer
+		// land in the gap — the guard would pass and still clobber the other session's edit.
+		art, err := srv.Storage.ApplyArticleEdit(eArgs.Slug, edit)
+		switch {
+		case errors.Is(err, ErrVersionConflict):
+			current := "unknown"
+			if existing, gErr := srv.Storage.GetArticle(eArgs.Slug); gErr == nil {
+				current = fmt.Sprintf("%d", existing.Version)
+			}
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: Version conflict! The article was updated by another session. Disk version is %s, but you loaded version %d. Re-fetch the article and try again.", current, eArgs.LoadedVersion)}}}, nil
+		case err != nil && strings.Contains(err.Error(), "article not found"):
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", eArgs.Slug)}}}, nil
+		case err != nil:
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing article: %v", err)}}}, nil
 		}
 
@@ -2265,12 +2301,22 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		// Set response headers
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
+		// Render into a buffer first. Committing 200 before dispatch made every outcome a 200 —
+		// the status could never reflect a failure, and a panic or write error mid-render would
+		// emit a truncated body under a success code.
+		var out bytes.Buffer
+		srv.handleRequest(&out, &req)
 
-		// Execute request synchronously and write response directly to the http response writer
-		srv.handleRequest(w, &req)
+		w.Header().Set("Content-Type", "application/json")
+
+		// A notification (no id) produces no response body; the spec calls for 202 Accepted.
+		if out.Len() == 0 {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(out.Bytes())
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}

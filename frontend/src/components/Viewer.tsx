@@ -88,16 +88,21 @@ export const Viewer: React.FC<ViewerProps> = ({ content, onNavigate, articles })
                   </a>
                 );
               } else {
-                // Render dotted red broken link for non-existent pages (wiki style!)
+                // Render dotted red broken link for non-existent pages (wiki style!).
+                // A real <button> rather than a clickable <span>: this is an interactive control,
+                // so it must be focusable, activatable with Enter/Space, and announced to screen
+                // readers with what it does.
                 const linkTitle = String(children);
                 return (
-                  <span
+                  <button
+                    type="button"
                     onClick={() => onNavigate(`new?title=${encodeURIComponent(linkTitle)}`)}
                     className="wikilink-broken"
                     title={`"${linkTitle}" does not exist yet. Click to create!`}
+                    aria-label={`Create missing page "${linkTitle}"`}
                   >
                     {children}
-                  </span>
+                  </button>
                 );
               }
             }
