@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import type { Article } from './types';
 import { ContentTypes, isAgentDoc, isSkill, isPlan, typeLabel } from './types';
 import { Sidebar } from './components/Sidebar';
@@ -15,6 +15,7 @@ import { useSSE } from './hooks/useSSE';
 import { useWikiUpdates } from './hooks/useWikiUpdates';
 import { useTheme } from './hooks/useTheme';
 import { useArticleActions } from './hooks/useArticleActions';
+import { useRouter, parseRoute } from './hooks/useRouter';
 import { ActivityLogDrawer } from './components/ActivityLogDrawer';
 import { 
   Edit, 
@@ -42,10 +43,6 @@ function isNewRequest(path: string): boolean {
 }
 
 export const App: React.FC = () => {
-  // Navigation & routing state
-  const [currentPath, setCurrentPath] = useState(window.location.pathname);
-  const [currentSearch, setCurrentSearch] = useState(window.location.search);
-  
   // Articles state
   const [articles, setArticles] = useState<Article[]>([]);
   const [currentArticle, setCurrentArticle] = useState<Article | null>(null);
@@ -57,6 +54,12 @@ export const App: React.FC = () => {
   const [editorContent, setEditorContent] = useState('');
   const [editorTags, setEditorTags] = useState<string[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+
+  // Hand-rolled routing: history, back/forward, and URL parsing.
+  const closeEditorOnRouteChange = useCallback(() => setIsEditing(false), []);
+  const { currentPath, currentSearch, navigate, navigateTo: handleNavigate } =
+    useRouter(closeEditorOnRouteChange);
+
   
 
   // UI state
@@ -109,33 +112,14 @@ export const App: React.FC = () => {
     document.title = `${wikiName} — Personal Knowledge Engine`;
   }, [wikiName]);
 
-  // Parse current route parameters memoized cleanly
+  // Route shape comes from parseRoute; whether the slug actually exists depends on the loaded
+  // article list, which parsing cannot know, so that refinement is applied here.
   const routeInfo = useMemo(() => {
-    if (currentPath === '/' || currentPath === '') {
-      return { route: 'home', slug: '' };
+    const parsed = parseRoute(currentPath, currentSearch);
+    if (parsed.route === 'article' && !isLoading && !articles.some(art => art.slug === parsed.slug)) {
+      return { route: '404', slug: '' } as typeof parsed;
     }
-    if (currentPath === '/new') {
-      const params = new URLSearchParams(currentSearch);
-      return { 
-        route: 'new', 
-        slug: '', 
-        prefillTitle: params.get('title') || '',
-        prefillType: params.get('type') || 'article'
-      };
-    }
-    if (currentPath === '/search') {
-      const params = new URLSearchParams(currentSearch);
-      return { route: 'search', slug: '', searchQuery: params.get('q') || '' };
-    }
-    if (currentPath.startsWith('/articles/')) {
-      const slug = currentPath.substring('/articles/'.length);
-      // Once booting/loading is complete, if the article slug is not present in the list, route to 404
-      if (!isLoading && !articles.some(art => art.slug === slug)) {
-        return { route: '404', slug: '' };
-      }
-      return { route: 'article', slug };
-    }
-    return { route: '404', slug: '' };
+    return parsed;
   }, [currentPath, currentSearch, isLoading, articles]);
 
   // Sync state on path/search changes during rendering (avoids useEffect cascading renders)
@@ -183,41 +167,6 @@ export const App: React.FC = () => {
       document.documentElement.classList.remove('dark');
     }
   }, [darkMode]);
-
-  // Custom navigate routing helper
-  const navigate = (fullUrl: string) => {
-    const cleanUrl = fullUrl.startsWith('/') ? fullUrl : '/' + fullUrl;
-    window.history.pushState(null, '', cleanUrl);
-    
-    const [path, search] = cleanUrl.split('?');
-    setCurrentPath(path);
-    setCurrentSearch(search ? '?' + search : '');
-    setIsEditing(false); // Close editor on navigation
-  };
-
-  // Unified smart navigation handler
-  const handleNavigate = (target: string) => {
-    if (target === 'home') {
-      navigate('/');
-    } else if (target.startsWith('new') || target.startsWith('/new')) {
-      navigate(target);
-    } else if (target.startsWith('search') || target.startsWith('/search')) {
-      navigate(target);
-    } else {
-      navigate(`/articles/${target}`);
-    }
-  };
-
-  // Sync routing state on browser back/forward buttons
-  useEffect(() => {
-    const handlePopState = () => {
-      setCurrentPath(window.location.pathname);
-      setCurrentSearch(window.location.search);
-      setIsEditing(false);
-    };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
 
   // Fetch all articles metadata on load
   const fetchArticles = async (selectSlugAfter?: string) => {
