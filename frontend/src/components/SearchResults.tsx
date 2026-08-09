@@ -161,9 +161,10 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
                     {hit.title}
                   </h3>
 
-                  {/* Google green URL line */}
+                  {/* Google green URL line — derived from the live origin so it stays correct
+                      behind a custom port, a Docker port remap, or a reverse-proxied domain */}
                   <div className="font-mono text-[10px] text-emerald-600 dark:text-emerald-500/80 truncate select-all">
-                    http://localhost:8080/articles/{hit.slug}
+                    {window.location.origin}/articles/{hit.slug}
                   </div>
 
                   {/* Matching snippets containing highlighted mark tags */}

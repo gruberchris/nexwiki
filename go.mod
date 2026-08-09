@@ -3,9 +3,13 @@ module nexwiki
 go 1.26.3
 
 require (
+	github.com/blevesearch/bleve/v2 v2.6.0
+	gopkg.in/yaml.v3 v3.0.1
+)
+
+require (
 	github.com/RoaringBitmap/roaring/v2 v2.14.5 // indirect
 	github.com/bits-and-blooms/bitset v1.24.2 // indirect
-	github.com/blevesearch/bleve/v2 v2.6.0 // indirect
 	github.com/blevesearch/bleve_index_api v1.3.11 // indirect
 	github.com/blevesearch/geo v0.2.5 // indirect
 	github.com/blevesearch/go-faiss v1.1.0 // indirect
@@ -30,5 +34,4 @@ require (
 	go.etcd.io/bbolt v1.4.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

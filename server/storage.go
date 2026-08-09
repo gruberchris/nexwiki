@@ -2,7 +2,9 @@ package server
 
 import (
 	"compress/gzip"
+	"errors"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"os"
@@ -51,6 +53,20 @@ type Storage struct {
 	SearchIndex bleve.Index
 	ThemeStore  *ThemeStore
 	closeOnce   sync.Once
+
+	// writeMu serializes every mutation of the article tree. Writers arrive concurrently from
+	// the HTTP API, the in-process MCP goroutine, and the Streamable HTTP transport; without
+	// this, two writers can both scan the history directory, compute the same next version
+	// number, and have one silently overwrite the other's revision snapshot.
+	//
+	// Methods suffixed "Locked" assume the caller already holds it (Go mutexes are not
+	// reentrant, and the write paths call into one another — e.g. SaveArticle → link healing
+	// → SaveArticle). Read paths intentionally do not take it: a reader racing a writer sees
+	// either the old or the new file, which is indistinguishable from reading a moment sooner.
+	//
+	// This guards a single process. A `-mcp-only` sidecar writing the same data directory is
+	// still unsynchronized; that needs an on-disk lock file.
+	writeMu sync.Mutex
 }
 
 // NewStorage initializes and returns a Storage manager, ensuring required subdirectories exist.
@@ -168,13 +184,9 @@ func (s *Storage) ListArticles() ([]Article, error) {
 	}
 
 	// Sort articles: updated_at descending
-	for i := 0; i < len(articles); i++ {
-		for j := i + 1; j < len(articles); j++ {
-			if articles[i].Timestamp.Before(articles[j].Timestamp) {
-				articles[i], articles[j] = articles[j], articles[i]
-			}
-		}
-	}
+	sort.Slice(articles, func(i, j int) bool {
+		return articles[i].Timestamp.After(articles[j].Timestamp)
+	})
 
 	return articles, nil
 }
@@ -202,6 +214,13 @@ func (s *Storage) GetArticle(slug string) (*Article, error) {
 // Description, source, and resource are written as given (callers preserve existing values by passing them through).
 // articleType sets the OKF document class; pass "" to preserve an existing article's type (or default a new one to Wiki).
 func (s *Storage) SaveArticle(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string) (*Article, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.saveArticleLocked(oldSlug, title, content, description, source, resource, editSummary, tags, articleType)
+}
+
+// saveArticleLocked is SaveArticle's body. The caller must hold writeMu.
+func (s *Storage) saveArticleLocked(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string) (*Article, error) {
 	newSlug := Slugify(title)
 	if newSlug == "" {
 		return nil, fmt.Errorf("article title must contain valid characters to generate a slug")
@@ -377,7 +396,7 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, desc
 	return art, nil
 }
 
-// healRenamedLinks rewrites every article that links to oldSlug via a WikiLink so it points
+// healRenamedLinks (caller must hold writeMu) rewrites every article that links to oldSlug via a WikiLink so it points
 // at the renamed article's new title. Best-effort: any per-article failure is logged and skipped.
 func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 	backlinks, err := s.GetBacklinks(oldSlug)
@@ -395,7 +414,7 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 			continue
 		}
 		summary := fmt.Sprintf("Auto-healed WikiLink: '%s' renamed to '%s'", oldSlug, newSlug)
-		if _, err := s.SaveArticle(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type); err != nil {
+		if _, err := s.saveArticleLocked(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to heal links in '%s' after rename: %v\n", linker.Slug, err)
 		}
 	}
@@ -403,6 +422,13 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 
 // DeleteArticle deletes the article's Markdown file, all its assets, and all version history on disk.
 func (s *Storage) DeleteArticle(slug string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.deleteArticleLocked(slug)
+}
+
+// deleteArticleLocked is DeleteArticle's body. The caller must hold writeMu.
+func (s *Storage) deleteArticleLocked(slug string) error {
 	cleanedSlug := Slugify(slug)
 	if cleanedSlug == "" {
 		return fmt.Errorf("invalid slug")
@@ -434,6 +460,10 @@ func (s *Storage) DeleteArticle(slug string) error {
 
 // SaveAsset saves an uploaded file into data/assets/{slug}/{filename}.
 func (s *Storage) SaveAsset(slug string, filename string, fileData []byte) (string, error) {
+	// Shares writeMu with SaveArticle, which renames asset directories on slug changes.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	cleanedSlug := Slugify(slug)
 	if cleanedSlug == "" {
 		return "", fmt.Errorf("invalid slug")
@@ -716,8 +746,11 @@ type SearchResult struct {
 	Slug      string    `json:"slug"`
 	Score     float64   `json:"score"`
 	Timestamp time.Time `json:"timestamp"`
-	Snippets  []string  `json:"snippets"`
-	Tags      []string  `json:"tags,omitempty"`
+	// Snippets are HTML fragments: article text is entity-escaped and matched terms are
+	// wrapped in <mark>. The frontend renders them as HTML, so every producer of a snippet
+	// MUST escape the article text it embeds — see the fallback path in SearchArticles.
+	Snippets []string `json:"snippets"`
+	Tags     []string `json:"tags,omitempty"`
 }
 
 // SearchArticles searches for keywords inside article titles and contents, returning HTML highlighted snippets.
@@ -806,14 +839,17 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 			snippets = frags
 		}
 
-		// Fallback snippet if Bleve returns empty fragments (extract first 150 characters)
+		// Fallback snippet if Bleve returns empty fragments (extract first 150 characters).
+		// Bleve escapes the fragments it produces; this path must escape too, because the
+		// frontend renders snippets as raw HTML. Without it, an article body starting with
+		// <img src=x onerror=...> becomes stored XSS in the search dropdown.
 		if len(snippets) == 0 {
 			runes := []rune(art.Content)
 			limit := 150
 			if len(runes) < limit {
 				limit = len(runes)
 			}
-			snippets = []string{string(runes[:limit]) + "..."}
+			snippets = []string{html.EscapeString(string(runes[:limit])) + "..."}
 		}
 
 		results = append(results, SearchResult{
@@ -923,19 +959,84 @@ func (s *Storage) GetArticleVersion(slug string, version int) (*Article, error) 
 	return parseArticleFile(data, true)
 }
 
+// ErrVersionConflict reports that an article changed since the client loaded it. Callers map
+// this to HTTP 409.
+var ErrVersionConflict = errors.New("article has been updated in another session")
+
+// ArticleEdit describes a user-initiated edit of an existing article. Nil pointer fields
+// preserve the stored value; an explicit empty string clears it. LoadedVersion enables the
+// optimistic-locking guard (0 disables it).
+type ArticleEdit struct {
+	Title         string
+	Content       string
+	Description   *string
+	Source        *string
+	Resource      *string
+	EditSummary   string
+	Tags          []string
+	LoadedVersion int
+}
+
+// ApplyArticleEdit loads the article, verifies LoadedVersion, merges the optional fields, and
+// writes — all under a single lock. Doing the check and the write atomically is the point:
+// performing them separately lets a concurrent writer land in between, so the guard passes and
+// the other session's edit is silently overwritten anyway.
+//
+// The document type is immutable here; regular edits never relabel a reserved OKF class.
+func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	existing, err := s.GetArticle(slug)
+	if err != nil {
+		return nil, err
+	}
+
+	if edit.LoadedVersion > 0 && existing.Version > 0 && existing.Version != edit.LoadedVersion {
+		return nil, ErrVersionConflict
+	}
+
+	description := existing.Description
+	if edit.Description != nil {
+		description = *edit.Description
+	}
+	source := existing.Source
+	if edit.Source != nil {
+		source = *edit.Source
+	}
+	resource := existing.Resource
+	if edit.Resource != nil {
+		resource = *edit.Resource
+	}
+
+	// Preserve tool-managed memory-scope tags a user edit must not be able to drop or forge.
+	cleanedTags := validateAndCleanUserTags(edit.Tags, existing.Tags)
+
+	return s.saveArticleLocked(slug, edit.Title, edit.Content, description, source, resource,
+		edit.EditSummary, cleanedTags, existing.Type)
+}
+
 // RevertArticle rolls the current active document back to the content of a historical version.
 func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	histArt, err := s.GetArticleVersion(slug, version)
 	if err != nil {
 		return nil, err
 	}
 
 	summary := fmt.Sprintf("Reverted to version %d", version)
-	return s.SaveArticle(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, histArt.Tags, histArt.Type)
+	return s.saveArticleLocked(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, histArt.Tags, histArt.Type)
 }
 
 // UpdateArticleTags updates only the tag array for an article without modifying the title or content.
+// The version check and the write happen under one lock, so the optimistic guard cannot be
+// defeated by a concurrent writer slipping in between them.
 func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion int, editSummary string) (*Article, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	art, err := s.GetArticle(slug)
 	if err != nil {
 		return nil, err
@@ -949,7 +1050,7 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 		editSummary = "Updated article tags"
 	}
 
-	return s.SaveArticle(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, tags, art.Type)
+	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, tags, art.Type)
 }
 
 // Close releases resources held by the Storage, including the Bleve search index.
@@ -1019,6 +1120,11 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 		return fmt.Errorf("cannot delete protected memory-scope tag: %s", tag)
 	}
 
+	// Held across the whole sweep so the operation is all-or-nothing with respect to other
+	// writers, rather than interleaving per-article saves with concurrent edits.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	articles, err := s.ListArticles()
 	if err != nil {
 		return err
@@ -1043,7 +1149,7 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 			// Remove the tag
 			newTags := append(art.Tags[:tagIndex], art.Tags[tagIndex+1:]...)
 			// Save the updated article
-			_, err = s.SaveArticle(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type)
+			_, err = s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type)
 			if err != nil {
 				return fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
 			}

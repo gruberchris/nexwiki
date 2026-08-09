@@ -1036,29 +1036,88 @@ func TestHandleImportOKFBundle(t *testing.T) {
 }
 
 func TestEnableCORS(t *testing.T) {
-	// OPTIONS request is short-circuited with 200 and CORS headers
-	req := httptest.NewRequest("OPTIONS", "/api/test", nil)
-	w := httptest.NewRecorder()
 	handler := EnableCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 	}))
+
+	// A loopback origin is echoed back verbatim (never "*"), and OPTIONS short-circuits with 200.
+	req := httptest.NewRequest("OPTIONS", "/api/test", nil)
+	req.Header.Set("Origin", "http://localhost:5173")
+	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("OPTIONS: expected 200, got %d", w.Code)
 	}
-	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("missing Access-Control-Allow-Origin: * header")
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+		t.Errorf("OPTIONS: expected echoed loopback origin, got %q", got)
+	}
+	if w.Header().Get("Vary") != "Origin" {
+		t.Error("OPTIONS: missing Vary: Origin")
+	}
+	if w.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Error("OPTIONS: missing nosniff security header")
 	}
 
-	// Non-OPTIONS passes through to inner handler
+	// A request with no Origin is a non-browser client (curl, MCP SDK) and passes through.
 	req2 := httptest.NewRequest("GET", "/api/test", nil)
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusTeapot {
-		t.Errorf("GET: expected 418 from inner handler, got %d", w2.Code)
+		t.Errorf("no-Origin GET: expected 418 from inner handler, got %d", w2.Code)
 	}
-	if w2.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("non-OPTIONS: missing CORS header")
+	if got := w2.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("no-Origin GET: should not echo an origin, got %q", got)
 	}
+
+	// A cross-site origin is rejected outright — reads included, since there is no auth.
+	req3 := httptest.NewRequest("DELETE", "/api/articles/home", nil)
+	req3.Header.Set("Origin", "https://evil.example")
+	w3 := httptest.NewRecorder()
+	handler.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusForbidden {
+		t.Errorf("cross-site DELETE: expected 403, got %d", w3.Code)
+	}
+	if got := w3.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("cross-site DELETE: must not echo the origin, got %q", got)
+	}
+}
+
+func TestOriginAllowed(t *testing.T) {
+	t.Setenv(AllowedOriginsEnv, "https://wiki.example.com")
+
+	tests := []struct {
+		name   string
+		origin string
+		host   string
+		want   bool
+	}{
+		{"no origin (curl / MCP SDK)", "", "localhost:8080", true},
+		{"own UI on loopback", "http://localhost:8080", "localhost:8080", true},
+		{"vite dev server", "http://localhost:5173", "localhost:8080", true},
+		{"127.0.0.1 loopback", "http://127.0.0.1:8080", "127.0.0.1:8080", true},
+		{"IPv6 loopback", "http://[::1]:8080", "[::1]:8080", true},
+		{"configured origin", "https://wiki.example.com", "wiki.example.com", true},
+		{"LAN same-origin from a phone", "http://192.168.1.50:8080", "192.168.1.50:8080", true},
+		{"malicious site", "https://evil.example", "localhost:8080", false},
+		{"unconfigured proxy domain", "https://other.example.com", "other.example.com", false},
+		{"DNS rebinding: Origin equals a DNS-name Host", "http://evil.example", "evil.example", false},
+		{"opaque null origin", "null", "localhost:8080", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, got := originAllowed(tc.origin, tc.host); got != tc.want {
+				t.Errorf("originAllowed(%q, %q) = %v, want %v", tc.origin, tc.host, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("wildcard opt-out restores permissive behavior", func(t *testing.T) {
+		t.Setenv(AllowedOriginsEnv, "*")
+		origin, ok := originAllowed("https://evil.example", "localhost:8080")
+		if !ok || origin != "*" {
+			t.Errorf("wildcard: got (%q, %v), want (\"*\", true)", origin, ok)
+		}
+	})
 }

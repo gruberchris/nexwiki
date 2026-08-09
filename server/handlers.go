@@ -2,11 +2,13 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -269,39 +271,27 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify that the article actually exists first
-	existing, err := srv.Storage.GetArticle(slug)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "article not found")
-		return
-	}
-
-	// Optimistic locking verification to prevent concurrent edit collision
-	if req.LoadedVersion > 0 && existing.Version > 0 && existing.Version != req.LoadedVersion {
+	// Existence check, optimistic-locking guard, field merge, and write happen atomically inside
+	// ApplyArticleEdit. Omitted description/source/resource preserve existing values; explicit
+	// empty strings clear them. The document type is preserved.
+	art, err := srv.Storage.ApplyArticleEdit(slug, ArticleEdit{
+		Title:         req.Title,
+		Content:       req.Content,
+		Description:   req.Description,
+		Source:        req.Source,
+		Resource:      req.Resource,
+		EditSummary:   req.EditSummary,
+		Tags:          req.Tags,
+		LoadedVersion: req.LoadedVersion,
+	})
+	switch {
+	case errors.Is(err, ErrVersionConflict):
 		writeError(w, http.StatusConflict, "this article has been updated in another session. Please copy your edits, reload the page, and try again.")
 		return
-	}
-
-	// Clean tags and preserve existing tool-managed "memory-<scope>" tags
-	cleanedTags := validateAndCleanUserTags(req.Tags, existing.Tags)
-
-	// Omitted description/source/resource preserve existing values; explicit empty strings clear them
-	description := existing.Description
-	if req.Description != nil {
-		description = *req.Description
-	}
-	source := existing.Source
-	if req.Source != nil {
-		source = *req.Source
-	}
-	resource := existing.Resource
-	if req.Resource != nil {
-		resource = *req.Resource
-	}
-
-	// Type is immutable on regular edits; preserve the existing document class.
-	art, err := srv.Storage.SaveArticle(slug, req.Title, req.Content, description, source, resource, req.EditSummary, cleanedTags, existing.Type)
-	if err != nil {
+	case err != nil && strings.Contains(err.Error(), "article not found"):
+		writeError(w, http.StatusNotFound, "article not found")
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -475,18 +465,29 @@ func (srv *Server) HandleUploadAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Basic safety check for mime types
+	// Basic safety check for mime types. The client-supplied Content-Type is not trustworthy on
+	// its own, so the filename extension must agree with it: http.ServeFile derives the response
+	// Content-Type from the extension, and that (plus nosniff) is what actually governs how a
+	// browser interprets the file later.
 	mimeType := header.Header.Get("Content-Type")
-	allowedMime := map[string]bool{
-		"image/jpeg":    true,
-		"image/png":     true,
-		"image/gif":     true,
-		"image/webp":    true,
-		"image/svg+xml": true,
+	allowedExtsForMime := map[string][]string{
+		"image/jpeg":    {".jpg", ".jpeg"},
+		"image/png":     {".png"},
+		"image/gif":     {".gif"},
+		"image/webp":    {".webp"},
+		"image/svg+xml": {".svg"},
 	}
 
-	if !allowedMime[mimeType] {
+	allowedExts, mimeOK := allowedExtsForMime[mimeType]
+	if !mimeOK {
 		writeError(w, http.StatusBadRequest, "unsupported asset type: only standard images are allowed")
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if !slices.Contains(allowedExts, ext) {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("file extension %q does not match the declared type %q", ext, mimeType))
 		return
 	}
 
@@ -515,25 +516,20 @@ func (srv *Server) HandleGetAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SVG is an active document format: served inline from this origin, any <script> inside it
+	// runs as same-origin JavaScript against an unauthenticated API. Force a download instead,
+	// and stop content sniffing from re-interpreting any other asset as markup.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if strings.EqualFold(filepath.Ext(filePath), ".svg") {
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(filePath)+"\"")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	}
+
 	// Serves file directly using net/http.ServeFile
 	http.ServeFile(w, r, filePath)
 }
 
-// EnableCORS handles standard CORS options matching standard browser pre-flight checks.
-func EnableCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
+// EnableCORS lives in security.go, alongside the Origin allow-list it enforces.
 
 // HandleSearchArticles executes full-text search against the index and returns matching summaries.
 func (srv *Server) HandleSearchArticles(w http.ResponseWriter, r *http.Request) {
@@ -1156,9 +1152,10 @@ func (srv *Server) HandlePostActivityLog(w http.ResponseWriter, r *http.Request)
 				}
 
 				updateType := "article-edited"
-				if payload.Action == "create" {
+				switch payload.Action {
+				case "create":
 					updateType = "article-added"
-				} else if payload.Action == "delete" {
+				case "delete":
 					updateType = "article-removed"
 				}
 

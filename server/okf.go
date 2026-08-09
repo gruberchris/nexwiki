@@ -92,7 +92,7 @@ func (s *Storage) ExportOKFBundle() ([]byte, error) {
 			if summary == "" {
 				summary = a.ContentPreview
 			}
-			b.WriteString(fmt.Sprintf("* [%s](/%s/%s.md)", a.Title, dir, a.Slug))
+			_, _ = fmt.Fprintf(&b, "* [%s](/%s/%s.md)", a.Title, dir, a.Slug)
 			if summary != "" {
 				b.WriteString(" - " + summary)
 			}
@@ -116,7 +116,7 @@ func (s *Storage) ExportOKFBundle() ([]byte, error) {
 		if label == "" {
 			label = dir
 		}
-		root.WriteString(fmt.Sprintf("* [%s](/%s/index.md) (%d)\n", label, dir, len(grouped[dir])))
+		_, _ = fmt.Fprintf(&root, "* [%s](/%s/index.md) (%d)\n", label, dir, len(grouped[dir]))
 	}
 	if err := writeFile("index.md", root.String()); err != nil {
 		return nil, err
@@ -154,9 +154,9 @@ func (s *Storage) buildOKFLog() string {
 		if tool == "" {
 			tool = "web-ui"
 		}
-		b.WriteString(fmt.Sprintf("- %s [%s/%s] %s", ev.Timestamp.Format("15:04:05"), ev.Source, ev.Action, tool))
+		_, _ = fmt.Fprintf(&b, "- %s [%s/%s] %s", ev.Timestamp.Format("15:04:05"), ev.Source, ev.Action, tool)
 		if ev.Title != "" || ev.Slug != "" {
-			b.WriteString(fmt.Sprintf(" → %s (%s)", ev.Title, ev.Slug))
+			_, _ = fmt.Fprintf(&b, " → %s (%s)", ev.Title, ev.Slug)
 		}
 		b.WriteString("\n")
 	}

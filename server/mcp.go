@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"os"
@@ -917,9 +918,10 @@ func (srv *Server) logMCPToolCall(params json.RawMessage) {
 			}
 
 			updateType := "article-edited"
-			if action == "create" {
+			switch action {
+			case "create":
 				updateType = "article-added"
-			} else if action == "delete" {
+			case "delete":
 				updateType = "article-removed"
 			}
 
@@ -1036,10 +1038,11 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 				}
 				text += fmt.Sprintf("[%d] %s (Slug: %s, Score: %.3f%s)\n", i+1, res.Title, res.Slug, res.Score, tagsStr)
 				for _, snippet := range res.Snippets {
-					// Strip HTML <mark> tags to make it clean Markdown for the AI agent
+					// Snippets are HTML (escaped text + <mark> highlights). Convert the marks to
+					// Markdown bold, then unescape the entities so the agent reads plain prose.
 					cleanSnippet := strings.ReplaceAll(snippet, "<mark>", "**")
 					cleanSnippet = strings.ReplaceAll(cleanSnippet, "</mark>", "**")
-					text += fmt.Sprintf("    Snippet: ... %s ...\n", cleanSnippet)
+					text += fmt.Sprintf("    Snippet: ... %s ...\n", html.UnescapeString(cleanSnippet))
 				}
 				text += "\n"
 			}
@@ -1498,12 +1501,9 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 
 		var text string
 		count := 0
-		for _, artMeta := range articles {
-			art, err := srv.Storage.GetArticle(artMeta.Slug)
-			if err != nil {
-				continue
-			}
-
+		// ListArticles already returns the type, tags, and description this loop needs, so it
+		// reads the metadata directly rather than re-reading and re-parsing every file.
+		for _, art := range articles {
 			if art.Type != ContentTypeMemory {
 				continue
 			}
@@ -2193,17 +2193,25 @@ func sendError(w io.Writer, code int, msg string, id interface{}) {
 // HandleStreamableHTTP implements the Streamable HTTP transport (2025 Spec)
 // supporting GET (initiating SSE stream) and POST (synchronous JSON-RPC).
 func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS for remote clients
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, MCP-Protocol-Version, MCP-Session-Id")
+	// Validate the browser Origin before doing anything else. Every MCP tool — including
+	// delete_wiki_article and export_okf_bundle — is reachable here with no authentication,
+	// so an unvalidated origin is full read/write access to the knowledge base.
+	applySecurityHeaders(w)
+	allowOrigin, originOK := originAllowed(r.Header.Get("Origin"), r.Host)
+	if !originOK {
+		applyCORSHeaders(w, "", "GET, POST, OPTIONS", "Content-Type, MCP-Protocol-Version, MCP-Session-Id")
+		http.Error(w, "origin not allowed; set "+AllowedOriginsEnv+" to permit it", http.StatusForbidden)
+		return
+	}
+	applyCORSHeaders(w, allowOrigin, "GET, POST, OPTIONS", "Content-Type, MCP-Protocol-Version, MCP-Session-Id")
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	if r.Method == http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
 		// Verify accept header supports text/event-stream
 		accept := r.Header.Get("Accept")
 		if accept != "" && !strings.Contains(accept, "text/event-stream") {
@@ -2239,7 +2247,7 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 				flusher.Flush()
 			}
 		}
-	} else if r.Method == http.MethodPost {
+	case http.MethodPost:
 		// Read body
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -2263,7 +2271,7 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 
 		// Execute request synchronously and write response directly to the http response writer
 		srv.handleRequest(w, &req)
-	} else {
+	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }

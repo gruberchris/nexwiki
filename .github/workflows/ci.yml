@@ -21,12 +21,15 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # npm ci installs exactly what package-lock.json pins, so CI cannot drift from local
+      # installs. tailwindcss@3 is already pinned in devDependencies — no extra install needed.
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
       - name: Build frontend assets
         working-directory: frontend
-        run: |
-          npm install
-          npm install -D tailwindcss@3
-          npm run build
+        run: npm run build
 
       - name: Run frontend tests
         working-directory: frontend
@@ -38,8 +41,73 @@ jobs:
           go-version: "1.26"
           cache: true
 
-      - name: Run tests
-        run: go test -v ./...
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l main.go server/)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./server/... .
+
+      # -race is what catches concurrent writers racing on article version assignment; the
+      # storage tests exercise that path directly.
+      - name: Run tests (race detector)
+        run: go test -race -v ./server/... .
 
       - name: Verify binary compiles
         run: CGO_ENABLED=0 go build -ldflags="-w -s" -o nexwiki main.go
+
+  vulncheck:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./server/... .
+
+  lint:
+    name: Lint (advisory)
+    runs-on: ubuntu-latest
+    # Advisory only for now: golangci-lint has not been triaged against this codebase yet, so a
+    # finding should surface in the PR without blocking the merge. Flip to a required check once
+    # the existing findings are cleared.
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      # frontend/dist is gitignored, so //go:embed frontend/dist/* fails to typecheck on a fresh
+      # checkout. Linting Go doesn't need the real assets, so stub the directory rather than
+      # paying for an npm ci + vite build here.
+      - name: Stub embedded frontend assets
+        run: |
+          mkdir -p frontend/dist
+          echo '<!doctype html><title>lint stub</title>' > frontend/dist/index.html
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          # golangci-lint v1 is built with Go 1.24 and refuses to lint a module targeting
+          # go 1.26; the v2 line is required here.
+          version: v2.12.2
+          # "." rather than main.go: a named .go file can't be mixed with a package pattern.
+          # Listed explicitly instead of ./... to skip frontend/node_modules.
+          args: --timeout=5m . ./server/...
