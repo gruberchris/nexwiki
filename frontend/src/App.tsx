@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type { Article } from './types';
 import { ContentTypes, isAgentDoc, isSkill, isPlan, typeLabel } from './types';
 import { Sidebar } from './components/Sidebar';
@@ -8,12 +8,13 @@ import { Editor } from './components/Editor';
 import { TOC } from './components/TOC';
 import { Hero } from './components/Hero';
 import { SearchResults } from './components/SearchResults';
-import { Slugify, saveFile, generateDocxContent } from './utils';
+import { Slugify } from './utils';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { ThemeManagerModal } from './components/ThemeManagerModal';
 import { useSSE } from './hooks/useSSE';
 import { useWikiUpdates } from './hooks/useWikiUpdates';
 import { useTheme } from './hooks/useTheme';
+import { useArticleActions } from './hooks/useArticleActions';
 import { ActivityLogDrawer } from './components/ActivityLogDrawer';
 import { 
   Edit, 
@@ -57,11 +58,6 @@ export const App: React.FC = () => {
   const [editorTags, setEditorTags] = useState<string[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   
-  // Dropdown & Copy utility states
-  const [shareDropdownOpen, setShareDropdownOpen] = useState(false);
-  const [copiedMd, setCopiedMd] = useState(false);
-  const [copiedUrl, setCopiedUrl] = useState(false);
-  const [copiedTitle, setCopiedTitle] = useState(false);
 
   // UI state
   const [isLoading, setIsLoading] = useState(true);
@@ -92,6 +88,19 @@ export const App: React.FC = () => {
     cycleThemeMode, selectTheme, saveTheme, deleteTheme,
     initialize: initializeTheme,
   } = useTheme(triggerAlert);
+
+  // Clipboard, export, and backup/restore actions.
+  const {
+    shareDropdownOpen, setShareDropdownOpen,
+    copiedMd, copiedUrl, copiedTitle,
+    copyMarkdown, copyShareLink, copyTitle,
+    exportPDF, exportDocx, exportMarkdown, exportAll,
+    importFileRef, triggerImport, handleImportFileChange,
+  } = useArticleActions({
+    currentArticle,
+    onAlert: triggerAlert,
+    onArticlesImported: () => fetchArticles(),
+  });
 
 	 const { resetUnreadCount } = useSSE();
 
@@ -401,198 +410,6 @@ export const App: React.FC = () => {
   };
 
   // Clipboard MD copying
-  const handleCopyMarkdown = async () => {
-    if (!currentArticle) return;
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(currentArticle.content || '');
-      } else {
-        const textarea = document.createElement('textarea');
-        textarea.value = currentArticle.content || '';
-        textarea.style.position = 'fixed';
-        document.body.appendChild(textarea);
-        textarea.select();
-        const cmd = 'execCommand';
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (document as any)[cmd]('copy');
-        document.body.removeChild(textarea);
-      }
-      setCopiedMd(true);
-      triggerAlert('success', 'Article Markdown copied to clipboard!');
-      setTimeout(() => setCopiedMd(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy Markdown:', err);
-      triggerAlert('error', 'Failed to copy Markdown content.');
-    }
-  };
-
-  // Clipboard Link sharing
-  const handleShareLink = async () => {
-    try {
-      const currentUrl = window.location.href;
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(currentUrl);
-      } else {
-        const textarea = document.createElement('textarea');
-        textarea.value = currentUrl;
-        textarea.style.position = 'fixed';
-        document.body.appendChild(textarea);
-        textarea.select();
-        const cmd = 'execCommand';
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (document as any)[cmd]('copy');
-        document.body.removeChild(textarea);
-      }
-      setCopiedUrl(true);
-      triggerAlert('success', 'Article URL copied to clipboard!');
-      setTimeout(() => setCopiedUrl(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy URL:', err);
-      triggerAlert('error', 'Failed to copy URL to clipboard.');
-    }
-  };
-
-  // Clipboard title copying
-  const handleCopyTitle = async () => {
-    if (!currentArticle) return;
-    try {
-      await navigator.clipboard.writeText(currentArticle.title);
-      setCopiedTitle(true);
-      triggerAlert('success', 'Article title copied to clipboard!');
-      setTimeout(() => setCopiedTitle(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy title:', err);
-      triggerAlert('error', 'Failed to copy article title.');
-    }
-  };
-
-  // PDF print export trigger
-  const handleExportPDF = () => {
-    setShareDropdownOpen(false);
-    window.print();
-  };
-
-  // DOCX file saving export trigger
-  const handleExportDocx = async () => {
-    if (!currentArticle) return;
-    setShareDropdownOpen(false);
-    
-    try {
-      const viewerEl = document.querySelector('.wiki-content');
-      const bodyHtml = viewerEl ? viewerEl.innerHTML : '';
-      
-      const docxContent = generateDocxContent(currentArticle.title, bodyHtml);
-      const suggestedName = Slugify(currentArticle.title) || 'article';
-      
-      const success = await saveFile(
-        docxContent,
-        suggestedName,
-        'application/msword',
-        'docx'
-      );
-      
-      if (success) {
-        triggerAlert('success', 'Article exported as Word successfully!');
-      }
-    } catch (err) {
-      console.error('Failed to export DOCX:', err);
-      triggerAlert('error', 'Failed to export as Word document.');
-    }
-  };
-
-  // MD file saving export trigger
-  const handleExportMd = async () => {
-    if (!currentArticle) return;
-    setShareDropdownOpen(false);
-    
-    try {
-      const suggestedName = Slugify(currentArticle.title) || 'article';
-      const success = await saveFile(
-        currentArticle.content || '',
-        suggestedName,
-        'text/markdown',
-        'md'
-      );
-      
-      if (success) {
-        triggerAlert('success', 'Article exported as Markdown successfully!');
-      }
-    } catch (err) {
-      console.error('Failed to export MD:', err);
-      triggerAlert('error', 'Failed to export as Markdown file.');
-    }
-  };
-
-  const importFileRef = useRef<HTMLInputElement>(null);
-
-  const handleExportAll = async () => {
-    try {
-      triggerAlert('success', 'Preparing backup… download will start shortly.');
-      const response = await fetch('/api/okf/export');
-      if (!response.ok) {
-        triggerAlert('error', 'Failed to create backup.');
-        return;
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `nexwiki-backup-${new Date().toISOString().split('T')[0]}.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch {
-      triggerAlert('error', 'Failed to create backup.');
-    }
-  };
-
-  const handleImport = () => importFileRef.current?.click();
-
-  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = '';
-    try {
-      triggerAlert('success', 'Restoring from backup…');
-      const form = new FormData();
-      form.append('file', file);
-      const response = await fetch('/api/okf/import', { method: 'POST', body: form });
-      if (!response.ok) {
-        triggerAlert('error', 'Restore failed. Ensure the file is a valid NexWiki backup (.zip).');
-        return;
-      }
-      const report = await response.json() as {
-        imported: number; skipped: number; missing_type: string[]; warnings: string[];
-      };
-      await fetchArticles();
-      if (report.warnings.length > 0) console.warn('Import warnings:', report.warnings);
-      const warn = report.warnings.length > 0
-        ? ` (${report.warnings.length} warning${report.warnings.length > 1 ? 's' : ''} — see console)`
-        : '';
-      triggerAlert('success', `Restored ${report.imported} article${report.imported !== 1 ? 's' : ''} from backup.${warn}`);
-    } catch {
-      triggerAlert('error', 'Restore failed. Ensure the file is a valid NexWiki backup (.zip).');
-    }
-  };
-
-  // Close dropdown on click outside
-  useEffect(() => {
-    if (!shareDropdownOpen) return;
-    
-    const handleOutsideClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest('.share-dropdown-container')) {
-        setShareDropdownOpen(false);
-      }
-    };
-    
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => {
-      document.removeEventListener('mousedown', handleOutsideClick);
-    };
-  }, [shareDropdownOpen]);
-
   // View renderer formatting dates
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '';
@@ -652,8 +469,8 @@ export const App: React.FC = () => {
             onNavigate={handleNavigate}
             onCreateNew={(type: 'article' | 'plan' | 'skill') => navigate(`/new?type=${type}`)}
             wikiName={wikiName}
-            onExportAll={handleExportAll}
-            onImport={handleImport}
+            onExportAll={exportAll}
+            onImport={triggerImport}
             onOpenActivityLog={() => setIsActivityOpen(true)}
             version={version}
           />
@@ -757,7 +574,7 @@ export const App: React.FC = () => {
                         {currentArticle.title}
                       </h1>
                       <button
-                        onClick={handleCopyTitle}
+                        onClick={copyTitle}
                         className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
                         title="Copy article title to clipboard"
                       >
@@ -871,14 +688,14 @@ export const App: React.FC = () => {
                       {shareDropdownOpen && (
                         <div className="dropdown-menu">
                           <button
-                            onClick={handleCopyMarkdown}
+                            onClick={copyMarkdown}
                             className="dropdown-item"
                           >
                             {copiedMd ? <Check size={12} className="text-emerald-500 animate-pulse" /> : <Copy size={12} className="text-indigo-500" />}
                             <span>{copiedMd ? 'Copied Markdown!' : 'Copy Markdown'}</span>
                           </button>
                           <button
-                            onClick={handleShareLink}
+                            onClick={copyShareLink}
                             className="dropdown-item"
                           >
                             {copiedUrl ? <Check size={12} className="text-emerald-500 animate-pulse" /> : <Share2 size={12} className="text-indigo-500" />}
@@ -888,21 +705,21 @@ export const App: React.FC = () => {
                           <div className="my-1 border-t border-slate-100 dark:border-slate-800/40" />
                           
                           <button
-                            onClick={handleExportPDF}
+                            onClick={exportPDF}
                             className="dropdown-item"
                           >
                             <Printer size={12} className="text-indigo-500" />
                             <span>Export as PDF</span>
                           </button>
                           <button
-                            onClick={handleExportDocx}
+                            onClick={exportDocx}
                             className="dropdown-item"
                           >
                             <FileText size={12} className="text-indigo-500" />
                             <span>Export as Word</span>
                           </button>
                           <button
-                            onClick={handleExportMd}
+                            onClick={exportMarkdown}
                             className="dropdown-item"
                           >
                             <FileDown size={12} className="text-indigo-500" />
