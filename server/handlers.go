@@ -23,7 +23,6 @@ type Server struct {
 	EventBus               *EventBus
 	Version                string
 	Port                   string
-	IsSecondaryProcess     bool
 }
 
 // NewServer builds a new API controller.
@@ -1106,74 +1105,4 @@ func (srv *Server) HandleGetActivityLog(w http.ResponseWriter, r *http.Request) 
 		"events":   events,
 		"has_more": len(events) == limit,
 	})
-}
-
-// HandlePostActivityLog receives activity events forwarded by mcp-only sidecar processes
-// and broadcasts them to active SSE listeners.
-func (srv *Server) HandlePostActivityLog(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var payload struct {
-		Source string `json:"source"`
-		Action string `json:"action"`
-		Tool   string `json:"tool"`
-		Slug   string `json:"slug"`
-		Title  string `json:"title"`
-		Agent  string `json:"agent"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		writeDecodeError(w, err)
-		return
-	}
-
-	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity(payload.Source, payload.Action, payload.Tool, payload.Slug, payload.Title, payload.Agent)
-
-		// Synchronize client list/stats when an mcp-only sidecar mutates the wiki
-		if payload.Action != "read" {
-			articles, err := srv.Storage.ListArticles()
-			if err == nil {
-				var targetTags []string
-				targetType := ContentTypeWiki
-				if payload.Slug != "" {
-					if art, err := srv.Storage.GetArticle(payload.Slug); err == nil {
-						targetTags = art.Tags
-						targetType = art.Type
-					}
-				}
-
-				dir := getArticleDirectory(targetType)
-				dirCount := 0
-				for _, a := range articles {
-					if getArticleDirectory(a.Type) == dir {
-						dirCount++
-					}
-				}
-
-				updateType := "article-edited"
-				switch payload.Action {
-				case "create":
-					updateType = "article-added"
-				case "delete":
-					updateType = "article-removed"
-				}
-
-				srv.EventBus.PublishWikiUpdate(WikiUpdate{
-					Type:           updateType,
-					Slug:           payload.Slug,
-					Title:          payload.Title,
-					Tags:           targetTags,
-					Directory:      dir,
-					TotalCount:     len(articles),
-					DirectoryCount: dirCount,
-				})
-			}
-		}
-	}
-
-	w.WriteHeader(http.StatusOK)
 }

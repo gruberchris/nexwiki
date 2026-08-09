@@ -168,7 +168,39 @@ notifications/resources/list_changed         sub=77
 
 Every message carries `io.modelcontextprotocol/subscriptionId` in `_meta` so concurrent subscriptions can be demultiplexed. Cancellation is closing the stream.
 
-> **Transport:** subscriptions require **Streamable HTTP**. On stdio the loop here is strictly request/response on one channel, so a stdio subscription is acknowledged and then closed gracefully rather than left waiting for notifications that will not arrive.
+> **Transport:** a *standalone* stdio server cannot hold subscriptions open — its loop is strictly request/response on one channel — so it acknowledges and closes gracefully. A stdio **sidecar next to a running web server does** get live subscriptions, because it proxies to the primary and relays the stream. See [Sidecar proxy mode](#-sidecar-proxy-mode) below.
+
+## 🔀 Sidecar proxy mode
+
+Only one process can own a wiki: the Bleve index takes an exclusive lock on the data directory. So a `-mcp-only` sidecar pointed at a *running* instance cannot open it.
+
+That is exactly the documented Claude Desktop stdio configuration. It used to hang forever on the lock; then it failed fast with an explanation — honest, but the setup still did not work. **Now it works:** when a sidecar detects a primary on the configured port, it does not open storage at all. It becomes a pipe, forwarding each stdio JSON-RPC message to the primary's `/api/mcp` and writing the reply back to stdout.
+
+```json
+{
+  "mcpServers": {
+    "nexwiki": {
+      "command": "docker",
+      "args": ["exec", "-i", "personal-wiki", "/app/nexwiki", "-mcp-only", "-data", "/app/data"]
+    }
+  }
+}
+```
+
+```
+-mcp-only: web server detected on port 8080; running as a proxy to it.
+           The primary owns the data directory; this process forwards MCP traffic to it.
+```
+
+**What this buys you beyond "it starts":**
+
+- **Writes land in the live wiki.** The call executes *inside* the primary, so the browser sees the change immediately and the activity log records it once, in the process that did the work.
+- **stdio gets live subscriptions.** The primary answers `subscriptions/listen` with an SSE stream, and the proxy relays each notification to stdout as its own JSON-RPC line. A standalone stdio server cannot offer this at all.
+- **No second index, no lock contention, no divergence.** There is one owner of the data directory, always.
+
+The proxy synthesizes the modern era's mirrored headers (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`) from the body it forwards, since stdio carries no headers and the primary validates them. If the primary is unreachable, the proxy answers with a JSON-RPC error carrying the original request id, so the failure is attributable to the call that caused it.
+
+> Streamable HTTP is still the simplest option when your client supports it — one process, no subprocess at all. Proxy mode exists so the stdio path is no longer a trap.
 
 ### 🔒 Log Safety Guarantee
 To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools like Claude Desktop), **NexWiki redirects all internal system and web application logs exclusively to standard error (`Stderr`)**. Only valid JSON-RPC envelopes are ever output to `Stdout`.
