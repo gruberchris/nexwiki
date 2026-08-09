@@ -46,7 +46,8 @@ var createAgentMemoryTool = toolDef{
 			"required": []string{"title", "content"},
 		},
 	},
-	Handler: (*Server).toolCreateAgentMemory,
+	Handler:  (*Server).toolCreateAgentMemory,
+	Behavior: toolBehavior{Title: "Create Agent Memory", Destructive: false, Idempotent: false},
 }
 
 func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -122,7 +123,8 @@ var appendAgentMemoryTool = toolDef{
 			"required": []string{"slug", "content_to_append"},
 		},
 	},
-	Handler: (*Server).toolAppendAgentMemory,
+	Handler:  (*Server).toolAppendAgentMemory,
+	Behavior: toolBehavior{Title: "Append to Agent Memory", Destructive: false, Idempotent: false},
 }
 
 func (srv *Server) toolAppendAgentMemory(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -208,7 +210,8 @@ var editAgentMemoryTool = toolDef{
 			"required": []string{"slug", "loaded_version"},
 		},
 	},
-	Handler: (*Server).toolEditAgentMemory,
+	Handler:  (*Server).toolEditAgentMemory,
+	Behavior: toolBehavior{Title: "Edit Agent Memory", Destructive: true, Idempotent: false},
 }
 
 func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -323,7 +326,8 @@ var deleteAgentMemoryTool = toolDef{
 			"required": []string{"slug"},
 		},
 	},
-	Handler: (*Server).toolDeleteAgentMemory,
+	Handler:  (*Server).toolDeleteAgentMemory,
+	Behavior: toolBehavior{Title: "Delete Agent Memory", Destructive: true, Idempotent: true},
 }
 
 func (srv *Server) toolDeleteAgentMemory(args json.RawMessage) (interface{}, *JSONRPCError) {
@@ -366,7 +370,8 @@ var listAgentMemoriesTool = toolDef{
 			},
 		},
 	},
-	Handler: (*Server).toolListAgentMemories,
+	Handler:  (*Server).toolListAgentMemories,
+	Behavior: toolBehavior{Title: "List Agent Memories", ReadOnly: true},
 }
 
 func (srv *Server) toolListAgentMemories(args json.RawMessage) (interface{}, *JSONRPCError) {
