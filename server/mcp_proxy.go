@@ -36,6 +36,11 @@ import (
 // (subscriptions) are exempt: they are meant to stay open.
 const proxyRequestTimeout = 5 * time.Minute
 
+// MaxStdioLineBytes caps a single JSON-RPC line on stdio, in both the proxy and the standalone
+// server. MCP payloads carry whole article bodies, so bufio's 64 KB default is far too small — and
+// overrunning it is unrecoverable, ending the read loop for the life of the process.
+const MaxStdioLineBytes = 8 << 20
+
 // MCPProxy forwards stdio JSON-RPC traffic to a NexWiki web primary over Streamable HTTP.
 type MCPProxy struct {
 	endpoint string
@@ -78,8 +83,7 @@ func (p *MCPProxy) Run(in io.Reader) {
 	defer p.stop()
 
 	scanner := bufio.NewScanner(in)
-	// MCP payloads can carry whole article bodies, which overrun bufio's default 64 KB line cap.
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxStdioLineBytes)
 
 	var streams sync.WaitGroup
 	for scanner.Scan() {
@@ -219,7 +223,7 @@ func (p *MCPProxy) forwardStream(payload []byte) {
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxStdioLineBytes)
 	for scanner.Scan() {
 		line := scanner.Text()
 		// Colon-prefixed lines are SSE keep-alive comments carrying no event data.

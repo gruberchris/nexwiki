@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -1014,5 +1015,94 @@ func TestHandleStreamableHTTP(t *testing.T) {
 	srv.HandleStreamableHTTP(w7, req7)
 	if w7.Code != http.StatusNotAcceptable {
 		t.Errorf("GET unsupported Accept: expected 406, got %d", w7.Code)
+	}
+}
+
+// TestStdioAcceptsLinesOverBufioDefault covers a failure that silently killed the stdio server.
+//
+// bufio.Scanner caps a line at 64 KB by default, and overrunning it is not recoverable: Scan
+// returns false and the read loop exits for the life of the process. A tool call carrying an
+// article body passes 64 KB easily, so writing a long article over stdio ended the MCP session —
+// standalone the process exited with status 0, so a supervising client saw a clean shutdown; run
+// alongside the web server, HTTP kept serving 200s while the MCP channel stayed dead. Either way
+// the agent got no response at all and the article was never written.
+func TestStdioAcceptsLinesOverBufioDefault(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Comfortably past the 64 KB default, and past the 65,536-byte boundary specifically.
+	body := strings.Repeat("x", 200_000)
+	request, err := json.Marshal(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]interface{}{
+			"name":      "create_wiki_article",
+			"arguments": map[string]interface{}{"title": "Large Stdio Article", "content": body},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if len(request) <= 64*1024 {
+		t.Fatalf("test payload is %d bytes, which does not exercise the cap", len(request))
+	}
+
+	var out bytes.Buffer
+	scanner := bufio.NewScanner(bytes.NewReader(append(request, '\n')))
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxStdioLineBytes)
+
+	if !scanner.Scan() {
+		t.Fatalf("scanner rejected a %d-byte line: %v", len(request), scanner.Err())
+	}
+	var req JSONRPCRequest
+	if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	srv.handleRequest(&out, &req)
+
+	if !strings.Contains(out.String(), "Large Stdio Article") {
+		t.Errorf("large article was not created; response begins: %.200s", out.String())
+	}
+	art, err := srv.Storage.GetArticle("large-stdio-article")
+	if err != nil {
+		t.Fatalf("article not persisted: %v", err)
+	}
+	if len(art.Content) != len(body) {
+		t.Errorf("persisted content is %d bytes, want %d", len(art.Content), len(body))
+	}
+}
+
+// TestModernSubscriptionsListenOnStdio covers an era inversion.
+//
+// subscriptions/listen was introduced by the 2026-07-28 revision, but handleModernMethod has no
+// case for it — the HTTP transport lifts the method out of dispatch before the era branch, and
+// stdio did not. So a modern client, the only kind that knows the method exists, was answered
+// "Method not found", while a legacy client got the graceful acknowledgment.
+func TestModernSubscriptionsListenOnStdio(t *testing.T) {
+	srv := newTestServer(t)
+
+	for _, tc := range []struct{ name, params string }{
+		{"legacy", `{"notifications":{"resourcesListChanged":true}}`},
+		{"modern", `{"notifications":{"resourcesListChanged":true},"_meta":{` +
+			`"io.modelcontextprotocol/protocolVersion":"2026-07-28",` +
+			`"io.modelcontextprotocol/clientCapabilities":{}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			req := JSONRPCRequest{JSONRPC: "2.0", ID: float64(7), Method: "subscriptions/listen",
+				Params: json.RawMessage(tc.params)}
+			srv.handleRequest(&out, &req)
+
+			var resp map[string]interface{}
+			if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+				t.Fatalf("response is not JSON: %q", out.String())
+			}
+			if _, isErr := resp["error"]; isErr {
+				t.Fatalf("subscriptions/listen returned an error: %s", out.String())
+			}
+			if resp["method"] != "notifications/subscriptions/acknowledged" {
+				t.Errorf("method = %v, want the acknowledgment", resp["method"])
+			}
+		})
 	}
 }
