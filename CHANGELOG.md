@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+- **The activity log never rotated in a long-running server.** The 10 MB threshold was only checked when the log was opened, which happens once at startup — so a deployment that stays up (`docker compose up -d`, the documented setup) grew `activity.jsonl` without bound until the next restart. It now rotates on append as well. This also bounded a compounding read cost: `get_recent_activity` stops early across *archives* but always parses the active file end to end, so an unbounded log made the call slower every time it ran. Measured on a synthetic log: 10 MB → 119 ms, 50 MB → 613 ms, growing linearly. A rotation that cannot rename now degrades to appending to the existing file rather than dropping events.
+
 ## [0.7.0] — 2026-08-09
 
 ### Added

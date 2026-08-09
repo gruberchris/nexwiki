@@ -20,8 +20,9 @@ const ActivityLogFilename = "activity.jsonl"
 // activity.jsonl.N (monotonic fallback). Archives are never overwritten, so history is retained.
 const activityArchivePrefix = "activity-"
 
-// activityLogRotateBytes triggers rotation (the active file is archived, a fresh one is started)
-// when the log exceeds this size at open time. Variable for testability.
+// activityLogRotateBytes triggers rotation: the active file is archived and a fresh one started
+// once the log exceeds this size. Checked both at open and after every append. Variable for
+// testability — tests lower it rather than writing 10 MB.
 var activityLogRotateBytes int64 = 10 * 1024 * 1024 // 10 MB
 
 // ActivityLog appends LogEvents durably as JSON Lines to the data directory.
@@ -29,6 +30,12 @@ type ActivityLog struct {
 	mu   sync.Mutex
 	file *os.File
 	Path string
+
+	// dataDir is retained so Append can rotate without re-deriving it from Path.
+	dataDir string
+	// size tracks the active file's byte count so the rotation check costs no syscall. Seeded
+	// from the file at open, incremented on every append, reset to zero on rotation.
+	size int64
 }
 
 // ActivityLogPath returns the canonical activity log location for a data directory.
@@ -54,7 +61,50 @@ func OpenActivityLog(dataDir string) (*ActivityLog, error) {
 		return nil, fmt.Errorf("failed to open activity log: %w", err)
 	}
 
-	return &ActivityLog{file: file, Path: path}, nil
+	// Seed the running size from whatever survived the rotation check above, so appends pick up
+	// where the previous process left off rather than restarting the count at zero.
+	var size int64
+	if info, err := file.Stat(); err == nil {
+		size = info.Size()
+	}
+
+	return &ActivityLog{file: file, Path: path, dataDir: dataDir, size: size}, nil
+}
+
+// rotateLocked archives the active file and starts a fresh one. The caller must hold al.mu.
+//
+// A rotation failure must not take the logger down with it: the activity log is audit
+// bookkeeping, and losing the ability to record events is worse than an oversized file. Every
+// failure path therefore keeps the current handle and reports, so appends continue.
+func (al *ActivityLog) rotateLocked() {
+	if err := al.file.Close(); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: closing activity log for rotation failed: %v\n", err)
+	}
+
+	reopen := func() {
+		file, err := os.OpenFile(al.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: reopening activity log after rotation failed: %v\n", err)
+			return
+		}
+		al.file = file
+		var size int64
+		if info, err := file.Stat(); err == nil {
+			size = info.Size()
+		}
+		al.size = size
+	}
+
+	if err := os.Rename(al.Path, nextArchivePath(al.dataDir)); err != nil {
+		// The rename failed, so the active file is still in place; reopening it resumes
+		// appending to the same (oversized) file rather than dropping events on the floor.
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: rotating activity log failed: %v\n", err)
+		reopen()
+		return
+	}
+
+	pruneActivityArchives(al.dataDir)
+	reopen()
 }
 
 // the nextArchivePath returns a non-colliding archive path: a UTC-timestamped name, falling back to a
@@ -123,8 +173,23 @@ func (al *ActivityLog) Append(ev LogEvent) error {
 
 	al.mu.Lock()
 	defer al.mu.Unlock()
-	_, err = al.file.Write(append(data, '\n'))
-	return err
+
+	n, err := al.file.Write(append(data, '\n'))
+	al.size += int64(n)
+	if err != nil {
+		return err
+	}
+
+	// Rotate here, not only at open. The threshold used to be checked exclusively in
+	// OpenActivityLog, which main.go calls once at startup — so a process that stays up (the
+	// documented `docker compose up -d` deployment) never rotated at all and the log grew without
+	// bound until the next restart. That also fed back into reads: ReadActivityLog stops early
+	// across *archives*, but always parses the active file end to end, so an unbounded active log
+	// made get_recent_activity progressively slower on every call.
+	if al.size > activityLogRotateBytes {
+		al.rotateLocked()
+	}
+	return nil
 }
 
 // Close releases the underlying file handle.

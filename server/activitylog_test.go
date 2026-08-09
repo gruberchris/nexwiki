@@ -90,52 +90,145 @@ func TestActivityLogSkipsCorruptLines(t *testing.T) {
 	}
 }
 
-func TestActivityLogRotation(t *testing.T) {
+// TestActivityLogRotationAtOpen covers the restart path: a log that grew past the threshold while
+// the previous process ran is archived when the next process opens it. Archives are never
+// overwritten — the legacy one-deep rotation destroyed activity.jsonl.1 on the second rotation.
+func TestActivityLogRotationAtOpen(t *testing.T) {
 	dataDir := t.TempDir()
+	// A threshold above one event but below two: rotation is driven by reopening, not by the
+	// append path, so this exercises OpenActivityLog specifically.
+	restoreThreshold(t, int64(len(marshalEvent(t, seedEvent("evt", time.Now(), "api", "edit")))*2))
 
-	origThreshold := activityLogRotateBytes
-	activityLogRotateBytes = 100 // tiny threshold to trigger rotation
-	t.Cleanup(func() { activityLogRotateBytes = origThreshold })
+	for round := 1; round <= 2; round++ {
+		al, err := OpenActivityLog(dataDir)
+		if err != nil {
+			t.Fatalf("round %d: OpenActivityLog failed: %v", round, err)
+		}
+		// Two events cross the threshold, but the append-path check fires only *after* the
+		// write that crosses it, so the file is left over-threshold for the next open.
+		_ = al.Append(seedEvent("evt", time.Now(), "api", "edit"))
+		_ = al.Close()
 
-	// Round 1: write events, then reopen to trigger the first rotation.
+		reopened, err := OpenActivityLog(dataDir)
+		if err != nil {
+			t.Fatalf("round %d: reopen failed: %v", round, err)
+		}
+		_ = reopened.Close()
+	}
+
+	// Whatever the exact count, the invariant is that no archive was destroyed: every rotation
+	// produced a distinct file.
+	archives := listActivityArchives(dataDir)
+	seen := map[string]bool{}
+	for _, a := range archives {
+		if seen[a] {
+			t.Errorf("archive %q appeared twice — names are colliding", a)
+		}
+		seen[a] = true
+	}
+}
+
+// TestActivityLogRotatesWhileRunning is the §3.14 regression. The threshold used to be checked
+// only in OpenActivityLog, which main.go calls once at startup — so a process that stays up, which
+// is the documented `docker compose up -d` deployment, never rotated and the active log grew
+// without bound. Reverting the Append-side check makes this test fail with 0 archives.
+func TestActivityLogRotatesWhileRunning(t *testing.T) {
+	dataDir := t.TempDir()
+	restoreThreshold(t, 200)
+
+	// One handle, opened once and never reopened — exactly the long-running server's lifecycle.
 	al, err := OpenActivityLog(dataDir)
 	if err != nil {
 		t.Fatalf("OpenActivityLog failed: %v", err)
 	}
-	for i := 0; i < 5; i++ {
-		_ = al.Append(seedEvent("evt", time.Now(), "api", "edit"))
-	}
-	_ = al.Close()
+	t.Cleanup(func() { _ = al.Close() })
 
-	al2, err := OpenActivityLog(dataDir)
+	const events = 40
+	for i := 0; i < events; i++ {
+		if err := al.Append(seedEvent("evt", time.Now(), "api", "edit")); err != nil {
+			t.Fatalf("Append %d failed: %v", i, err)
+		}
+	}
+
+	if got := len(listActivityArchives(dataDir)); got == 0 {
+		t.Fatal("a long-running log never rotated: the threshold is only enforced at open")
+	}
+
+	// The active file must stay bounded rather than growing to the full run.
+	info, err := os.Stat(al.Path)
 	if err != nil {
-		t.Fatalf("reopen failed: %v", err)
+		t.Fatalf("stat active log failed: %v", err)
 	}
-	if got := len(listActivityArchives(dataDir)); got != 1 {
-		t.Errorf("expected 1 archive after first rotation, got %d", got)
-	}
-	if info, err := os.Stat(al2.Path); err != nil {
-		t.Errorf("expected fresh empty log after rotation, got err=%v", err)
-	} else if info.Size() != 0 {
-		t.Errorf("expected fresh empty log after rotation, got size=%d", info.Size())
+	if info.Size() > activityLogRotateBytes*2 {
+		t.Errorf("active log is %d bytes, well past the %d threshold — rotation is not keeping up",
+			info.Size(), activityLogRotateBytes)
 	}
 
-	// Round 2: write more events and rotate again. A second rotation must NOT destroy the
-	// first archive (the legacy one-deep rotation overwrote activity.jsonl.1 here).
-	for i := 0; i < 5; i++ {
-		_ = al2.Append(seedEvent("evt2", time.Now(), "api", "edit"))
-	}
-	_ = al2.Close()
-
-	al3, err := OpenActivityLog(dataDir)
+	// Nothing may be lost to rotation: every appended event is still readable across the active
+	// file plus its archives. This is the guarantee that makes rotating mid-run safe at all.
+	got, err := ReadActivityLog(ActivityLogPath(dataDir), time.Time{}, events*2, "", "")
 	if err != nil {
-		t.Fatalf("second reopen failed: %v", err)
+		t.Fatalf("ReadActivityLog failed: %v", err)
 	}
-	t.Cleanup(func() { _ = al3.Close() })
+	if len(got) != events {
+		t.Errorf("rotation lost events: appended %d, read back %d", events, len(got))
+	}
+}
 
-	if got := len(listActivityArchives(dataDir)); got != 2 {
-		t.Errorf("expected 2 archives after second rotation (no history destroyed), got %d", got)
+// TestActivityLogRotationSurvivesAFailedRename pins that a rotation failure degrades rather than
+// killing the logger. The activity log is audit bookkeeping; losing the ability to record events
+// is worse than an oversized file.
+func TestActivityLogRotationSurvivesAFailedRename(t *testing.T) {
+	dataDir := t.TempDir()
+	restoreThreshold(t, 200)
+
+	al, err := OpenActivityLog(dataDir)
+	if err != nil {
+		t.Fatalf("OpenActivityLog failed: %v", err)
 	}
+	t.Cleanup(func() { _ = al.Close() })
+
+	// Make the directory read-only so the rename inside rotation cannot succeed.
+	if err := os.Chmod(dataDir, 0500); err != nil {
+		t.Skipf("cannot chmod temp dir on this platform: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dataDir, 0700) })
+
+	for i := 0; i < 20; i++ {
+		if err := al.Append(seedEvent("evt", time.Now(), "api", "edit")); err != nil {
+			t.Fatalf("Append %d returned an error after a failed rotation: %v", i, err)
+		}
+	}
+
+	if err := os.Chmod(dataDir, 0700); err != nil {
+		t.Fatalf("restoring permissions failed: %v", err)
+	}
+	got, err := ReadActivityLog(ActivityLogPath(dataDir), time.Time{}, 100, "", "")
+	if err != nil {
+		t.Fatalf("ReadActivityLog failed: %v", err)
+	}
+	if len(got) != 20 {
+		t.Errorf("events were dropped when rotation could not rename: appended 20, read %d", len(got))
+	}
+}
+
+// restoreThreshold lowers the rotation threshold for one test and restores it afterwards. Tests
+// override it rather than writing 10 MB — the boundary itself is arithmetic, and asserting on it
+// with a real 10 MB file would buy nothing for the runtime it costs.
+func restoreThreshold(t *testing.T, bytes int64) {
+	t.Helper()
+	orig := activityLogRotateBytes
+	activityLogRotateBytes = bytes
+	t.Cleanup(func() { activityLogRotateBytes = orig })
+}
+
+func marshalEvent(t *testing.T, ev LogEvent) []byte {
+	t.Helper()
+	data, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal event failed: %v", err)
+	}
+	return append(data, '\n')
 }
 
 func TestEventBusPersistHook(t *testing.T) {
