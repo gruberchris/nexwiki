@@ -288,9 +288,6 @@ func (srv *Server) logMCPToolCall(params json.RawMessage) {
 	srv.EventBus.PublishActivity("mcp", action, tool, slug, title, agent)
 
 	// When running as a mcp-only sidecar alongside a web server, forward the event to it.
-	if srv.IsSecondaryProcess {
-		go srv.forwardActivityToWebServer("mcp", action, tool, slug, title, agent)
-	}
 
 	// If it's a mutation, broadcast a WikiUpdate to sync all clients!
 	if action != "read" {
@@ -332,45 +329,6 @@ func (srv *Server) logMCPToolCall(params json.RawMessage) {
 			})
 		}
 	}
-}
-
-// forwardActivityToWebServer forwards the activity log to the main web server process via HTTP.
-func (srv *Server) forwardActivityToWebServer(source, action, tool, slug, title, agent string) {
-	// Construct payload
-	payload := map[string]string{
-		"source": source,
-		"action": action,
-		"tool":   tool,
-		"slug":   slug,
-		"title":  title,
-		"agent":  agent,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-
-	// We target the configured port. Default to 8080 if not set.
-	port := srv.Port
-	if port == "" {
-		port = "8080"
-	}
-
-	url := fmt.Sprintf("http://127.0.0.1:%s/api/activity/log", port)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	// Use a short timeout so we don't block
-	client := &http.Client{Timeout: 1 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		// Silently ignore if the server is not running or listening
-		return
-	}
-	_ = resp.Body.Close()
 }
 
 // memoryScopeTags returns the tool-managed memory-scope tags (memory-<scope>) present on a tag list.

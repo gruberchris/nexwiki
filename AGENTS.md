@@ -67,6 +67,8 @@ To run a **stdio MCP server next to an already-running web primary** — which i
 
 > ⚠️ **Every stdio client config below must pass `-mcp-only`.** Without it, the spawned process tries to bind the web port, collides with your running instance, and exits with `Fatal: could not bind web server`.
 
+> **A sidecar beside a running web server now proxies to it.** Only one process can own the data directory (the search index holds an exclusive lock), so the sidecar forwards MCP traffic to the primary instead of opening storage — which also gives stdio clients live subscription streams.
+
 ---
 
 ## 🛠️ Exposed MCP Tools

@@ -229,6 +229,8 @@ Use stdio only when you are not running the web interface, or when your client c
 ```
 `docker exec` bypasses the image ENTRYPOINT, so `-mcp-only` and `-data` must both be passed explicitly.
 
+Because the container already runs a web server owning that data directory, the sidecar automatically runs as a **proxy** to it: one process owns the wiki, and the sidecar forwards MCP traffic to it — including live subscription streams. See [Sidecar proxy mode](./docs/mcp_server.md#-sidecar-proxy-mode).
+
 **Option B: Running the Go Binary directly**
 ```json
 {

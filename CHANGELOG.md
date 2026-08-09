@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ## [Unreleased]
 
 ### Added
+- **Sidecar proxy mode.** A `-mcp-only` process beside a running web server now forwards MCP traffic to it instead of failing on the search-index lock, so the documented Claude Desktop stdio configuration works. Writes land in the live wiki, and subscription streams are relayed to stdout — live subscriptions a standalone stdio server cannot provide.
 - **MCP Resources.** Every document is exposed at `nexwiki://article/{slug}` via `resources/list`, `resources/read`, and `resources/templates/list`, so a user can `@`-mention a wiki page in their client instead of spending a tool call on it.
 - **`subscriptions/listen`.** A long-lived notification stream delivers `notifications/resources/updated` and `notifications/resources/list_changed` off the existing EventBus, so an agent learns the moment a page is edited in the browser or another agent writes a memory. Requires the Streamable HTTP transport.
 - **MCP tool annotations.** All 27 tools now declare `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, and a human-readable `title`, so clients can auto-approve safe reads rather than prompting for every call. `openWorldHint` is `false` on every tool — NexWiki never reaches outside the local wiki.

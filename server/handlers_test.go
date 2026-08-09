@@ -742,44 +742,6 @@ func TestHandleGetSkillRaw(t *testing.T) {
 	}
 }
 
-func TestHandlePostActivityLog(t *testing.T) {
-	srv := newTestServer(t)
-
-	// Non-POST method
-	req0 := httptest.NewRequest("GET", "/api/activity", nil)
-	w0 := httptest.NewRecorder()
-	srv.HandlePostActivityLog(w0, req0)
-	if w0.Code != http.StatusMethodNotAllowed {
-		t.Errorf("GET method: expected 405, got %d", w0.Code)
-	}
-
-	// Invalid body
-	req := httptest.NewRequest("POST", "/api/activity", strings.NewReader("not json"))
-	w := httptest.NewRecorder()
-	srv.HandlePostActivityLog(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("invalid body: expected 400, got %d", w.Code)
-	}
-
-	// Valid
-	body := `{"source": "mcp", "action": "create", "slug": "test", "title": "Test", "agent": "Claude"}`
-	req2 := httptest.NewRequest("POST", "/api/activity", strings.NewReader(body))
-	w2 := httptest.NewRecorder()
-	srv.HandlePostActivityLog(w2, req2)
-	if w2.Code != http.StatusOK {
-		t.Errorf("valid: expected 200, got %d", w2.Code)
-	}
-
-	// Valid with read action (no wiki update published)
-	body2 := `{"source": "mcp", "action": "read", "slug": "test"}`
-	req3 := httptest.NewRequest("POST", "/api/activity", strings.NewReader(body2))
-	w3 := httptest.NewRecorder()
-	srv.HandlePostActivityLog(w3, req3)
-	if w3.Code != http.StatusOK {
-		t.Errorf("read action: expected 200, got %d", w3.Code)
-	}
-}
-
 func TestExtractDescription(t *testing.T) {
 	tests := []struct {
 		name     string

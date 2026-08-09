@@ -71,9 +71,23 @@ func main() {
 	log.Printf("Default Theme: %s", defaultTheme)
 	log.Printf("Theme Scheduling Enabled: %t", themeSchedulingEnabled)
 
-	// Probe for a running web primary before opening storage, so a lock conflict can be explained
-	// rather than merely reported. Cheap (750 ms against loopback) and needed for the message below.
+	// Probe for a running web primary before opening storage. Only one process can own a wiki —
+	// the Bleve index holds an exclusive lock — so a sidecar pointed at a running instance must
+	// not try to open it at all.
 	primaryDetected := mcpOnlyMode && probeForPrimary(*port)
+
+	// Proxy mode: forward stdio to the running primary instead of opening the data directory.
+	//
+	// This is what makes the documented Claude Desktop stdio configuration actually work. It used
+	// to hang forever on the index lock; then it failed fast with an explanation, which was honest
+	// but still left the setup unusable. Now the sidecar is a pipe: the primary owns the wiki and
+	// answers every call, including subscription streams relayed back as stdio notifications.
+	if primaryDetected {
+		log.Printf("-mcp-only: web server detected on port %s; running as a proxy to it. "+
+			"The primary owns the data directory; this process forwards MCP traffic to it.", *port)
+		server.NewMCPProxy(*port, os.Stdout).Run(os.Stdin)
+		return
+	}
 
 	// Ensure storage is initialized.
 	//
@@ -84,14 +98,9 @@ func main() {
 	// the MCP loop, which is precisely the documented Claude Desktop stdio configuration.
 	storage, err := openStorageWithTimeout(*dataDir, storageOpenTimeout)
 	if err != nil {
-		if errors.Is(err, errStorageLocked) && primaryDetected {
-			log.Fatalf("Fatal: a NexWiki web server is already running on port %s and holds an exclusive "+
-				"lock on the search index in %s.\n"+
-				"A -mcp-only process cannot share a data directory with a running instance.\n"+
-				"Connect over the Streamable HTTP transport instead — point your MCP client at "+
-				"http://localhost:%s/api/mcp — or stop the web server before using stdio.",
-				*port, *dataDir, *port)
-		}
+		// A primary on the configured port is handled above by proxying, so reaching here with a
+		// locked index means some other process owns the directory — a second instance on a
+		// different port, or a stale one that never shut down.
 		if errors.Is(err, errStorageLocked) {
 			log.Fatalf("Fatal: could not open the search index in %s within %s — another process is "+
 				"holding it open.\nStop any other NexWiki process using this data directory, or pass "+
@@ -106,29 +115,23 @@ func main() {
 	// Initialize server instance with configured name, theme, event bus, and scheduling settings
 	srv := server.NewServer(storage, name, defaultTheme, themeSchedulingEnabled, eventBus, Version, *port)
 
-	// A sidecar that got this far is using a *different* data directory than the primary (it would
-	// have failed the lock check otherwise), so it forwards activity events rather than writing the
-	// primary's log itself.
-	if primaryDetected {
-		srv.IsSecondaryProcess = true
-		log.Printf("-mcp-only: web server detected on port %s; forwarding activity events to it.", *port)
-	} else if mcpOnlyMode {
+	// Any process reaching here owns its data directory outright: a detected primary would have
+	// been proxied to above, so there is no secondary to forward activity events from.
+	if mcpOnlyMode {
 		log.Printf("-mcp-only: no web server detected; running standalone and persisting activity directly.")
 	}
 
-	// Persist activity events durably to data/activity.jsonl.
-	// When running as a mcp-only sidecar alongside a web server, events are forwarded via HTTP
-	// instead of written here — this prevents two processes writing the same file concurrently.
+	// Persist activity events durably to data/activity.jsonl. Whichever process reaches here owns
+	// the data directory outright, so it is the only writer: a sidecar alongside a primary proxies
+	// instead, and the proxied call is logged by the primary that actually executes it.
 	var openActivityLog *server.ActivityLog
 	if activityLog, err := server.OpenActivityLog(*dataDir); err != nil {
 		log.Printf("Warning: activity log persistence disabled: %v", err)
 	} else {
 		openActivityLog = activityLog
 		eventBus.SetPersist(func(ev server.LogEvent) {
-			if !srv.IsSecondaryProcess {
-				if err := activityLog.Append(ev); err != nil {
-					log.Printf("Warning: failed to persist activity event: %v", err)
-				}
+			if err := activityLog.Append(ev); err != nil {
+				log.Printf("Warning: failed to persist activity event: %v", err)
 			}
 		})
 	}
@@ -188,7 +191,6 @@ func main() {
 	mux.HandleFunc("DELETE /api/tags/{tag}", srv.HandleDeleteTagGlobally)
 	mux.HandleFunc("GET /api/activity/stream", srv.HandleActivityStream)
 	mux.HandleFunc("GET /api/activity/log", srv.HandleGetActivityLog)
-	mux.HandleFunc("POST /api/activity/log", srv.HandlePostActivityLog)
 	mux.HandleFunc("GET /api/wiki/stats", srv.HandleGetWikiStats)
 	mux.HandleFunc("GET /api/okf/export", srv.HandleExportOKFBundle)
 	mux.HandleFunc("POST /api/okf/import", srv.HandleImportOKFBundle)
