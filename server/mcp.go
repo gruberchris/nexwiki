@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -57,6 +58,16 @@ type ToolResponse struct {
 // StartMCPServer runs the stdio MCP JSON-RPC protocol loop in a non-blocking background goroutine.
 func (srv *Server) StartMCPServer() {
 	scanner := bufio.NewScanner(os.Stdin)
+	// A tool call carrying a whole article body easily exceeds bufio's default 64 KB line cap, and
+	// exceeding it is not recoverable: Scan returns false, the loop below ends, and the stdio
+	// server stops answering for the rest of the process's life.
+	//
+	// That failure was silent in the worst possible way. Standalone (-mcp-only) the process exited
+	// with status 0, so a supervising client saw a clean shutdown rather than a crash. Alongside
+	// the web server it was worse still: the background loop died while HTTP kept serving 200s, so
+	// the app looked healthy while its MCP channel was permanently dead — and the agent that sent
+	// the article got no response at all, not even an error, and the article was never written.
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxStdioLineBytes)
 	writer := os.Stdout
 
 	_, _ = fmt.Fprintf(os.Stderr, "Always-on stdio MCP server loop successfully started in background!\n")
@@ -78,7 +89,15 @@ func (srv *Server) StartMCPServer() {
 		srv.handleRequest(writer, &req)
 	}
 
+	// The loop above cannot resume after a scanner failure, so tell the client rather than going
+	// quiet: an agent waiting on a response it will never receive has no way to distinguish a dead
+	// channel from a slow one.
 	if err := scanner.Err(); err != nil && err != io.EOF {
+		if errors.Is(err, bufio.ErrTooLong) {
+			sendError(writer, -32700, fmt.Sprintf(
+				"Request exceeded the %d MB stdio line limit; the stdio channel has closed. Use the HTTP transport for payloads this large.",
+				MaxStdioLineBytes>>20), nil)
+		}
 		_, _ = fmt.Fprintf(os.Stderr, "MCP server stdio error: %v\n", err)
 	}
 }
@@ -134,7 +153,29 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 	var result interface{}
 	var rpcErr *JSONRPCError
 
-	if env := parseParamsEnvelope(req.Params); isModernRequest(env) {
+	env := parseParamsEnvelope(req.Params)
+
+	// subscriptions/listen is answered before the era branch, mirroring HandleStreamableHTTP, which
+	// also lifts it out of dispatch. Both eras get the same answer here because the stdio loop is
+	// strictly request/response on one channel and cannot interleave notifications either way.
+	//
+	// Taking it out of the branch is what makes the modern era work at all. The method was
+	// *introduced* by the 2026-07-28 revision, but handleModernMethod has no case for it, so a
+	// modern client — the only kind that knows the method exists — was told "Method not found",
+	// while a legacy client got the graceful acknowledgment. Exactly backwards.
+	if req.Method == "subscriptions/listen" {
+		// Modern metadata is still validated first, so a malformed request fails the same way it
+		// would on any other method, and the same way it does over HTTP.
+		if isModernRequest(env) {
+			if rpcErr := validateModernMeta(env); rpcErr != nil {
+				return srv.writeResponse(w, req, nil, rpcErr)
+			}
+		}
+		srv.handleStdioSubscription(w, req, parseSubscriptionParams(req.Params))
+		return http.StatusOK
+	}
+
+	if isModernRequest(env) {
 		result, rpcErr = srv.dispatchModern(req, env)
 		return srv.writeResponse(w, req, result, rpcErr)
 	}
@@ -174,12 +215,6 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 
 	case "resources/read":
 		result, rpcErr = srv.readResource(req.Params)
-
-	case "subscriptions/listen":
-		// Reached only on stdio; the HTTP transport intercepts this before dispatch so it can
-		// hold the response open as a stream.
-		srv.handleStdioSubscription(w, req, parseSubscriptionParams(req.Params))
-		return http.StatusOK
 
 	default:
 		rpcErr = &JSONRPCError{

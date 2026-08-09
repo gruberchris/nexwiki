@@ -205,6 +205,12 @@ The proxy synthesizes the modern era's mirrored headers (`MCP-Protocol-Version`,
 ### 🔒 Log Safety Guarantee
 To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools like Claude Desktop), **NexWiki redirects all internal system and web application logs exclusively to standard error (`Stderr`)**. Only valid JSON-RPC envelopes are ever output to `Stdout`.
 
+### 📏 Stdio message size
+
+A single JSON-RPC line on stdio may be up to **8 MB**, in both the standalone stdio server and the sidecar proxy. This is far above bufio's 64 KB default because MCP payloads carry whole article bodies — a `create_wiki_article` call with a long document passes 64 KB easily.
+
+Exceeding the cap is **not recoverable**: the read loop ends and the stdio channel stops answering for the life of the process. NexWiki emits a JSON-RPC parse error naming the limit before it goes quiet, so the failure is attributable rather than silent, but the session is over. Use the Streamable HTTP transport for payloads that large — it has no per-message line limit (its own body caps are separate and much higher).
+
 ---
 
 ## 🛠️ Exposed MCP Tools
