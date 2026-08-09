@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,11 +24,23 @@ type Server struct {
 	EventBus               *EventBus
 	Version                string
 	Port                   string
+
+	// shuttingDown is closed when the process begins a graceful shutdown. Every long-lived
+	// response stream selects on it and returns.
+	//
+	// This is required for shutdown to work at all: http.Server.Shutdown waits for connections to
+	// become *idle*, and an SSE stream never does. A single browser tab on the wiki holds one
+	// open, so without this signal Shutdown blocks until its own timeout and the supervisor
+	// SIGKILLs the process first — leaving the Bleve index open, which is the corruption this
+	// whole mechanism exists to prevent.
+	shuttingDown chan struct{}
+	shutdownOnce sync.Once
 }
 
 // NewServer builds a new API controller.
 func NewServer(storage *Storage, wikiName string, defaultTheme string, themeSchedulingEnabled bool, eventBus *EventBus, version string, port string) *Server {
 	return &Server{
+		shuttingDown:           make(chan struct{}),
 		Storage:                storage,
 		WikiName:               wikiName,
 		DefaultTheme:           defaultTheme,
@@ -36,6 +49,22 @@ func NewServer(storage *Storage, wikiName string, defaultTheme string, themeSche
 		Version:                version,
 		Port:                   port,
 	}
+}
+
+// BeginShutdown signals every open response stream to end so http.Server.Shutdown can complete.
+// Safe to call more than once.
+func (srv *Server) BeginShutdown() {
+	srv.shutdownOnce.Do(func() {
+		if srv.shuttingDown != nil {
+			close(srv.shuttingDown)
+		}
+	})
+}
+
+// shutdownSignal returns the channel closed at shutdown, tolerating a zero-value Server (some
+// tests construct one directly) by returning nil, which blocks forever in a select.
+func (srv *Server) shutdownSignal() <-chan struct{} {
+	return srv.shuttingDown
 }
 
 // JSON Helper to write standard structured error responses.
@@ -1021,6 +1050,11 @@ func (srv *Server) HandleActivityStream(w http.ResponseWriter, r *http.Request) 
 			flusher.Flush()
 
 		case <-notify:
+			return
+
+		case <-srv.shutdownSignal():
+			// Shutdown waits for connections to go idle, which this one never does; ending here
+			// is what lets the process close the search index before it is killed.
 			return
 		}
 	}

@@ -180,6 +180,20 @@ func (srv *Server) streamSubscription(w http.ResponseWriter, r *http.Request, re
 			// Client closed the stream — that is the cancellation signal on Streamable HTTP.
 			return
 
+		case <-srv.shutdownSignal():
+			// Server-initiated end: reply to the long-lived request with the empty result the
+			// spec defines, so the client knows the subscription closed deliberately rather than
+			// the transport dropping.
+			writeSSE(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      req.ID,
+				"result": map[string]interface{}{
+					"resultType": "complete",
+					"_meta":      map[string]interface{}{metaSubscriptionID: req.ID},
+				},
+			})
+			return
+
 		case update, ok := <-updates:
 			if !ok {
 				return
