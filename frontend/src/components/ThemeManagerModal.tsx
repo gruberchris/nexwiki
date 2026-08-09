@@ -303,7 +303,7 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                       value={editThemeName}
                       onChange={(e) => setEditThemeName(e.target.value)}
                       placeholder="e.g. Emerald Forest, Solar Breeze"
-                      className="w-full p-2.5 text-xs rounded-xl bg-themeBgPrimary/50 border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary"
+                      className="w-full p-2.5 text-xs rounded-xl bg-themeBgPrimary/50 border border-themeBorder focus:outline-hidden focus:ring-2 focus:ring-themeAccent text-themeTextSecondary"
                     />
                   </div>
 
@@ -316,7 +316,7 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                         onClick={() => setEditDefaultMode('light')}
                         className={`flex-1 py-2 px-3 text-xs rounded-xl border font-semibold transition-all ${
                           editDefaultMode === 'light'
-                            ? 'bg-themeAccent text-white border-themeAccent shadow-sm'
+                            ? 'bg-themeAccent text-white border-themeAccent shadow-xs'
                             : 'bg-themeBgPrimary border-themeBorder text-themeTextSecondary hover:bg-themeBgPrimary/80'
                         }`}
                       >
@@ -327,7 +327,7 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                         onClick={() => setEditDefaultMode('dark')}
                         className={`flex-1 py-2 px-3 text-xs rounded-xl border font-semibold transition-all ${
                           editDefaultMode === 'dark'
-                            ? 'bg-themeAccent text-white border-themeAccent shadow-sm'
+                            ? 'bg-themeAccent text-white border-themeAccent shadow-xs'
                             : 'bg-themeBgPrimary border-themeBorder text-themeTextSecondary hover:bg-themeBgPrimary/80'
                         }`}
                       >
@@ -359,7 +359,7 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                             <select
                               value={schedStartMonth}
                               onChange={(e) => setSchedStartMonth(e.target.value)}
-                              className="flex-1 p-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary"
+                              className="flex-1 p-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-hidden focus:ring-2 focus:ring-themeAccent text-themeTextSecondary"
                             >
                               {Array.from({ length: 12 }, (_, i) => (
                                 <option key={i + 1} value={i + 1}>
@@ -373,7 +373,7 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                               max="31"
                               value={schedStartDay}
                               onChange={(e) => setSchedStartDay(e.target.value)}
-                              className="w-16 p-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary text-center"
+                              className="w-16 p-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-hidden focus:ring-2 focus:ring-themeAccent text-themeTextSecondary text-center"
                               placeholder="Day"
                             />
                           </div>
@@ -385,7 +385,7 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                             <select
                               value={schedEndMonth}
                               onChange={(e) => setSchedEndMonth(e.target.value)}
-                              className="flex-1 p-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary"
+                              className="flex-1 p-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-hidden focus:ring-2 focus:ring-themeAccent text-themeTextSecondary"
                             >
                               {Array.from({ length: 12 }, (_, i) => (
                                 <option key={i + 1} value={i + 1}>
@@ -399,7 +399,7 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                               max="31"
                               value={schedEndDay}
                               onChange={(e) => setSchedEndDay(e.target.value)}
-                              className="w-16 p-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-none focus:ring-2 focus:ring-themeAccent text-themeTextSecondary text-center"
+                              className="w-16 p-2 text-xs rounded-xl bg-themeBgSecondary border border-themeBorder focus:outline-hidden focus:ring-2 focus:ring-themeAccent text-themeTextSecondary text-center"
                               placeholder="Day"
                             />
                           </div>
@@ -458,7 +458,7 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                                   type="text"
                                   value={curVal}
                                   onChange={(e) => handleColorChange(activeEditorTab, field.key, e.target.value)}
-                                  className="text-[9px] font-mono text-themeTextMuted border-none bg-transparent w-16 text-right p-0 focus:outline-none focus:text-themeAccent"
+                                  className="text-[9px] font-mono text-themeTextMuted border-none bg-transparent w-16 text-right p-0 focus:outline-hidden focus:text-themeAccent"
                                 />
                               </div>
                               <span className="text-[9px] text-themeTextMuted block truncate leading-none mt-0.5">{field.desc}</span>
@@ -555,7 +555,7 @@ export const ThemeManagerModal: React.FC<ThemeManagerModalProps> = ({
                             onSelectTheme(selectedTheme.name);
                             onClose();
                           }}
-                          className="py-2 px-4 rounded-xl bg-themeAccent hover:opacity-90 text-white font-bold active:scale-95 transition-all shadow-sm"
+                          className="py-2 px-4 rounded-xl bg-themeAccent hover:opacity-90 text-white font-bold active:scale-95 transition-all shadow-xs"
                         >
                           Activate Theme
                         </button>

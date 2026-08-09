@@ -82,7 +82,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
             onClick={() => onLayoutChange('split')}
             className={`py-1.5 px-3 rounded-lg flex items-center gap-1.5 text-[10px] font-bold transition-all ${
               layoutMode === 'split'
-                ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-sm scale-102'
+                ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-xs scale-102'
                 : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
             }`}
           >
@@ -94,7 +94,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
             onClick={() => onLayoutChange('unified')}
             className={`py-1.5 px-3 rounded-lg flex items-center gap-1.5 text-[10px] font-bold transition-all ${
               layoutMode === 'unified'
-                ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-sm scale-102'
+                ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-xs scale-102'
                 : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
             }`}
           >
@@ -108,7 +108,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
       <div className="flex-1 overflow-auto bg-slate-50/20 dark:bg-slate-950/10 p-4 min-h-[300px]">
         {layoutMode === 'unified' ? (
           /* ================= UNIFIED INLINE LAYOUT ================= */
-          <div className="font-mono text-xs leading-relaxed border border-slate-200/60 dark:border-slate-800/60 rounded-xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-900 bg-white dark:bg-slate-900 shadow-sm">
+          <div className="font-mono text-xs leading-relaxed border border-slate-200/60 dark:border-slate-800/60 rounded-xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-900 bg-white dark:bg-slate-900 shadow-xs">
             {diffLines.map((line, index) => {
               const isAdded = line.type === 'added';
               const isRemoved = line.type === 'removed';
@@ -143,7 +143,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
           </div>
         ) : (
           /* ================= SPLIT PANE LAYOUT ================= */
-          <div className="grid grid-cols-2 divide-x divide-slate-200 dark:divide-slate-800 border border-slate-200/60 dark:border-slate-800/60 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-sm">
+          <div className="grid grid-cols-2 divide-x divide-slate-200 dark:divide-slate-800 border border-slate-200/60 dark:border-slate-800/60 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-xs">
             
             {/* Left Pane (Old / Deletions) */}
             <div className="flex flex-col font-mono text-xs leading-relaxed overflow-x-auto divide-y divide-slate-100 dark:divide-slate-900">

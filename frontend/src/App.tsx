@@ -570,7 +570,7 @@ export const App: React.FC = () => {
                         {isAgentDoc(currentArticle) && (
                           <span
                             title="Document type (set by the agent tools)"
-                            className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 dark:bg-emerald-400/10 border border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400 shadow-sm"
+                            className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 dark:bg-emerald-400/10 border border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400 shadow-xs"
                           >
                             {currentArticle.type === ContentTypes.Skill ? <Wrench size={10} className="shrink-0" />
                               : currentArticle.type === ContentTypes.Plan ? <ClipboardList size={10} className="shrink-0" />
@@ -584,7 +584,7 @@ export const App: React.FC = () => {
                             <span
                               key={tag}
                               title="Tool-managed memory-scope tag"
-                              className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 dark:bg-emerald-400/10 border border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400 shadow-sm"
+                              className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 dark:bg-emerald-400/10 border border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400 shadow-xs"
                             >
                               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-emerald-400"></span>
                               {tag}
@@ -592,7 +592,7 @@ export const App: React.FC = () => {
                           ) : (
                             <span
                               key={tag}
-                              className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 shadow-sm"
+                              className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 shadow-xs"
                             >
                               <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-600"></span>
                               {tag}
@@ -606,14 +606,14 @@ export const App: React.FC = () => {
                   <div className="flex items-center justify-end gap-2 self-stretch no-print mt-1">
                     <button
                       onClick={handleTriggerEdit}
-                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer"
+                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-xs hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer"
                     >
                       <Edit size={12} />
                       <span>Edit Page</span>
                     </button>
                     <button
                       onClick={() => setHistoryOpen(true)}
-                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer"
+                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-xs hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer"
                     >
                       <Clock size={12} className="text-indigo-500" />
                       <span>History</span>
@@ -623,7 +623,7 @@ export const App: React.FC = () => {
                     <div className="relative share-dropdown-container">
                       <button
                         onClick={() => setShareDropdownOpen(!shareDropdownOpen)}
-                        className={`flex items-center gap-1.5 py-2 px-3.5 rounded-xl border font-semibold text-xs shadow-sm hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer ${
+                        className={`flex items-center gap-1.5 py-2 px-3.5 rounded-xl border font-semibold text-xs shadow-xs hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer ${
                           shareDropdownOpen
                             ? 'border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/20 text-indigo-650 dark:text-indigo-400'
                             : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300'
@@ -692,7 +692,7 @@ export const App: React.FC = () => {
                 {/* Rendered Markdown Body Content */}
                 <div className="pb-16 animate-fade-in space-y-6">
                   {isSkill(currentArticle) && (
-                    <div className="p-5 rounded-2xl bg-gradient-to-tr from-indigo-500/5 to-purple-500/5 border border-indigo-500/25 dark:border-indigo-500/15 text-slate-700 dark:text-slate-300 shadow-sm flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between no-print select-none backdrop-blur-sm">
+                    <div className="p-5 rounded-2xl bg-gradient-to-tr from-indigo-500/5 to-purple-500/5 border border-indigo-500/25 dark:border-indigo-500/15 text-slate-700 dark:text-slate-300 shadow-xs flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between no-print select-none backdrop-blur-sm">
                       <div className="flex items-center gap-3">
                         <div className="p-2 rounded-xl bg-indigo-500/10 dark:bg-indigo-400/10 text-indigo-600 dark:text-indigo-400 animate-pulse shrink-0">
                           <Wrench size={18} />
@@ -728,7 +728,7 @@ export const App: React.FC = () => {
                   )}
 
                   {isPlan(currentArticle) && (
-                    <div className="p-5 rounded-2xl bg-gradient-to-tr from-emerald-500/5 to-teal-500/5 border border-emerald-500/25 dark:border-emerald-500/15 text-slate-700 dark:text-slate-300 shadow-sm flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between no-print select-none backdrop-blur-sm animate-fade-in">
+                    <div className="p-5 rounded-2xl bg-gradient-to-tr from-emerald-500/5 to-teal-500/5 border border-emerald-500/25 dark:border-emerald-500/15 text-slate-700 dark:text-slate-300 shadow-xs flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between no-print select-none backdrop-blur-sm animate-fade-in">
                       <div className="flex items-center gap-3">
                         <div className="p-2 rounded-xl bg-emerald-500/10 dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-400 animate-pulse shrink-0">
                           <ClipboardList size={18} />

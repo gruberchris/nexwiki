@@ -93,7 +93,7 @@ export const FilterInput: React.FC<FilterInputProps> = ({
             setShowDropdown(true);
           }}
           onKeyDown={handleKeyDown}
-          className={`w-full pl-10 pr-9 py-2 text-xs rounded-xl border border-themeBorder focus:outline-none focus:ring-2 ${accentRingClass} text-themeTextSecondary transition-all placeholder:text-themeTextMuted ${inputClassName}`}
+          className={`w-full pl-10 pr-9 py-2 text-xs rounded-xl border border-themeBorder focus:outline-hidden focus:ring-2 ${accentRingClass} text-themeTextSecondary transition-all placeholder:text-themeTextMuted ${inputClassName}`}
         />
         {value && (
           <button

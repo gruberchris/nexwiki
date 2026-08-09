@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { readFileSync, readdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import indexCss from './index.css?raw';
+import themeManagerSource from './components/ThemeManagerModal.tsx?raw';
 import { useTheme } from './hooks/useTheme';
 import type { Theme, ThemeColors } from './components/ThemeManagerModal';
 
@@ -26,9 +25,6 @@ import type { Theme, ThemeColors } from './components/ThemeManagerModal';
  * and on v4, so they fail only if the port actually loses something.
  */
 
-const here = dirname(fileURLToPath(import.meta.url));
-const readSrc = (rel: string) => readFileSync(resolve(here, rel), 'utf8');
-
 /** The canonical ten, in the JSON form Go emits and the frontend consumes. */
 const THEME_COLOR_KEYS: (keyof ThemeColors)[] = [
   'bg_primary',
@@ -49,51 +45,41 @@ const cssVarFor = (key: string) => `--${key.replace(/_/g, '-')}`;
 /**
  * The region where Tailwind's colour tokens are defined — and nothing else.
  *
- * On v3 that is tailwind.config.js. On v4 it is the `@theme { ... }` block inside index.css.
+ * Under v4 that is the `@theme { ... }` block in index.css; under v3 it was tailwind.config.js.
  * Returning only that region is what makes the assertions meaningful: scanning the whole of
  * index.css would let ordinary CSS rules that happen to reference a variable satisfy a check about
- * the *mapping*. Reading whichever exists lets the same tests run before and after the migration.
+ * the *mapping*. An earlier draft did exactly that and was useless — deleting a mapping still
+ * passed, because index.css references var(--accent-bg) in its own rules.
  */
 function themeMappingSurface(): string {
-  let surface = '';
-  try {
-    surface += readSrc('../tailwind.config.js');
-  } catch {
-    /* v4: configuration lives in CSS */
-  }
+  const start = indexCss.indexOf('@theme');
+  if (start === -1) return '';
 
-  const css = readSrc('./index.css');
-  const start = css.indexOf('@theme');
-  if (start !== -1) {
-    // Brace-match so nested blocks inside @theme are included rather than truncating at the first
-    // closing brace.
-    let depth = 0;
-    for (let i = css.indexOf('{', start); i < css.length; i++) {
-      if (css[i] === '{') depth++;
-      if (css[i] === '}') {
-        depth--;
-        if (depth === 0) {
-          surface += css.slice(start, i + 1);
-          break;
-        }
-      }
+  // Brace-match so the nested @keyframes blocks inside @theme are included rather than truncating
+  // at the first closing brace.
+  let depth = 0;
+  for (let i = indexCss.indexOf('{', start); i < indexCss.length; i++) {
+    if (indexCss[i] === '{') depth++;
+    if (indexCss[i] === '}') {
+      depth--;
+      if (depth === 0) return indexCss.slice(start, i + 1);
     }
   }
-  return surface;
+  return '';
 }
 
-/** Every component/hook source file, for scanning which theme utilities are actually referenced. */
+/**
+ * Every component and hook source, for scanning which theme utilities are actually referenced.
+ *
+ * import.meta.glob rather than a directory walk: it is typed by vite/client (so this file
+ * typechecks under the app's tsconfig, which carries no Node types), and it recurses, so a
+ * component in a subdirectory cannot quietly escape the scan.
+ */
 function componentSources(): string[] {
-  const roots = ['./components', './hooks', '.'];
-  const files: string[] = [];
-  for (const root of roots) {
-    for (const entry of readdirSync(resolve(here, root), { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      if (!/\.(tsx?|jsx?)$/.test(entry.name) || entry.name.includes('.test.')) continue;
-      files.push(readFileSync(resolve(here, root, entry.name), 'utf8'));
-    }
-  }
-  return files;
+  const modules = import.meta.glob('./**/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true });
+  return Object.entries(modules)
+    .filter(([path]) => !path.includes('.test.'))
+    .map(([, source]) => source as string);
 }
 
 /** A fully populated variant, so a missing projection shows up as an unset property. */
@@ -139,8 +125,10 @@ describe('theme contract: the ten colours are declared everywhere they are consu
   it('index.css declares a :root default for every colour', () => {
     // The defaults matter: useTheme only projects a palette once /api/themes resolves, so these
     // are what the app renders with on first paint and if that request ever fails.
-    const css = readSrc('./index.css');
-    const rootBlock = css.slice(css.indexOf(':root'), css.indexOf('}', css.indexOf(':root')));
+    const rootBlock = indexCss.slice(
+      indexCss.indexOf(':root'),
+      indexCss.indexOf('}', indexCss.indexOf(':root')),
+    );
 
     for (const key of THEME_COLOR_KEYS) {
       expect(rootBlock, `index.css :root is missing ${cssVarFor(key)}`).toContain(
@@ -196,7 +184,7 @@ describe('theme contract: the ten colours are declared everywhere they are consu
   it('the TypeScript interface and the canonical list agree', () => {
     // Guards the direction the other assertions cannot see: a colour added to the interface but
     // never wired into CSS.
-    const source = readSrc('./components/ThemeManagerModal.tsx');
+    const source = themeManagerSource;
     const interfaceBlock = source.slice(
       source.indexOf('export interface ThemeColors'),
       source.indexOf('}', source.indexOf('export interface ThemeColors')),

@@ -284,7 +284,7 @@ export const Editor: React.FC<EditorProps> = ({
               placeholder="Article Title..."
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full text-xl font-bold bg-transparent border-none outline-none text-slate-950 dark:text-white placeholder:text-slate-400"
+              className="w-full text-xl font-bold bg-transparent border-none outline-hidden text-slate-950 dark:text-white placeholder:text-slate-400"
               required
               disabled={isSaving}
             />
@@ -294,7 +294,7 @@ export const Editor: React.FC<EditorProps> = ({
                 placeholder="One-line description (shown in indexes)..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                className="flex-1 text-xs bg-transparent border-none outline-none text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
+                className="flex-1 text-xs bg-transparent border-none outline-hidden text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
                 disabled={isSaving}
               />
               <input
@@ -302,7 +302,7 @@ export const Editor: React.FC<EditorProps> = ({
                 placeholder="Source (where the knowledge came from)..."
                 value={source}
                 onChange={(e) => setSource(e.target.value)}
-                className="flex-1 text-xs bg-transparent border-none outline-none text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
+                className="flex-1 text-xs bg-transparent border-none outline-hidden text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
                 disabled={isSaving}
               />
               <input
@@ -310,7 +310,7 @@ export const Editor: React.FC<EditorProps> = ({
                 placeholder="Resource (canonical URI of the concept)..."
                 value={resource}
                 onChange={(e) => setResource(e.target.value)}
-                className="flex-1 text-xs bg-transparent border-none outline-none text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
+                className="flex-1 text-xs bg-transparent border-none outline-hidden text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
                 disabled={isSaving}
               />
             </div>
@@ -360,7 +360,7 @@ export const Editor: React.FC<EditorProps> = ({
                     return (
                       <span
                         key={tag}
-                        className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium shadow-sm transition-all border ${
+                        className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium shadow-xs transition-all border ${
                           isLockedScopeTag
                             ? 'bg-indigo-500/10 dark:bg-emerald-400/10 border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400'
                             : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300'
@@ -386,7 +386,7 @@ export const Editor: React.FC<EditorProps> = ({
                       value={tagInput}
                       onChange={(e) => handleTagInputChange(e.target.value)}
                       onKeyDown={handleTagKeyDown}
-                      className="text-[10px] py-0.5 px-2 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-200 outline-none w-20 focus:w-28 focus:ring-1 focus:ring-indigo-500 transition-all font-medium"
+                      className="text-[10px] py-0.5 px-2 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-200 outline-hidden w-20 focus:w-28 focus:ring-1 focus:ring-indigo-500 transition-all font-medium"
                     />
 
                     {/* Auto-complete Tag Suggestions Dropdown */}
@@ -420,7 +420,7 @@ export const Editor: React.FC<EditorProps> = ({
                 placeholder="What did you change? (e.g. Fixed typo)"
                 value={editSummary}
                 onChange={(e) => setEditSummary(e.target.value)}
-                className="py-1.5 px-3.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60 text-xs bg-slate-50 dark:bg-slate-900 outline-none text-slate-800 dark:text-slate-200 w-56 focus:ring-1 focus:ring-indigo-500 font-medium transition-all"
+                className="py-1.5 px-3.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60 text-xs bg-slate-50 dark:bg-slate-900 outline-hidden text-slate-800 dark:text-slate-200 w-56 focus:ring-1 focus:ring-indigo-500 font-medium transition-all"
                 disabled={isSaving}
               />
             )}
@@ -581,7 +581,7 @@ export const Editor: React.FC<EditorProps> = ({
               onClick={() => setViewMode('edit')}
               className={`p-1.5 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all cursor-pointer ${
                 viewMode === 'edit'
-                  ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-sm'
+                  ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-xs'
                   : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
               }`}
             >
@@ -593,7 +593,7 @@ export const Editor: React.FC<EditorProps> = ({
               onClick={() => setViewMode('split')}
               className={`p-1.5 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all cursor-pointer ${
                 viewMode === 'split'
-                  ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-sm'
+                  ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-xs'
                   : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
               }`}
             >
@@ -605,7 +605,7 @@ export const Editor: React.FC<EditorProps> = ({
               onClick={() => setViewMode('preview')}
               className={`p-1.5 rounded-lg flex items-center gap-1 text-[10px] font-bold transition-all cursor-pointer ${
                 viewMode === 'preview'
-                  ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-sm'
+                  ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-xs'
                   : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
               }`}
             >
@@ -664,7 +664,7 @@ export const Editor: React.FC<EditorProps> = ({
                   searchKeymap: true,
                   lintKeymap: true,
                 }}
-                className="flex-1 h-full outline-none focus:ring-0 leading-relaxed text-sm"
+                className="flex-1 h-full outline-hidden focus:ring-0 leading-relaxed text-sm"
                 placeholder="Write your markdown here... Drag & Drop images directly into this pane!"
                 editable={!isSaving}
               />
@@ -690,7 +690,7 @@ export const Editor: React.FC<EditorProps> = ({
               style={{ width: viewMode === 'split' ? `${100 - splitPercentage}%` : undefined }}
               className={`${viewMode === 'split' ? 'flex-shrink-0' : 'flex-1'} h-full overflow-y-auto bg-slate-50 dark:bg-slate-950/20 p-8 min-w-0`}
             >
-              <div className="max-w-2xl mx-auto py-2 bg-white dark:bg-slate-900 border border-slate-200/50 dark:border-slate-800/60 p-8 shadow-sm rounded-2xl min-h-full">
+              <div className="max-w-2xl mx-auto py-2 bg-white dark:bg-slate-900 border border-slate-200/50 dark:border-slate-800/60 p-8 shadow-xs rounded-2xl min-h-full">
                 {title.trim() && (
                   <h1 className="text-4xl font-extrabold text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-800 pb-3 mb-6 tracking-tight">
                     {title}
