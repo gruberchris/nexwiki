@@ -17,13 +17,36 @@ import (
 var searchWikiTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "search_wiki",
-		"description": "Perform full-text searches inside the NexWiki knowledge base using Bleve search query parsing. Returns scored article matches and highlighted content snippets.",
+		"description": "Perform full-text searches across the entire NexWiki knowledge base using Bleve query parsing. Searches ALL document types by default — wiki articles, your own agent memories, plans, and skills — so prior knowledge you recorded is always retrievable. Returns scored matches with highlighted snippets. Use 'type' and 'tags' to narrow.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"query": map[string]interface{}{
 					"type":        "string",
 					"description": "The search keywords or query string. Supports wildcards, quotes for exact matches, and boolean terms.",
+				},
+				"type": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "string",
+						"enum": SearchTypeNames(),
+					},
+					"description": "Optional document types to restrict the search to: 'articles', 'memories', 'plans', 'skills'. Omit to search every type.",
+				},
+				"tags": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+					"description": "Optional tags a result must ALL carry (case-insensitive), e.g. ['wip'] or ['memory-nexwiki'].",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional maximum number of results (default 40, maximum 200).",
+				},
+				"include_archived": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional; set true to include archived documents, which are excluded by default.",
 				},
 			},
 			"required": []string{"query"},
@@ -34,30 +57,67 @@ var searchWikiTool = toolDef{
 
 func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type SearchArgs struct {
-		Query string `json:"query"`
+		Query           string   `json:"query"`
+		Types           []string `json:"type"`
+		Tags            []string `json:"tags"`
+		Limit           int      `json:"limit"`
+		IncludeArchived bool     `json:"include_archived"`
 	}
 	var searchArgs SearchArgs
 	if err := json.Unmarshal(args, &searchArgs); err != nil || searchArgs.Query == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'query' argument"}
 	}
 
-	results, err := srv.Storage.SearchArticles(searchArgs.Query)
+	// Report a bad type name rather than silently returning nothing — an agent that typos
+	// "memorys" would otherwise conclude the knowledge simply is not there.
+	if unknown := ValidateSearchTypes(searchArgs.Types); len(unknown) > 0 {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf(
+			"Error: unknown document type(s): %s. Valid values: %s.",
+			strings.Join(unknown, ", "), strings.Join(SearchTypeNames(), ", "))}}}, nil
+	}
+
+	// No legacyQueryHeuristics: an agent searching its own second brain sees every document
+	// type unless it explicitly narrows. Memories and plans are the point, not noise.
+	results, err := srv.Storage.SearchArticlesWithOptions(searchArgs.Query, SearchOptions{
+		Types:           searchArgs.Types,
+		Tags:            searchArgs.Tags,
+		Limit:           searchArgs.Limit,
+		IncludeArchived: searchArgs.IncludeArchived,
+	})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+	}
+
+	// Describe the applied facets so the agent can tell "no such knowledge" from "my filter
+	// excluded it" — the difference between giving up and retrying with a wider search.
+	var facets []string
+	if len(searchArgs.Types) > 0 {
+		facets = append(facets, "type: "+strings.Join(searchArgs.Types, ", "))
+	}
+	if len(searchArgs.Tags) > 0 {
+		facets = append(facets, "tags: "+strings.Join(searchArgs.Tags, ", "))
+	}
+	if searchArgs.IncludeArchived {
+		facets = append(facets, "including archived")
+	}
+	facetStr := ""
+	if len(facets) > 0 {
+		facetStr = fmt.Sprintf(" [filtered by %s]", strings.Join(facets, "; "))
 	}
 
 	// Convert structured search results to friendly readable text for AI agents
 	var text string
 	if len(results) == 0 {
-		text = fmt.Sprintf("No articles found matching query: '%s'\n", searchArgs.Query)
+		text = fmt.Sprintf("No documents found matching query: '%s'%s\n", searchArgs.Query, facetStr)
 	} else {
-		text = fmt.Sprintf("Found %d matching articles in NexWiki:\n\n", len(results))
+		text = fmt.Sprintf("Found %d matching documents in NexWiki%s:\n\n", len(results), facetStr)
 		for i, res := range results {
 			tagsStr := ""
 			if len(res.Tags) > 0 {
 				tagsStr = fmt.Sprintf(" | Tags: %s", strings.Join(res.Tags, ", "))
 			}
-			text += fmt.Sprintf("[%d] %s (Slug: %s, Score: %.3f%s)\n", i+1, res.Title, res.Slug, res.Score, tagsStr)
+			text += fmt.Sprintf("[%d] %s (Slug: %s, Type: %s, Score: %.3f%s)\n",
+				i+1, res.Title, res.Slug, res.Type, res.Score, tagsStr)
 			for _, snippet := range res.Snippets {
 				// Snippets are HTML (escaped text + <mark> highlights). Convert the marks to
 				// Markdown bold, then unescape the entities so the agent reads plain prose.
