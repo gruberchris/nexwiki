@@ -38,6 +38,11 @@ var createAgentPlanTool = toolDef{
 					"type":        "string",
 					"description": "Optional provenance: where this plan originated (URL, ticket, or session context).",
 				},
+				"tags": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Optional status or user tags to apply, e.g. ['wip']. Call get_status_tags to see the recognized status values. The project-context tag is added automatically from 'project_context'.",
+				},
 				"edit_summary": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional summary detailing the creation.",
@@ -52,12 +57,13 @@ var createAgentPlanTool = toolDef{
 
 func (srv *Server) toolCreateAgentPlan(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type CreatePlanArgs struct {
-		Title          string `json:"title"`
-		Content        string `json:"content"`
-		ProjectContext string `json:"project_context"`
-		Description    string `json:"description"`
-		Source         string `json:"source"`
-		EditSummary    string `json:"edit_summary"`
+		Title          string   `json:"title"`
+		Content        string   `json:"content"`
+		ProjectContext string   `json:"project_context"`
+		Description    string   `json:"description"`
+		Source         string   `json:"source"`
+		Tags           []string `json:"tags"`
+		EditSummary    string   `json:"edit_summary"`
 	}
 	var pArgs CreatePlanArgs
 	if e := decodeToolArgs(args, &pArgs); e != nil {
@@ -71,11 +77,30 @@ func (srv *Server) toolCreateAgentPlan(args json.RawMessage) (interface{}, *JSON
 	slug := Slugify(title)
 
 	// The OKF type carries the plan class; tags hold only the project context + status.
-	var tags []string
+	var contextTags []string
 	projCtx := strings.TrimSpace(pArgs.ProjectContext)
 	if projCtx != "" {
 		if contextTag := Slugify(projCtx); contextTag != "" {
-			tags = append(tags, contextTag)
+			contextTags = append(contextTags, contextTag)
+		}
+	}
+
+	// Caller tags merge on top of the derived project tag, sanitized through the same helper the
+	// REST path uses so a caller cannot forge a tool-managed memory-<scope> tag onto a plan.
+	// Without this a plan could not be created 'wip' in one call: the agent had to follow with
+	// update_article_tags, which is annotated destructive and so prompts the user.
+	// Built explicitly rather than via lowercaseSet, which returns nil for an empty input — and
+	// contextTags is empty whenever project_context slugifies to nothing (e.g. "!!!"), which would
+	// make the write below panic on a nil map.
+	tags := append([]string(nil), contextTags...)
+	seen := make(map[string]bool, len(contextTags))
+	for _, t := range contextTags {
+		seen[strings.ToLower(t)] = true
+	}
+	for _, t := range validateAndCleanUserTags(pArgs.Tags, nil) {
+		if lower := strings.ToLower(t); !seen[lower] {
+			seen[lower] = true
+			tags = append(tags, t)
 		}
 	}
 

@@ -405,9 +405,10 @@ Creates a brand new protected AI Agent Memory document. The `memory_type` scopes
   * `memory_type` (string, **optional**): Scopes the memory. Use a **project name** (e.g. `nexwiki`) for project-specific knowledge, a **topic name** (e.g. `docker`) for reusable cross-project knowledge, or **omit** for general knowledge. Applies a tool-managed `memory-<memory_type>` scope tag (e.g. `memory-nexwiki`), or no scope tag if omitted. The OKF document `type` is always set to `AI-Agent-Memory` regardless.
   * `description` (string, **optional**): One-line summary shown in list indexes and the context overview.
   * `source` (string, **optional**): Provenance — where this knowledge came from (URL, document, or session context).
+  * `tags` (array of string, **optional**): Status or user tags to apply, e.g. `["review"]`. Call `get_status_tags` for the recognized status values. The tool-managed `memory-<memory_type>` scope tag is added automatically and **cannot be set here** — a caller-supplied `memory-*` tag is dropped.
   * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
 * **Behavior**:
-  Checks for slug collision, sets the OKF `type` to `AI-Agent-Memory`, applies a tool-managed `memory-<memory_type>` scope tag if a `memory_type` was provided, saves the Markdown file, commits the first version snapshot, and indexes the document in the search engine.
+  Checks for slug collision, sets the OKF `type` to `AI-Agent-Memory`, applies a tool-managed `memory-<memory_type>` scope tag if a `memory_type` was provided, merges any caller `tags` on top of it, saves the Markdown file, commits the first version snapshot, and indexes the document in the search engine.
 * **Memory hygiene**: Search for an existing memory before creating one. If a memory later becomes stale, use `edit_agent_memory` to correct it in place or `delete_agent_memory` to retire it — do not create near-duplicates.
 
 ---
@@ -444,9 +445,10 @@ Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by
   * `project_context` (string, **required**): The name of the project this plan is for (e.g. "nexwiki"). Generates a custom project tag.
   * `description` (string, **optional**): One-line summary shown in list indexes and the context overview.
   * `source` (string, **optional**): Provenance — where this plan originated (URL, ticket, or session context).
+  * `tags` (array of string, **optional**): Status or user tags to apply, e.g. `["wip"]`, so a plan can be created in flight in **one call**. Call `get_status_tags` for the recognized status values. Tool-managed `memory-*` tags are reserved and dropped.
   * `edit_summary` (string, **optional**): Optional summary detailing the creation of the plan.
 * **Behavior**:
-  Checks for slug collision, sets the OKF `type` to `AI-Agent-Plan`, applies a tag for the project name, saves the Markdown file, commits the first version snapshot, and indexes the plan in Bleve for search.
+  Checks for slug collision, sets the OKF `type` to `AI-Agent-Plan`, applies a tag for the project name, merges any caller `tags` on top of it, saves the Markdown file, commits the first version snapshot, and indexes the plan in Bleve for search.
 * **Plan Completion Workflow**:
   After a plan is fully implemented, use `append_agent_plan` to add final notes documenting the implementation (plan deviations, files created, tools used, unexpected challenges, or other observations). Then use `edit_agent_plan` to add the `completed` status tag to mark the plan as done.
 
