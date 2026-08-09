@@ -10,23 +10,27 @@ interface BacklinksPanelProps {
 // BacklinksPanel fetches and renders the list of articles linking to the current page.
 // Hidden entirely when the article has no inbound WikiLinks.
 export function BacklinksPanel({ slug, onNavigate }: BacklinksPanelProps) {
-  const [backlinks, setBacklinks] = useState<Article[]>([]);
+  // The fetched links are stored together with the slug they belong to, so results arriving for a
+  // previous article are simply not rendered. Clearing state synchronously at the top of the
+  // effect did the same job but forced an extra render pass on every navigation.
+  const [fetched, setFetched] = useState<{ slug: string; links: Article[] }>({ slug, links: [] });
 
   useEffect(() => {
     let cancelled = false;
-    setBacklinks([]);
     fetch(`/api/articles/${slug}/backlinks`)
       .then((res) => (res.ok ? res.json() : []))
       .then((data: Article[]) => {
-        if (!cancelled) setBacklinks(Array.isArray(data) ? data : []);
+        if (!cancelled) setFetched({ slug, links: Array.isArray(data) ? data : [] });
       })
       .catch(() => {
-        if (!cancelled) setBacklinks([]);
+        if (!cancelled) setFetched({ slug, links: [] });
       });
     return () => {
       cancelled = true;
     };
   }, [slug]);
+
+  const backlinks = fetched.slug === slug ? fetched.links : [];
 
   if (backlinks.length === 0) return null;
 
