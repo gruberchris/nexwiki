@@ -65,7 +65,10 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		IncludeArchived bool     `json:"include_archived"`
 	}
 	var searchArgs SearchArgs
-	if err := json.Unmarshal(args, &searchArgs); err != nil || searchArgs.Query == "" {
+	if e := decodeToolArgs(args, &searchArgs); e != nil {
+		return nil, e
+	}
+	if searchArgs.Query == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'query' argument"}
 	}
 
@@ -157,7 +160,10 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		Slug string `json:"slug"`
 	}
 	var readArgs ReadArgs
-	if err := json.Unmarshal(args, &readArgs); err != nil || readArgs.Slug == "" {
+	if e := decodeToolArgs(args, &readArgs); e != nil {
+		return nil, e
+	}
+	if readArgs.Slug == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'slug' argument"}
 	}
 
@@ -312,7 +318,10 @@ func (srv *Server) toolCreateWikiArticle(args json.RawMessage) (interface{}, *JS
 		EditSummary string   `json:"edit_summary"`
 	}
 	var cArgs CreateArgs
-	if err := json.Unmarshal(args, &cArgs); err != nil || cArgs.Title == "" || cArgs.Content == "" {
+	if e := decodeToolArgs(args, &cArgs); e != nil {
+		return nil, e
+	}
+	if cArgs.Title == "" || cArgs.Content == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'title' or 'content' arguments"}
 	}
 
@@ -400,7 +409,10 @@ func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSON
 		EditSummary   string   `json:"edit_summary"`
 	}
 	var eArgs EditArgs
-	if err := json.Unmarshal(args, &eArgs); err != nil || eArgs.Slug == "" || eArgs.Title == "" || eArgs.Content == "" || eArgs.LoadedVersion <= 0 {
+	if e := decodeToolArgs(args, &eArgs); e != nil {
+		return nil, e
+	}
+	if eArgs.Slug == "" || eArgs.Title == "" || eArgs.Content == "" || eArgs.LoadedVersion <= 0 {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. Requires 'slug', 'title', 'content', and positive 'loaded_version'"}
 	}
 
@@ -487,7 +499,10 @@ func (srv *Server) toolUpdateArticleTags(args json.RawMessage) (interface{}, *JS
 		EditSummary   string   `json:"edit_summary"`
 	}
 	var uArgs UpdateTagsArgs
-	if err := json.Unmarshal(args, &uArgs); err != nil || uArgs.Slug == "" || uArgs.Tags == nil {
+	if e := decodeToolArgs(args, &uArgs); e != nil {
+		return nil, e
+	}
+	if uArgs.Slug == "" || uArgs.Tags == nil {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. Requires 'slug' and 'tags' array."}
 	}
 
@@ -532,7 +547,10 @@ func (srv *Server) toolDeleteWikiArticle(args json.RawMessage) (interface{}, *JS
 		Slug string `json:"slug"`
 	}
 	var dArgs DelArgs
-	if err := json.Unmarshal(args, &dArgs); err != nil || dArgs.Slug == "" {
+	if e := decodeToolArgs(args, &dArgs); e != nil {
+		return nil, e
+	}
+	if dArgs.Slug == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'slug' argument"}
 	}
 
@@ -578,7 +596,10 @@ func (srv *Server) toolGetArticleHistory(args json.RawMessage) (interface{}, *JS
 		Slug string `json:"slug"`
 	}
 	var hArgs HistArgs
-	if err := json.Unmarshal(args, &hArgs); err != nil || hArgs.Slug == "" {
+	if e := decodeToolArgs(args, &hArgs); e != nil {
+		return nil, e
+	}
+	if hArgs.Slug == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'slug' argument"}
 	}
 
@@ -633,7 +654,10 @@ func (srv *Server) toolRevertArticleVersion(args json.RawMessage) (interface{}, 
 		Version int    `json:"version"`
 	}
 	var rArgs RevArgs
-	if err := json.Unmarshal(args, &rArgs); err != nil || rArgs.Slug == "" || rArgs.Version <= 0 {
+	if e := decodeToolArgs(args, &rArgs); e != nil {
+		return nil, e
+	}
+	if rArgs.Slug == "" || rArgs.Version <= 0 {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. Requires 'slug' and positive 'version'"}
 	}
 
@@ -671,7 +695,10 @@ func (srv *Server) toolGetBacklinks(args json.RawMessage) (interface{}, *JSONRPC
 		Slug string `json:"slug"`
 	}
 	var bArgs BacklinkArgs
-	if err := json.Unmarshal(args, &bArgs); err != nil || bArgs.Slug == "" {
+	if e := decodeToolArgs(args, &bArgs); e != nil {
+		return nil, e
+	}
+	if bArgs.Slug == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'slug' argument"}
 	}
 

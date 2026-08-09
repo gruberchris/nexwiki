@@ -41,12 +41,6 @@ type SearchOptions struct {
 	legacyQueryHeuristics bool
 }
 
-// hasFilters reports whether post-scoring filtering may drop hits, in which case the search must
-// over-fetch from Bleve to still be able to fill the requested limit.
-func (o SearchOptions) hasFilters() bool {
-	return len(o.Types) > 0 || len(o.Tags) > 0 || o.legacyQueryHeuristics
-}
-
 // allowsArchived reports whether an archived document should survive filtering. A document counts
 // as archived either by its archived_at timestamp or by carrying the "archived" tag.
 func (o SearchOptions) allowsArchived(art *Article, queryLower string) bool {

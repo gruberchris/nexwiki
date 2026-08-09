@@ -63,7 +63,10 @@ func (srv *Server) toolCreateAgentSkill(args json.RawMessage) (interface{}, *JSO
 		EditSummary string   `json:"edit_summary"`
 	}
 	var sArgs CreateSkillArgs
-	if err := json.Unmarshal(args, &sArgs); err != nil || sArgs.Title == "" || sArgs.Content == "" {
+	if e := decodeToolArgs(args, &sArgs); e != nil {
+		return nil, e
+	}
+	if sArgs.Title == "" || sArgs.Content == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title' and 'content' are required."}
 	}
 

@@ -60,7 +60,10 @@ func (srv *Server) toolCreateAgentPlan(args json.RawMessage) (interface{}, *JSON
 		EditSummary    string `json:"edit_summary"`
 	}
 	var pArgs CreatePlanArgs
-	if err := json.Unmarshal(args, &pArgs); err != nil || pArgs.Title == "" || pArgs.Content == "" || pArgs.ProjectContext == "" {
+	if e := decodeToolArgs(args, &pArgs); e != nil {
+		return nil, e
+	}
+	if pArgs.Title == "" || pArgs.Content == "" || pArgs.ProjectContext == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title', 'content', and 'project_context' are required."}
 	}
 
@@ -129,7 +132,10 @@ func (srv *Server) toolAppendAgentPlan(args json.RawMessage) (interface{}, *JSON
 		EditSummary     string `json:"edit_summary"`
 	}
 	var aArgs AppendPlanArgs
-	if err := json.Unmarshal(args, &aArgs); err != nil || aArgs.Slug == "" || aArgs.ContentToAppend == "" {
+	if e := decodeToolArgs(args, &aArgs); e != nil {
+		return nil, e
+	}
+	if aArgs.Slug == "" || aArgs.ContentToAppend == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'slug' and 'content_to_append' are required."}
 	}
 
@@ -211,7 +217,10 @@ func (srv *Server) toolEditAgentPlan(args json.RawMessage) (interface{}, *JSONRP
 		EditSummary   string    `json:"edit_summary"`
 	}
 	var eArgs EditPlanArgs
-	if err := json.Unmarshal(args, &eArgs); err != nil || eArgs.Slug == "" || eArgs.LoadedVersion <= 0 {
+	if e := decodeToolArgs(args, &eArgs); e != nil {
+		return nil, e
+	}
+	if eArgs.Slug == "" || eArgs.LoadedVersion <= 0 {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'slug' and positive 'loaded_version' are required."}
 	}
 

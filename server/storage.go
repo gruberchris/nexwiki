@@ -839,12 +839,15 @@ func (s *Storage) SearchArticlesWithOptions(queryStr string, opts SearchOptions)
 	searchRequest.Highlight.AddField("content")
 	searchRequest.Highlight.AddField("title")
 
-	// Over-fetch: type/tag facets are applied after scoring, so asking Bleve for exactly `limit`
-	// hits would silently return fewer than requested whenever anything is filtered out.
-	searchRequest.Size = limit
-	if opts.hasFilters() {
-		searchRequest.Size = maxSearchLimit
-	}
+	// Over-fetch: every filter below runs *after* Bleve has scored and truncated, so asking for
+	// exactly `limit` hits silently returns fewer than requested whenever anything is dropped.
+	//
+	// This must not be conditional on opts.hasFilters(). Three filters apply to every search
+	// regardless of the caller's facets: "home" is always excluded, archived documents are
+	// excluded by default, and a hit whose file has been deleted is skipped. The home page in
+	// particular mentions the wiki's own name constantly, so it scores highly on the most
+	// ordinary queries — which made an unfaceted `limit: N` reliably return N-1.
+	searchRequest.Size = maxSearchLimit
 
 	searchResults, err := s.SearchIndex.Search(searchRequest)
 	if err != nil {

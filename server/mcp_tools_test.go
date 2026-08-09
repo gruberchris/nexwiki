@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -247,6 +249,89 @@ func TestReadOnlyToolsCannotWrite(t *testing.T) {
 	for slug, state := range before {
 		if after[slug] != state {
 			t.Errorf("a read-only tool modified %q:\n  before: %s\n  after:  %s", slug, state, after[slug])
+		}
+	}
+}
+
+// TestDecodeToolArgsNamesTheWrongField covers an error message that misdirected the caller.
+//
+// Handlers folded the JSON decode into their required-field check, so any decode failure was
+// reported as whichever field the handler named first. Passing search_wiki a string `type` — the
+// schema wants an array, and a string is the natural mistake to make — answered "Missing or
+// invalid 'query' argument" for a request whose query was present and correct. An agent following
+// that message rewrites the one argument that was already right, and gets the same error again.
+func TestDecodeToolArgsNamesTheWrongField(t *testing.T) {
+	var args struct {
+		Query string   `json:"query"`
+		Types []string `json:"type"`
+	}
+
+	rpcErr := decodeToolArgs(json.RawMessage(`{"query":"zebra","type":"memories"}`), &args)
+	if rpcErr == nil {
+		t.Fatal("expected a decode error for a string in an array field")
+	}
+	if rpcErr.Code != -32602 {
+		t.Errorf("code = %d, want -32602", rpcErr.Code)
+	}
+	if !strings.Contains(rpcErr.Message, "'type'") {
+		t.Errorf("message %q does not name the offending field 'type'", rpcErr.Message)
+	}
+	if strings.Contains(rpcErr.Message, "query") {
+		t.Errorf("message %q blames 'query', which was valid", rpcErr.Message)
+	}
+}
+
+// TestDecodeToolArgsAcceptsValidArguments confirms the helper stays out of the way when the
+// payload is well formed, including the optional fields a caller omits.
+func TestDecodeToolArgsAcceptsValidArguments(t *testing.T) {
+	var args struct {
+		Query string   `json:"query"`
+		Types []string `json:"type"`
+		Limit int      `json:"limit"`
+	}
+
+	if rpcErr := decodeToolArgs(json.RawMessage(`{"query":"zebra","type":["memories"],"limit":5}`), &args); rpcErr != nil {
+		t.Fatalf("unexpected error: %s", rpcErr.Message)
+	}
+	if args.Query != "zebra" || len(args.Types) != 1 || args.Limit != 5 {
+		t.Errorf("decoded %+v, want query=zebra type=[memories] limit=5", args)
+	}
+}
+
+// TestDecodeToolArgsFallsBackForFieldlessErrors keeps malformed JSON — which carries no field
+// information — from producing an empty or misleading message.
+func TestDecodeToolArgsFallsBackForFieldlessErrors(t *testing.T) {
+	var args struct {
+		Query string `json:"query"`
+	}
+
+	rpcErr := decodeToolArgs(json.RawMessage(`{"query":`), &args)
+	if rpcErr == nil {
+		t.Fatal("expected an error for truncated JSON")
+	}
+	if !strings.HasPrefix(rpcErr.Message, "Invalid arguments: ") || len(rpcErr.Message) <= len("Invalid arguments: ") {
+		t.Errorf("message %q carries no explanation", rpcErr.Message)
+	}
+}
+
+// TestSchemaTypeNameSpeaksJSONSchema keeps decode errors in the vocabulary the caller read the
+// schema in. An agent told its argument "expects []string" has to map a Go type name back onto the
+// `"type": "array"` it saw in tools/list.
+func TestSchemaTypeNameSpeaksJSONSchema(t *testing.T) {
+	cases := []struct {
+		value interface{}
+		want  string
+	}{
+		{[]string{}, "array"},
+		{map[string]interface{}{}, "object"},
+		{"", "string"},
+		{false, "boolean"},
+		{0, "integer"},
+		{0.0, "number"},
+	}
+	for _, tc := range cases {
+		if got := schemaTypeName(reflect.TypeOf(tc.value)); got != tc.want {
+			t.Errorf("schemaTypeName(%T) = %q, want %q", tc.value, got, tc.want)
 		}
 	}
 }

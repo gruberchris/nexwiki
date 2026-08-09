@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -334,5 +335,71 @@ func TestSearchWikiToolExposesFacets(t *testing.T) {
 	// A typo is reported rather than silently returning nothing.
 	if text := call(map[string]interface{}{"query": "zqterm", "type": []string{"memorys"}}); !strings.Contains(text, "unknown document type") {
 		t.Errorf("expected an unknown-type error, got:\n%s", text)
+	}
+}
+
+// TestSearchLimitIsFullyDeliveredWhenHomeMatches covers a limit that silently under-delivered.
+//
+// Bleve applies Size before NexWiki's own filters run, and three of those filters are
+// unconditional: "home" is always excluded from results, archived documents are excluded by
+// default, and a hit whose file has been deleted is skipped. The over-fetch that compensates for
+// this was gated on the caller having supplied a type or tag facet, so an *unfaceted* search asked
+// Bleve for exactly `limit` hits and then threw one away with nothing to backfill it.
+//
+// The home page is the reliable trigger rather than an edge case: it describes the wiki, so it
+// scores on the most ordinary queries. In a real 83-article wiki this made every unfaceted
+// `limit: N` return N-1, including the default limit of 40.
+func TestSearchLimitIsFullyDeliveredWhenHomeMatches(t *testing.T) {
+	storage, err := NewStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+
+	// "home" must match the query for the filter to have anything to drop.
+	seed := func(slug, title string) {
+		art, err := storage.SaveArticle(slug, title, "zqterm shared body text", "", "", "", "seed", nil, ContentTypeWiki)
+		if err != nil {
+			t.Fatalf("SaveArticle(%s) failed: %v", title, err)
+		}
+		if err := storage.IndexArticle(art); err != nil {
+			t.Fatalf("IndexArticle(%s) failed: %v", title, err)
+		}
+	}
+	seed("home", "Home")
+	for i := 0; i < 8; i++ {
+		seed("", fmt.Sprintf("Article %d", i))
+	}
+
+	for _, limit := range []int{1, 2, 3, 4, 5, 8} {
+		results, err := storage.SearchArticlesWithOptions("zqterm", SearchOptions{Limit: limit})
+		if err != nil {
+			t.Fatalf("search with limit %d failed: %v", limit, err)
+		}
+		if len(results) != limit {
+			t.Errorf("limit %d returned %d results, want %d", limit, len(results), limit)
+		}
+		for _, r := range results {
+			if r.Slug == "home" {
+				t.Errorf("limit %d: home leaked into results", limit)
+			}
+		}
+	}
+}
+
+// TestSearchLimitStillDeliveredWithFacets guards the path that already worked, so the unconditional
+// over-fetch does not regress faceted searches.
+func TestSearchLimitStillDeliveredWithFacets(t *testing.T) {
+	storage := seedSearchCorpus(t)
+
+	results, err := storage.SearchArticlesWithOptions("zqterm", SearchOptions{
+		Types: []string{"memories", "plans"},
+		Limit: 2,
+	})
+	if err != nil {
+		t.Fatalf("faceted search failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("faceted limit 2 returned %d results, want 2", len(results))
 	}
 }
