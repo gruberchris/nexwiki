@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # Go modules for the server binary
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+
+  # npm packages for the embedded React frontend
+  - package-ecosystem: npm
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(frontend)"
+    groups:
+      # Patch and minor bumps land as one PR per ecosystem rather than a dozen.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # The Actions used by the CI, release, and contributors workflows
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"

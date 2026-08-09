@@ -11,6 +11,7 @@ First off, thank you for considering contributing to NexWiki! It's people like y
   - [Pull Requests](#pull-requests)
 - [Development Setup](#development-setup)
 - [Coding Standards](#coding-standards)
+- [Documentation Rules](#documentation-rules)
 - [Commit Messages](#commit-messages)
 - [Running Tests](#running-tests)
 
@@ -120,6 +121,31 @@ make docker-down
 - Do not add unnecessary comments — let code be self-documenting
 - Follow existing naming conventions in the codebase
 - Preserve Markdown formatting consistency in documentation files
+
+## Documentation Rules
+
+These are the two conventions a new contributor is most likely to miss, and both are enforced in review.
+
+### Where documentation lives
+
+| File | Purpose |
+|---|---|
+| [`README.md`](./README.md) | The pitch, quick start, and a one-line entry per feature |
+| [`docs/`](./docs) | One in-depth guide per feature area; every guide is linked from [`docs/README.md`](./docs/README.md) |
+| [`docs/mcp_server.md`](./docs/mcp_server.md) | **The** canonical MCP tool reference — never restate the full tool list anywhere else |
+| [`AGENTS.md`](./AGENTS.md) | MCP architecture, protocol eras, prompts, and client configuration |
+| [`CHANGELOG.md`](./CHANGELOG.md) | User-visible changes, added under `[Unreleased]` |
+
+### The Documentation Integrity Rule
+
+When you add a feature ([full rule in `AGENTS.md`](./AGENTS.md#-project-documentation-guide)):
+
+1. Add it to the feature list in `README.md`.
+2. Write a user guide in `docs/` that teaches the feature with practical examples.
+3. Link that guide from `docs/README.md`.
+4. Add a `CHANGELOG.md` entry under `[Unreleased]`.
+
+**If you add or remove an MCP tool**, document it in `docs/mcp_server.md` and update the tool count in *every* place it is stated — `README.md`, `AGENTS.md`, `docs/README.md`, `docs/second_brain_workflow_guide.md`, and the `expectedToolCount` constant in `server/mcp_tools_test.go`. That constant makes CI fail with the list of files to update, so a stale count cannot merge unnoticed.
 
 ## Commit Messages
 
