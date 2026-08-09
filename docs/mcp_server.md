@@ -11,7 +11,74 @@ This protocol acts as a standardized bridge allowing AI agents (like Claude Desk
 The NexWiki MCP server supports two primary transport layers:
 
 1. **Stdio (Standard Input/Output) [JSON-RPC 2.0]**: Typically used for local server-agent processes. The agent runs the NexWiki binary or spins up the Docker container directly, piping JSON-RPC 2.0 messages via standard input/output.
-2. **Streamable HTTP**: Enables a modern, secure networked connection over HTTP (2025 Spec, the official successor to the deprecated HTTP+SSE specification). It uses a streamable HTTP connection at `/api/mcp` supporting GET (initiating the stream) and POST (executing synchronous JSON-RPC commands) to execute tools.
+2. **Streamable HTTP**: A modern, networked connection over HTTP at `/api/mcp`, the official successor to the deprecated HTTP+SSE transport. POST carries every JSON-RPC message.
+
+### 🕰️ Protocol Revisions: NexWiki is Dual-Era
+
+The MCP specification changed shape in revision **`2026-07-28`**. NexWiki implements **both eras on the same endpoint** and picks per request, so old and new clients work side by side with no configuration.
+
+| | **Modern** (`2026-07-28`) | **Legacy** (`2025-06-18` and earlier) |
+|---|---|---|
+| Handshake | None — stateless | `initialize` |
+| Protocol version | `_meta` on **every** request | negotiated once at `initialize` |
+| Sessions | None (`Mcp-Session-Id` ignored) | connection-scoped |
+| Discovery | `server/discover` | `initialize` result |
+| Results | carry `resultType: "complete"` | bare result object |
+| Protocol errors | real HTTP status (`400`/`404`) | `200` with an error body |
+
+**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 27 tools and the same 2 prompts — only the envelope differs.
+
+#### Modern-era requirements
+
+A modern request **must** carry per-request metadata:
+
+```json
+{
+  "jsonrpc": "2.0", "id": 1, "method": "tools/list",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {},
+      "io.modelcontextprotocol/clientInfo": { "name": "MyClient", "version": "1.0.0" }
+    }
+  }
+}
+```
+
+Over HTTP it must also mirror those fields into headers, which NexWiki validates against the body — a mismatch means an intermediary could route on one value while the server acts on another, so it is rejected rather than reconciled:
+
+| Header | Required for | Must match |
+|---|---|---|
+| `MCP-Protocol-Version` | every request | `_meta` protocol version |
+| `Mcp-Method` | every request | the JSON-RPC `method` |
+| `Mcp-Name` | `tools/call`, `prompts/get` | `params.name` |
+
+`Mcp-Name` values may use the spec's Base64 sentinel form (`=?base64?...?=`); NexWiki decodes before comparing.
+
+#### Error codes
+
+| Code | Name | HTTP | Raised when |
+|---|---|---|---|
+| `-32020` | `HeaderMismatch` | `400` | a mirrored header disagrees with the body, or is missing |
+| `-32022` | `UnsupportedProtocolVersion` | `400` | the requested revision is not implemented; `data.supported` lists what is |
+| `-32602` | `InvalidParams` | `400` | a required `_meta` field is missing |
+| `-32601` | `MethodNotFound` | `404` | unknown method (the `404` is how a dual-era client tells a modern server from a legacy one) |
+
+#### `server/discover`
+
+Modern servers must implement it. One request returns supported versions, capabilities, and identity — no handshake needed:
+
+```bash
+curl -X POST http://localhost:8080/api/mcp \
+  -H "Content-Type: application/json" \
+  -H "MCP-Protocol-Version: 2026-07-28" \
+  -H "Mcp-Method: server/discover" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{
+        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities":{}}}}'
+```
+
+> **What NexWiki does not implement:** MCP Resources, and `subscriptions/listen` (the modern mechanism for long-lived server→client change notifications). `capabilities` advertises only `tools` and `prompts`, because claiming a capability the server does not serve is worse than omitting it. The standalone `GET` SSE stream and `Mcp-Session-Id` were removed by the 2026-07-28 revision; NexWiki keeps the `GET` stream only for legacy-era clients that open one.
 
 ### 🔒 Log Safety Guarantee
 To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools like Claude Desktop), **NexWiki redirects all internal system and web application logs exclusively to standard error (`Stderr`)**. Only valid JSON-RPC envelopes are ever output to `Stdout`.

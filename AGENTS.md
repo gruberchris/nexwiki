@@ -25,7 +25,12 @@ If you are a developer or an AI agent interacting with this repository, please o
 NexWiki's MCP implementation is lightweight, robust, and supports two primary transport layers:
 
 1. **Stdio (Standard Input/Output)**: Typically used for local server-agent processes. The agent runs the NexWiki binary or spins up the Docker container directly, piping JSON-RPC 2.0 messages via standard input/output.
-2. **Streamable HTTP**: Enables a modern, secure networked connection over HTTP (2025 Spec, the official successor to the deprecated HTTP+SSE specification). It uses a streamable HTTP connection at `/api/mcp` supporting GET (initiating the stream) and POST (executing synchronous JSON-RPC commands) to execute tools.
+2. **Streamable HTTP**: A modern, networked connection over HTTP at `/api/mcp`, the official successor to the deprecated HTTP+SSE transport. POST carries every JSON-RPC message.
+
+### 🕰️ Dual-Era Protocol Support
+The MCP specification changed shape in revision **`2026-07-28`**: no `initialize` handshake, no sessions, protocol version and client capabilities carried in `_meta` on every request, and results wrapped with a `resultType`. NexWiki serves **both that revision and the older initialize-based revisions on the same endpoint**, choosing per request — a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is modern, anything else is legacy. Both eras share the same tools and prompts.
+
+Modern-era specifics (required `_meta` fields, the `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` header contract, `server/discover`, and the `-32020` / `-32022` error codes) are documented in [docs/mcp_server.md](./docs/mcp_server.md#-protocol-revisions-nexwiki-is-dual-era).
 
 ```mermaid
 graph TD
@@ -168,7 +173,7 @@ Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat wi
 ---
 
 ### 2. Cursor IDE (Streamable HTTP Connection – Preferred)
-NexWiki implements the modern **Streamable HTTP** transport (2025 Spec) at `/api/mcp`.
+NexWiki implements the modern **Streamable HTTP** transport at `/api/mcp`, serving both the `2026-07-28` revision and the older initialize-based revisions.
 
 1. Open **Cursor Settings** (Gear icon in top right).
 2. Go to **Features** → **MCP**.

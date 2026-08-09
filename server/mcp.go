@@ -18,6 +18,13 @@ type JSONRPCRequest struct {
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	ID      interface{}     `json:"id,omitempty"`
+
+	// Headers carries the HTTP headers when the request arrived over Streamable HTTP, so the
+	// modern era can verify the mirrored metadata against the body. Nil on stdio.
+	Headers http.Header `json:"-"`
+	// IsModern records that the request opted into the per-request-metadata era, which decides
+	// whether protocol errors surface as HTTP failures or ride inside a 200 response.
+	IsModern bool `json:"-"`
 }
 
 // JSONRPCResponse represents an outgoing response in the JSON-RPC 2.0 format.
@@ -111,34 +118,36 @@ func negotiateProtocolVersion(params json.RawMessage) string {
 	return defaultProtocolVersion
 }
 
-func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
+// handleRequest dispatches one JSON-RPC request and writes its envelope to w. It returns the
+// HTTP status the response should carry; stdio callers ignore it.
+//
+// NexWiki is dual-era. A request carrying per-request `_meta` protocol fields is served under the
+// 2026-07-28 revision (stateless, no handshake); anything else is served under the older
+// initialize-based revisions. Both eras share the tool registry and prompt definitions — only the
+// envelope, the required metadata, and the HTTP status mapping differ.
+func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 	// Notifications (requests without an ID) can be ignored or logged to stderr
 	if req.ID == nil {
-		return
+		return http.StatusAccepted
 	}
 
 	var result interface{}
 	var rpcErr *JSONRPCError
 
+	if env := parseParamsEnvelope(req.Params); isModernRequest(env) {
+		result, rpcErr = srv.dispatchModern(req, env)
+		return srv.writeResponse(w, req, result, rpcErr)
+	}
+
 	switch req.Method {
 	case "initialize":
 		result = map[string]interface{}{
 			"protocolVersion": negotiateProtocolVersion(req.Params),
-			"capabilities": map[string]interface{}{
-				"tools":   map[string]interface{}{},
-				"prompts": map[string]interface{}{},
-			},
-			"serverInfo": map[string]interface{}{
-				"name":    "NexWiki MCP Server",
-				"version": srv.Version,
-			},
+			"capabilities":    serverCapabilities(),
+			"serverInfo":      srv.implementation(),
 			// Connect-time hint surfaced by MCP clients as a system-prompt-style nudge, so
 			// the agent reaches for NexWiki as a second brain without explicit prompting.
-			"instructions": "This NexWiki server is the user's persistent second brain. Use it to store plans and " +
-				"memories and to look up prior knowledge — do not keep that only in chat. At session start, load the " +
-				"operating rules with read_article(slug: \"" + AgentGuidelinesSlug + "\"), then get_context_overview " +
-				"and get_recent_activity(since: \"48h\") to orient. Save multi-step work with create_agent_plan, " +
-				"durable facts with create_agent_memory (setting description and source), and search before writing.",
+			"instructions": agentInstructions(),
 		}
 
 	case "tools/list":
@@ -151,121 +160,11 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) {
 
 	case "prompts/list":
 		result = map[string]interface{}{
-			"prompts": []map[string]interface{}{
-				{
-					"name":        "article_creation_workflow",
-					"description": "Guides the agent on how to correctly search for styling/formatting guidelines and custom memories before writing a new Wiki article, to avoid inconsistencies.",
-					"arguments": []map[string]interface{}{
-						{
-							"name":        "title",
-							"description": "The title of the article to be created.",
-							"required":    true,
-						},
-						{
-							"name":        "description",
-							"description": "Brief summary of what the article should cover.",
-							"required":    false,
-						},
-					},
-				},
-				{
-					"name":        "project_planning_workflow",
-					"description": "Guides the agent on how to collaboratively plan a new development task, outline subtasks, and ensure the plan is saved and updated in NexWiki.",
-					"arguments": []map[string]interface{}{
-						{
-							"name":        "title",
-							"description": "The title of the Collaborative Plan (e.g. Go 1.22 Migration Plan).",
-							"required":    true,
-						},
-						{
-							"name":        "project",
-							"description": "The name of the project this plan belongs to (e.g. nexwiki).",
-							"required":    true,
-						},
-					},
-				},
-			},
+			"prompts": promptDefinitions(),
 		}
 
 	case "prompts/get":
-		type GetPromptArgs struct {
-			Name      string            `json:"name"`
-			Arguments map[string]string `json:"arguments"`
-		}
-		var promptArgs GetPromptArgs
-		if err := json.Unmarshal(req.Params, &promptArgs); err != nil {
-			rpcErr = &JSONRPCError{Code: -32602, Message: "Invalid prompt parameters"}
-			break
-		}
-
-		switch promptArgs.Name {
-		case "article_creation_workflow":
-			title := promptArgs.Arguments["title"]
-			desc := promptArgs.Arguments["description"]
-
-			promptText := fmt.Sprintf(`You are an AI assistant tasked with creating a new article titled "%s" in the user's NexWiki knowledge base.
-
-Before you begin writing the article, you MUST follow these steps to ensure format consistency and align with the user's rules:
-1. Call 'list_agent_memories' or search for memory articles using 'search_wiki' specifically looking for "rules", "formatting", or "style guide" memories regarding this type of article (e.g., programming language guides, system architecture templates, etc.).
-2. If any formatting guidelines or style memories are found, read their contents using 'read_article'.
-3. Incorporate those styles, sections, structure, and constraints strictly into the new article's content.
-4. Write the article content in clean, semantic Markdown.
-5. Save the article using 'create_wiki_article'. Include a helpful edit summary detailing the style guidelines you incorporated.
-6. Let the user know you successfully incorporated the specific style rules you found.`, title)
-
-			if desc != "" {
-				promptText += fmt.Sprintf("\n\nArticle Outline/Description: %s", desc)
-			}
-
-			result = map[string]interface{}{
-				"description": "Guides the agent on how to correctly search for styling/formatting guidelines and custom memories before writing a new Wiki article.",
-				"messages": []map[string]interface{}{
-					{
-						"role": "user",
-						"content": map[string]interface{}{
-							"type": "text",
-							"text": promptText,
-						},
-					},
-				},
-			}
-
-		case "project_planning_workflow":
-			title := promptArgs.Arguments["title"]
-			project := promptArgs.Arguments["project"]
-
-			promptText := fmt.Sprintf(`You are an AI assistant tasked with creating a new Collaborative AI Plan for the project "%s" titled "%s".
-
-Please follow these strict steps:
-1. Collaboratively outline the plan with the user, dividing it into clear objectives, architectural details, technical requirements, and task checklists.
-2. Format the plan using rich, clean Markdown.
-3. Save the initial plan in NexWiki immediately using the 'create_agent_plan' tool. Make sure to specify the project_context as "%s".
-4. Inform the user that the plan is saved in NexWiki, provide the article slug, and ask for their feedback or approval on the plan.
-5. As tasks are completed or updated during implementation, use 'append_agent_plan' to log the progress and update the checklists.
-6. When the plan is fully implemented, use 'append_agent_plan' to add final notes documenting anything worth noting (plan deviations, files created, tools used, unexpected challenges, or other observations).
-7. After adding final notes, use 'edit_agent_plan' to mark the plan as completed by adding the 'completed' status tag.
-
-IMPORTANT: The reserved AI-Agent-Plan type must NEVER be relabelled unless explicitly instructed by the user.`, project, title, project)
-
-			result = map[string]interface{}{
-				"description": "Guides the agent on how to collaboratively plan a new development task, outline subtasks, and ensure the plan is saved and updated in NexWiki.",
-				"messages": []map[string]interface{}{
-					{
-						"role": "user",
-						"content": map[string]interface{}{
-							"type": "text",
-							"text": promptText,
-						},
-					},
-				},
-			}
-
-		default:
-			rpcErr = &JSONRPCError{
-				Code:    -32601,
-				Message: fmt.Sprintf("Prompt not found: %s", promptArgs.Name),
-			}
-		}
+		result, rpcErr = srv.getPrompt(req.Params)
 
 	default:
 		rpcErr = &JSONRPCError{
@@ -274,13 +173,40 @@ IMPORTANT: The reserved AI-Agent-Plan type must NEVER be relabelled unless expli
 		}
 	}
 
-	// Send JSON-RPC response
+	return srv.writeResponse(w, req, result, rpcErr)
+}
+
+// dispatchModern validates a per-request-metadata request and runs it, wrapping a successful
+// payload in the modern result envelope (resultType plus server identity).
+func (srv *Server) dispatchModern(req *JSONRPCRequest, env paramsEnvelope) (interface{}, *JSONRPCError) {
+	if rpcErr := validateModernMeta(env); rpcErr != nil {
+		return nil, rpcErr
+	}
+	if rpcErr := validateModernHeaders(req.Headers, req.Method, env); rpcErr != nil {
+		return nil, rpcErr
+	}
+
+	payload, rpcErr := srv.handleModernMethod(req.Method, env)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	return srv.completeResult(payload), nil
+}
+
+// writeResponse marshals the JSON-RPC envelope and reports the HTTP status it should carry.
+// Legacy-era responses are always 200 (errors ride in the body); modern-era protocol failures
+// surface as real HTTP failures, which is how a dual-era client distinguishes the two.
+func (srv *Server) writeResponse(w io.Writer, req *JSONRPCRequest, result interface{}, rpcErr *JSONRPCError) int {
 	var resp JSONRPCResponse
 	resp.JSONRPC = "2.0"
 	resp.ID = req.ID
 
+	status := http.StatusOK
 	if rpcErr != nil {
 		resp.Error = rpcErr
+		if req.IsModern {
+			status = modernErrorStatus(rpcErr)
+		}
 	} else {
 		resp.Result = result
 	}
@@ -290,6 +216,7 @@ IMPORTANT: The reserved AI-Agent-Plan type must NEVER be relabelled unless expli
 		// Stdio transport expects each JSON-RPC envelope strictly on a single line!
 		_, _ = fmt.Fprintf(w, "%s\n", string(respBytes))
 	}
+	return status
 }
 
 // logMCPToolCall logs a successfully executed MCP tool call and publishes it.
@@ -531,6 +458,9 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
+		// Tells reverse proxies (nginx especially) not to buffer the stream, which would
+		// otherwise hold events until the buffer fills and defeat the point of SSE.
+		w.Header().Set("X-Accel-Buffering", "no")
 
 		// Priming comment to flush connection
 		_, _ = fmt.Fprint(w, ": keepalive\n\n")
@@ -568,11 +498,16 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
+		// Hand the transport context to the dispatcher: the modern era verifies the mirrored
+		// HTTP headers against the body, and reports protocol failures as HTTP status codes.
+		req.Headers = r.Header
+		req.IsModern = isModernRequest(parseParamsEnvelope(req.Params))
+
 		// Render into a buffer first. Committing 200 before dispatch made every outcome a 200 —
 		// the status could never reflect a failure, and a panic or write error mid-render would
 		// emit a truncated body under a success code.
 		var out bytes.Buffer
-		srv.handleRequest(&out, &req)
+		status := srv.handleRequest(&out, &req)
 
 		w.Header().Set("Content-Type", "application/json")
 
@@ -582,7 +517,7 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(status)
 		_, _ = w.Write(out.Bytes())
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
