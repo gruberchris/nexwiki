@@ -342,12 +342,3 @@ func TestSubscriptionWithNothingHonoredClosesGracefully(t *testing.T) {
 		t.Errorf("expected a graceful empty result closing the subscription, got:\n%s", out)
 	}
 }
-
-func containsString(haystack []string, needle string) bool {
-	for _, v := range haystack {
-		if v == needle {
-			return true
-		}
-	}
-	return false
-}
