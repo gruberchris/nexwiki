@@ -94,12 +94,31 @@ To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools l
 The NexWiki MCP server registers and exposes twenty-seven powerful tools for AI agents:
 
 ### 1. `search_wiki`
-Performs a high-speed, full-text search across all wiki articles using the built-in **Bleve Search** engine.
+Performs a high-speed, full-text search across the **entire** knowledge base using the built-in **Bleve Search** engine — wiki articles *and* your agent memories, plans, and skills.
 
 * **Arguments**:
   * `query` (string, **required**): The search keywords or query string. Supports wildcards, quotes for exact matches, and boolean terms.
+  * `type` (array of string, *optional*): Restrict to document types — `articles`, `memories`, `plans`, `skills`. Canonical OKF names (`AI-Agent-Memory`) also work. Omit to search every type.
+  * `tags` (array of string, *optional*): A result must carry **all** of these tags (case-insensitive), e.g. `["wip"]` or `["memory-nexwiki"]`.
+  * `limit` (integer, *optional*): Maximum results. Default `40`, maximum `200`.
+  * `include_archived` (boolean, *optional*): Include archived documents, which are excluded by default.
 * **Behavior**:
-  Executes the search query against the local Bleve index. It converts scored matches into a human-readable text block. To optimize LLM context usage, all HTML `<mark>` search highlight tags are automatically converted to clean Markdown bold formatting (`**`).
+  Executes the query against the local Bleve index and converts scored matches into a readable text block, reporting each hit's document `Type` so you can tell a memory from an article. HTML `<mark>` highlights become Markdown bold (`**`) to save context. When facets are applied they are echoed in the response header line, so an empty result set is distinguishable from an over-narrow filter. An unrecognized `type` value is reported as an error rather than silently returning nothing.
+
+> **Agents search everything by default.** Earlier versions hid memories, plans, and skills unless the *query text* happened to contain the words "memory", "plan", or "skill". That meant a memory recording *"we chose Bleve over Elasticsearch"* was invisible to `search_wiki("elasticsearch")`, and the agent would re-derive a decision it had already stored. Agent-facing search now spans every type unless you narrow it with `type`. The browser sidebar is unchanged and still hides agent documents from human searches.
+
+**Examples**
+
+```jsonc
+// Everything about a topic, across articles and your own memories
+{ "query": "elasticsearch" }
+
+// Only what you remember about this project
+{ "query": "retrieval", "type": ["memories"], "tags": ["memory-nexwiki"] }
+
+// In-flight plans, newest handful
+{ "query": "migration", "type": ["plans"], "tags": ["wip"], "limit": 5 }
+```
 
 ---
 

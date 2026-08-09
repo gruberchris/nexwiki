@@ -759,8 +759,11 @@ func (s *Storage) SyncSearchIndex() error {
 
 // SearchResult represents a single full-text query match.
 type SearchResult struct {
-	Title     string    `json:"title"`
-	Slug      string    `json:"slug"`
+	Title string `json:"title"`
+	Slug  string `json:"slug"`
+	// Type is the OKF document class of the hit. Faceted searches span types, so a caller has to
+	// be able to tell a wiki article from an agent memory in the results.
+	Type      string    `json:"type,omitempty"`
 	Score     float64   `json:"score"`
 	Timestamp time.Time `json:"timestamp"`
 	// Snippets are HTML fragments: article text is entity-escaped and matched terms are
@@ -772,8 +775,27 @@ type SearchResult struct {
 
 // SearchArticles searches for keywords inside article titles and contents, returning HTML highlighted snippets.
 func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
+	return s.SearchArticlesWithOptions(queryStr, SearchOptions{legacyQueryHeuristics: true})
+}
+
+// SearchArticlesWithOptions runs a full-text search with explicit facets.
+//
+// The distinction from SearchArticles matters. The human sidebar wants agent documents hidden by
+// default — they would drown out the wiki. An *agent* searching its own second brain wants the
+// opposite: memories and plans are the whole point, and hiding them means the agent re-derives
+// knowledge it already recorded. Facets make that an explicit choice by the caller rather than a
+// property of the query text.
+func (s *Storage) SearchArticlesWithOptions(queryStr string, opts SearchOptions) ([]SearchResult, error) {
 	if queryStr == "" {
 		return []SearchResult{}, nil
+	}
+
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = defaultSearchLimit
+	}
+	if limit > maxSearchLimit {
+		limit = maxSearchLimit
 	}
 
 	// Create a query matching terms (supports boolean logic, wildcards, fuzzy matching natively!)
@@ -785,21 +807,28 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 	searchRequest.Highlight.AddField("content")
 	searchRequest.Highlight.AddField("title")
 
-	// Limit to top 40 matches
-	searchRequest.Size = 40
+	// Over-fetch: type/tag facets are applied after scoring, so asking Bleve for exactly `limit`
+	// hits would silently return fewer than requested whenever anything is filtered out.
+	searchRequest.Size = limit
+	if opts.hasFilters() {
+		searchRequest.Size = maxSearchLimit
+	}
 
 	searchResults, err := s.SearchIndex.Search(searchRequest)
 	if err != nil {
 		return nil, fmt.Errorf("bleve search failed: %w", err)
 	}
 
+	typeFilter := normalizeTypeFilter(opts.Types)
+	tagFilter := lowercaseSet(opts.Tags)
 	queryLower := strings.ToLower(queryStr)
-	// A query that names the agent doc-class (legacy 'aiagent-' or the OKF 'ai-agent' type)
-	// globally opts every agent document back into the results.
-	allowAgentDocs := strings.Contains(queryLower, "aiagent") || strings.Contains(queryLower, "ai-agent")
 
 	var results []SearchResult
 	for _, hit := range searchResults.Hits {
+		if len(results) >= limit {
+			break
+		}
+
 		art, err := s.GetArticle(hit.ID)
 		if err != nil {
 			// Skip if the physical Markdown file was deleted on disk but search index is slightly out of sync
@@ -811,42 +840,14 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 			continue
 		}
 
-		// Filter out archived articles unless query explicitly requests them
-		isArchived := !art.ArchivedAt.IsZero()
-		if !isArchived {
-			for _, tag := range art.Tags {
-				if strings.ToLower(tag) == "archived" {
-					isArchived = true
-					break
-				}
-			}
-		}
-		if isArchived && !strings.Contains(queryLower, "archived") {
+		if !opts.allowsArchived(art, queryLower) {
 			continue
 		}
-
-		// Filter out agent documents (memories/plans/skills, by OKF type) unless explicitly requested.
-		if !allowAgentDocs && art.Type != ContentTypeWiki {
-			bypass := false
-
-			// 1. Explicitly searching for the doc by slug/title name (exact match)
-			if strings.EqualFold(art.Slug, queryStr) || strings.EqualFold(art.Title, queryStr) {
-				bypass = true
-			} else {
-				// 2. Or the query references the doc-class by name.
-				switch art.Type {
-				case ContentTypeSkill:
-					bypass = strings.Contains(queryLower, "skill")
-				case ContentTypePlan:
-					bypass = strings.Contains(queryLower, "plan")
-				case ContentTypeMemory:
-					bypass = strings.Contains(queryLower, "memory") || strings.Contains(queryLower, "memories")
-				}
-			}
-
-			if !bypass {
-				continue
-			}
+		if !opts.allowsType(art, typeFilter, queryStr, queryLower) {
+			continue
+		}
+		if !matchesAllTags(art.Tags, tagFilter) {
+			continue
 		}
 
 		var snippets []string
@@ -872,6 +873,7 @@ func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
 		results = append(results, SearchResult{
 			Title:     art.Title,
 			Slug:      art.Slug,
+			Type:      art.Type,
 			Score:     hit.Score,
 			Timestamp: art.Timestamp,
 			Snippets:  snippets,
