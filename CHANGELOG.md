@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Security
+- Bumped `golang.org/x/sys` to v0.44.0 for **GO-2026-5024** (integer overflow in `NewNTUnicodeString`, Windows only). NexWiki's own code never calls the affected symbol, so it was not exploitable here, but NexWiki ships a `windows-amd64` binary and the fix is a transitive version bump.
+
 ### Added
 - **`create_agent_memory` and `create_agent_plan` now accept `tags`.** `create_wiki_article` and `create_agent_skill` always did, so an agent that wanted a plan marked `wip` had to follow the create with `update_article_tags` — a tool annotated `destructiveHint: true`, which makes a cautious client stop and ask the user to approve a second call that only existed because the first tool lacked an argument its siblings had. Tool-managed tags stay reserved: the `memory-<scope>` and project-context tags are still derived automatically, and a caller cannot forge a `memory-*` tag through the new argument.
 
