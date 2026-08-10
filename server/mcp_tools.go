@@ -99,6 +99,7 @@ var mcpToolRegistry = []toolDef{
 	editAgentPlanTool,
 	listAgentPlansTool,
 	createAgentSkillTool,
+	editAgentSkillTool,
 	listAgentSkillsTool,
 	getStatusTagsTool,
 	getRecentActivityTool,

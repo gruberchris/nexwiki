@@ -95,6 +95,139 @@ func (srv *Server) toolCreateAgentSkill(args json.RawMessage) (interface{}, *JSO
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
+var editAgentSkillTool = toolDef{
+	Schema: map[string]interface{}{
+		"name":        "edit_agent_skill",
+		"description": "Modify the title, content, description, source, tags, or edit summary of an existing Custom AI Skill. The reserved AI-Agent-Skill type is strictly preserved and must NEVER be relabelled. Use this to refine a skill's procedure in place, or to promote it from 'draft' to 'ready'.",
+		"inputSchema": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"slug": map[string]interface{}{
+					"type":        "string",
+					"description": "The unique URL-safe slug of the skill to edit.",
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional new skill title (preserves the existing title if omitted).",
+				},
+				"content": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional replacement Markdown body in SKILL.md format. Omit to preserve existing content.",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional one-line summary shown in list indexes and get_context_overview. Pointer semantics: omit to preserve the existing value, pass an empty string to clear it.",
+				},
+				"source": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional provenance reference. Pointer semantics: omit to preserve, empty string to clear.",
+				},
+				"tags": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+					"description": "Optional tags to set on the skill (replaces existing user tags; the AI-Agent-Skill type is preserved). Call get_status_tags to see recognized status values (e.g. 'draft', 'ready').",
+				},
+				"loaded_version": map[string]interface{}{
+					"type":        "integer",
+					"description": "The active version number of the skill loaded by the client (helps detect multi-session edit collisions).",
+				},
+				"edit_summary": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional summary outlining what changed.",
+				},
+			},
+			"required": []string{"slug", "loaded_version"},
+		},
+	},
+	Handler:  (*Server).toolEditAgentSkill,
+	Behavior: toolBehavior{Title: "Edit Agent Skill", Destructive: true, Idempotent: false},
+}
+
+// toolEditAgentSkill completes the skill lifecycle. create_agent_skill and list_agent_skills have
+// always existed with no edit counterpart, so the only way to revise a skill through MCP was
+// edit_wiki_article — which works, but offers none of the type guarding the memory and plan tools
+// apply. That mattered most for nexwiki-agent-guidelines: the governance document every agent
+// loads is itself a skill, so the one document intended to be revised had no first-class edit path.
+func (srv *Server) toolEditAgentSkill(args json.RawMessage) (interface{}, *JSONRPCError) {
+	type EditSkillArgs struct {
+		Slug          string    `json:"slug"`
+		Title         *string   `json:"title,omitempty"`
+		Content       *string   `json:"content,omitempty"`
+		Description   *string   `json:"description,omitempty"`
+		Source        *string   `json:"source,omitempty"`
+		Tags          *[]string `json:"tags,omitempty"`
+		LoadedVersion int       `json:"loaded_version"`
+		EditSummary   string    `json:"edit_summary"`
+	}
+	var eArgs EditSkillArgs
+	if e := decodeToolArgs(args, &eArgs); e != nil {
+		return nil, e
+	}
+	if eArgs.Slug == "" || eArgs.LoadedVersion <= 0 {
+		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'slug' and positive 'loaded_version' are required."}
+	}
+
+	existing, err := srv.Storage.GetArticle(eArgs.Slug)
+	if err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: skill with slug '%s' not found", eArgs.Slug)}}}, nil
+	}
+
+	if existing.Type != ContentTypeSkill {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a Custom AI Skill (type must be AI-Agent-Skill)."}}}, nil
+	}
+
+	if existing.Version > 0 && existing.Version != eArgs.LoadedVersion {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: Version conflict! The skill was updated by another session. Disk version is %d, but you loaded version %d. Re-fetch the skill and try again.", existing.Version, eArgs.LoadedVersion)}}}, nil
+	}
+
+	newTitle := existing.Title
+	if eArgs.Title != nil {
+		newTitle = strings.TrimSpace(*eArgs.Title)
+		if newTitle == "" {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: title cannot be empty"}}}, nil
+		}
+	}
+
+	newContent := existing.Content
+	if eArgs.Content != nil {
+		if strings.TrimSpace(*eArgs.Content) == "" {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: content cannot be empty. Use 'delete_wiki_article' to remove a skill entirely."}}}, nil
+		}
+		newContent = *eArgs.Content
+	}
+
+	newDescription := existing.Description
+	if eArgs.Description != nil {
+		newDescription = strings.TrimSpace(*eArgs.Description)
+	}
+
+	newSource := existing.Source
+	if eArgs.Source != nil {
+		newSource = strings.TrimSpace(*eArgs.Source)
+	}
+
+	newTags := existing.Tags
+	if eArgs.Tags != nil {
+		newTags = validateAndCleanUserTags(*eArgs.Tags, existing.Tags)
+	}
+
+	summary := eArgs.EditSummary
+	if summary == "" {
+		summary = "Updated Custom AI Agent Skill"
+	}
+
+	art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type)
+	if err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent skill: %v", err)}}}, nil
+	}
+
+	respText := fmt.Sprintf("Success! Custom AI Skill '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nTags: %s\n",
+		art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339), strings.Join(art.Tags, ", "))
+	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+}
+
 var listAgentSkillsTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "list_agent_skills",

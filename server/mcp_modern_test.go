@@ -131,8 +131,8 @@ func TestModernResultsCarryResultTypeAndServerInfo(t *testing.T) {
 		t.Errorf("modern results should identify the server via %s", metaServerInfo)
 	}
 	tools, ok := result["tools"].([]interface{})
-	if !ok || len(tools) != 28 {
-		t.Errorf("expected 28 tools in the modern envelope, got %v", result["tools"])
+	if !ok || len(tools) != 29 {
+		t.Errorf("expected 29 tools in the modern envelope, got %v", result["tools"])
 	}
 }
 

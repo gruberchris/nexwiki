@@ -73,11 +73,11 @@ To run a **stdio MCP server next to an already-running web primary** — which i
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes **twenty-eight** semantic tools for AI agents, covering search and reads, article writes with optimistic locking, revision history and reverts, tag management, AI memory lifecycle, collaborative plans, the custom skills registry, progressive-disclosure orientation, backlink traversal, activity history, and OKF bundle import/export.
+The NexWiki MCP server registers and exposes **twenty-nine** semantic tools for AI agents, covering search and reads, article writes with optimistic locking, revision history and reverts, tag management, AI memory lifecycle, collaborative plans, the custom skills registry, progressive-disclosure orientation, backlink traversal, activity history, and OKF bundle import/export.
 
 NexWiki also exposes **Resources** (`nexwiki://article/{slug}`) so a user can `@`-mention a wiki page directly, and **`subscriptions/listen`** so an agent is notified the moment a document is edited or the document set changes — see [docs/mcp_server.md](./docs/mcp_server.md#-resources---mention-a-wiki-page).
 
-Every tool carries MCP **annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`) so clients can auto-approve safe reads and confirm destructive writes. `openWorldHint` is `false` on all 28 — the entire surface is local. See [docs/mcp_server.md](./docs/mcp_server.md#-tool-annotations--fewer-approval-prompts).
+Every tool carries MCP **annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`) so clients can auto-approve safe reads and confirm destructive writes. `openWorldHint` is `false` on all 29 — the entire surface is local. See [docs/mcp_server.md](./docs/mcp_server.md#-tool-annotations--fewer-approval-prompts).
 
 Twelve read tools additionally declare an **`outputSchema`** and return `structuredContent` alongside their prose, so an agent parses data instead of scraping sentences — `read_article` hands back `version` as a number to pass straight to `edit_wiki_article` as `loaded_version`. The text is always still emitted, and both halves are rendered from the same value so they cannot disagree. See [docs/mcp_server.md](./docs/mcp_server.md#-structured-output--parse-data-dont-scrape-prose).
 
@@ -176,7 +176,7 @@ If you compiled the binary on your local machine:
 }
 ```
 
-Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat window, confirming that all twenty-eight NexWiki MCP tools are ready to use!
+Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat window, confirming that all twenty-nine NexWiki MCP tools are ready to use!
 
 ---
 
@@ -192,7 +192,7 @@ NexWiki implements the modern **Streamable HTTP** transport at `/api/mcp`, servi
    * **URL**: `http://localhost:8080/api/mcp` (or your production domain e.g. `https://wiki.yourdomain.com/api/mcp`)
 5. Click **Save**.
 
-Cursor will establish a stream connection and immediately list all twenty-eight NexWiki tools in the sidebar. You can now use Cursor Composer or chat (`Cmd+K` / `Ctrl+K`) and reference your wiki directly during code generation!
+Cursor will establish a stream connection and immediately list all twenty-nine NexWiki tools in the sidebar. You can now use Cursor Composer or chat (`Cmd+K` / `Ctrl+K`) and reference your wiki directly during code generation!
 
 > Per-client setup for **Claude Code**, **GitHub Copilot CLI**, and other agent CLIs is documented in [docs/mcp_server.md](./docs/mcp_server.md#-connecting-clients).
 

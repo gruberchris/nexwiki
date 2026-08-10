@@ -91,7 +91,7 @@ When you give the agent a multi-step task, the governance rules force it to:
 2. **`append_agent_plan`** progress notes after each milestone.
 3. On completion: append final notes (deviations, files created, surprises), then **`edit_agent_plan`** to add the `completed` status tag.
 
-> **Correcting plan steps:** Use `edit_agent_plan` with a `content` field to rewrite plan content in-place (full replacement with optimistic locking). Use `append_agent_plan` for additive progress notes only.
+> **Correcting plan steps:** Use `edit_agent_plan` with a `content` field to rewrite plan content in-place (full replacement with optimistic locking). Use `append_agent_plan` for additive progress notes only. The same tool sets `description` and `source`, so a plan's one-line summary can be corrected after creation rather than only at it.
 
 You watch all of this live in the Activity Drawer, and the plan is a normal wiki page you can read, edit, and build on later.
 
@@ -161,7 +161,7 @@ That sequence exercises every piece of the system: the ingest skill, overview + 
 
 ## 📚 Related Guides
 
-* [MCP Server Guide](./mcp_server.md) — all 28 tools in detail, client connection configs
+* [MCP Server Guide](./mcp_server.md) — all 29 tools in detail, client connection configs
 * [AI Agent Integration & SOP Guide](./agent_integration_guide.md) — governance layers and the guidelines skill
 * [Tags & AI Agent Memories Guide](./tags.md) — protected tags and memory isolation
 * [AI Agent Skills & Custom Registry Guide](./aiagent_skills.md) — the skills registry powering `ingest-source`

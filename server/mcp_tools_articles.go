@@ -440,7 +440,7 @@ var editWikiArticleTool = toolDef{
 				},
 				"loaded_version": map[string]interface{}{
 					"type":        "integer",
-					"description": "The active version number of the article loaded by the client (helps detect multi-session edit collisions).",
+					"description": "The active version number of the article as returned by read_article (helps detect multi-session edit collisions). Pass 0 only when read_article reported 0, which means the article predates versioning; passing 0 for a versioned article is rejected as a stale read.",
 				},
 				"edit_summary": map[string]interface{}{
 					"type":        "string",
@@ -470,8 +470,12 @@ func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSON
 	if e := decodeToolArgs(args, &eArgs); e != nil {
 		return nil, e
 	}
-	if eArgs.Slug == "" || eArgs.Title == "" || eArgs.Content == "" || eArgs.LoadedVersion <= 0 {
-		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. Requires 'slug', 'title', 'content', and positive 'loaded_version'"}
+	// loaded_version may be 0: that is the version read_article reports for an article written to
+	// disk before versioning existed, and rejecting it made those articles uneditable through the
+	// documented read-then-edit loop. It is not a way to skip optimistic locking — a 0 against an
+	// article that does have a version is treated as a stale read by ApplyArticleEdit.
+	if eArgs.Slug == "" || eArgs.Title == "" || eArgs.Content == "" || eArgs.LoadedVersion < 0 {
+		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. Requires 'slug', 'title', 'content', and a non-negative 'loaded_version'"}
 	}
 
 	// Empty/omitted description and source preserve the existing values; resource already

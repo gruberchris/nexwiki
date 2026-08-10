@@ -26,7 +26,7 @@ The MCP specification changed shape in revision **`2026-07-28`**. NexWiki implem
 | Results | carry `resultType: "complete"` | bare result object |
 | Protocol errors | real HTTP status (`400`/`404`) | `200` with an error body |
 
-**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 28 tools and the same 2 prompts — only the envelope differs.
+**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 29 tools and the same 2 prompts — only the envelope differs.
 
 #### Modern-era requirements
 
@@ -84,7 +84,7 @@ curl -X POST http://localhost:8080/api/mcp \
 
 Every tool carries MCP `annotations` telling your client what calling it actually does. Clients use these to **auto-approve safe reads and confirm destructive writes**, so an agent isn't interrupting you to run `get_context_overview` — the tool the agent skill says to call first in every session.
 
-This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 28 tools might destroy data and reach arbitrary external systems.
+This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 29 tools might destroy data and reach arbitrary external systems.
 
 | Hint | NexWiki's values |
 |---|---|
@@ -98,7 +98,7 @@ This matters because the spec's defaults are **pessimistic**: an unannotated too
 
 **Additive writes (6)** — create new content, never overwrite: the four `create_*` tools plus `append_agent_memory` and `append_agent_plan`.
 
-**Destructive writes (8)** — can overwrite or remove existing content: `edit_wiki_article` · `edit_agent_memory` · `edit_agent_plan` · `update_article_tags` · `delete_wiki_article` · `delete_agent_memory` · `revert_article_version` · `import_okf_bundle`
+**Destructive writes (9)** — can overwrite or remove existing content: `edit_wiki_article` · `edit_agent_memory` · `edit_agent_plan` · `edit_agent_skill` · `update_article_tags` · `delete_wiki_article` · `delete_agent_memory` · `revert_article_version` · `import_okf_bundle`
 
 > **Annotations are hints, not guarantees.** The specification is explicit that clients must treat them as untrusted from untrusted servers. They describe intent; the actual guards are the optimistic-locking checks and the reserved-type rules enforced inside the handlers.
 >
@@ -256,7 +256,7 @@ Exceeding the cap is **not recoverable**: the read loop ends and the stdio chann
 
 > **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port (and is the primary that persists the activity log); if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server, it forwards its activity events to it; with no NexWiki web server, it persists the log itself. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
 
-The NexWiki MCP server registers and exposes twenty-eight powerful tools for AI agents:
+The NexWiki MCP server registers and exposes twenty-nine powerful tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across the **entire** knowledge base using the built-in **Bleve Search** engine — wiki articles *and* your agent memories, plans, and skills.
@@ -512,7 +512,25 @@ Creates a new Custom AI Skill, automatically making it part of the custom Skills
 
 ---
 
-### 19. `list_agent_skills`
+### 19. `edit_agent_skill`
+Modifies an existing Custom AI Skill in place. The reserved `AI-Agent-Skill` type is strictly preserved and must **NEVER** be relabelled.
+
+* **Arguments**:
+  * `slug` (string, **required**): The URL-safe slug of the skill to edit.
+  * `loaded_version` (integer, **required**): The active version the client read, for optimistic locking.
+  * `title` (string, **optional**): New title; omit to preserve.
+  * `content` (string, **optional**): Replacement Markdown body in SKILL.md format; omit to preserve.
+  * `description` (string, **optional**): One-line summary. Pointer semantics — omit to preserve, empty string to clear.
+  * `source` (string, **optional**): Provenance. Pointer semantics, as above.
+  * `tags` (array of strings, **optional**): Replaces existing user tags. Call `get_status_tags` for recognized values (e.g. promoting `draft` → `ready`).
+  * `edit_summary` (string, **optional**): What changed.
+* **Behavior**:
+  Rejects a target whose type is not `AI-Agent-Skill`, enforces optimistic locking, merges the optional fields, and writes a new version snapshot.
+* **Why it exists:** `create_agent_skill` and `list_agent_skills` shipped without an edit counterpart, so revising a skill meant reaching for `edit_wiki_article` — which works but applies none of the type guarding its memory and plan equivalents do. That mattered most for `nexwiki-agent-guidelines`: the governance document every agent loads is itself a skill, so the one document explicitly designed to be revised had no first-class edit path.
+
+---
+
+### 20. `list_agent_skills`
 Lists all Custom AI Skills (OKF type `AI-Agent-Skill`) currently saved in the knowledge base.
 
 * **Arguments**: None (empty object `{}`).
@@ -522,7 +540,7 @@ Lists all Custom AI Skills (OKF type `AI-Agent-Skill`) currently saved in the kn
 
 ---
 
-### 20. `get_status_tags`
+### 21. `get_status_tags`
 Returns the canonical list of recognized status tags used to indicate the lifecycle state of wiki articles and AI plans.
 
 * **Arguments**: None (empty object `{}`).
@@ -534,7 +552,7 @@ Returns the canonical list of recognized status tags used to indicate the lifecy
 
 ---
 
-### 21. `get_context_overview`
+### 22. `get_context_overview`
 Returns a **cheap progressive-disclosure index** of the entire knowledge base — the recommended first call of any agent session. Each entry is one compact line: title, slug, one-line summary, tags, and updated date, grouped into Wiki Articles / Agent Memories / Agent Plans / Agent Skills sections.
 
 * **Arguments**:
@@ -556,7 +574,7 @@ Each line: Title (slug) — summary [tags] (updated). Use read_article(slug) to 
 
 ---
 
-### 22. `get_backlinks`
+### 23. `get_backlinks`
 Lists all articles whose content links to a given article, in **either** internal link form — double-bracket `[[WikiLinks]]` or absolute `[text](/articles/<slug>)` Markdown links — reverse traversal of the knowledge graph.
 
 * **Arguments**:
@@ -567,7 +585,7 @@ Lists all articles whose content links to a given article, in **either** interna
 
 ---
 
-### 23. `edit_agent_memory`
+### 24. `edit_agent_memory`
 Replaces or corrects an existing protected AI Agent Memory **in place** — the core memory-hygiene tool. Prefer this over creating a near-duplicate memory when facts go stale.
 
 * **Arguments**:
@@ -584,7 +602,7 @@ Replaces or corrects an existing protected AI Agent Memory **in place** — the 
 
 ---
 
-### 24. `delete_agent_memory`
+### 25. `delete_agent_memory`
 Permanently deletes an obsolete or fully superseded protected AI Agent Memory.
 
 * **Arguments**:
@@ -595,7 +613,7 @@ Permanently deletes an obsolete or fully superseded protected AI Agent Memory.
 
 ---
 
-### 25. `get_recent_activity`
+### 26. `get_recent_activity`
 Queries the **durable activity log** (`data/activity.jsonl`) to see what changed in the wiki and when — the "what happened since my last session?" tool.
 
 * **Arguments**:
@@ -615,14 +633,14 @@ Recent wiki activity (3 events, oldest first):
 2026-06-11 14:03:22 [mcp/edit] edit_agent_memory → 'Build Quirk' (build-quirk) by Claude
 ```
 
-### 26. `export_okf_bundle`
+### 27. `export_okf_bundle`
 Exports the entire knowledge base as a conformant **Open Knowledge Format (OKF v0.1) bundle** (a `.zip`).
 
 * **Arguments**: none.
 * **Behavior**:
   Native files are already OKF YAML, so export synthesizes the **bundle hierarchy** from each document's `type` (`wiki/`, `aimemories/`, `aiplans/`, `aiskills/`), the reserved per-directory and root `index.md` files (the root carries `okf_version: "0.1"`), a date-grouped `log.md` built from the durable activity log, and translates `[[WikiLinks]]` into bundle-relative concept paths (`/wiki/<slug>.md`, OKF §5.1). The archive is written into the data directory and its path is returned. REST equivalent: `GET /api/okf/export` (streams the `.zip` as a download).
 
-### 27. `import_okf_bundle`
+### 28. `import_okf_bundle`
 Imports an **OKF v0.1 bundle** (`.zip`) from a filesystem path into the knowledge base.
 
 * **Arguments**:
@@ -632,7 +650,7 @@ Imports an **OKF v0.1 bundle** (`.zip`) from a filesystem path into the knowledg
 
 ---
 
-### 28. `wiki_health`
+### 29. `wiki_health`
 Audits the knowledge base for maintenance work in one call. Everything it reports is something the wiki already knows but never volunteers.
 
 * **Arguments**:
