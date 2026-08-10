@@ -162,5 +162,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ steps.version.outputs.VERSION }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Reads the cache CI writes; deliberately does not write one.
+          #
+          # This build is multi-platform, so a mode=max write stores every intermediate layer
+          # twice — and it would almost never be read back. Releases are weeks apart and GitHub
+          # expires caches that go 7 days without a hit, so the blobs a tag writes are gone long
+          # before the next tag runs. It was paying the largest storage cost in the repository for
+          # a cache with an effectively zero hit rate.
+          #
+          # cache-from stays: when a release follows recent CI activity the layers are still warm,
+          # and reading costs nothing.
+          cache-from: type=gha,scope=ci

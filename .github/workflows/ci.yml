@@ -90,8 +90,23 @@ jobs:
           tags: nexwiki:ci
           build-args: |
             VERSION=ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # mode=min, and scoped.
+          #
+          # mode=max caches every *intermediate* layer, which for this multi-stage build means the
+          # whole `npm ci` tree and the Go build tree, stored per build. This job runs on every
+          # pull request and again on the merge to main, so a single busy day produced 278 blobs
+          # and 8.3 GB — most of a repository's 10 GB Actions cache quota. GitHub evicts
+          # least-recently-used entries at the limit, so nothing failed; it just meant the Docker
+          # blobs continuously evicted the Go and npm caches that every other job depends on.
+          #
+          # mode=min keeps only the layers present in the final image. The builder stages are
+          # rebuilt each time, which costs this job a little time and is the right trade: the job
+          # exists to prove the Dockerfile still builds and serves the correct assets, not to be
+          # fast.
+          #
+          # The scope keeps this cache from colliding with anything else that may later write one.
+          cache-from: type=gha,scope=ci
+          cache-to: type=gha,mode=min,scope=ci
 
       # Building is not enough — a stale or wrongly-pinned frontend toolchain produces an image
       # that builds and then serves the wrong assets. This asserts the container actually answers
