@@ -6,24 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-08-10
+
 ### Added
+
 - **`edit_agent_skill` — the 29th tool.** `create_agent_skill` and `list_agent_skills` shipped without an edit counterpart, so revising a skill meant reaching for `edit_wiki_article`, which applies none of the type guarding the memory and plan tools do. It mattered most for `nexwiki-agent-guidelines`: the governance document every agent loads is itself a skill, so the one document designed to be revised had no first-class edit path.
 - **`edit_agent_plan` accepts `description` and `source`.** `create_agent_plan` always did; edit did not, so a plan's one-line summary could be set once at creation and never corrected. On a real wiki that left most plans with an empty description, showing as a bare title in `get_context_overview`. Both use the same pointer semantics as `edit_agent_memory` — omit to preserve, empty string to clear.
+- **`MDLINK_BROKEN` editor diagnostic** — the linter now underlines absolute `[text](/articles/slug)` links whose target does not exist, alongside the existing `WIKILINK_BROKEN`. Both link rules now skip fenced code blocks, matching the server-side scanner, so a documented `[Title](/articles/slug)` example is not reported as a link.
+- **`broken_links[].form`** on `wiki_health` and `get_wiki_statistics` — `"wikilink"` or `"markdown"`. Reports print the link in the syntax it was written in, because an agent told to fix `[[rust]]` in a file that actually says `[Rust](/articles/rust)` will not find it.
 
 ### Fixed
-- **A stale `loaded_version` of `0` silently bypassed optimistic locking.** `ApplyArticleEdit` skipped the version check whenever the *caller's* version was 0, not just when the stored one was, so a client that omitted the field overwrote a versioned article with no conflict raised. The check now keys only on the stored version: 0 on disk means the file predates versioning and anything is accepted, but once an article has a version the caller must supply the matching one.
-- **Unversioned legacy articles could not be edited through MCP at all.** `Article.Version` carried `omitempty`, so `read_article` dropped the field entirely for files written before versioning existed — and `edit_wiki_article` demanded a *positive* `loaded_version`. The documented "feed `read_article`'s version straight back" loop therefore dead-ended on exactly those articles. `version` is now always reported, including `0`, and `0` is accepted for an article that has no version.
+
 - **The link graph ignored the link form the house style prefers.** `ScanLinkGraph` read only `[[WikiLinks]]`, but the corpus is overwhelmingly written in absolute `[text](/articles/slug)` Markdown links — and `nexwiki-agent-guidelines` §5 tells every connected agent to write them that way. Measured on an 84-document wiki: **293 Markdown links against 57 WikiLinks, and the home page's 48 internal links were 100% invisible.** Three consumers were wrong as a result, and all three are fixed by one scanner change:
   - `wiki_health` reported **0 broken links against 26 real ones** (14 of them pointing at a `/articles/rust` that had been renamed).
   - `wiki_health` called **44 of 84 documents orphans (52%)**; the true number is 2. §6.5 had already tuned this check once after it fired on 84% of the wiki, and the remaining cause was that the majority link form was never counted.
   - `get_backlinks` — which the guidelines tell agents to run *before* a rename or delete — under-reported inbound references, the dangerous direction for that use.
 - **Renaming an article now heals inbound Markdown links too**, not just `[[WikiLinks]]`. Only the destination is rewritten (`](/articles/old)` → `](/articles/new)`); the link text is left exactly as the author wrote it, the same guarantee `[[old|display]]` already had. Unhealed Markdown links are presumably how `/articles/rust` came to be broken in 14 places.
-- **The editor's quick-fix action pasted prose into the article.** `LintDiagnostic.suggestion` carried two different things — replacement text for rules like `MD034`, and human guidance for a broken WikiLink — and neither quick-fix path (the CodeMirror lint action or the right-click menu) could tell them apart. Both inserted it verbatim, so choosing **Fix** on a broken `[[Foo]]` replaced it with the sentence *"Click to create this page."* The field is now split into `fix` (replacement text, the only thing a quick-fix will insert) and `hint` (displayed, never inserted), which makes the mistake unrepresentable rather than merely documented. A test asserts every `fix` a document produces is Markdown rather than prose.
 - **The viewer opened the wiki's own pages in a new tab.** `Viewer.tsx` had a branch for `wikilink:` URLs and a fallback for external links, and nothing in between, so an absolute `/articles/<slug>` link rendered with `target="_blank"` and full-reloaded the app. Both internal forms now navigate in place, and both render the same red-dotted create prompt when the target does not exist.
-
-### Added
-- **`MDLINK_BROKEN` editor diagnostic** — the linter now underlines absolute `[text](/articles/slug)` links whose target does not exist, alongside the existing `WIKILINK_BROKEN`. Both link rules now skip fenced code blocks, matching the server-side scanner, so a documented `[Title](/articles/slug)` example is not reported as a link.
-- **`broken_links[].form`** on `wiki_health` and `get_wiki_statistics` — `"wikilink"` or `"markdown"`. Reports print the link in the syntax it was written in, because an agent told to fix `[[rust]]` in a file that actually says `[Rust](/articles/rust)` will not find it.
+- **The editor's quick-fix action pasted prose into the article.** `LintDiagnostic.suggestion` carried two different things — replacement text for rules like `MD034`, and human guidance for a broken WikiLink — and neither quick-fix path (the CodeMirror lint action or the right-click menu) could tell them apart. Both inserted it verbatim, so choosing **Fix** on a broken `[[Foo]]` replaced it with the sentence *"Click to create this page."* The field is now split into `fix` (replacement text, the only thing a quick-fix will insert) and `hint` (displayed, never inserted), which makes the mistake unrepresentable rather than merely documented. A test asserts every `fix` a document produces is Markdown rather than prose.
+- **A stale `loaded_version` of `0` silently bypassed optimistic locking.** `ApplyArticleEdit` skipped the version check whenever the *caller's* version was 0, not just when the stored one was, so a client that omitted the field overwrote a versioned article with no conflict raised. The check now keys only on the stored version: 0 on disk means the file predates versioning and anything is accepted, but once an article has a version the caller must supply the matching one.
+- **Unversioned legacy articles could not be edited through MCP at all.** `Article.Version` carried `omitempty`, so `read_article` dropped the field entirely for files written before versioning existed — and `edit_wiki_article` demanded a *positive* `loaded_version`. The documented "feed `read_article`'s version straight back" loop therefore dead-ended on exactly those articles. `version` is now always reported, including `0`, and `0` is accepted for an article that has no version.
 
 ## [0.9.0] — 2026-08-09
 
@@ -179,7 +181,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/gruberchris/nexwiki/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/gruberchris/nexwiki/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/gruberchris/nexwiki/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/gruberchris/nexwiki/compare/v0.6.0...v0.7.0
