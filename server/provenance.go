@@ -223,7 +223,16 @@ func attributeRevisions(logPath string, slug string, versions []RevisionRef) []R
 		order[i] = i
 	}
 	sort.SliceStable(order, func(a, b int) bool {
-		return versions[order[a]].Timestamp.Before(versions[order[b]].Timestamp)
+		x, y := versions[order[a]], versions[order[b]]
+		if !x.Timestamp.Equal(y.Timestamp) {
+			return x.Timestamp.Before(y.Timestamp)
+		}
+		// Tie-break on the version number, and note that ties are the *common* case, not an edge
+		// one: second-resolution timestamps mean every revision an agent writes in quick
+		// succession shares a timestamp. Without this the walk falls back to input order, and
+		// GetArticleHistory returns versions newest-first — so the newest revision was handed the
+		// oldest event and the whole attribution came out reversed.
+		return x.Version < y.Version
 	})
 
 	used := make([]bool, len(events))

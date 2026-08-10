@@ -352,17 +352,26 @@ func TestRapidRevisionsAreNotAllCreditedToOneEvent(t *testing.T) {
 		}
 	}
 
+	// Newest-first, because that is what GetArticleHistory returns — it sorts by version
+	// descending. The first version of this test built the slice ascending, which quietly made it
+	// agree with the input order instead of testing anything: the bug it was meant to catch
+	// (assignment falling back to input order when timestamps tie) shipped, and turned up in the
+	// pre-tag smoke test with every revision's author reversed.
 	got := attributeRevisions(ActivityLogPath(dir), "rapid", []RevisionRef{
-		{Version: 1, Timestamp: base},
-		{Version: 2, Timestamp: base},
 		{Version: 3, Timestamp: base},
+		{Version: 2, Timestamp: base},
+		{Version: 1, Timestamp: base},
 	})
 
-	want := []string{"Claude Desktop 1.4.2", "Cursor 0.9", "Opencode 2.1"}
+	want := map[int]string{
+		1: "Claude Desktop 1.4.2", // the create, earliest event
+		2: "Cursor 0.9",
+		3: "Opencode 2.1", // the latest edit, latest event
+	}
 	seen := map[string]int{}
-	for i, v := range got {
-		if v.Agent != want[i] {
-			t.Errorf("v%d attributed to %q, want %q", v.Version, v.Agent, want[i])
+	for _, v := range got {
+		if v.Agent != want[v.Version] {
+			t.Errorf("v%d attributed to %q, want %q", v.Version, v.Agent, want[v.Version])
 		}
 		seen[v.Agent]++
 	}
