@@ -6,7 +6,18 @@ export interface LintDiagnostic {
   to: number;
   severity: 'error' | 'warning' | 'info';
   message: string;
-  suggestion?: string;
+  /**
+   * Replacement text for the diagnostic's own `from`..`to` range. Present **only** when inserting
+   * it verbatim produces correct Markdown, because that is exactly what the quick-fix actions do.
+   *
+   * This used to be one `suggestion` field carrying both this and prose guidance, and the two
+   * quick-fix paths could not tell them apart: a broken WikiLink's suggestion was the sentence
+   * "Click to create this page.", so applying the fix replaced `[[Foo]]` with that sentence. The
+   * split makes the mistake unrepresentable rather than merely documented.
+   */
+  fix?: string;
+  /** Human guidance for a problem with no mechanical fix. Displayed to the user, never inserted. */
+  hint?: string;
   code: string;
 }
 
@@ -51,7 +62,7 @@ export function lintMarkdown(content: string, articles: { slug: string; title: s
           to: currentOffset + headingText.length,
           severity: 'warning',
           message: `Heading level should only increase by one level at a time. Expected H${prevHeadingLevel + 1} but got H${headingLevel}.`,
-          suggestion: `${'#'.repeat(prevHeadingLevel + 1)} ${headingMatch[2]}`,
+          fix: `${'#'.repeat(prevHeadingLevel + 1)} ${headingMatch[2]}`,
           code: 'MD001'
         });
       }
@@ -66,7 +77,7 @@ export function lintMarkdown(content: string, articles: { slug: string; title: s
             to: currentOffset + headingText.length,
             severity: 'error',
             message: 'Multiple top-level H1 headers found. Only one H1 is recommended per document.',
-            suggestion: `## ${headingMatch[2]}`,
+            fix: `## ${headingMatch[2]}`,
             code: 'MD025'
           });
         }
@@ -90,7 +101,7 @@ export function lintMarkdown(content: string, articles: { slug: string; title: s
         to: currentOffset + matchIndex + fullMatch.indexOf(indicator) + fullMatch.trim().length,
         severity: 'warning',
         message: 'Emphasis indicators should not be surrounded by spaces.',
-        suggestion: `${indicator}${spacesAndText.trim()}${indicator}`,
+        fix: `${indicator}${spacesAndText.trim()}${indicator}`,
         code: 'MD037'
       });
     }
@@ -114,7 +125,7 @@ export function lintMarkdown(content: string, articles: { slug: string; title: s
           to: currentOffset + matchIndex + url.length,
           severity: 'info',
           message: 'Bare URLs should be wrapped in angle brackets or properly formatted.',
-          suggestion: `<${url}>`,
+          fix: `<${url}>`,
           code: 'MD034'
         });
       }
@@ -138,7 +149,7 @@ export function lintMarkdown(content: string, articles: { slug: string; title: s
           to: currentOffset + matchIndex + fullWikiLink.length,
           severity: 'warning',
           message: `WikiLink target "${target}" does not exist yet.`,
-          suggestion: `Click to create this page.`,
+          hint: `Click the broken link in the preview to create this page.`,
           code: 'WIKILINK_BROKEN'
         });
       }
@@ -150,8 +161,8 @@ export function lintMarkdown(content: string, articles: { slug: string; title: s
     // [[WikiLinks]] in body prose, so leaving it unlinted meant the link form the house style
     // actually uses got no warning at all. The leading (^|[^!]) skips the image form.
     //
-    // Deliberately carries no `suggestion`: the editor's quick-fix action inserts the suggestion
-    // text verbatim into the document, so a prose hint would be pasted into the article body.
+    // Carries a `hint`, never a `fix`: there is no single correct replacement — the destination
+    // may be a typo for an existing article or a page that genuinely needs creating.
     const mdLinkRegex = /(^|[^!])(\[[^\]]*]\(\/articles\/)([^)\s"]+)/g;
     let mdMatch;
     while (!inCodeBlock && (mdMatch = mdLinkRegex.exec(line)) !== null) {
@@ -170,6 +181,7 @@ export function lintMarkdown(content: string, articles: { slug: string; title: s
           to: currentOffset + matchIndex + linkLen,
           severity: 'warning',
           message: `Link target "/articles/${target}" does not exist yet.`,
+          hint: `Create the page, or point the link at an article that exists.`,
           code: 'MDLINK_BROKEN'
         });
       }

@@ -70,9 +70,17 @@ To guarantee structural health and pristine formatting, NexWiki executes debounc
 
 Both link rules skip fenced code blocks, matching the server-side link scanner: a `[Title](/articles/slug)` inside a ` ```markdown ` example is documentation, not a link.
 
+### Fixes vs. hints
+A diagnostic carries **at most one** of two distinct things, and the difference is load-bearing:
+
+* **`fix`** — replacement text for the diagnostic's own range. Both quick-fix paths (the CodeMirror lint action and the right-click menu) insert it verbatim, so it is present only when doing that produces correct Markdown. `MD001`, `MD025`, `MD037`, and `MD034` carry one.
+* **`hint`** — human guidance for a problem with no mechanical fix. Displayed, never inserted. `WIKILINK_BROKEN` and `MDLINK_BROKEN` carry one, because a broken link may be a typo for an existing page or a page that genuinely needs creating, and only the author knows which.
+
+These were a single `suggestion` field, and neither quick-fix path could tell the two apart: `WIKILINK_BROKEN`'s suggestion was the sentence *"Click to create this page."*, so applying its fix replaced `[[Foo]]` with that sentence. Splitting the field makes the mistake unrepresentable rather than merely documented, and a test asserts every `fix` in a document is Markdown rather than prose.
+
 ### Inline Diagnostics & Context Menus
 * **Wavy Underlines**: Issues draw wavy glows (red for errors, amber for warnings, indigo for info). Hovering over a span displays details and click-to-apply quick-fixes.
-* **Custom Context Menu**: Right-clicking a wavy underline span opens a custom glassmorphic context menu containing `"Fix: [suggestion]"` and `"Show in Error Panel"`.
+* **Custom Context Menu**: Right-clicking a wavy underline span opens a custom glassmorphic context menu containing `"Fix: [replacement]"` when the diagnostic has a `fix`, the guidance text when it has a `hint`, and `"Show in Error Panel"`.
 * **Toolbar Count Badges**: The toolbar displays an active counter of errors (`E`) and warnings (`W`).
 * **Errors Dashboard**: Clicking the toolbar counter opens the `MarkdownLintErrorModal` allowing you to:
   - Sort issues by line number or severity.
