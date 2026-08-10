@@ -193,7 +193,7 @@ func (srv *Server) toolAppendAgentPlan(args json.RawMessage) (interface{}, *JSON
 var editAgentPlanTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "edit_agent_plan",
-		"description": "Modify the title, content, tags, or edit summary of an existing Collaborative AI Plan. The reserved AI-Agent-Plan type is strictly preserved and must NEVER be relabelled. Use this to correct or rewrite plan content in-place, or to mark a plan as 'completed' by adding the 'completed' status tag.",
+		"description": "Modify the title, content, description, source, tags, or edit summary of an existing Collaborative AI Plan. The reserved AI-Agent-Plan type is strictly preserved and must NEVER be relabelled. Use this to correct or rewrite plan content in-place, or to mark a plan as 'completed' by adding the 'completed' status tag.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -208,6 +208,14 @@ var editAgentPlanTool = toolDef{
 				"content": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional replacement Markdown body. Omit to preserve existing content. Use append_agent_plan to add progress notes without replacing.",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional one-line summary shown in list indexes and get_context_overview. Pointer semantics: omit to preserve the existing value, pass an empty string to clear it.",
+				},
+				"source": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional provenance reference — where the plan's knowledge came from. Pointer semantics: omit to preserve, empty string to clear.",
 				},
 				"tags": map[string]interface{}{
 					"type": "array",
@@ -233,10 +241,18 @@ var editAgentPlanTool = toolDef{
 }
 
 func (srv *Server) toolEditAgentPlan(args json.RawMessage) (interface{}, *JSONRPCError) {
+	// Description and Source are pointers for the same reason they are on edit_agent_memory:
+	// omitted must mean "preserve" while an explicit empty string means "clear", and a plain
+	// string cannot express both. create_agent_plan has always accepted them; until now edit did
+	// not, so a plan's summary could be set once at creation and never corrected — which is why
+	// most plans in a real wiki have an empty description and read as a bare title in
+	// get_context_overview.
 	type EditPlanArgs struct {
 		Slug          string    `json:"slug"`
 		Title         *string   `json:"title,omitempty"`
 		Content       *string   `json:"content,omitempty"`
+		Description   *string   `json:"description,omitempty"`
+		Source        *string   `json:"source,omitempty"`
 		Tags          *[]string `json:"tags,omitempty"`
 		LoadedVersion int       `json:"loaded_version"`
 		EditSummary   string    `json:"edit_summary"`
@@ -278,6 +294,16 @@ func (srv *Server) toolEditAgentPlan(args json.RawMessage) (interface{}, *JSONRP
 		newContent = *eArgs.Content
 	}
 
+	newDescription := existing.Description
+	if eArgs.Description != nil {
+		newDescription = strings.TrimSpace(*eArgs.Description)
+	}
+
+	newSource := existing.Source
+	if eArgs.Source != nil {
+		newSource = strings.TrimSpace(*eArgs.Source)
+	}
+
 	newTags := existing.Tags
 	if eArgs.Tags != nil {
 		// The plan class lives in the OKF type; tags are freely settable (project + status).
@@ -298,7 +324,7 @@ func (srv *Server) toolEditAgentPlan(args json.RawMessage) (interface{}, *JSONRP
 		summary = "Updated Collaborative AI Plan"
 	}
 
-	art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, newContent, existing.Description, existing.Source, existing.Resource, summary, newTags, existing.Type)
+	art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent plan: %v", err)}}}, nil
 	}

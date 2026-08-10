@@ -31,10 +31,14 @@ type Article struct {
 	CreatedAt   time.Time `json:"created_at"`
 	Timestamp   time.Time `json:"timestamp"` // Canonical modified-time (OKF), replaces updated_at
 	Content     string    `json:"content,omitempty"`
-	Description string    `json:"description,omitempty"`  // OKF one-line summary shown in indexes
-	Resource    string    `json:"resource,omitempty"`     // OKF canonical URI of what the concept *is*
-	Source      string    `json:"source,omitempty"`       // Provenance: where the knowledge *came from* (OKF citation)
-	Version     int       `json:"version,omitempty"`      // Version number
+	Description string    `json:"description,omitempty"` // OKF one-line summary shown in indexes
+	Resource    string    `json:"resource,omitempty"`    // OKF canonical URI of what the concept *is*
+	Source      string    `json:"source,omitempty"`      // Provenance: where the knowledge *came from* (OKF citation)
+	// Version is always reported, including 0. It used to carry `omitempty`, which dropped the
+	// field entirely for articles written to disk before versioning existed — so read_article's
+	// structured output had no `version` at all, and the documented loop of feeding it straight
+	// back to edit_wiki_article as `loaded_version` dead-ended on exactly those articles.
+	Version     int       `json:"version"`
 	EditSummary string    `json:"edit_summary,omitempty"` // Summary of edits
 	Tags        []string  `json:"tags,omitempty"`         // Tags list (system and free user tags)
 	ArchivedAt  time.Time `json:"archived_at,omitempty"`  // When the article was archived
@@ -1134,7 +1138,12 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 		return nil, err
 	}
 
-	if edit.LoadedVersion > 0 && existing.Version > 0 && existing.Version != edit.LoadedVersion {
+	// A stored version of 0 means the file predates versioning — there is nothing to compare
+	// against, so any loaded_version is accepted. Once an article has a version, the caller must
+	// supply the matching one: a 0 against a versioned article is a stale read, not a waiver of
+	// the check. (This condition used to also require edit.LoadedVersion > 0, which turned an
+	// omitted version into a silent bypass of optimistic locking on every versioned article.)
+	if existing.Version > 0 && existing.Version != edit.LoadedVersion {
 		return nil, ErrVersionConflict
 	}
 

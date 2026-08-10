@@ -13,7 +13,7 @@ import (
 // the registry, the schema lived in one 760-line literal and the handler in a separate 1,180-line
 // switch, so adding a tool to one and forgetting the other compiled cleanly and shipped broken.
 func TestRegistryCoversEveryTool(t *testing.T) {
-	const expectedToolCount = 28
+	const expectedToolCount = 29
 
 	if len(mcpToolRegistry) != expectedToolCount {
 		t.Errorf("registry holds %d tools, expected %d — update the count in README.md, AGENTS.md, "+

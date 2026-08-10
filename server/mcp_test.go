@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -849,6 +851,148 @@ func TestMCPEditAgentPlanContentEditing(t *testing.T) {
 	}
 	if !strings.Contains(resp4.Content[0].Text, "cannot be empty") {
 		t.Errorf("expected 'cannot be empty' in error, got: %s", resp4.Content[0].Text)
+	}
+}
+
+// TestMCPEditAgentPlanDescriptionAndSource covers the gap that left most plans in a real wiki
+// with an empty description: create_agent_plan accepted description and source, edit_agent_plan
+// accepted neither, so the one-line summary get_context_overview shows could be set once at
+// creation and never corrected. Both use pointer semantics, matching edit_agent_memory.
+func TestMCPEditAgentPlanDescriptionAndSource(t *testing.T) {
+	srv := newMCPServer(t)
+
+	toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Described Plan","content":"# Step 1","project_context":"test","description":"first summary","source":"session notes"}}`)
+
+	// Omitted description and source preserve the existing values.
+	if resp := toolCall(t, srv, `{"name":"edit_agent_plan","arguments":{"slug":"described-plan","content":"# Step 2","loaded_version":1}}`); resp.IsError {
+		t.Fatalf("edit failed: %s", resp.Content[0].Text)
+	}
+	art, _ := srv.Storage.GetArticle("described-plan")
+	if art.Description != "first summary" || art.Source != "session notes" {
+		t.Errorf("omitted fields must be preserved, got description=%q source=%q", art.Description, art.Source)
+	}
+
+	// A supplied description replaces it — the whole point of the fix.
+	if resp := toolCall(t, srv, `{"name":"edit_agent_plan","arguments":{"slug":"described-plan","description":"corrected summary","loaded_version":2}}`); resp.IsError {
+		t.Fatalf("edit failed: %s", resp.Content[0].Text)
+	}
+	art, _ = srv.Storage.GetArticle("described-plan")
+	if art.Description != "corrected summary" {
+		t.Errorf("description = %q, want the corrected value", art.Description)
+	}
+	if art.Source != "session notes" {
+		t.Errorf("source must survive a description-only edit, got %q", art.Source)
+	}
+
+	// An explicit empty string clears, which is why these are pointers rather than plain strings.
+	if resp := toolCall(t, srv, `{"name":"edit_agent_plan","arguments":{"slug":"described-plan","source":"","loaded_version":3}}`); resp.IsError {
+		t.Fatalf("edit failed: %s", resp.Content[0].Text)
+	}
+	art, _ = srv.Storage.GetArticle("described-plan")
+	if art.Source != "" {
+		t.Errorf("an explicit empty source must clear it, got %q", art.Source)
+	}
+	if art.Type != ContentTypePlan {
+		t.Errorf("OKF type must be preserved, got %q", art.Type)
+	}
+}
+
+// TestMCPEditAgentSkill covers the tool that did not exist: create_agent_skill and
+// list_agent_skills shipped without an edit counterpart, so revising a skill — including
+// nexwiki-agent-guidelines, the governance document every agent loads — had no first-class path.
+func TestMCPEditAgentSkill(t *testing.T) {
+	srv := newMCPServer(t)
+
+	toolCall(t, srv, `{"name":"create_agent_skill","arguments":{"title":"Prune Containers","content":"# Steps\n\n1. docker system prune","description":"how to prune","tags":["draft"]}}`)
+
+	// Content, description, and a draft -> ready promotion in one edit.
+	resp := toolCall(t, srv, `{"name":"edit_agent_skill","arguments":{"slug":"prune-containers","content":"# Steps\n\n1. docker system prune -af","description":"how to prune aggressively","tags":["ready"],"loaded_version":1,"edit_summary":"Promote to ready"}}`)
+	if resp.IsError {
+		t.Fatalf("edit_agent_skill failed: %s", resp.Content[0].Text)
+	}
+	art, _ := srv.Storage.GetArticle("prune-containers")
+	if !strings.Contains(art.Content, "prune -af") {
+		t.Errorf("content not replaced: %s", art.Content)
+	}
+	if art.Description != "how to prune aggressively" {
+		t.Errorf("description = %q", art.Description)
+	}
+	if art.Version != 2 {
+		t.Errorf("version = %d, want 2", art.Version)
+	}
+	if art.Type != ContentTypeSkill {
+		t.Errorf("the reserved AI-Agent-Skill type must survive an edit, got %q", art.Type)
+	}
+	if len(art.Tags) != 1 || art.Tags[0] != "ready" {
+		t.Errorf("tags = %v, want [ready]", art.Tags)
+	}
+
+	// Optimistic locking, matching every other edit tool.
+	if resp := toolCall(t, srv, `{"name":"edit_agent_skill","arguments":{"slug":"prune-containers","content":"# Stale","loaded_version":1}}`); !resp.IsError {
+		t.Error("a stale loaded_version must be rejected")
+	}
+
+	// Refuses a target that is not a skill, so it cannot be used to launder a document's type.
+	toolCall(t, srv, `{"name":"create_wiki_article","arguments":{"title":"Not A Skill","content":"# Plain"}}`)
+	resp = toolCall(t, srv, `{"name":"edit_agent_skill","arguments":{"slug":"not-a-skill","content":"# Hijacked","loaded_version":1}}`)
+	if !resp.IsError || !strings.Contains(resp.Content[0].Text, "not a Custom AI Skill") {
+		t.Errorf("expected a type guard error, got: %+v", resp)
+	}
+}
+
+// TestEditingAnUnversionedArticle covers the legacy files written to disk before versioning
+// existed. read_article omitted `version` entirely for them (omitempty on zero), and
+// edit_wiki_article demanded a positive loaded_version — so the documented read-then-edit loop
+// dead-ended on exactly those articles, and the only way to change one was to edit the file by
+// hand. Relaxing the guard must not weaken optimistic locking for versioned articles.
+func TestEditingAnUnversionedArticle(t *testing.T) {
+	srv := newMCPServer(t)
+
+	// A file placed on disk directly, with no version in its front matter — the shape every
+	// article created before versioning has.
+	legacy := "---\ntype: Wiki\ntitle: Legacy Page\nslug: legacy-page\ntimestamp: \"2026-01-01T00:00:00Z\"\ncreated_at: \"2026-01-01T00:00:00Z\"\n---\n# Legacy Page\n\nWritten before versioning.\n"
+	if err := os.WriteFile(filepath.Join(srv.Storage.ArticleDir, "legacy-page.md"), []byte(legacy), 0644); err != nil {
+		t.Fatalf("seeding the legacy file failed: %v", err)
+	}
+
+	// read_article must report the version rather than omitting it, or the agent has nothing to
+	// feed back as loaded_version.
+	resp := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"legacy-page"}}`)
+	out, ok := resp.StructuredContent.(ArticleOutput)
+	if !ok {
+		t.Fatalf("expected ArticleOutput, got %T", resp.StructuredContent)
+	}
+	if out.Article.Version != 0 {
+		t.Fatalf("expected version 0 for an unversioned article, got %d", out.Article.Version)
+	}
+	raw, err := json.Marshal(out.Article)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if !strings.Contains(string(raw), `"version":0`) {
+		t.Errorf("version must be present in the payload, not dropped by omitempty: %s", raw)
+	}
+
+	// Feeding that 0 straight back must work.
+	resp = toolCall(t, srv, `{"name":"edit_wiki_article","arguments":{"slug":"legacy-page","title":"Legacy Page","content":"# Legacy Page\n\nNow editable.","loaded_version":0,"edit_summary":"Edit an unversioned article"}}`)
+	if resp.IsError {
+		t.Fatalf("editing an unversioned article must succeed, got: %s", resp.Content[0].Text)
+	}
+	art, _ := srv.Storage.GetArticle("legacy-page")
+	if !strings.Contains(art.Content, "Now editable") {
+		t.Errorf("content was not written: %s", art.Content)
+	}
+
+	// The article now has a version, so a stale 0 must be rejected rather than silently
+	// overwriting — the check this relaxation must not weaken.
+	resp = toolCall(t, srv, `{"name":"edit_wiki_article","arguments":{"slug":"legacy-page","title":"Legacy Page","content":"# Clobbered","loaded_version":0}}`)
+	if !resp.IsError || !strings.Contains(resp.Content[0].Text, "Version conflict") {
+		t.Errorf("a 0 against a versioned article must be a conflict, got: %+v", resp)
+	}
+
+	// A negative version is still nonsense and stays a hard argument error.
+	if _, rpcErr := srv.executeToolCallInternal(json.RawMessage(`{"name":"edit_wiki_article","arguments":{"slug":"legacy-page","title":"T","content":"C","loaded_version":-1}}`)); rpcErr == nil {
+		t.Error("a negative loaded_version must be rejected")
 	}
 }
 
