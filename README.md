@@ -106,6 +106,7 @@ All settings can be set via CLI flags. The `NEXWIKI_NAME`, `NEXWIKI_THEME`, and 
 | Stdio MCP-only mode | `-mcp-only` | `NEXWIKI_MCP_ONLY` | `false` | Run as a pure stdio MCP server, skipping the web port bind entirely. Required when spawning a stdio MCP subprocess alongside an already-running web server |
 | Archive auto-delete | — | `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Days after archiving before an article is permanently deleted on startup |
 | Activity archive cap | — | `NEXWIKI_ACTIVITY_MAX_ARCHIVES` | unlimited | Maximum number of rotated `activity-<UTC>.jsonl` archives to retain |
+| Agent attribution | `-agent-name` | `NEXWIKI_AGENT_NAME` | (unset) | Name recorded in the activity log for MCP clients that do not identify themselves. Clients sending MCP `clientInfo` are credited by their own name regardless. **Not** the same as `-name`, which is the wiki's display title |
 | Bind interface | `-bind` | `NEXWIKI_BIND` | (all interfaces) | Network interface to bind, e.g. `127.0.0.1` to accept only local connections. Leave unset for Docker |
 | Extra browser origins | — | `NEXWIKI_ALLOWED_ORIGINS` | (loopback only) | Comma-separated origins allowed to call the API from a browser, e.g. `https://wiki.example.com`. Needed only when serving NexWiki from a DNS name |
 

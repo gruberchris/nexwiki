@@ -40,6 +40,7 @@ func main() {
 	themeScheduling := flag.Bool("theme-scheduling", false, "Enable opt-in seasonal theme scheduling auto-swaps")
 	mcpOnly := flag.Bool("mcp-only", false, "Run as a pure stdio MCP server (skip the web port bind entirely)")
 	bindAddr := flag.String("bind", "", "Network interface to bind (e.g. 127.0.0.1 to accept only local connections). Empty binds all interfaces")
+	agentName := flag.String("agent-name", "", "Fallback attribution recorded in the activity log for MCP clients that do not identify themselves. Clients that send MCP clientInfo are credited by their own name regardless of this")
 	flag.Parse()
 
 	// NEXWIKI_MCP_ONLY env overrides the flag (e.g., set in a Claude Desktop spawn config).
@@ -114,6 +115,9 @@ func main() {
 
 	// Initialize server instance with configured name, theme, event bus, and scheduling settings
 	srv := server.NewServer(storage, name, defaultTheme, themeSchedulingEnabled, eventBus, Version, *port)
+	// Attribution fallback for MCP callers that send no clientInfo. Deliberately NOT `name`:
+	// NEXWIKI_NAME is the wiki's display title, and using it here is the defect this fixes.
+	srv.AgentName = server.ResolveConfiguredAgentName(*agentName)
 
 	// Any process reaching here owns its data directory outright: a detected primary would have
 	// been proxied to above, so there is no secondary to forward activity events from.

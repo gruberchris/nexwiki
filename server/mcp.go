@@ -26,6 +26,11 @@ type JSONRPCRequest struct {
 	// IsModern records that the request opted into the per-request-metadata era, which decides
 	// whether protocol errors surface as HTTP failures or ride inside a 200 response.
 	IsModern bool `json:"-"`
+	// FromStdio records that the request arrived on the stdio transport, which is the only one
+	// where a legacy `initialize` handshake can be remembered: stdio is one process talking to one
+	// client, whereas HTTP is sessionless and caching a handshake there would attribute one
+	// client's writes to another. handleRequest serves both, so the distinction has to be carried.
+	FromStdio bool `json:"-"`
 }
 
 // JSONRPCResponse represents an outgoing response in the JSON-RPC 2.0 format.
@@ -91,6 +96,7 @@ func (srv *Server) StartMCPServer() {
 			sendError(writer, -32700, "Parse error: invalid JSON", nil)
 			continue
 		}
+		req.FromStdio = true
 
 		// Handle request methods
 		srv.handleRequest(writer, &req)
@@ -189,6 +195,11 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 
 	switch req.Method {
 	case "initialize":
+		// Capture who is connecting, so their writes are attributable. Only on stdio — see
+		// JSONRPCRequest.FromStdio.
+		if req.FromStdio {
+			srv.rememberStdioClient(req.Params)
+		}
 		result = map[string]interface{}{
 			"protocolVersion": negotiateProtocolVersion(req.Params),
 			"capabilities":    serverCapabilities(),
@@ -204,7 +215,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 		}
 
 	case "tools/call":
-		result, rpcErr = srv.executeToolCall(req.Params)
+		result, rpcErr = srv.executeToolCall(req.Params, srv.resolveAgent(env))
 
 	case "prompts/list":
 		result = map[string]interface{}{
@@ -276,8 +287,8 @@ func (srv *Server) writeResponse(w io.Writer, req *JSONRPCRequest, result interf
 	return status
 }
 
-// logMCPToolCall logs a successfully executed MCP tool call and publishes it.
-func (srv *Server) logMCPToolCall(params json.RawMessage) {
+// logMCPToolCall logs a successfully executed MCP tool call and publishes it, attributed to agent.
+func (srv *Server) logMCPToolCall(params json.RawMessage, agent string) {
 	if srv.EventBus == nil {
 		return
 	}
@@ -322,9 +333,8 @@ func (srv *Server) logMCPToolCall(params json.RawMessage) {
 		}
 	}
 
-	agent := "AI Agent"
-	if srvName := os.Getenv("NEXWIKI_NAME"); srvName != "" {
-		agent = srvName
+	if agent == "" {
+		agent = DefaultAgentName
 	}
 
 	srv.EventBus.PublishActivity("mcp", action, tool, slug, title, agent)
@@ -386,12 +396,26 @@ func memoryScopeTags(tags []string) []string {
 }
 
 // executeToolCall parses parameters and executes requested MCP tools, with automatic logging hooks.
-func (srv *Server) executeToolCall(params json.RawMessage) (interface{}, *JSONRPCError) {
+// agent is the attribution recorded against the call — see resolveAgent.
+func (srv *Server) executeToolCall(params json.RawMessage, agent string) (interface{}, *JSONRPCError) {
 	result, rpcErr := srv.executeToolCallInternal(params)
-	if rpcErr == nil {
-		srv.logMCPToolCall(params)
+	if rpcErr == nil && !isToolError(result) {
+		srv.logMCPToolCall(params, agent)
 	}
 	return result, rpcErr
+}
+
+// isToolError reports whether a tool reported failure *inside* a successful JSON-RPC response.
+//
+// This distinction is the whole reason the guard exists. A tool that refuses its work — a version
+// conflict, a missing article, an invalid tag — returns ToolResponse{IsError: true} in a perfectly
+// well-formed result, not a JSON-RPC error. The logging hook only checked rpcErr, so every one of
+// those refusals was recorded as a completed write: a rejected optimistic-locking edit appeared in
+// the activity log as an edit that happened, attributed to whoever attempted it, against an
+// article that never changed.
+func isToolError(result interface{}) bool {
+	resp, ok := result.(ToolResponse)
+	return ok && resp.IsError
 }
 
 // executeToolCallInternal parses parameters and executes requested MCP tools.

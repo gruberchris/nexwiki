@@ -668,7 +668,7 @@ func (srv *Server) toolGetArticleHistory(args json.RawMessage) (interface{}, *JS
 	}
 
 	// A revision listing exists to answer "which version do I revert to, and why", so the
-	// structured form carries those three fields rather than a full copy of every past version.
+	// structured form carries those fields rather than a full copy of every past version.
 	versions := make([]RevisionRef, 0, len(history))
 	for _, ver := range history {
 		versions = append(versions, RevisionRef{
@@ -678,6 +678,18 @@ func (srv *Server) toolGetArticleHistory(args json.RawMessage) (interface{}, *JS
 		})
 	}
 
+	// Join who-wrote-what from the activity log. Unattributed revisions stay unattributed rather
+	// than guessing — see attributeRevisions.
+	slug := Slugify(hArgs.Slug)
+	versions = attributeRevisions(ActivityLogPath(srv.Storage.DataDir), slug, versions)
+
+	// The article's own provenance — where the knowledge came from, as distinct from who typed it.
+	// A missing article is not an error here: history can outlive the document it belonged to.
+	var source string
+	if art, err := srv.Storage.GetArticle(slug); err == nil {
+		source = art.Source
+	}
+
 	var respText string
 	if len(versions) == 0 {
 		respText = fmt.Sprintf("No historical versions found for article '%s'\n", hArgs.Slug)
@@ -685,16 +697,26 @@ func (srv *Server) toolGetArticleHistory(args json.RawMessage) (interface{}, *JS
 		respText = fmt.Sprintf("Revision History for '%s' (%d versions):\n\n", hArgs.Slug, len(versions))
 		for _, ver := range versions {
 			respText += fmt.Sprintf("Version: %d | Edited: %s\n", ver.Version, ver.Timestamp.Format(time.RFC3339))
+			if ver.Agent != "" {
+				byLine := fmt.Sprintf("  By: %s", ver.Agent)
+				if ver.Tool != "" {
+					byLine += fmt.Sprintf(" (via %s)", ver.Tool)
+				}
+				respText += byLine + "\n"
+			}
 			if ver.EditSummary != "" {
 				respText += fmt.Sprintf("  Summary: %s\n", ver.EditSummary)
 			}
 			respText += "\n"
 		}
+		if source != "" {
+			respText += fmt.Sprintf("Article source: %s\n", source)
+		}
 	}
 
 	return ToolResponse{
 		Content:           []ToolContent{{Type: "text", Text: respText}},
-		StructuredContent: HistoryOutput{Slug: Slugify(hArgs.Slug), Count: len(versions), Versions: versions},
+		StructuredContent: HistoryOutput{Slug: slug, Count: len(versions), Source: source, Versions: versions},
 	}, nil
 }
 

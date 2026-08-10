@@ -751,7 +751,7 @@ func TestExecuteToolCallLogsActivity(t *testing.T) {
 
 	// executeToolCall (not internal) should log to EventBus without error
 	params := json.RawMessage(`{"name":"list_articles","arguments":{}}`)
-	result, rpcErr := srv.executeToolCall(params)
+	result, rpcErr := srv.executeToolCall(params, "Test Client")
 	if rpcErr != nil {
 		t.Fatalf("executeToolCall returned RPC error: %v", rpcErr)
 	}
@@ -768,19 +768,19 @@ func TestLogMCPToolCallBranches(t *testing.T) {
 	srv := newMCPServer(t)
 
 	// Covers create_ prefix → "create" action
-	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"create_wiki_article","arguments":{"title":"Log Test Article","content":"# Content"}}`))
+	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"create_wiki_article","arguments":{"title":"Log Test Article","content":"# Content"}}`), "Test Client")
 
 	// Covers delete_ prefix → "delete" action
 	_, _ = srv.Storage.SaveArticle("", "Log Delete Me", "# bye", "", "", "", "", nil, "")
-	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"delete_wiki_article","arguments":{"slug":"log-delete-me"}}`))
+	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"delete_wiki_article","arguments":{"slug":"log-delete-me"}}`), "Test Client")
 
 	// Covers edit_ prefix → "edit" action
 	_, _ = srv.Storage.SaveArticle("", "Log Edit Me", "# v1", "", "", "", "", nil, "")
-	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"edit_wiki_article","arguments":{"slug":"log-edit-me","title":"Log Edit Me","content":"# v2","loaded_version":1}}`))
+	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"edit_wiki_article","arguments":{"slug":"log-edit-me","title":"Log Edit Me","content":"# v2","loaded_version":1}}`), "Test Client")
 
 	// Covers append_ prefix → "edit" action
 	_, _ = srv.Storage.SaveArticle("", "Log Append Me", "# base", "", "", "", "", []string{"aiagent-plan"}, ContentTypePlan)
-	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"append_agent_plan","arguments":{"slug":"log-append-me","content_to_append":"\n\n## Appended"}}`))
+	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"append_agent_plan","arguments":{"slug":"log-append-me","content_to_append":"\n\n## Appended"}}`), "Test Client")
 
 	// Verify EventBus received events
 	time.Sleep(10 * time.Millisecond) // let async goroutines finish if any

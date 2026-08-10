@@ -365,13 +365,17 @@ Permanently deletes an existing wiki article and its associated resources.
 ---
 
 ### 8. `get_article_history`
-Retrieves the full revision history log of a wiki page, showing version numbers, timestamps, and edit summaries.
+Retrieves the full revision history log of a wiki page, showing version numbers, timestamps, edit summaries, and **who made each revision**.
 
 * **Arguments**:
   * `slug` (string, **required**): The URL-safe slug of the target article.
 * **Behavior**:
-  Scans the gzip history directory and returns a structured, bulleted plain text revision list of all historical edits made to the page.
-* **Structured output**: `structuredContent` as `{slug, count, versions[]}`, each version carrying `version`, `timestamp`, and `edit_summary` — the three fields a revert decision needs.
+  Scans the gzip history directory and returns a structured, bulleted plain text revision list of all historical edits made to the page. Each revision is joined against the activity log to attribute it to the agent that made it.
+* **Structured output**: `structuredContent` as `{slug, count, source, versions[]}`. Each version carries `version`, `timestamp`, and `edit_summary` — the three fields a revert decision needs — plus `agent`, `tool`, and `via` when the activity log has a matching event. Top-level `source` is the article's own OKF provenance field: where the knowledge came from, as distinct from who typed it.
+
+> **Attribution is a hint, not an identity claim.** `agent` is whatever the MCP client reported as its `clientInfo`, or the server's configured `NEXWIKI_AGENT_NAME` for clients that report nothing. NexWiki is unauthenticated (see `SECURITY.md`), so nothing may treat this field as proof of who made a change.
+>
+> The fields are **omitted, not blank**, when no matching event exists. That is the normal case for revisions older than the activity log, or older than its retention window. Matching is by timestamp proximity within 5 seconds rather than by position, because the log can rotate or be pruned and an off-by-one would attribute every subsequent revision to the wrong agent.
 
 ---
 
