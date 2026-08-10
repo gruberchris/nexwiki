@@ -94,11 +94,7 @@ func healthOutputSchema() map[string]interface{} {
 		"detail": schemaOf("string", "What is wrong, phrased as something to act on."),
 	}, "slug", "title", "detail")
 
-	broken := schemaObject(map[string]interface{}{
-		"from_slug":   schemaOf("string", "Document containing the broken link."),
-		"target":      schemaOf("string", "Raw link target as written between the double brackets."),
-		"target_slug": schemaOf("string", "Slug the target resolves to; this is the page to create."),
-	}, "from_slug", "target", "target_slug")
+	broken := brokenLinkSchema()
 
 	duplicate := schemaObject(map[string]interface{}{
 		"slug":       schemaOf("string", "One memory of the pair."),
@@ -115,8 +111,8 @@ func healthOutputSchema() map[string]interface{} {
 		"truncated":                  schemaOf("boolean", "True when a category hit the limit and its list is shorter than its count."),
 		"orphan_count":               schemaOf("integer", "Documents no other document links to."),
 		"orphans":                    schemaArrayOf(finding, "Orphaned documents, up to the limit."),
-		"broken_link_count":          schemaOf("integer", "WikiLinks with no destination."),
-		"broken_links":               schemaArrayOf(broken, "Broken WikiLinks, up to the limit."),
+		"broken_link_count":          schemaOf("integer", "Internal links with no destination, in either link form."),
+		"broken_links":               schemaArrayOf(broken, "Broken internal links, up to the limit."),
 		"unsourced_memory_count":     schemaOf("integer", "Agent memories recorded without a source."),
 		"unsourced_memories":         schemaArrayOf(finding, "Memories missing provenance, up to the limit."),
 		"stale_plan_count":           schemaOf("integer", "In-flight plans untouched for longer than stale_days. Excludes plans tagged finished or parked."),
@@ -139,7 +135,7 @@ func healthOutputSchema() map[string]interface{} {
 var wikiHealthTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "wiki_health",
-		"description": "Audit the knowledge base for maintenance work: orphan pages nothing links to, broken double-bracket WikiLinks, agent memories recorded without a 'source', in-flight plans that have gone stale, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
+		"description": "Audit the knowledge base for maintenance work: orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source', in-flight plans that have gone stale, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -225,10 +221,14 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		}
 
 		// Orphan detection applies to wiki articles only. Memories, plans, and skills are reached
-		// through their own list tools, the search facets, and the context overview — nobody
-		// WikiLinks a memory, so calling every one of them an orphan is noise. Measured on the
-		// real 83-document corpus: reporting every type flagged 70 documents, 27 of which were
-		// agent documents behaving exactly as designed.
+		// through their own list tools, the search facets, and the context overview — nobody links
+		// to a memory, so calling every one of them an orphan is noise. Measured on the real
+		// 83-document corpus: reporting every type flagged 70 documents, 27 of which were agent
+		// documents behaving exactly as designed.
+		//
+		// The graph counts both internal link forms (§3.21). While it counted only [[WikiLinks]]
+		// this check still fired on 44 of 84 real documents, almost all of them linked from the
+		// home page in Markdown syntax; counting both took it to 2.
 		//
 		// home is the dashboard, not a leaf page: nothing links to a front page.
 		if doc.Type == ContentTypeWiki && slug != "home" && graph.InboundCount[slug] == 0 {
@@ -365,7 +365,7 @@ func renderHealthReport(out HealthOutput) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "NexWiki Health Report (%d documents scanned)\n\n", out.TotalDocuments)
 	fmt.Fprintf(&b, "- Orphan pages: %d\n", out.OrphanCount)
-	fmt.Fprintf(&b, "- Broken WikiLinks: %d\n", out.BrokenLinkCount)
+	fmt.Fprintf(&b, "- Broken internal links: %d\n", out.BrokenLinkCount)
 	fmt.Fprintf(&b, "- Memories with no source: %d\n", out.UnsourcedCount)
 	fmt.Fprintf(&b, "- Stale plans (unfinished, untouched for %d+ days): %d\n", out.StaleDays, out.StalePlanCount)
 	if out.ColdMemoryScanRan {
@@ -403,10 +403,12 @@ func renderHealthReport(out HealthOutput) string {
 	writeFindings("Orphan pages", out.OrphanCount, out.Orphans)
 
 	if out.BrokenLinkCount > 0 {
-		fmt.Fprintf(&b, "\n== Broken WikiLinks (%d) ==\n", out.BrokenLinkCount)
+		fmt.Fprintf(&b, "\n== Broken internal links (%d) ==\n", out.BrokenLinkCount)
 		for _, bl := range out.BrokenLinks {
-			fmt.Fprintf(&b, "- '[[%s]]' in '%s' — target '%s' does not exist. Create it or fix the link.\n",
-				bl.Target, bl.FromSlug, bl.TargetSlug)
+			// Display() prints the link in the syntax it was written in, so the agent searches the
+			// file for text that is actually there.
+			fmt.Fprintf(&b, "- '%s' in '%s' — target '%s' does not exist. Create it or fix the link.\n",
+				bl.Display(), bl.FromSlug, bl.TargetSlug)
 		}
 		if len(out.BrokenLinks) < out.BrokenLinkCount {
 			fmt.Fprintf(&b, "  ... and %d more; raise 'limit' to see them.\n", out.BrokenLinkCount-len(out.BrokenLinks))

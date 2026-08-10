@@ -17,11 +17,26 @@ export function lintMarkdown(content: string, articles: { slug: string; title: s
   let currentOffset = 0;
   let prevHeadingLevel = 0;
   let h1Count = 0;
-  
+  // Fenced-code state, tracked for the two link checks only. Those have to agree with the server's
+  // link graph, which blanks out code before scanning (stripCodeForLinkScan) so that a C++
+  // [[nodiscard]] or a documented `[Title](/articles/slug)` example is not a link. The style rules
+  // below keep their existing whole-document behavior.
+  let inFence = false;
+  let fenceMarker = '';
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const lineLen = line.length;
-    
+    const trimmed = line.trimStart();
+    const wasInFence = inFence;
+    if (!inFence && (trimmed.startsWith('```') || trimmed.startsWith('~~~'))) {
+      inFence = true;
+      fenceMarker = trimmed.slice(0, 3);
+    } else if (inFence && trimmed.startsWith(fenceMarker)) {
+      inFence = false;
+    }
+    const inCodeBlock = wasInFence || inFence;
+
     // MD001 & MD025: Heading checks
     const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
     if (headingMatch) {
@@ -108,7 +123,7 @@ export function lintMarkdown(content: string, articles: { slug: string; title: s
     // WikiLinks check: [[Page Title]] or [[page-slug|Custom text]]
     const wikiLinkRegex = /\[\[([^\]|]+)(?:\|([^\]]+))?]]/g;
     let wlMatch;
-    while ((wlMatch = wikiLinkRegex.exec(line)) !== null) {
+    while (!inCodeBlock && (wlMatch = wikiLinkRegex.exec(line)) !== null) {
       const fullWikiLink = wlMatch[0];
       const matchIndex = wlMatch.index;
       const target = wlMatch[1].trim();
@@ -129,6 +144,37 @@ export function lintMarkdown(content: string, articles: { slug: string; title: s
       }
     }
     
+    // MDLINK_BROKEN: absolute internal Markdown links, [text](/articles/slug)
+    //
+    // The other half of the same check. NexWiki's guidelines tell agents to prefer this form over
+    // [[WikiLinks]] in body prose, so leaving it unlinted meant the link form the house style
+    // actually uses got no warning at all. The leading (^|[^!]) skips the image form.
+    //
+    // Deliberately carries no `suggestion`: the editor's quick-fix action inserts the suggestion
+    // text verbatim into the document, so a prose hint would be pasted into the article body.
+    const mdLinkRegex = /(^|[^!])(\[[^\]]*]\(\/articles\/)([^)\s"]+)/g;
+    let mdMatch;
+    while (!inCodeBlock && (mdMatch = mdLinkRegex.exec(line)) !== null) {
+      const prefixLen = mdMatch[1].length;
+      const matchIndex = mdMatch.index + prefixLen;
+      const linkLen = mdMatch[0].length - prefixLen;
+      const target = mdMatch[3].split(/[#?]/)[0].replace(/\/$/, '');
+
+      const slug = Slugify(target);
+      const exists = articles.some(art => art.slug === slug) || slug === 'home' || slug === 'new';
+
+      if (target && !exists) {
+        diagnostics.push({
+          line: i + 1,
+          from: currentOffset + matchIndex,
+          to: currentOffset + matchIndex + linkLen,
+          severity: 'warning',
+          message: `Link target "/articles/${target}" does not exist yet.`,
+          code: 'MDLINK_BROKEN'
+        });
+      }
+    }
+
     // Add length of current line + newline char
     currentOffset += lineLen + 1; // +1 for the \n
   }

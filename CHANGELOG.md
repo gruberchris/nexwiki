@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+- **The link graph ignored the link form the house style prefers.** `ScanLinkGraph` read only `[[WikiLinks]]`, but the corpus is overwhelmingly written in absolute `[text](/articles/slug)` Markdown links — and `nexwiki-agent-guidelines` §5 tells every connected agent to write them that way. Measured on an 84-document wiki: **293 Markdown links against 57 WikiLinks, and the home page's 48 internal links were 100% invisible.** Three consumers were wrong as a result, and all three are fixed by one scanner change:
+  - `wiki_health` reported **0 broken links against 26 real ones** (14 of them pointing at a `/articles/rust` that had been renamed).
+  - `wiki_health` called **44 of 84 documents orphans (52%)**; the true number is 2. §6.5 had already tuned this check once after it fired on 84% of the wiki, and the remaining cause was that the majority link form was never counted.
+  - `get_backlinks` — which the guidelines tell agents to run *before* a rename or delete — under-reported inbound references, the dangerous direction for that use.
+- **Renaming an article now heals inbound Markdown links too**, not just `[[WikiLinks]]`. Only the destination is rewritten (`](/articles/old)` → `](/articles/new)`); the link text is left exactly as the author wrote it, the same guarantee `[[old|display]]` already had. Unhealed Markdown links are presumably how `/articles/rust` came to be broken in 14 places.
+- **The viewer opened the wiki's own pages in a new tab.** `Viewer.tsx` had a branch for `wikilink:` URLs and a fallback for external links, and nothing in between, so an absolute `/articles/<slug>` link rendered with `target="_blank"` and full-reloaded the app. Both internal forms now navigate in place, and both render the same red-dotted create prompt when the target does not exist.
+
+### Added
+- **`MDLINK_BROKEN` editor diagnostic** — the linter now underlines absolute `[text](/articles/slug)` links whose target does not exist, alongside the existing `WIKILINK_BROKEN`. Both link rules now skip fenced code blocks, matching the server-side scanner, so a documented `[Title](/articles/slug)` example is not reported as a link.
+- **`broken_links[].form`** on `wiki_health` and `get_wiki_statistics` — `"wikilink"` or `"markdown"`. Reports print the link in the syntax it was written in, because an agent told to fix `[[rust]]` in a file that actually says `[Rust](/articles/rust)` will not find it.
+
 ## [0.9.0] — 2026-08-09
 
 ### Added

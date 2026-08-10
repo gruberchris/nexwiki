@@ -435,8 +435,10 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	return art, nil
 }
 
-// healRenamedLinks (caller must hold writeMu) rewrites every article that links to oldSlug via a WikiLink so it points
-// at the renamed article's new title. Best-effort: any per-article failure is logged and skipped.
+// healRenamedLinks (caller must hold writeMu) rewrites every article that links to oldSlug so it
+// points at the renamed article. Both internal link forms are healed: a [[WikiLink]] is retargeted
+// to the new title, and an absolute [text](/articles/<slug>) destination is retargeted to the new
+// slug with its link text untouched. Best-effort: any per-article failure is logged and skipped.
 func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 	backlinks, err := s.GetBacklinks(oldSlug)
 	if err != nil {
@@ -448,11 +450,12 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 		if err != nil {
 			continue
 		}
-		rewritten, changed := RewriteWikiLinks(linker.Content, oldSlug, newTitle)
-		if !changed {
+		rewritten, wikiChanged := RewriteWikiLinks(linker.Content, oldSlug, newTitle)
+		rewritten, pathChanged := RewriteArticlePathLinks(rewritten, oldSlug, newSlug)
+		if !wikiChanged && !pathChanged {
 			continue
 		}
-		summary := fmt.Sprintf("Auto-healed WikiLink: '%s' renamed to '%s'", oldSlug, newSlug)
+		summary := fmt.Sprintf("Auto-healed internal link: '%s' renamed to '%s'", oldSlug, newSlug)
 		if _, err := s.saveArticleLocked(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to heal links in '%s' after rename: %v\n", linker.Slug, err)
 		}

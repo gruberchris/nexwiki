@@ -153,6 +153,86 @@ describe('lintMarkdown – WikiLinks', () => {
   });
 });
 
+describe('lintMarkdown – MDLINK_BROKEN (absolute /articles/ links)', () => {
+  it('no diagnostic for an existing article link', () => {
+    const diags = lintMarkdown('See [the page](/articles/existing-page) for more.', articles);
+    expect(diags.filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('warns for a nonexistent target', () => {
+    const diags = lintMarkdown('See [Kotlin](/articles/kotlin) for more.', articles);
+    const md = diags.filter(d => d.code === 'MDLINK_BROKEN');
+    expect(md).toHaveLength(1);
+    expect(md[0].severity).toBe('warning');
+    expect(md[0].message).toContain('/articles/kotlin');
+  });
+
+  it('carries no suggestion, because the quick-fix action inserts it into the document', () => {
+    const diags = lintMarkdown('[Kotlin](/articles/kotlin)', articles);
+    expect(diags.find(d => d.code === 'MDLINK_BROKEN')!.suggestion).toBeUndefined();
+  });
+
+  it('spans the whole link, not the character before it', () => {
+    const content = 'See [Kotlin](/articles/kotlin) here.';
+    const diag = lintMarkdown(content, articles).find(d => d.code === 'MDLINK_BROKEN')!;
+    expect(content.slice(diag.from, diag.to)).toBe('[Kotlin](/articles/kotlin');
+  });
+
+  it('ignores the fragment when resolving the target', () => {
+    const diags = lintMarkdown('[History](/articles/existing-page#history)', articles);
+    expect(diags.filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('/articles/home is always valid', () => {
+    const diags = lintMarkdown('Back to [home](/articles/home).', noArticles);
+    expect(diags.filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('does not flag images', () => {
+    const diags = lintMarkdown('![diagram](/articles/kotlin)', articles);
+    expect(diags.filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('does not flag /api/articles/ URLs', () => {
+    const diags = lintMarkdown('Call [the API](/api/articles/kotlin).', articles);
+    expect(diags.filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('flags links on a later line with the right line number', () => {
+    const diags = lintMarkdown('# Title\n\n[Kotlin](/articles/kotlin)', articles);
+    const md = diags.find(d => d.code === 'MDLINK_BROKEN')!;
+    expect(md.line).toBe(3);
+  });
+});
+
+// Both link checks have to agree with the server's link graph, which blanks out code before
+// scanning. The two format-template articles in the real corpus document the convention with a
+// fenced [Article Title](/articles/slug) example, and flagging those would be a false positive on
+// content the health report deliberately ignores.
+describe('lintMarkdown – links inside code are not links', () => {
+  it('ignores an /articles/ link inside a fenced block', () => {
+    const content = '```markdown\n[Article Title](/articles/slug)\n```\n';
+    expect(lintMarkdown(content, articles).filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('ignores a WikiLink inside a fenced block', () => {
+    const content = '```cpp\n[[nodiscard]] int f();\n```\n';
+    expect(lintMarkdown(content, articles).filter(d => d.code === 'WIKILINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('ignores a tilde-fenced block', () => {
+    const content = '~~~markdown\n[Article Title](/articles/slug)\n~~~\n';
+    expect(lintMarkdown(content, articles).filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('still flags links after the fence closes', () => {
+    const content = '```markdown\n[Example](/articles/slug)\n```\n\n[Kotlin](/articles/kotlin)\n';
+    const md = lintMarkdown(content, articles).filter(d => d.code === 'MDLINK_BROKEN');
+    expect(md).toHaveLength(1);
+    expect(md[0].line).toBe(5);
+  });
+});
+
 describe('lintMarkdown – character offsets', () => {
   it('computes correct from offset for heading on first line', () => {
     const content = '# Title';

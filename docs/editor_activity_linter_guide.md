@@ -66,6 +66,9 @@ To guarantee structural health and pristine formatting, NexWiki executes debounc
 * **MD037 (Surrounding Spaces)**: Warns on spaces right inside bold/italic triggers (e.g., `** text **` instead of `**text**`).
 * **MD034 (Bare URLs)**: Advises wrapping plain links in angle brackets (e.g. `<http://example.com>`).
 * **WIKILINK_BROKEN**: Warns on double-bracketed `[[WikiLink]]` tags targeting slugs that do not exist yet in the database.
+* **MDLINK_BROKEN**: Warns on absolute internal Markdown links — `[text](/articles/slug)` — whose target slug does not exist. This is the link form the agent guidelines tell authors to prefer in body prose, so leaving it unchecked meant the majority of internal links got no warning at all. Image links (`![alt](/articles/…)`) and `/api/articles/…` URLs are not flagged.
+
+Both link rules skip fenced code blocks, matching the server-side link scanner: a `[Title](/articles/slug)` inside a ` ```markdown ` example is documentation, not a link.
 
 ### Inline Diagnostics & Context Menus
 * **Wavy Underlines**: Issues draw wavy glows (red for errors, amber for warnings, indigo for info). Hovering over a span displays details and click-to-apply quick-fixes.

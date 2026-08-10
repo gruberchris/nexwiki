@@ -43,6 +43,29 @@ function preprocessWikiLinks(markdown: string): string {
     .join('');
 }
 
+/**
+ * Resolves an href to the wiki slug it targets, or null when the link is external.
+ *
+ * NexWiki has two internal link forms and they must behave identically: the `wikilink:` protocol
+ * that preprocessWikiLinks emits for [[WikiLinks]], and absolute `/articles/<slug>` Markdown links,
+ * which the agent guidelines tell authors to prefer and which make up the majority of real links.
+ * Any #fragment or ?query is dropped — it addresses a position within the article, not a different
+ * article.
+ */
+function internalTargetSlug(href: string | undefined): string | null {
+  if (!href) return null;
+  if (href.startsWith('wikilink:')) return href.substring('wikilink:'.length) || null;
+  if (href.startsWith('/articles/')) {
+    const raw = href.substring('/articles/'.length).split(/[#?]/)[0].replace(/\/$/, '');
+    try {
+      return decodeURIComponent(raw) || null;
+    } catch {
+      return raw || null; // malformed percent-encoding: use it verbatim rather than throwing
+    }
+  }
+  return null;
+}
+
 export const Viewer: React.FC<ViewerProps> = ({ content, onNavigate, articles }) => {
   const processedContent = preprocessWikiLinks(content);
 
@@ -66,14 +89,19 @@ export const Viewer: React.FC<ViewerProps> = ({ content, onNavigate, articles })
             const id = Slugify(String(children));
             return <h3 id={id}>{children}</h3>;
           },
-          // Override default link rendering for WikiLinks and SPA standard links
+          // Override default link rendering for internal links and SPA standard links
           a: ({ href, children, ...props }) => {
-            if (href && href.startsWith('wikilink:')) {
-              const slug = href.substring('wikilink:'.length);
-              
+            // Both internal link forms resolve to a slug and must look and behave identically.
+            // [[WikiLinks]] arrive as the custom wikilink: protocol from preprocessWikiLinks;
+            // absolute Markdown links are the form the agent guidelines tell authors to prefer,
+            // and they fell through to the external-link branch below — opening the wiki's own
+            // pages in a new tab with a full page reload.
+            const slug = internalTargetSlug(href);
+
+            if (slug) {
               // Verify if the referenced page exists in our wiki list
               const exists = articles.some(art => art.slug === slug);
-              
+
               if (exists || slug === 'home') {
                 return (
                   <a
@@ -93,10 +121,16 @@ export const Viewer: React.FC<ViewerProps> = ({ content, onNavigate, articles })
                 // so it must be focusable, activatable with Enter/Space, and announced to screen
                 // readers with what it does.
                 const linkTitle = String(children);
+                // Create the page the link actually points at. The display text is the nicer
+                // title and is used whenever it resolves to the same slug — always true for
+                // [[WikiLinks]] — but a Markdown link's text can differ from its destination
+                // ([Rust](/articles/rust-lang)), and a "create" affordance that produces a page
+                // the link still cannot reach is worse than none.
+                const createTitle = Slugify(linkTitle) === slug ? linkTitle : slug;
                 return (
                   <button
                     type="button"
-                    onClick={() => onNavigate(`new?title=${encodeURIComponent(linkTitle)}`)}
+                    onClick={() => onNavigate(`new?title=${encodeURIComponent(createTitle)}`)}
                     className="wikilink-broken"
                     title={`"${linkTitle}" does not exist yet. Click to create!`}
                     aria-label={`Create missing page "${linkTitle}"`}

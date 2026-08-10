@@ -79,9 +79,9 @@ It then calls **`get_recent_activity(since: "48h")`** to see what you, other age
 Based on the overview, the agent calls **`read_article`** only on relevant entries. Each read now includes:
 
 * the **Description** and **Source** metadata (when set), and
-* a **`Linked from:`** footer listing inbound WikiLinks.
+* a **`Linked from:`** footer listing inbound internal links, in either form.
 
-For deeper graph traversal it calls **`get_backlinks(slug)`** — *"what references this decision?"* — and hops the knowledge graph associatively, the way a human brain follows threads. Writing flows in the other direction too: agents add `[[WikiLinks]]` when creating content, and the **Linked from** panel in the web UI shows you the same inbound links.
+For deeper graph traversal it calls **`get_backlinks(slug)`** — *"what references this decision?"* — and hops the knowledge graph associatively, the way a human brain follows threads. Writing flows in the other direction too: agents add internal links when creating content — `[[WikiLinks]]` or absolute `[text](/articles/slug)` Markdown links, both of which the graph counts — and the **Linked from** panel in the web UI shows you the same inbound links.
 
 ### Step 3 — Work, with plans
 
@@ -121,7 +121,7 @@ Say *"ingest my inbox"* or *"ingest this article: \<URL\>"*. The agent loads the
 2. Orient with `get_context_overview` to avoid duplicates.
 3. Read the source **fully** before writing.
 4. Synthesize a proper wiki article — a compilation in the wiki's voice, not a transcript — with `description` and `source` (citation) set.
-5. Cross-link with `[[WikiLinks]]` to related pages, and add backlinks from 1–3 closely related existing pages.
+5. Cross-link to related pages — `[[WikiLinks]]` or absolute `/articles/<slug>` Markdown links, whichever the wiki's house style prefers — and add backlinks from 1–3 closely related existing pages.
 6. **Flag contradictions** with existing content for your review — never silently overwrite.
 7. Remove the `inbox` tag from the raw dump (or delete it).
 8. Report what was created, linked, and flagged.
