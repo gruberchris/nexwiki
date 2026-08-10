@@ -82,12 +82,25 @@ type RevisionRef struct {
 	Version     int       `json:"version"`
 	Timestamp   time.Time `json:"timestamp"`
 	EditSummary string    `json:"edit_summary,omitempty"`
+
+	// Agent is who made this revision, joined from the activity log. Omitted when the log has no
+	// event for it — which is normal for revisions predating the log, or older than its retention.
+	// Self-reported by the client: a provenance hint, not an authentication claim.
+	Agent string `json:"agent,omitempty"`
+	// Tool is the MCP tool used, empty for edits made through the web UI.
+	Tool string `json:"tool,omitempty"`
+	// Via is the transport that carried the edit: "mcp" or "api".
+	Via string `json:"via,omitempty"`
 }
 
 // HistoryOutput is the `get_article_history` payload, newest version first.
 type HistoryOutput struct {
-	Slug     string        `json:"slug"`
-	Count    int           `json:"count"`
+	Slug  string `json:"slug"`
+	Count int    `json:"count"`
+	// Source is the article's provenance field — where the knowledge came from, as opposed to who
+	// typed it. Together with the per-revision Agent this answers §6.9's question in full:
+	// "Claude wrote this on 2026-06-20, citing X".
+	Source   string        `json:"source,omitempty"`
 	Versions []RevisionRef `json:"versions"`
 }
 
@@ -226,11 +239,15 @@ func historyOutputSchema() map[string]interface{} {
 		"version":      schemaOf("integer", "Revision number, usable with revert_article_version."),
 		"timestamp":    schemaOf("string", "RFC3339 time the revision was written."),
 		"edit_summary": schemaOf("string", "Summary recorded with the edit."),
+		"agent":        schemaOf("string", "Who made this revision, from the activity log. Absent when the log has no matching event. Self-reported by the client: a provenance hint, not an authentication claim."),
+		"tool":         schemaOf("string", "MCP tool used for the edit; absent for edits made in the web UI."),
+		"via":          schemaOf("string", "Transport that carried the edit: 'mcp' or 'api'."),
 	}, "version", "timestamp")
 
 	return schemaObject(map[string]interface{}{
 		"slug":     schemaOf("string", "The article whose history was requested."),
 		"count":    schemaOf("integer", "Number of stored revisions."),
+		"source":   schemaOf("string", "The article's provenance: where its knowledge came from, as opposed to who wrote it."),
 		"versions": schemaArrayOf(revision, "Revisions, newest version first."),
 	}, "slug", "count", "versions")
 }

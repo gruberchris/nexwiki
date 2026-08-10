@@ -35,6 +35,14 @@ DNS names are deliberately not auto-trusted via the same-origin rule: that would
 - Search snippets are HTML-escaped before rendering.
 - The HTTP server sets read and idle timeouts.
 
+## Agent attribution is not authentication
+
+The activity log records an `agent` for every change, `get_article_history` reports who made each revision, and the Activity drawer lets you filter by agent. **None of this is an identity claim.**
+
+The value comes from the MCP client's self-reported `clientInfo`, or from the server's configured `NEXWIKI_AGENT_NAME` for clients that report nothing. Any client can send any name. Since NexWiki is unauthenticated (see the trust model above), attribution is a convenience for telling *your own* agents apart — not evidence of who made a change, and not something to build an access decision on.
+
+Self-reported names are length-capped and stripped of control characters before they reach the log, so a hostile value cannot corrupt the record or the UI that renders it.
+
 ## Reporting a vulnerability
 
 Please report security issues **privately** — do not open a public issue.

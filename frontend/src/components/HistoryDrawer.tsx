@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, RotateCcw, Eye, ArrowLeft, Loader2, Calendar, FileText, Sparkles } from 'lucide-react';
+import { Clock, RotateCcw, Eye, ArrowLeft, Loader2, Calendar, FileText, Sparkles, User } from 'lucide-react';
 import { DiffView } from './DiffView';
 import type { Article } from '../types';
+
+// A history entry is an Article plus who made the revision, joined server-side from the activity
+// log. The attribution fields are optional: revisions predating the log carry none, and showing
+// nothing is the honest rendering of "we do not know".
+type Revision = Article & { agent?: string; tool?: string; via?: string };
 
 interface HistoryDrawerProps {
   slug: string;
@@ -18,9 +23,9 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   currentContent,
   currentTitle,
 }) => {
-  const [history, setHistory] = useState<Article[]>([]);
+  const [history, setHistory] = useState<Revision[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedVersion, setSelectedVersion] = useState<Article | null>(null);
+  const [selectedVersion, setSelectedVersion] = useState<Revision | null>(null);
   const [isReverting, setIsReverting] = useState(false);
   const [layoutMode, setLayoutMode] = useState<'split' | 'unified'>('split');
 
@@ -237,6 +242,13 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                       <div className="text-xs text-slate-700 dark:text-slate-350 font-bold leading-tight">
                         {h.edit_summary}
                       </div>
+                      {h.agent && (
+                        <div className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
+                          <User size={9} />
+                          <span className="font-semibold text-slate-500 dark:text-slate-400">{h.agent}</span>
+                          {h.tool && <span className="font-mono text-slate-400">via {h.tool}</span>}
+                        </div>
+                      )}
                       {h.title !== currentTitle && (
                         <div className="text-[10px] text-slate-400 font-medium">
                           Historical Title: <span className="font-semibold text-slate-500">{h.title}</span>

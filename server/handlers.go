@@ -25,6 +25,19 @@ type Server struct {
 	Version                string
 	Port                   string
 
+	// AgentName is the attribution recorded in the activity log for MCP callers that do not
+	// identify themselves. Optional; set from -agent-name / NEXWIKI_AGENT_NAME. It is a field
+	// rather than a NewServer parameter because it is optional configuration with a working
+	// default, and threading it through every construction site would say otherwise.
+	//
+	// Note this is NOT WikiName. Conflating the two is the defect this exists to fix — see
+	// provenance.go.
+	AgentName string
+
+	// stdioClient holds the identity from a legacy `initialize` on the stdio connection, which is
+	// the only transport where a handshake can be attributed for the life of a connection.
+	stdioClient agentIdentity
+
 	// shuttingDown is closed when the process begins a graceful shutdown. Every long-lived
 	// response stream selects on it and returns.
 	//
@@ -611,7 +624,33 @@ func (srv *Server) HandleGetArticleHistory(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, history)
+	writeJSON(w, http.StatusOK, srv.attributeHistory(Slugify(slug), history))
+}
+
+// historyEntryResponse is a revision plus who made it. Article is embedded rather than copied
+// field-by-field, so its JSON keys are promoted unchanged and the addition is purely additive for
+// existing clients.
+type historyEntryResponse struct {
+	Article
+	Agent string `json:"agent,omitempty"`
+	Tool  string `json:"tool,omitempty"`
+	Via   string `json:"via,omitempty"`
+}
+
+// attributeHistory joins revision metadata with the activity log so the History drawer can say who
+// made each edit, using the same matching rules as the MCP tool — see attributeRevisions.
+func (srv *Server) attributeHistory(slug string, history []Article) []historyEntryResponse {
+	refs := make([]RevisionRef, len(history))
+	for i, ver := range history {
+		refs[i] = RevisionRef{Version: ver.Version, Timestamp: ver.Timestamp}
+	}
+	refs = attributeRevisions(ActivityLogPath(srv.Storage.DataDir), slug, refs)
+
+	out := make([]historyEntryResponse, len(history))
+	for i, ver := range history {
+		out[i] = historyEntryResponse{Article: ver, Agent: refs[i].Agent, Tool: refs[i].Tool, Via: refs[i].Via}
+	}
+	return out
 }
 
 // HandleGetArticleVersion retrieves single historical version details including content body.

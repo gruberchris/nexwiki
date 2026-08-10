@@ -263,7 +263,9 @@ func (srv *Server) handleModernMethod(method string, env paramsEnvelope) (interf
 		return map[string]interface{}{"tools": toolSchemas()}, nil
 
 	case "tools/call":
-		return srv.executeToolCall(env.Raw)
+		// The modern era carries clientInfo in _meta on every request, so attribution needs no
+		// handshake and no session — the identity is right here in the envelope.
+		return srv.executeToolCall(env.Raw, srv.resolveAgent(env))
 
 	case "prompts/list":
 		return map[string]interface{}{"prompts": promptDefinitions()}, nil

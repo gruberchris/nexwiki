@@ -199,29 +199,42 @@ func (al *ActivityLog) Close() error {
 	return al.file.Close()
 }
 
-// ReadActivityLog reads persisted events spanning the active log plus rotated archives, applying
-// filters, and returns at most limit of the newest matches in chronological order (oldest first).
-// It walks files newest-first and stops as soon as the since/limit window is satisfied, so a
-// "last 24h" query never scans years of archived history. Unparseable lines are skipped.
-// Files are opened fresh on every call so mcp-only sidecar processes can read the shared log.
-func ReadActivityLog(path string, since time.Time, limit int, actionFilter string, sourceFilter string) ([]LogEvent, error) {
-	dataDir := filepath.Dir(path)
+// ActivityFilter selects which events a read returns.
+//
+// This exists because ReadActivityLog and ReadActivityLogBefore already took five positional
+// filter arguments each, and the provenance join needed a sixth (slug). A struct keeps the
+// existing call sites untouched and stops the next filter from making the signature worse.
+type ActivityFilter struct {
+	// Since bounds how far back to walk. Zero means unbounded.
+	Since time.Time
+	// Limit caps the returned events. Zero or negative means unlimited.
+	Limit int
+	// Action, Source and Slug are exact-match filters; empty means "any".
+	Action string
+	Source string
+	Slug   string
+}
 
-	// Newest-first reading order: the active file, then archives by descending name (time).
-	files := append([]string{path}, listActivityArchives(dataDir)...)
-
-	matches := func(ev LogEvent) bool {
-		if !since.IsZero() && ev.Timestamp.Before(since) {
-			return false
-		}
-		if actionFilter != "" && ev.Action != actionFilter {
-			return false
-		}
-		if sourceFilter != "" && ev.Source != sourceFilter {
-			return false
-		}
-		return true
+func (f ActivityFilter) matches(ev LogEvent) bool {
+	if !f.Since.IsZero() && ev.Timestamp.Before(f.Since) {
+		return false
 	}
+	if f.Action != "" && ev.Action != f.Action {
+		return false
+	}
+	if f.Source != "" && ev.Source != f.Source {
+		return false
+	}
+	if f.Slug != "" && ev.Slug != f.Slug {
+		return false
+	}
+	return true
+}
+
+// ReadActivityLogFiltered is the general form of ReadActivityLog, taking a filter struct.
+func ReadActivityLogFiltered(path string, filter ActivityFilter) ([]LogEvent, error) {
+	dataDir := filepath.Dir(path)
+	files := append([]string{path}, listActivityArchives(dataDir)...)
 
 	var collected []LogEvent
 	anyFileExists := false
@@ -235,18 +248,18 @@ func ReadActivityLog(path string, since time.Time, limit int, actionFilter strin
 		}
 		anyFileExists = true
 		for _, ev := range evs {
-			if matches(ev) {
+			if filter.matches(ev) {
 				collected = append(collected, ev)
 			}
 		}
 		// Stop walking older archives once the window is fully covered:
 		// - a since bound is satisfied once this file reaches before `since`, or
 		// - without a since bound, once we already hold at least `limit` matches.
-		if !since.IsZero() {
-			if !fileEarliest.IsZero() && fileEarliest.Before(since) {
+		if !filter.Since.IsZero() {
+			if !fileEarliest.IsZero() && fileEarliest.Before(filter.Since) {
 				break
 			}
-		} else if limit > 0 && len(collected) >= limit {
+		} else if filter.Limit > 0 && len(collected) >= filter.Limit {
 			break
 		}
 	}
@@ -259,10 +272,24 @@ func ReadActivityLog(path string, since time.Time, limit int, actionFilter strin
 		return collected[i].Timestamp.Before(collected[j].Timestamp)
 	})
 
-	if limit > 0 && len(collected) > limit {
-		collected = collected[len(collected)-limit:]
+	if filter.Limit > 0 && len(collected) > filter.Limit {
+		collected = collected[len(collected)-filter.Limit:]
 	}
 	return collected, nil
+}
+
+// ReadActivityLog reads persisted events spanning the active log plus rotated archives, applying
+// filters, and returns at most limit of the newest matches in chronological order (oldest first).
+// It walks files newest-first and stops as soon as the since/limit window is satisfied, so a
+// "last 24h" query never scans years of archived history. Unparseable lines are skipped.
+// Files are opened fresh on every call so mcp-only sidecar processes can read the shared log.
+func ReadActivityLog(path string, since time.Time, limit int, actionFilter string, sourceFilter string) ([]LogEvent, error) {
+	return ReadActivityLogFiltered(path, ActivityFilter{
+		Since:  since,
+		Limit:  limit,
+		Action: actionFilter,
+		Source: sourceFilter,
+	})
 }
 
 // ReadActivityLogBefore returns up to limit matching events strictly older than `before`
