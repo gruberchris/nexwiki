@@ -637,26 +637,33 @@ Audits the knowledge base for maintenance work in one call. Everything it report
 
 * **Arguments**:
   * `stale_days` (integer, *optional*): How many days an in-flight plan may go untouched before counting as stale. Default `30`.
+  * `cold_days` (integer, *optional*): How many days a memory may go unread and unedited before counting as cold. Default `90`.
   * `limit` (integer, *optional*): Maximum items reported **per category**. Default `50`, maximum `500`. Counts are always complete even when the lists are capped.
 * **Behavior**:
-  Runs four checks over a single cached pass of the article directory — the same `LinkGraph` scan `get_wiki_statistics` uses, so the two tools can never disagree about the same wiki:
+  Runs six checks over a single cached pass of the article directory — the same `LinkGraph` scan `get_wiki_statistics` uses, so the two tools can never disagree about the same wiki:
 
   | Check | Finds | Why it matters |
   |---|---|---|
   | **Orphan pages** | A **wiki article** no other article links to | Unreachable by graph traversal, so an agent following WikiLinks will never find it |
   | **Broken WikiLinks** | The target does not exist | Names the `target_slug` a fix has to create |
   | **Memories with no `source`** | An `AI-Agent-Memory` with empty provenance | A fact that cannot be re-verified later |
-  | **Stale plans** | An `AI-Agent-Plan` untouched for `stale_days` and never marked finished | Work that quietly stopped |
+  | **Stale plans** | An `AI-Agent-Plan` untouched for `stale_days`, never marked finished, and not parked | Work that quietly stopped |
+  | **Cold memories** | An `AI-Agent-Memory` neither read nor edited within `cold_days` | Knowledge nothing consults is either settled or quietly wrong |
+  | **Duplicate memories** | Two memories in the same `memory-<scope>` with closely matching titles | Two answers to one question drift apart |
 
-  Four rules keep the report actionable rather than noisy:
+  Several rules keep the report actionable rather than noisy:
 
   * **Archived documents are skipped entirely.** Archiving is you saying "this is done"; reporting it as needing attention inverts that.
   * **Orphan detection covers wiki articles only.** Memories, plans, and skills are reached through their own list tools, the search facets, and `get_context_overview` — nobody WikiLinks a memory, so flagging every one of them is noise. On an 83-document corpus, scanning every type produced 70 findings, 27 of which were agent documents behaving exactly as designed.
   * **`home` is never an orphan.** Nothing links to a front page.
   * **A plan tagged `completed`, `done`, or `superseded` is never stale**, however old, even if it still also carries `wip`. The terminal tag wins.
+  * **A plan tagged `parked`, `deferred`, `tabled`, `on-hold`, or `someday` is not stale either.** Parked is not finished — the work may still happen — but it *is* a decision, and re-reporting a decision teaches you to skip the report. Parked plans are reported as a count, so the number is not mistaken for plans that fell off the list by accident.
+  * **The cold-memory check refuses to run when it cannot be trusted.** Recency comes from the activity log, so on a fresh install — or after `NEXWIKI_ACTIVITY_MAX_ARCHIVES` pruning — the log may be younger than `cold_days`, and then *every* memory looks untouched. Rather than report all of them, the check is skipped and `cold_memory_scan_ran` is `false` with `cold_memory_skipped_reason` saying why.
+  * **Reads keep a memory warm.** A memory the agent keeps consulting is alive even if nobody has edited it in a year — that is what a good memory looks like.
+  * **Duplicate detection is scoped, and skips pairs that already link to each other.** A "Deployment Notes" memory about `docker` and one about `nexwiki` are separate by design. And when two memories reference one another, their author already knows both exist and has decided to keep them apart. It reports similarity, not disagreement: telling the two apart needs semantics NexWiki deliberately does not have.
 
   A stale plan does **not** need an in-flight tag. Requiring `wip` sounds tidier but makes the check incapable of firing on a real wiki, where plans typically carry a project tag and nothing else — what matters is that the plan was never marked finished and nobody has touched it since. When an in-flight tag (`wip`, `in-progress`, `draft`, `active`, `todo`, `pending`, `review`, `blocked`) *is* present, the report names it.
-* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], stale_plan_count, stale_plans[]}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut.
+* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], stale_plan_count, stale_plans[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut.
 
 **Examples**
 
