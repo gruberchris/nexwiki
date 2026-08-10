@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-08-09
+
+### Added
+- **Agent attribution is real.** `get_article_history` now reports who made each revision and through which tool, joined from the activity log, alongside the article's own `source` — so a revision reads as "Claude Desktop 1.4.2 wrote this on 2026-08-09 via `edit_wiki_article`, citing X". The History drawer shows it too. Identity is resolved most-specific-first: per-request `clientInfo` from the `2026-07-28` `_meta` envelope, then the `clientInfo` a legacy client sent at `initialize` **on stdio**, then the new `NEXWIKI_AGENT_NAME` / `-agent-name` setting, then `AI Agent`. The stdio restriction is deliberate: HTTP is sessionless by design, so caching a handshake there would credit one client's writes to another.
+- **`NEXWIKI_AGENT_NAME` / `-agent-name`** — the attribution recorded for MCP clients that do not identify themselves. Distinct from `-name`, which is the wiki's display title.
+- **`wiki_health` gained three memory-hygiene checks**, without adding a tool — the count stays at 28. *Cold memories*: an `AI-Agent-Memory` neither read nor edited within `cold_days` (default 90); reads count, because a memory the agent keeps consulting is alive even if nobody has edited it in a year. *Duplicate memories*: pairs within one `memory-<scope>` whose titles overlap heavily, excluding pairs that already link to each other, since an author who cross-linked two documents has already decided to keep them apart. *Parked plans*: `parked`, `deferred`, `tabled`, `on-hold`, and `someday` now end a plan's staleness the way `completed` does, but are reported as a count rather than silently hidden.
+  - The cold check **refuses to run when it cannot be trusted.** Recency comes from the activity log, so on a fresh install — or after `NEXWIKI_ACTIVITY_MAX_ARCHIVES` pruning — the log can be younger than `cold_days`, and then every memory looks untouched. Rather than report all of them it is skipped, with `cold_memory_scan_ran: false` and a reason.
+- Benchmarks covering large-corpus behavior at 1,000 / 5,000 / 10,000 documents. They are benchmarks, so `go test ./...` does not pay for them.
+
+### Changed
+- **BREAKING: `NEXWIKI_NAME` no longer sets the activity log's `agent` field.** It is the wiki's display title and was being copied into attribution, so on any deployment that set it — including the compose examples in the README — every agent write was credited to the wiki itself, and the Activity drawer's agent filter had one value for everything. Attribution now comes from the sources listed above. Existing log entries keep the values they were written with; they are history, not data to migrate.
+- **Boot indexing is batched.** `SyncSearchIndex` committed one Bleve transaction per document, making startup linear at roughly 24 ms per document — and the server answers nothing until it finishes. Documents are now indexed in batches of 500, bounded rather than one batch for the whole corpus so a large wiki does not trade a startup delay for a startup allocation spike. Measured: **1,000 documents 26.3 s → 0.28 s; 5,000 119.6 s → 1.19 s; 10,000 238.4 s → 2.28 s (~104×).** The orphan-reconciliation query in the same function also asked Bleve to size a collector for 1,000,000 hits regardless of corpus size, and now uses the real document count.
+
+### Fixed
+- **Tool calls that failed were recorded in the activity log as if they had succeeded.** A tool that refuses its work returns an error *inside* a well-formed JSON-RPC result rather than as a JSON-RPC error, and the logging hook only checked for the latter. So an edit rejected by optimistic locking left the article untouched and still appeared in the log as a completed edit by whoever attempted it — and `get_recent_activity`, which agents are told to call at session start, would report work that never happened.
+- **`get_article_history` attribution no longer credits one edit to several revisions.** Article timestamps are stored at one-second resolution, and an agent produces several revisions well inside a second, so matching each revision to its nearest log event independently handed the same event to more than one. Assignment is one-to-one, oldest revision first. Revisions with no matching event report no author rather than a guessed one, which is the normal case for any wiki older than its activity log.
+
+### Security
+- Documented in `SECURITY.md` that **agent attribution is not authentication.** The value is self-reported by the MCP client, and NexWiki is unauthenticated, so it is a convenience for telling your own agents apart — not evidence of who made a change. Self-reported names are length-capped and stripped of control characters before they reach the durable log.
+
 ## [0.8.0] — 2026-08-09
 
 ### Fixed
@@ -140,7 +160,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/gruberchris/nexwiki/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/gruberchris/nexwiki/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/gruberchris/nexwiki/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/gruberchris/nexwiki/compare/v0.5.2...v0.6.0
