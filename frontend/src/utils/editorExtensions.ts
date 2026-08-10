@@ -75,10 +75,15 @@ export const nexwikiHighlightStyle = HighlightStyle.define([
   ]);
 
 /**
- * Bridges NexWiki's Markdown linter into CodeMirror's lint layer, exposing each diagnostic's
- * suggested fix as an applicable action.
+ * Bridges NexWiki's Markdown linter into CodeMirror's lint layer, offering an applicable action
+ * only for diagnostics that carry a `fix` — replacement text that is correct to insert verbatim.
  *
- * Depends on the article list because broken-WikiLink detection needs to know which slugs exist.
+ * A diagnostic with only a `hint` gets no action. The two are separate fields precisely because
+ * this apply callback cannot tell prose from Markdown: when they shared one `suggestion` field,
+ * applying a broken WikiLink's "fix" pasted the sentence "Click to create this page." over
+ * `[[Foo]]`. The hint still reaches the user through the diagnostics panel.
+ *
+ * Depends on the article list because broken-link detection needs to know which slugs exist.
  */
 export function createMarkdownLinter(articles: Article[]): Extension {
   return linter((view) => {
@@ -87,12 +92,12 @@ export function createMarkdownLinter(articles: Article[]): Extension {
       from: d.from,
       to: d.to,
       severity: d.severity,
-      message: d.message,
-      actions: d.suggestion
+      message: d.hint ? `${d.message} ${d.hint}` : d.message,
+      actions: d.fix
         ? [{
-            name: `Fix: ${d.suggestion}`,
+            name: `Fix: ${d.fix}`,
             apply: (view: EditorView, from: number, to: number) => {
-              view.dispatch({ changes: { from, to, insert: d.suggestion! } });
+              view.dispatch({ changes: { from, to, insert: d.fix! } });
             },
           }]
         : [],

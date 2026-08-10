@@ -16,7 +16,7 @@ import (
 var getWikiStatisticsTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_wiki_statistics",
-		"description": "Retrieve high-level wiki statistics, including total articles, storage footprint, and a list of dead or broken double-bracket internal WikiLinks.",
+		"description": "Retrieve high-level wiki statistics, including total articles, storage footprint, and a list of dead or broken internal links — both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links.",
 		"inputSchema": map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -46,16 +46,18 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	var respText string
 	respText = "NexWiki Knowledge Base Statistics:\n"
 	respText += fmt.Sprintf("- Total Articles: %d\n", len(articles))
-	respText += fmt.Sprintf("- Total WikiLinks Scanned: %d\n", graph.TotalLinks)
-	respText += fmt.Sprintf("- Total Broken/Dead WikiLinks: %d\n\n", len(graph.Broken))
+	respText += fmt.Sprintf("- Total Internal Links Scanned: %d\n", graph.TotalLinks)
+	respText += fmt.Sprintf("- Total Broken/Dead Internal Links: %d\n\n", len(graph.Broken))
 
 	if len(graph.Broken) == 0 {
-		respText += "Excellent! All double-bracket WikiLinks are healthy and fully connected! 🎉\n"
+		respText += "Excellent! All internal links are healthy and fully connected! 🎉\n"
 	} else {
-		respText += "Broken/Dead WikiLinks Detected (AI suggestion: create these pages to heal the wiki!):\n"
+		respText += "Broken/Dead Internal Links Detected (AI suggestion: create these pages to heal the wiki!):\n"
 		for _, bl := range graph.Broken {
-			respText += fmt.Sprintf("  - Link '[[%s]]' inside article '/articles/%s' (Target slug: '%s' is missing)\n",
-				bl.Target, bl.FromSlug, bl.TargetSlug)
+			// Display() prints the link in the syntax it was written in — the agent has to find
+			// that exact text in the file to repair it.
+			respText += fmt.Sprintf("  - Link '%s' inside article '/articles/%s' (Target slug: '%s' is missing)\n",
+				bl.Display(), bl.FromSlug, bl.TargetSlug)
 		}
 	}
 

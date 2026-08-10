@@ -5,9 +5,9 @@ import { MarkdownLintErrorModal } from './MarkdownLintErrorModal';
 import type { LintDiagnostic } from '../utils/markdownLinter';
 
 const mockDiagnostics: LintDiagnostic[] = [
-  { line: 1, from: 0, to: 5, severity: 'error', message: 'Multiple H1 headers', suggestion: '## Alt', code: 'MD025' },
-  { line: 3, from: 20, to: 40, severity: 'warning', message: 'Heading hierarchy skip', suggestion: '## Good', code: 'MD001' },
-  { line: 5, from: 50, to: 80, severity: 'info', message: 'Bare URL detected', suggestion: '<url>', code: 'MD034' },
+  { line: 1, from: 0, to: 5, severity: 'error', message: 'Multiple H1 headers', fix: '## Alt', code: 'MD025' },
+  { line: 3, from: 20, to: 40, severity: 'warning', message: 'Heading hierarchy skip', fix: '## Good', code: 'MD001' },
+  { line: 5, from: 50, to: 80, severity: 'info', message: 'Bare URL detected', fix: '<url>', code: 'MD034' },
 ];
 
 describe('MarkdownLintErrorModal', () => {

@@ -264,7 +264,7 @@ func TestWikiHealthProseMatchesStructure(t *testing.T) {
 
 	for _, want := range []string{
 		"Orphan pages: " + itoa(out.OrphanCount),
-		"Broken WikiLinks: " + itoa(out.BrokenLinkCount),
+		"Broken internal links: " + itoa(out.BrokenLinkCount),
 		"Memories with no source: " + itoa(out.UnsourcedCount),
 	} {
 		if !strings.Contains(text, want) {
@@ -321,7 +321,12 @@ func TestScanLinkGraphIgnoresCodeFences(t *testing.T) {
 
 	content := "# Attributes\n\n" +
 		"```cpp\n[[nodiscard]] int f();\n```\n\n" +
-		"Inline `[[not a link]]` too, but [[Real Target]] is one.\n"
+		"Inline `[[not a link]]` too, but [[Real Target]] is one.\n\n" +
+		// The same rule has to hold for the Markdown form, or the two format-template articles in
+		// the real corpus — which document the convention with a fenced [Title](/articles/slug)
+		// example — would each report a broken link to a page called "slug".
+		"```markdown\n[Article Title](/articles/slug)\n```\n\n" +
+		"And a real one: [Second Target](/articles/second-target).\n"
 	args, err := json.Marshal(map[string]string{
 		"title": "Attributes", "content": content, "edit_summary": "Initial",
 	})
@@ -349,6 +354,98 @@ func TestScanLinkGraphIgnoresCodeFences(t *testing.T) {
 	}
 	if !sawReal {
 		t.Errorf("the genuine WikiLink was lost: %+v", graph.Outbound["attributes"])
+	}
+}
+
+// TestScanLinkGraphCountsMarkdownLinks is the §3.21 regression test. The link graph read only
+// [[WikiLinks]], but the corpus — and nexwiki-agent-guidelines §5 — prefer absolute Markdown
+// links, so 84% of real internal links were invisible: broken-link detection reported 0 against
+// 26, orphan detection called 44 of 84 documents orphans, and get_backlinks under-reported
+// inbound references before a rename or delete. Revert ExtractLinkRefs' Markdown pass and all
+// three assertions below fail.
+func TestScanLinkGraphCountsMarkdownLinks(t *testing.T) {
+	srv := newMCPServer(t)
+
+	seed := func(title, content string) {
+		if _, err := srv.Storage.SaveArticle("", title, content, "", "", "", "seed", nil, ""); err != nil {
+			t.Fatalf("seeding %q failed: %v", title, err)
+		}
+	}
+	seed("Target Page", "# Target")
+	seed("Linker", "Only a Markdown link: [the target](/articles/target-page).")
+	seed("Dangler", "Points nowhere: [gone](/articles/no-such-page).")
+
+	graph, err := srv.Storage.ScanLinkGraph()
+	if err != nil {
+		t.Fatalf("ScanLinkGraph failed: %v", err)
+	}
+
+	// 1. The link is counted, so the target is not an orphan.
+	if graph.InboundCount["target-page"] != 1 {
+		t.Errorf("a Markdown link must count as inbound: InboundCount = %d, want 1", graph.InboundCount["target-page"])
+	}
+
+	// 2. A Markdown link with no destination is a broken link, reported in its own syntax.
+	var dangling *BrokenLinkRef
+	for i, bl := range graph.Broken {
+		if bl.TargetSlug == "no-such-page" {
+			dangling = &graph.Broken[i]
+		}
+	}
+	if dangling == nil {
+		t.Fatalf("a broken Markdown link must be reported, got %+v", graph.Broken)
+	}
+	if dangling.Form != LinkFormMarkdown {
+		t.Errorf("Form = %q, want %q", dangling.Form, LinkFormMarkdown)
+	}
+	if dangling.Target != "/articles/no-such-page" {
+		t.Errorf("Target = %q, want the destination as written", dangling.Target)
+	}
+	if got := dangling.Display(); got != "(/articles/no-such-page)" {
+		t.Errorf("Display() = %q — a Markdown link rendered as [[…]] sends the author looking for text that is not in the file", got)
+	}
+
+	// 3. get_backlinks sees it too; the guidelines tell agents to run it before a rename.
+	backlinks, err := srv.Storage.GetBacklinks("target-page")
+	if err != nil {
+		t.Fatalf("GetBacklinks failed: %v", err)
+	}
+	if len(backlinks) != 1 || backlinks[0].Slug != "linker" {
+		t.Errorf("expected linker as a backlink of target-page, got %+v", backlinks)
+	}
+}
+
+// TestWikiHealthOrphansCountMarkdownLinks pins the consumer §3.21 hurt most. §6.5 already tuned
+// orphan detection once after it fired on 84% of the corpus; counting only one link form left it
+// firing on 52%, and an agent learns to skip a check that is usually wrong.
+func TestWikiHealthOrphansCountMarkdownLinks(t *testing.T) {
+	srv := newMCPServer(t)
+
+	if _, err := srv.Storage.SaveArticle("", "Reachable", "# Reachable", "", "", "", "seed", nil, ""); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+	home, err := srv.Storage.GetArticle("home")
+	if err != nil {
+		t.Fatalf("GetArticle home failed: %v", err)
+	}
+	if _, err := srv.Storage.SaveArticle("home", home.Title,
+		home.Content+"\n\n| [Reachable](/articles/reachable) | linked from the dashboard |\n",
+		"", "", "", "link it", home.Tags, ""); err != nil {
+		t.Fatalf("home edit failed: %v", err)
+	}
+
+	resp := toolCall(t, srv, `{"name":"wiki_health","arguments":{}}`)
+	if resp.IsError {
+		t.Fatalf("wiki_health failed: %s", resp.Content[0].Text)
+	}
+	out, ok := resp.StructuredContent.(HealthOutput)
+	if !ok {
+		t.Fatalf("expected HealthOutput, got %T", resp.StructuredContent)
+	}
+	for _, o := range out.Orphans {
+		if o.Slug == "reachable" {
+			t.Errorf("a page the home dashboard links to in Markdown is not an orphan; orphans: %+v", out.Orphans)
+		}
 	}
 }
 

@@ -733,7 +733,10 @@ export const Editor: React.FC<EditorProps> = ({
           style={{ top: contextMenu.y, left: contextMenu.x }}
           className="fixed z-50 rounded-xl glass-panel bg-white/95 dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-800/50 shadow-xl p-1.5 min-w-[185px] select-none text-xs animate-fade-in"
         >
-          {contextMenu.diagnostic.suggestion && (
+          {/* Only a `fix` is offered as an applicable action — it is replacement text for the
+              diagnostic's range. A `hint` is prose and is shown below instead: inserting it would
+              overwrite the author's Markdown with a sentence. */}
+          {contextMenu.diagnostic.fix && (
             <button
               onClick={() => {
                 const view = editorRef.current?.view;
@@ -742,7 +745,7 @@ export const Editor: React.FC<EditorProps> = ({
                     changes: {
                       from: contextMenu.diagnostic.from,
                       to: contextMenu.diagnostic.to,
-                      insert: contextMenu.diagnostic.suggestion!
+                      insert: contextMenu.diagnostic.fix!
                     }
                   });
                 }
@@ -750,8 +753,13 @@ export const Editor: React.FC<EditorProps> = ({
               }}
               className="w-full text-left px-3 py-2 rounded-lg font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 text-indigo-600 dark:text-indigo-400 cursor-pointer"
             >
-              Fix: {contextMenu.diagnostic.suggestion}
+              Fix: {contextMenu.diagnostic.fix}
             </button>
+          )}
+          {contextMenu.diagnostic.hint && (
+            <p className="px-3 py-2 text-slate-500 dark:text-slate-400 max-w-[240px] cursor-default">
+              {contextMenu.diagnostic.hint}
+            </p>
           )}
           <button
             onClick={() => {

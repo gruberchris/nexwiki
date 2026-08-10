@@ -54,6 +54,201 @@ func TestExtractWikiLinkTargetsIgnoresCode(t *testing.T) {
 	}
 }
 
+// TestExtractArticlePathTargets pins the other half of the link graph (§3.21). The corpus is
+// overwhelmingly written in this form — the agent guidelines tell authors to prefer it — and it
+// was invisible to the scanner, so wiki_health reported 0 broken links against 26 real ones and
+// called 44 of 84 documents orphans.
+func TestExtractArticlePathTargets(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{"no links", "Plain text with no links.", nil},
+		{"single link", "See [Rust](/articles/rust) here.", []string{"/articles/rust"}},
+		{"multiple links", "[A](/articles/a) and [B](/articles/b)", []string{"/articles/a", "/articles/b"}},
+		{"empty link text", "[](/articles/bare)", []string{"/articles/bare"}},
+		{"anchor trimmed", "[Go](/articles/go#history)", []string{"/articles/go"}},
+		{"query trimmed", "[Go](/articles/go?v=2)", []string{"/articles/go"}},
+		{"trailing slash trimmed", "[Go](/articles/go/)", []string{"/articles/go"}},
+		{"link title preserved", `[Go](/articles/go "The Go article")`, []string{"/articles/go"}},
+		{"in a table cell", "| [Go](/articles/go) | fast |", []string{"/articles/go"}},
+		{"at start of content", "[Go](/articles/go) leads.", []string{"/articles/go"}},
+		{"images are not links", "![diagram](/articles/go)", nil},
+		{"api paths are not article links", "Call [the API](/api/articles/go).", nil},
+		{"relative paths are not matched", "See [Go](articles/go).", nil},
+		{"external links ignored", "[Go](https://go.dev)", nil},
+		{"bare /articles/ yields nothing", "[Nothing](/articles/)", nil},
+		{"fenced block ignored", "```markdown\n[Example](/articles/slug)\n```\nSee [Go](/articles/go).", []string{"/articles/go"}},
+		{"inline code ignored", "Write `[Title](/articles/slug)` like [Go](/articles/go).", []string{"/articles/go"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ExtractArticlePathTargets(tc.content)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("ExtractArticlePathTargets(%q) = %v, want %v", tc.content, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestExtractLinkRefsCoversBothForms checks that the two scanners meet correctly: every link is
+// resolved to a slug, and each one records which syntax it was written in so a report can name it
+// the way the author will find it in the file.
+func TestExtractLinkRefsCoversBothForms(t *testing.T) {
+	content := "See [[Rust Programming Language]] and [Go](/articles/go), plus [[go|the same page]]."
+
+	got := ExtractLinkRefs(content)
+	want := []LinkRef{
+		{Target: "Rust Programming Language", Slug: "rust-programming-language", Form: LinkFormWiki},
+		{Target: "go", Slug: "go", Form: LinkFormWiki},
+		{Target: "/articles/go", Slug: "go", Form: LinkFormMarkdown},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ExtractLinkRefs = %+v, want %+v", got, want)
+	}
+
+	// The Markdown target keeps its leading path, so Slugify must run on the segment rather than
+	// the whole destination — Slugify("/articles/go") is "articlesgo", not "go".
+	for _, ref := range got {
+		if ref.Slug == "articlesgo" {
+			t.Errorf("the /articles/ prefix leaked into the slug: %+v", ref)
+		}
+	}
+}
+
+func TestLinkRefDisplay(t *testing.T) {
+	wiki := LinkRef{Target: "Rust", Form: LinkFormWiki}
+	if got := wiki.Display(); got != "[[Rust]]" {
+		t.Errorf("wiki Display() = %q, want %q", got, "[[Rust]]")
+	}
+	md := LinkRef{Target: "/articles/rust", Form: LinkFormMarkdown}
+	if got := md.Display(); got != "(/articles/rust)" {
+		t.Errorf("markdown Display() = %q, want %q", got, "(/articles/rust)")
+	}
+}
+
+// TestRewriteArticlePathLinks pins rename healing for the Markdown form. Only the destination may
+// change: the link text is the author's prose, and rewriting it would be a different and much less
+// safe operation.
+func TestRewriteArticlePathLinks(t *testing.T) {
+	cases := []struct {
+		name        string
+		content     string
+		want        string
+		wantChanged bool
+	}{
+		{
+			name:        "destination rewritten, text untouched",
+			content:     "Read [Rust](/articles/rust) today.",
+			want:        "Read [Rust](/articles/rust-programming-language) today.",
+			wantChanged: true,
+		},
+		{
+			name:        "anchor preserved",
+			content:     "[Rust](/articles/rust#history)",
+			want:        "[Rust](/articles/rust-programming-language#history)",
+			wantChanged: true,
+		},
+		{
+			name:        "other targets untouched",
+			content:     "[Go](/articles/go) and [Rust](/articles/rust)",
+			want:        "[Go](/articles/go) and [Rust](/articles/rust-programming-language)",
+			wantChanged: true,
+		},
+		{
+			name:        "images are not rewritten",
+			content:     "![rust](/articles/rust)",
+			want:        "![rust](/articles/rust)",
+			wantChanged: false,
+		},
+		{
+			name:        "no match reports no change",
+			content:     "[Go](/articles/go)",
+			want:        "[Go](/articles/go)",
+			wantChanged: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, changed := RewriteArticlePathLinks(tc.content, "rust", "rust-programming-language")
+			if got != tc.want {
+				t.Errorf("content = %q, want %q", got, tc.want)
+			}
+			if changed != tc.wantChanged {
+				t.Errorf("changed = %v, want %v", changed, tc.wantChanged)
+			}
+		})
+	}
+
+	// A rename that resolves to the same slug is not a rename.
+	if _, changed := RewriteArticlePathLinks("[Go](/articles/go)", "go", "Go"); changed {
+		t.Error("rewriting a slug to itself should report no change")
+	}
+}
+
+// TestRenameHealsMarkdownLinks drives the whole rename path. Before §3.21 the healer only rewrote
+// [[WikiLinks]], so an inbound Markdown link was left pointing at a slug that no longer existed —
+// which is how /articles/rust came to be broken in 14 places in the real corpus.
+func TestRenameHealsMarkdownLinks(t *testing.T) {
+	storage, err := NewStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+
+	if _, err := storage.SaveArticle("", "Rust", "# Rust", "", "", "", "", nil, ""); err != nil {
+		t.Fatalf("seed target failed: %v", err)
+	}
+	// Markdown-only, deliberately. The healer starts from GetBacklinks, so a fixture that also
+	// carries a [[WikiLink]] would be healed even with the Markdown scan reverted — the test would
+	// agree with the bug (§3.20's lesson).
+	if _, err := storage.SaveArticle("", "Systems", "See [the Rust page](/articles/rust) for details.", "", "", "", "", nil, ""); err != nil {
+		t.Fatalf("seed Markdown linker failed: %v", err)
+	}
+	if _, err := storage.SaveArticle("", "Compilers", "Also [[Rust]].", "", "", "", "", nil, ""); err != nil {
+		t.Fatalf("seed WikiLink linker failed: %v", err)
+	}
+
+	if _, err := storage.SaveArticle("rust", "Rust Programming Language", "# Rust", "", "", "", "rename", nil, ""); err != nil {
+		t.Fatalf("rename failed: %v", err)
+	}
+
+	healed, err := storage.GetArticle("systems")
+	if err != nil {
+		t.Fatalf("GetArticle failed: %v", err)
+	}
+	wantMarkdown := "[the Rust page](/articles/rust-programming-language)"
+	if !strings.Contains(healed.Content, wantMarkdown) {
+		t.Errorf("Markdown link was not healed; content is:\n%s", healed.Content)
+	}
+	if !strings.Contains(healed.Content, "[the Rust page]") {
+		t.Errorf("the link text must not be rewritten; content is:\n%s", healed.Content)
+	}
+
+	wikiHealed, err := storage.GetArticle("compilers")
+	if err != nil {
+		t.Fatalf("GetArticle failed: %v", err)
+	}
+	if !strings.Contains(wikiHealed.Content, "[[Rust Programming Language]]") {
+		t.Errorf("WikiLink healing regressed; content is:\n%s", wikiHealed.Content)
+	}
+
+	graph, err := storage.ScanLinkGraph()
+	if err != nil {
+		t.Fatalf("ScanLinkGraph failed: %v", err)
+	}
+	// The seeded home page carries its own example WikiLinks to pages that do not exist, so scope
+	// the assertion to the document the rename touched.
+	for _, bl := range graph.Broken {
+		if bl.FromSlug == "systems" || bl.FromSlug == "compilers" {
+			t.Errorf("a healed rename should leave no broken links behind, got %+v", bl)
+		}
+	}
+}
+
 func TestGetBacklinks(t *testing.T) {
 	storage, err := NewStorage(t.TempDir())
 	if err != nil {

@@ -11,7 +11,7 @@ Select a guide below to explore specific features:
 ### 1. [NexWiki User & Content Creation Guide](./user_guide.md)
 A comprehensive manual designed to help you create, format, link, share, upload, and export wiki content:
 * **Managing Articles**: Creating, editing in different view layouts, and deleting wiki articles.
-* **WikiLinks & Linking**: Creating double-bracket internal WikiLinks (`[[WikiLink]]`), custom display tags, and secure external links.
+* **WikiLinks & Linking**: Creating internal links in either form — double-bracket WikiLinks (`[[WikiLink]]`) or absolute Markdown links (`[text](/articles/slug)`) — plus custom display tags and secure external links.
 * **Media & Uploads**: Backed by a drag-and-drop file uploader and embedded image assets.
 * **Exporting & Sharing**: Sharing page URLs, copying Markdown body text, and exporting articles directly to PDF, Microsoft Word (`.docx`), and Markdown (`.md`) files using the native File System Access API.
 
@@ -25,7 +25,7 @@ An advanced technical and user guide covering the flat-file gzipped backup and c
 ### 3. [NexWiki Model Context Protocol (MCP) Server Guide](./mcp_server.md)
 A comprehensive technical manual describing the always-on Go MCP engine:
 * **Transport Layers**: Connecting AI clients over standard input/output (Stdio) or Streamable HTTP network streams.
-* **Exposed Tools**: In-depth explanations of all twenty-eight exposed tools including read, search, context overview, backlinks, memory lifecycle, optimistic locked writes, reverts, tag management, status tags, activity history, OKF bundle import/export, and dead WikiLink scanners.
+* **Exposed Tools**: In-depth explanations of all twenty-eight exposed tools including read, search, context overview, backlinks, memory lifecycle, optimistic locked writes, reverts, tag management, status tags, activity history, OKF bundle import/export, and dead internal-link scanners.
 * **Client Configurations**: Step-by-step setup guides for Claude Desktop and Cursor IDE.
 
 ### 4. [NexWiki Tags & AI Agent Memories Guide](./tags.md)

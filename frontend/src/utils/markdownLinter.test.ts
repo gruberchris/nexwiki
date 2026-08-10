@@ -27,7 +27,7 @@ describe('lintMarkdown – MD001 (heading hierarchy)', () => {
     expect(md001).toHaveLength(1);
     expect(md001[0].severity).toBe('warning');
     expect(md001[0].message).toContain('H3');
-    expect(md001[0].suggestion).toContain('## Skipped H2');
+    expect(md001[0].fix).toContain('## Skipped H2');
   });
 
   it('provides correct line number for MD001 diagnostic', () => {
@@ -52,7 +52,7 @@ describe('lintMarkdown – MD025 (multiple H1)', () => {
     expect(md025).toHaveLength(1);
     expect(md025[0].severity).toBe('error');
     expect(md025[0].line).toBe(5);
-    expect(md025[0].suggestion).toContain('## Second H1');
+    expect(md025[0].fix).toContain('## Second H1');
   });
 
   it('flags third H1 as well', () => {
@@ -75,7 +75,7 @@ describe('lintMarkdown – MD037 (spaces around emphasis)', () => {
     const md037 = diags.filter(d => d.code === 'MD037');
     expect(md037.length).toBeGreaterThanOrEqual(1);
     expect(md037[0].severity).toBe('warning');
-    expect(md037[0].suggestion).toBe('**bold text**');
+    expect(md037[0].fix).toBe('**bold text**');
   });
 
   it('warns for single-asterisk with surrounding spaces', () => {
@@ -91,7 +91,7 @@ describe('lintMarkdown – MD034 (bare URLs)', () => {
     const md034 = diags.filter(d => d.code === 'MD034');
     expect(md034).toHaveLength(1);
     expect(md034[0].severity).toBe('info');
-    expect(md034[0].suggestion).toBe('<https://example.com>');
+    expect(md034[0].fix).toBe('<https://example.com>');
   });
 
   it('no warning for angle-bracket wrapped URL', () => {
@@ -153,6 +153,87 @@ describe('lintMarkdown – WikiLinks', () => {
   });
 });
 
+describe('lintMarkdown – MDLINK_BROKEN (absolute /articles/ links)', () => {
+  it('no diagnostic for an existing article link', () => {
+    const diags = lintMarkdown('See [the page](/articles/existing-page) for more.', articles);
+    expect(diags.filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('warns for a nonexistent target', () => {
+    const diags = lintMarkdown('See [Kotlin](/articles/kotlin) for more.', articles);
+    const md = diags.filter(d => d.code === 'MDLINK_BROKEN');
+    expect(md).toHaveLength(1);
+    expect(md[0].severity).toBe('warning');
+    expect(md[0].message).toContain('/articles/kotlin');
+  });
+
+  it('carries a hint but no fix, because there is no single correct replacement', () => {
+    const diag = lintMarkdown('[Kotlin](/articles/kotlin)', articles).find(d => d.code === 'MDLINK_BROKEN')!;
+    expect(diag.fix).toBeUndefined();
+    expect(diag.hint).toBeTruthy();
+  });
+
+  it('spans the whole link, not the character before it', () => {
+    const content = 'See [Kotlin](/articles/kotlin) here.';
+    const diag = lintMarkdown(content, articles).find(d => d.code === 'MDLINK_BROKEN')!;
+    expect(content.slice(diag.from, diag.to)).toBe('[Kotlin](/articles/kotlin');
+  });
+
+  it('ignores the fragment when resolving the target', () => {
+    const diags = lintMarkdown('[History](/articles/existing-page#history)', articles);
+    expect(diags.filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('/articles/home is always valid', () => {
+    const diags = lintMarkdown('Back to [home](/articles/home).', noArticles);
+    expect(diags.filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('does not flag images', () => {
+    const diags = lintMarkdown('![diagram](/articles/kotlin)', articles);
+    expect(diags.filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('does not flag /api/articles/ URLs', () => {
+    const diags = lintMarkdown('Call [the API](/api/articles/kotlin).', articles);
+    expect(diags.filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('flags links on a later line with the right line number', () => {
+    const diags = lintMarkdown('# Title\n\n[Kotlin](/articles/kotlin)', articles);
+    const md = diags.find(d => d.code === 'MDLINK_BROKEN')!;
+    expect(md.line).toBe(3);
+  });
+});
+
+// Both link checks have to agree with the server's link graph, which blanks out code before
+// scanning. The two format-template articles in the real corpus document the convention with a
+// fenced [Article Title](/articles/slug) example, and flagging those would be a false positive on
+// content the health report deliberately ignores.
+describe('lintMarkdown – links inside code are not links', () => {
+  it('ignores an /articles/ link inside a fenced block', () => {
+    const content = '```markdown\n[Article Title](/articles/slug)\n```\n';
+    expect(lintMarkdown(content, articles).filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('ignores a WikiLink inside a fenced block', () => {
+    const content = '```cpp\n[[nodiscard]] int f();\n```\n';
+    expect(lintMarkdown(content, articles).filter(d => d.code === 'WIKILINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('ignores a tilde-fenced block', () => {
+    const content = '~~~markdown\n[Article Title](/articles/slug)\n~~~\n';
+    expect(lintMarkdown(content, articles).filter(d => d.code === 'MDLINK_BROKEN')).toHaveLength(0);
+  });
+
+  it('still flags links after the fence closes', () => {
+    const content = '```markdown\n[Example](/articles/slug)\n```\n\n[Kotlin](/articles/kotlin)\n';
+    const md = lintMarkdown(content, articles).filter(d => d.code === 'MDLINK_BROKEN');
+    expect(md).toHaveLength(1);
+    expect(md[0].line).toBe(5);
+  });
+});
+
 describe('lintMarkdown – character offsets', () => {
   it('computes correct from offset for heading on first line', () => {
     const content = '# Title';
@@ -169,6 +250,48 @@ describe('lintMarkdown – character offsets', () => {
     // Line 3 starts at offset 9 (8 chars on lines 1-2 + newlines)
     expect(wl!.line).toBe(3);
     expect(wl!.from).toBeGreaterThan(8);
+  });
+});
+
+// A `fix` is inserted verbatim over the diagnostic's range by both quick-fix paths — the
+// CodeMirror lint action and the editor's right-click menu. Applying every `fix` to its own range
+// must therefore leave valid Markdown. When `fix` and `hint` were one `suggestion` field, this
+// invariant did not hold: WIKILINK_BROKEN's suggestion was the sentence "Click to create this
+// page.", so the Fix button replaced `[[Foo]]` with prose.
+describe('lintMarkdown – every fix is safe to insert verbatim', () => {
+  const content = [
+    '# Title',
+    '### Skipped H2',
+    '# Second H1',
+    'Visit https://example.com for more.',
+    'This is ** bold text ** here.',
+    'See [[Missing Page]] and [Kotlin](/articles/kotlin).',
+  ].join('\n');
+
+  it('never offers a fix that is prose rather than Markdown', () => {
+    for (const d of lintMarkdown(content, articles)) {
+      if (d.fix === undefined) continue;
+      // Every rule that carries a fix replaces a heading, an emphasis run, or a bare URL.
+      expect(d.fix).toMatch(/^(#{1,6} |<https?:\/\/|\*{1,2}|_{1,2})/);
+      expect(d.fix).not.toMatch(/\bClick\b/);
+    }
+  });
+
+  it('gives the broken-link rules a hint and no fix', () => {
+    const linkDiags = lintMarkdown(content, articles)
+      .filter(d => d.code === 'WIKILINK_BROKEN' || d.code === 'MDLINK_BROKEN');
+    expect(linkDiags).toHaveLength(2);
+    for (const d of linkDiags) {
+      expect(d.fix).toBeUndefined();
+      expect(d.hint).toBeTruthy();
+    }
+  });
+
+  it('applying a fix to its own range replaces exactly the flagged text', () => {
+    const src = 'This is ** bold text ** here.';
+    const d = lintMarkdown(src, noArticles).find(x => x.code === 'MD037')!;
+    const applied = src.slice(0, d.from) + d.fix! + src.slice(d.to);
+    expect(applied).toBe('This is **bold text** here.');
   });
 });
 

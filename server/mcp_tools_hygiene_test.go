@@ -73,7 +73,7 @@ func TestCrossLinkedMemoriesAreNotReportedAsDuplicates(t *testing.T) {
 	}
 
 	// ...and with it they do not.
-	outbound := map[string][]WikiLinkRef{
+	outbound := map[string][]LinkRef{
 		"pl-format": {{Target: "sql-dialect-article-format-template", Slug: "sql-format"}},
 	}
 	if pairs := findDuplicateMemories(memories, outbound); len(pairs) != 0 {

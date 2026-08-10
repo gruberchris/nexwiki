@@ -97,7 +97,7 @@ Re-importing the same bundle twice is safe — existing articles are updated in 
 
 ## 🔗 Linking Between Wiki Articles
 
-A strong wiki is defined by how well its pages connect to one another. NexWiki supports two separate linking styles.
+A strong wiki is defined by how well its pages connect to one another. NexWiki supports three linking styles: two internal forms, which behave identically, and external web links.
 
 ### 1. Internal WikiLinks (Double Brackets)
 WikiLinks allow you to link articles together simply by referencing their titles inside double square brackets.
@@ -114,15 +114,31 @@ WikiLinks allow you to link articles together simply by referencing their titles
   ```
   *Renders as:* a clickable link — **Detailed Setup Instructions** — routed to `/articles/setup-guide`.
 
+### 2. Absolute Article Links (Standard Markdown)
+
+You can also link to another article with ordinary Markdown, pointing at its `/articles/<slug>` route:
+
+```markdown
+Read the [Formatting Guide](/articles/formatting-guide) for advanced syntax.
+```
+
+This form is fully equivalent to a WikiLink: it navigates within the app rather than reloading the
+page, it counts toward backlinks and the **Linked from** panel, and a missing target renders the
+same red-dotted create prompt. Use whichever reads better — WikiLinks are shorter, absolute links
+survive being copied into other tools and let you write display text independently of the target.
+
+*Note: a link into a section (`/articles/go#history`) still resolves to the article.*
+
 #### 🔗 Smart Link Resolution (Broken Links)
-NexWiki keeps track of all pages. If you add a WikiLink to a page that **does not exist yet**:
+NexWiki keeps track of all pages. If you add an internal link — in **either** form — to a page that **does not exist yet**:
 - It will render as a red-dotted link with a question mark.
 - Clicking the link doesn't break the app; instead, it automatically opens the creation screen with that title pre-filled.
+- The editor's linter underlines it as you type (`WIKILINK_BROKEN` or `MDLINK_BROKEN`), and `wiki_health` reports it.
 - This allows you to plan your documentation structure ahead of time and fill in pages as you go!
 
 ---
 
-### 2. External Web Links
+### 3. External Web Links
 For standard external websites, use traditional Markdown link syntax:
 ```markdown
 For more information, visit the [Go Language Homepage](https://go.dev).

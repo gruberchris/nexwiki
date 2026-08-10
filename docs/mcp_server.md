@@ -294,7 +294,7 @@ Retrieves the raw Markdown content and Yaml-style front-matter configurations of
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target article (e.g. `home` or `setup-guide`).
 * **Behavior**:
-  Reads the Markdown file on disk, parses the front-matter metadata, and returns a plain text document listing the article Title, Slug, Created timestamp, Updated timestamp, Description and Source (when set), and the complete raw Markdown body. If other articles link to this page via WikiLinks, a `Linked from:` section is appended (capped at 15 entries) so agents can traverse the knowledge graph in reverse.
+  Reads the Markdown file on disk, parses the front-matter metadata, and returns a plain text document listing the article Title, Slug, Created timestamp, Updated timestamp, Description and Source (when set), and the complete raw Markdown body. If other articles link to this page — via `[[WikiLinks]]` or absolute `/articles/<slug>` Markdown links — a `Linked from:` section is appended (capped at 15 entries) so agents can traverse the knowledge graph in reverse.
 * **Structured output**: `structuredContent` as `{article, backlinks[]}`. The article includes `version` — pass it straight to `edit_wiki_article` as `loaded_version`. Unlike the prose, `backlinks` is not capped at 15.
 
 ---
@@ -391,12 +391,12 @@ Reverts the active state of an article to a specific historical version number.
 ---
 
 ### 10. `get_wiki_statistics`
-Scans the entire knowledge base to compile total page stats and **autonomously scan for dead or broken internal WikiLinks** (e.g., `[[Missing Page]]`).
+Scans the entire knowledge base to compile total page stats and **autonomously scan for dead or broken internal links** — both `[[Missing Page]]` WikiLinks and absolute `[text](/articles/missing-page)` Markdown links.
 
 * **Arguments**: None (empty object `{}`).
 * **Behavior**:
-  Scans the raw content of all wiki articles for double-bracket WikiLink references. It normalizes targets into slugs and matches them against active articles. It returns a summary text listing total pages, total WikiLinks, total broken links, and details on exactly which pages contain dead references so the AI agent can autonomously fix them!
-* **Structured output**: `structuredContent` as `{total_articles, total_links, broken_link_count, broken_links[]}`. Each broken link names `from_slug`, the raw `target`, and the `target_slug` a fix has to create.
+  Scans the raw content of all wiki articles for internal links in **both** supported forms. It normalizes targets into slugs and matches them against active articles. It returns a summary text listing total pages, total internal links, total broken links, and details on exactly which pages contain dead references so the AI agent can autonomously fix them!
+* **Structured output**: `structuredContent` as `{total_articles, total_links, broken_link_count, broken_links[]}`. Each broken link names `from_slug`, the raw `target` as the author wrote it, the `target_slug` a fix has to create, and the `form` it was written in (`"wikilink"` or `"markdown"`) — the two are repaired differently, and an agent told to fix `[[rust]]` in a file that actually says `[Rust](/articles/rust)` will not find it.
 
 ---
 
@@ -557,12 +557,12 @@ Each line: Title (slug) — summary [tags] (updated). Use read_article(slug) to 
 ---
 
 ### 22. `get_backlinks`
-Lists all articles whose content links to a given article via double-bracket `[[WikiLinks]]` — reverse traversal of the knowledge graph.
+Lists all articles whose content links to a given article, in **either** internal link form — double-bracket `[[WikiLinks]]` or absolute `[text](/articles/<slug>)` Markdown links — reverse traversal of the knowledge graph.
 
 * **Arguments**:
   * `slug` (string, **required**): The URL-safe slug of the target article to find inbound links for.
 * **Behavior**:
-  Scans all article bodies (including the `home` dashboard) on demand for WikiLinks resolving to the target slug, skipping self-links. Returns an indexed plain-text list with titles, slugs, summaries, and updated timestamps, sorted the newest first. Useful before editing or deleting a page to see what references it. `read_article` also appends a compact `Linked from:` section automatically.
+  Scans all article bodies (including the `home` dashboard) on demand for internal links resolving to the target slug, skipping self-links. Returns an indexed plain-text list with titles, slugs, summaries, and updated timestamps, sorted the newest first. Useful before editing or deleting a page to see what references it. `read_article` also appends a compact `Linked from:` section automatically.
 * **Structured output**: `structuredContent` as `{slug, count, backlinks[]}`.
 
 ---
@@ -644,8 +644,8 @@ Audits the knowledge base for maintenance work in one call. Everything it report
 
   | Check | Finds | Why it matters |
   |---|---|---|
-  | **Orphan pages** | A **wiki article** no other article links to | Unreachable by graph traversal, so an agent following WikiLinks will never find it |
-  | **Broken WikiLinks** | The target does not exist | Names the `target_slug` a fix has to create |
+  | **Orphan pages** | A **wiki article** no other article links to | Unreachable by graph traversal, so an agent following links will never find it |
+  | **Broken internal links** | The target does not exist | Names the `target_slug` a fix has to create, and the `form` the link was written in |
   | **Memories with no `source`** | An `AI-Agent-Memory` with empty provenance | A fact that cannot be re-verified later |
   | **Stale plans** | An `AI-Agent-Plan` untouched for `stale_days`, never marked finished, and not parked | Work that quietly stopped |
   | **Cold memories** | An `AI-Agent-Memory` neither read nor edited within `cold_days` | Knowledge nothing consults is either settled or quietly wrong |
@@ -654,7 +654,8 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   Several rules keep the report actionable rather than noisy:
 
   * **Archived documents are skipped entirely.** Archiving is you saying "this is done"; reporting it as needing attention inverts that.
-  * **Orphan detection covers wiki articles only.** Memories, plans, and skills are reached through their own list tools, the search facets, and `get_context_overview` — nobody WikiLinks a memory, so flagging every one of them is noise. On an 83-document corpus, scanning every type produced 70 findings, 27 of which were agent documents behaving exactly as designed.
+  * **Both internal link forms are counted.** The graph reads `[[WikiLinks]]` *and* absolute `[text](/articles/<slug>)` Markdown links, so orphan detection, broken-link detection, and `get_backlinks` all see the same wiki. Counting only the double-bracket form reported 0 broken links against 26 real ones on an 84-document corpus, and called 44 of those documents orphans — most of them linked from the home page in Markdown syntax.
+  * **Orphan detection covers wiki articles only.** Memories, plans, and skills are reached through their own list tools, the search facets, and `get_context_overview` — nobody links to a memory, so flagging every one of them is noise. On an 83-document corpus, scanning every type produced 70 findings, 27 of which were agent documents behaving exactly as designed.
   * **`home` is never an orphan.** Nothing links to a front page.
   * **A plan tagged `completed`, `done`, or `superseded` is never stale**, however old, even if it still also carries `wip`. The terminal tag wins.
   * **A plan tagged `parked`, `deferred`, `tabled`, `on-hold`, or `someday` is not stale either.** Parked is not finished — the work may still happen — but it *is* a decision, and re-reporting a decision teaches you to skip the report. Parked plans are reported as a count, so the number is not mistaken for plans that fell off the list by accident.
@@ -663,7 +664,7 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   * **Duplicate detection is scoped, and skips pairs that already link to each other.** A "Deployment Notes" memory about `docker` and one about `nexwiki` are separate by design. And when two memories reference one another, their author already knows both exist and has decided to keep them apart. It reports similarity, not disagreement: telling the two apart needs semantics NexWiki deliberately does not have.
 
   A stale plan does **not** need an in-flight tag. Requiring `wip` sounds tidier but makes the check incapable of firing on a real wiki, where plans typically carry a project tag and nothing else — what matters is that the plan was never marked finished and nobody has touched it since. When an in-flight tag (`wip`, `in-progress`, `draft`, `active`, `todo`, `pending`, `review`, `blocked`) *is* present, the report names it.
-* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], stale_plan_count, stale_plans[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut.
+* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], stale_plan_count, stale_plans[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`).
 
 **Examples**
 

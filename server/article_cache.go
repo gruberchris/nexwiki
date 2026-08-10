@@ -31,10 +31,10 @@ type articleCacheEntry struct {
 
 	// meta is the metadata-only parse (no body), matching what ListArticles returns.
 	meta Article
-	// links are the outbound WikiLinks in the body, each carrying both the raw target as
-	// written and the slug it resolves to. Populated lazily: only link scans need them, and
-	// they require reading the body.
-	links       []WikiLinkRef
+	// links are the outbound internal links in the body, each carrying the raw target as
+	// written, the slug it resolves to, and which form it was written in. Populated lazily:
+	// only link scans need them, and they require reading the body.
+	links       []LinkRef
 	linksLoaded bool
 }
 
@@ -74,7 +74,7 @@ func (c *articleCache) store(path string, info fs.FileInfo, meta Article) *artic
 
 // setLinks attaches the outbound links to an entry, under the cache lock so a concurrent reader
 // never observes a half-populated slice.
-func (c *articleCache) setLinks(entry *articleCacheEntry, refs []WikiLinkRef) {
+func (c *articleCache) setLinks(entry *articleCacheEntry, refs []LinkRef) {
 	c.mu.Lock()
 	entry.links = refs
 	entry.linksLoaded = true
@@ -82,7 +82,7 @@ func (c *articleCache) setLinks(entry *articleCacheEntry, refs []WikiLinkRef) {
 }
 
 // links reads an entry's cached outbound links, reporting whether they have been populated.
-func (c *articleCache) links(entry *articleCacheEntry) ([]WikiLinkRef, bool) {
+func (c *articleCache) links(entry *articleCacheEntry) ([]LinkRef, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return entry.links, entry.linksLoaded
@@ -133,10 +133,11 @@ func (a Article) clone() Article {
 	return dup
 }
 
-// cachedLinkTargets returns the outbound WikiLinks for one article, reading the body only when the
-// file changed or the links have not been scanned yet. Link scans are O(articles) by nature;
-// caching the parse keeps repeated lookups from re-reading the whole wiki.
-func (s *Storage) cachedLinkTargets(path string, info fs.FileInfo) ([]WikiLinkRef, error) {
+// cachedLinkTargets returns the outbound internal links for one article — both [[WikiLinks]] and
+// absolute /articles/ Markdown links — reading the body only when the file changed or the links
+// have not been scanned yet. Link scans are O(articles) by nature; caching the parse keeps
+// repeated lookups from re-reading the whole wiki.
+func (s *Storage) cachedLinkTargets(path string, info fs.FileInfo) ([]LinkRef, error) {
 	entry, _, err := s.cachedMeta(path, info)
 	if err != nil {
 		return nil, err
@@ -154,14 +155,11 @@ func (s *Storage) cachedLinkTargets(path string, info fs.FileInfo) ([]WikiLinkRe
 		return nil, err
 	}
 
-	// Resolve each target once here, so Slugify stays off the hot path of every lookup. The raw
-	// target is kept alongside it because a broken-link report has to name the link as the author
-	// wrote it — "[[Search Design]]" is what they have to find in the file to fix it.
-	raw := ExtractWikiLinkTargets(full.Content)
-	refs := make([]WikiLinkRef, 0, len(raw))
-	for _, target := range raw {
-		refs = append(refs, WikiLinkRef{Target: target, Slug: Slugify(target)})
-	}
+	// ExtractLinkRefs resolves each target once here, so Slugify stays off the hot path of every
+	// lookup. The raw target is kept alongside it because a broken-link report has to name the
+	// link as the author wrote it — "[[Search Design]]" or "(/articles/search-design)" is what
+	// they have to find in the file to fix it.
+	refs := ExtractLinkRefs(full.Content)
 
 	s.cache.setLinks(entry, refs)
 	return refs, nil

@@ -118,7 +118,7 @@ func memoryScope(tags []string) string {
 //
 // outbound is the link graph's outbound edges, used to suppress pairs that already reference each
 // other — see crossLinked.
-func findDuplicateMemories(memories []Article, outbound map[string][]WikiLinkRef) []DuplicateMemoryPair {
+func findDuplicateMemories(memories []Article, outbound map[string][]LinkRef) []DuplicateMemoryPair {
 	byScope := map[string][]Article{}
 	for _, m := range memories {
 		scope := memoryScope(m.Tags)
@@ -175,7 +175,7 @@ func findDuplicateMemories(memories []Article, outbound map[string][]WikiLinkRef
 // together already knows both exist and has decided to keep them separate; telling them to consider
 // merging is telling them something they have answered. That took the check from one false positive
 // on the live wiki to zero.
-func crossLinked(outbound map[string][]WikiLinkRef, a, b string) bool {
+func crossLinked(outbound map[string][]LinkRef, a, b string) bool {
 	links := func(from, to string) bool {
 		for _, ref := range outbound[from] {
 			if ref.Slug == to {

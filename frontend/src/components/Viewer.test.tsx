@@ -96,6 +96,83 @@ describe('Viewer', () => {
   });
 });
 
+// The absolute Markdown form is what nexwiki-agent-guidelines tells authors to prefer, and it fell
+// through to the external-link branch: the wiki's own pages opened in a new tab with a full page
+// reload. Both internal forms must now look and behave identically (§3.21).
+describe('absolute /articles/ Markdown links', () => {
+  it('navigates in-place instead of opening a new tab', async () => {
+    const onNavigate = vi.fn();
+    const { container } = render(
+      <Viewer {...baseProps} onNavigate={onNavigate} content="Read [the page](/articles/existing-page) now." />
+    );
+
+    const link = await waitFor(() => {
+      const el = container.querySelector('a[href="/articles/existing-page"]');
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+    expect(link.target).toBe('');
+    expect(link.textContent).toBe('the page');
+
+    await userEvent.click(link);
+    expect(onNavigate).toHaveBeenCalledWith('existing-page');
+  });
+
+  it('ignores a fragment when resolving the target article', async () => {
+    const onNavigate = vi.fn();
+    const { container } = render(
+      <Viewer {...baseProps} onNavigate={onNavigate} content="Jump to [history](/articles/existing-page#history)." />
+    );
+    const link = await waitFor(() => {
+      const el = container.querySelector('a[href="/articles/existing-page"]');
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+    await userEvent.click(link);
+    expect(onNavigate).toHaveBeenCalledWith('existing-page');
+  });
+
+  it('renders a missing target as the same broken-link create prompt', async () => {
+    const onNavigate = vi.fn();
+    const { container } = render(
+      <Viewer {...baseProps} onNavigate={onNavigate} content="See [Missing Page](/articles/missing-page)." />
+    );
+    const broken = await waitFor(() => {
+      const el = container.querySelector('button.wikilink-broken');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    // The display text slugifies to the destination, so it is used as the friendlier title.
+    await userEvent.click(broken);
+    expect(onNavigate).toHaveBeenCalledWith('new?title=Missing%20Page');
+  });
+
+  it('creates the page the link actually points at when the text disagrees', async () => {
+    const onNavigate = vi.fn();
+    const { container } = render(
+      <Viewer {...baseProps} onNavigate={onNavigate} content="See [Rust](/articles/rust-lang)." />
+    );
+    const broken = await waitFor(() => {
+      const el = container.querySelector('button.wikilink-broken');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    // "Rust" would create /articles/rust, which this link still could not reach.
+    await userEvent.click(broken);
+    expect(onNavigate).toHaveBeenCalledWith('new?title=rust-lang');
+  });
+
+  it('leaves external links opening in a new tab', async () => {
+    const { container } = render(<Viewer {...baseProps} content="[Go](https://go.dev)" />);
+    const link = await waitFor(() => {
+      const el = container.querySelector('a[href="https://go.dev"]');
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+    expect(link.target).toBe('_blank');
+  });
+});
+
 describe('broken WikiLink accessibility', () => {
   it('exposes a broken WikiLink as a button with an accessible name', async () => {
     render(<Viewer {...baseProps} content="See [[Missing Page]] for details." />);

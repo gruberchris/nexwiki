@@ -52,7 +52,9 @@ export const MarkdownLintErrorModal: React.FC<MarkdownLintErrorModalProps> = ({
   // Copy All Errors
   const handleCopyAll = async () => {
     const text = diagnostics
-      .map((d) => `[${d.severity.toUpperCase()}] Line ${d.line} (${d.code}): ${d.message}${d.suggestion ? ` Suggested fix: ${d.suggestion}` : ''}`)
+      .map((d) => `[${d.severity.toUpperCase()}] Line ${d.line} (${d.code}): ${d.message}` +
+        (d.fix ? ` Suggested fix: ${d.fix}` : '') +
+        (d.hint ? ` ${d.hint}` : ''))
       .join('\n');
     await navigator.clipboard.writeText(text);
     setCopiedAll(true);
@@ -194,11 +196,18 @@ export const MarkdownLintErrorModal: React.FC<MarkdownLintErrorModalProps> = ({
                         <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
                           {diag.message}
                         </p>
-                        {diag.suggestion && (
+                        {/* A `fix` is literal replacement text, so it is shown monospaced as the
+                            Markdown it would insert. A `hint` is prose and is shown as prose. */}
+                        {diag.fix && (
                           <div className="mt-1 flex items-center gap-1.5 font-mono text-[10px] text-indigo-500 bg-indigo-500/5 dark:bg-indigo-950/20 border border-indigo-500/10 px-2 py-0.5 rounded-lg w-fit">
                             <span className="text-slate-450 uppercase font-semibold text-[8px]">Suggestion:</span>
-                            <span className="font-semibold">{diag.suggestion}</span>
+                            <span className="font-semibold">{diag.fix}</span>
                           </div>
+                        )}
+                        {diag.hint && (
+                          <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400 italic">
+                            {diag.hint}
+                          </p>
                         )}
                       </div>
                     </div>

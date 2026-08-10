@@ -104,12 +104,23 @@ type HistoryOutput struct {
 	Versions []RevisionRef `json:"versions"`
 }
 
-// BrokenLinkRef is a WikiLink whose target does not exist. TargetSlug is the Slugify'd form the
-// link actually resolves to, which is the name a fix has to create.
+// BrokenLinkRef is an internal link whose target does not exist. TargetSlug is the Slugify'd form
+// the link actually resolves to, which is the name a fix has to create.
+//
+// Form says which syntax the link was written in ("wikilink" or "markdown"), because the two are
+// repaired differently and an agent told to fix "[[rust]]" in a file that actually says
+// "[Rust](/articles/rust)" will not find it.
 type BrokenLinkRef struct {
-	FromSlug   string `json:"from_slug"`
-	Target     string `json:"target"`
-	TargetSlug string `json:"target_slug"`
+	FromSlug   string   `json:"from_slug"`
+	Target     string   `json:"target"`
+	TargetSlug string   `json:"target_slug"`
+	Form       LinkForm `json:"form"`
+}
+
+// Display renders the broken link in the syntax the author wrote it, delegating to LinkRef so the
+// two reports that print broken links cannot describe the same link differently.
+func (b BrokenLinkRef) Display() string {
+	return LinkRef{Target: b.Target, Form: b.Form}.Display()
 }
 
 // StatisticsOutput is the `get_wiki_statistics` payload.
@@ -252,18 +263,24 @@ func historyOutputSchema() map[string]interface{} {
 	}, "slug", "count", "versions")
 }
 
-func statisticsOutputSchema() map[string]interface{} {
-	broken := schemaObject(map[string]interface{}{
+// brokenLinkSchema describes one BrokenLinkRef. get_wiki_statistics and wiki_health both publish
+// the type, and they published two independently worded copies of this schema until the `form`
+// field made keeping them in step matter — one builder, so they cannot drift.
+func brokenLinkSchema() map[string]interface{} {
+	return schemaObject(map[string]interface{}{
 		"from_slug":   schemaOf("string", "Document containing the broken link."),
-		"target":      schemaOf("string", "Raw link target as written between the double brackets."),
+		"target":      schemaOf("string", "Raw link target as the author wrote it: the text between the double brackets for a WikiLink, or the '/articles/<slug>' destination for a Markdown link."),
 		"target_slug": schemaOf("string", "Slug the target resolves to; this is the page to create."),
-	}, "from_slug", "target", "target_slug")
+		"form":        schemaOf("string", "Which syntax the link was written in: 'wikilink' for [[Target]], 'markdown' for [text](/articles/<slug>). They are repaired differently."),
+	}, "from_slug", "target", "target_slug", "form")
+}
 
+func statisticsOutputSchema() map[string]interface{} {
 	return schemaObject(map[string]interface{}{
 		"total_articles":    schemaOf("integer", "Number of documents in the knowledge base."),
-		"total_links":       schemaOf("integer", "Number of WikiLinks scanned."),
-		"broken_link_count": schemaOf("integer", "Number of WikiLinks with no destination."),
-		"broken_links":      schemaArrayOf(broken, "Every WikiLink whose target does not exist."),
+		"total_links":       schemaOf("integer", "Number of internal links scanned, in either link form."),
+		"broken_link_count": schemaOf("integer", "Number of internal links with no destination."),
+		"broken_links":      schemaArrayOf(brokenLinkSchema(), "Every internal link whose target does not exist."),
 	}, "total_articles", "total_links", "broken_link_count", "broken_links")
 }
 

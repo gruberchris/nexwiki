@@ -769,7 +769,7 @@ func (srv *Server) toolRevertArticleVersion(args json.RawMessage) (interface{}, 
 var getBacklinksTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_backlinks",
-		"description": "List all articles whose content links to the given article via double-bracket WikiLinks. Use this to traverse the knowledge graph in reverse: find the pages that reference a concept, decision, or note before editing or deleting it.",
+		"description": "List all articles whose content links to the given article, in either internal link form — double-bracket [[WikiLinks]] or absolute [text](/articles/<slug>) Markdown links. Use this to traverse the knowledge graph in reverse: find the pages that reference a concept, decision, or note before editing or deleting it.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

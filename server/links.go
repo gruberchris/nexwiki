@@ -77,16 +77,112 @@ func ExtractWikiLinkTargets(content string) []string {
 	return targets
 }
 
-// WikiLinkRef is one outbound WikiLink: the raw target as the author wrote it between the double
-// brackets, and the slug it resolves to. Both matter — comparisons use the slug, but a report an
-// author has to act on has to name the text they actually typed.
-type WikiLinkRef struct {
+// LinkForm distinguishes the two ways NexWiki authors write an internal link. Comparisons never
+// need it — every consumer matches on the resolved slug — but a report does: telling an author to
+// look for "[[rust]]" in a file that says "[Rust](/articles/rust)" sends them hunting for text
+// that is not there.
+type LinkForm string
+
+const (
+	// LinkFormWiki is the double-bracket form, [[Target]] or [[Target|display]].
+	LinkFormWiki LinkForm = "wikilink"
+	// LinkFormMarkdown is the absolute Markdown form, [display](/articles/<slug>). This is the
+	// form nexwiki-agent-guidelines §5 tells agents to prefer in body prose, and it accounts for
+	// the large majority of internal links in a real corpus.
+	LinkFormMarkdown LinkForm = "markdown"
+)
+
+// LinkRef is one outbound internal link: the raw target as the author wrote it, the slug it
+// resolves to, and which of the two link forms it was written in. All three matter — comparisons
+// use the slug, but a report an author has to act on has to name the text they actually typed,
+// in the syntax they typed it.
+type LinkRef struct {
+	// Target is what the author wrote: the text between the double brackets for a WikiLink, or
+	// the destination path (/articles/<slug>) for a Markdown link. Not the link's display text —
+	// the destination is the half a fix has to edit.
 	Target string
 	Slug   string
+	Form   LinkForm
 }
 
-// LinkGraph is the whole wiki's WikiLink structure from a single cached pass over the article
-// directory: who links to whom, in both directions, plus the links that go nowhere.
+// Display renders a reference the way it appears in the source, so a broken-link report names
+// something the author can search for. One helper rather than a format string at each call site:
+// the health report and the statistics report must not describe the same link differently.
+func (r LinkRef) Display() string {
+	if r.Form == LinkFormMarkdown {
+		return "(" + r.Target + ")"
+	}
+	return "[[" + r.Target + "]]"
+}
+
+// articlePathPrefix is the route every wiki article is served under, and the only destination
+// prefix the link scanner treats as internal.
+const articlePathPrefix = "/articles/"
+
+// articlePathLink matches an internal Markdown link — [text](/articles/<slug>) — in three parts:
+// the character before the link, the opening through the /articles/ prefix, and the destination.
+// Splitting it this way lets RewriteArticlePathLinks rebuild the link by swapping one group.
+//
+// The leading (^|[^!]) rejects the image form ![alt](/articles/…): an image is not a navigational
+// link. The destination stops at whitespace, ')' or '"' so a titled link ([t](/articles/x "T"))
+// still resolves. Only the absolute /articles/ prefix matches, which also excludes the
+// /api/articles/… URLs that appear in API examples.
+var articlePathLink = regexp.MustCompile(`(^|[^!])(\[[^]]*]\(/articles/)([^)\s"]+)`)
+
+// ExtractArticlePathTargets returns the raw destinations of all absolute Markdown links to wiki
+// articles — [text](/articles/<slug>) — found in a Markdown body, in order of appearance.
+//
+// This is the form nexwiki-agent-guidelines §5 tells agents to prefer, and until §3.21 it was
+// invisible to the link graph: broken-link detection reported none, orphan detection reported
+// pages the home page links to, and get_backlinks under-reported inbound references.
+//
+// Destinations inside code blocks/spans are ignored, exactly as WikiLinks are — a path in a
+// syntax example is documentation, not a link. Any #fragment or ?query is trimmed, so a link into
+// a section still resolves to the article that holds it.
+func ExtractArticlePathTargets(content string) []string {
+	content = stripCodeForLinkScan(content)
+	var targets []string
+	for _, m := range articlePathLink.FindAllStringSubmatch(content, -1) {
+		dest := m[3]
+		if idx := strings.IndexAny(dest, "#?"); idx != -1 {
+			dest = dest[:idx]
+		}
+		dest = strings.TrimSuffix(dest, "/")
+		if dest == "" {
+			continue
+		}
+		targets = append(targets, articlePathPrefix+dest)
+	}
+	return targets
+}
+
+// ExtractLinkRefs returns every outbound internal link in a Markdown body, in both supported
+// forms, with each target resolved to the slug it points at.
+//
+// The two forms are scanned separately and concatenated rather than interleaved by position.
+// Nothing downstream depends on document order — the broken-link report is grouped and sorted by
+// document — and keeping the hand-rolled WikiLink scanner intact preserves its pinned edge-case
+// behavior (empty brackets, unterminated brackets) that a combined regex would silently change.
+func ExtractLinkRefs(content string) []LinkRef {
+	wiki := ExtractWikiLinkTargets(content)
+	paths := ExtractArticlePathTargets(content)
+
+	refs := make([]LinkRef, 0, len(wiki)+len(paths))
+	for _, target := range wiki {
+		refs = append(refs, LinkRef{Target: target, Slug: Slugify(target), Form: LinkFormWiki})
+	}
+	for _, target := range paths {
+		// Slugify the path segment, not the whole destination: Slugify strips '/', so
+		// Slugify("/articles/rust") would yield "articlesrust".
+		slug := Slugify(strings.TrimPrefix(target, articlePathPrefix))
+		refs = append(refs, LinkRef{Target: target, Slug: slug, Form: LinkFormMarkdown})
+	}
+	return refs
+}
+
+// LinkGraph is the whole wiki's internal-link structure from a single cached pass over the article
+// directory: who links to whom, in both directions, plus the links that go nowhere. Both link
+// forms are included — see LinkForm.
 //
 // One pass, one shape. Broken-link detection and orphan detection need the same traversal in
 // opposite directions, and building it twice would double both the cost and the number of places
@@ -94,14 +190,14 @@ type WikiLinkRef struct {
 type LinkGraph struct {
 	// Meta is every document's metadata by slug, including home, which listings exclude.
 	Meta map[string]Article
-	// Outbound is each document's WikiLinks, keyed by the slug of the document holding them.
-	Outbound map[string][]WikiLinkRef
+	// Outbound is each document's internal links, keyed by the slug of the document holding them.
+	Outbound map[string][]LinkRef
 	// InboundCount is how many *other* documents link to each slug. Self-links do not count:
 	// a page that only links to itself is still an orphan.
 	InboundCount map[string]int
-	// Broken lists every WikiLink whose target does not exist, in document then document order.
+	// Broken lists every internal link whose target does not exist, in document then document order.
 	Broken []BrokenLinkRef
-	// TotalLinks is every WikiLink scanned, broken or not.
+	// TotalLinks is every internal link scanned, broken or not, in either form.
 	TotalLinks int
 }
 
@@ -117,7 +213,7 @@ type LinkGraph struct {
 func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 	graph := &LinkGraph{
 		Meta:         map[string]Article{},
-		Outbound:     map[string][]WikiLinkRef{},
+		Outbound:     map[string][]LinkRef{},
 		InboundCount: map[string]int{},
 		Broken:       []BrokenLinkRef{},
 	}
@@ -163,6 +259,7 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 					FromSlug:   slug,
 					Target:     ref.Target,
 					TargetSlug: ref.Slug,
+					Form:       ref.Form,
 				})
 				continue
 			}
@@ -175,9 +272,9 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 	return graph, nil
 }
 
-// GetBacklinks scans all articles (including the home dashboard, which listings exclude)
-// and returns metadata for every article whose body links to the target slug via a WikiLink.
-// Self-links are skipped. Results are sorted by UpdatedAt descending.
+// GetBacklinks scans all articles (including the home dashboard, which listings exclude) and
+// returns metadata for every article whose body links to the target slug, in either internal link
+// form. Self-links are skipped. Results are sorted by UpdatedAt descending.
 func (s *Storage) GetBacklinks(targetSlug string) ([]Article, error) {
 	cleanedTarget := Slugify(targetSlug)
 	if cleanedTarget == "" {
@@ -280,6 +377,47 @@ func RewriteWikiLinks(content, oldSlug, newTitle string) (string, bool) {
 	}
 
 	return b.String(), changed
+}
+
+// RewriteArticlePathLinks rewrites every absolute Markdown link whose destination resolves to
+// oldSlug — [text](/articles/<oldSlug>) — so it points at newSlug instead. It returns the
+// rewritten content and whether any link changed.
+//
+// Only the destination changes; the link text is left exactly as written. That is the same
+// guarantee [[old|display]] already gets from RewriteWikiLinks, and it is what makes healing this
+// form safe: a Markdown destination is a path, not prose. Note the asymmetry with
+// RewriteWikiLinks, which substitutes the new *title* — a WikiLink target is a title, a Markdown
+// destination is a slug.
+//
+// Any #fragment or ?query on the destination is preserved: a link into a section of the renamed
+// article should still land on that section.
+func RewriteArticlePathLinks(content, oldSlug, newSlug string) (string, bool) {
+	cleanedOld := Slugify(oldSlug)
+	cleanedNew := Slugify(newSlug)
+	if cleanedOld == "" || cleanedNew == "" || cleanedOld == cleanedNew {
+		return content, false
+	}
+
+	changed := false
+	rewritten := articlePathLink.ReplaceAllStringFunc(content, func(m string) string {
+		groups := articlePathLink.FindStringSubmatch(m)
+		if len(groups) != 4 {
+			return m
+		}
+		dest, suffix := groups[3], ""
+		if idx := strings.IndexAny(dest, "#?"); idx != -1 {
+			dest, suffix = dest[:idx], dest[idx:]
+		}
+		if Slugify(strings.TrimSuffix(dest, "/")) != cleanedOld {
+			return m
+		}
+		changed = true
+		// groups[1] is the character the pattern had to consume to reject the image form and
+		// groups[2] is "[text](/articles/"; both go back verbatim.
+		return groups[1] + groups[2] + cleanedNew + suffix
+	})
+
+	return rewritten, changed
 }
 
 // TranslateWikiLinksToBundlePaths rewrites [[Target]] / [[Target|alias]] WikiLinks into
