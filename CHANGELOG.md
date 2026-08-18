@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **The orientation prerequisites formed a cycle with no exit, and agents livelocked in it.** Three tool descriptions told agents they must *ALWAYS* load `nexwiki-agent-guidelines` before executing, and the seeded guidelines told them to search for a style guide before writing — so intent to create led to re-reading the guidelines, which led to searching, which led back to intent to create. Nothing in either half said "you have already done this." Observed on a live wiki: an agent wrote its article successfully at 20:39 UTC, never registered the success, and then spent **31 minutes and ~170 tool calls alternating between `read_article` and `search_wiki`** before it was killed. Each lap appended another copy of the ~4,500-token guidelines to its context until the original request was evicted, at which point the only instructions left were the ones telling it to orient. Frontier models escape by tracking satisfied preconditions; smaller local models do not.
+  - The `create_wiki_article`, `create_agent_memory`, and `create_agent_plan` descriptions now scope the prerequisite to **once per session**, and say explicitly not to re-read the guidelines if they are already in context.
+  - The seeded guidelines gained a **§0 "Orientation runs once, then you write"**: each orientation call runs once per question, a search returning nothing is a *completed* check rather than a failed one, and when the checks are done the next action is a `create_*` call. §2 gained the matching exit clause for the case no template covers the subject — which is what triggered this, since the wiki's only format templates were for programming languages and SQL dialects and the article was about neither.
+  - Existing wikis keep their own guidelines page untouched, as seeding has always been skip-if-present. Add the §0 rules by hand to get the fix.
+- **`create_wiki_article` now states what `title` is for.** The same run passed `title: "create"` — the tool's own verb — and the article was stored at `/articles/create` with an otherwise complete body. The description now says to use the subject's human-readable name and never a tool name, verb, or placeholder, since the slug is derived from it.
+
 ## [0.10.0] — 2026-08-10
 
 ### Added

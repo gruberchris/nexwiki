@@ -19,14 +19,28 @@ const defaultAgentGuidelines = `# NexWiki Agent Guidelines
 Operating rules for AI agents working with this NexWiki second brain. Edit this page in
 the wiki UI to change how every connected agent behaves — updates take effect immediately.
 
+## 0. Orientation runs once, then you write
+These rules bound every other rule on this page. Orientation is a prerequisite, not a loop.
+- Load this page **once per session**. If it is already in your context, do not read it again.
+- Run each orientation call (` + "`get_context_overview`, `list_agent_memories`, `search_wiki`" + `)
+  once per question. Repeating a call you have already made is never the right next action.
+- A search that returns nothing relevant is a **completed** check, not a failed one. Proceed —
+  do not re-run it with reworded queries hoping for a different result.
+- When the checks are done, write. If you have finished orienting and have not yet called a
+  ` + "`create_*`" + ` tool, calling it is your next action.
+- Unsure whether you already created something? Call ` + "`get_recent_activity`" + ` once and look.
+  Do not restart the task from the beginning.
+
 ## 1. Orient at session start (progressive disclosure)
 - Call ` + "`get_context_overview`" + ` to load a compact index of the whole wiki before reading anything.
 - Then ` + "`read_article`" + ` only on the entries you actually need — do not bulk-read to orient.
 - When resuming, call ` + "`get_recent_activity`" + ` (e.g., since: "48h") to see what changed.
 
-## 2. Search before you write
-- Before creating a wiki article, call ` + "`list_agent_memories`" + ` or ` + "`search_wiki`" + ` for
-  relevant style guides, templates, or formatting memories, and follow any you find.
+## 2. Search before you write — once
+- Before creating a wiki article, make one ` + "`list_agent_memories`" + ` or ` + "`search_wiki`" + ` call
+  for relevant style guides, templates, or formatting memories, and follow any you find.
+- If nothing matches the subject, that is the expected answer for a topic no template covers:
+  use a sensible structure of your own and write the article. Do not search again.
 
 ## 3. Save multi-step work as plans
 - Any task with more than two steps must be saved with ` + "`create_agent_plan`" + ` (set
