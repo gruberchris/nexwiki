@@ -93,6 +93,39 @@ Add a custom instruction rule prompting the agent to fetch the guidelines:
 2. Paste the following global instruction:
    > *"You have the `nexwiki` MCP server registered. Before writing any documentation or saving development plans, always load and follow the global agent operational guidelines skill using `read_article(slug: 'nexwiki-agent-guidelines')`."*
 
+#### Option C: opencode
+Register the server in `opencode.json`, and put the session-start instruction in the agent's
+system prompt so it runs before the first tool selection:
+
+```json
+{
+  "mcp": {
+    "nexwiki": {
+      "type": "local",
+      "command": ["docker", "exec", "-i", "personal-wiki", "/app/nexwiki", "-mcp-only", "-data", "/app/data"]
+    }
+  },
+  "instructions": [
+    "You have the nexwiki MCP server registered. Once at the start of the session, read the operating rules with read_article(slug: \"nexwiki-agent-guidelines\") and follow them. Do not re-read that page later in the session."
+  ]
+}
+```
+
+> ⚠️ **Say "once" explicitly when the client model is small.** Local models served through LM Studio
+> or Ollama tend not to track which prerequisites they have already satisfied, and an instruction
+> phrased as an unconditional precondition can put them in a read → search → read loop that never
+> reaches the write. See the note in §2 above.
+
+#### Option D: GitHub Copilot CLI
+Reference the guidelines from `.github/copilot-instructions.md` in each repository:
+
+> *"This project uses a NexWiki second brain over MCP. At the start of a session, call `read_article(slug: "nexwiki-agent-guidelines")` once and follow it when creating articles, plans, or memories."*
+
+#### Option E: Any MCP-Compatible Agent
+1. The agent calls `list_agent_skills()` to discover the available skills.
+2. It calls `read_article(slug: "nexwiki-agent-guidelines")` once to load the operating rules.
+3. That content becomes active instructions for the rest of the session.
+
 ---
 
 ## 📖 Practical End-to-End Walkthroughs
