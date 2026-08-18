@@ -69,12 +69,15 @@ func (srv *Server) toolCreateAgentSkill(args json.RawMessage) (interface{}, *JSO
 	if sArgs.Title == "" || sArgs.Content == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title' and 'content' are required."}
 	}
+	if resp := rejectToolArtifactTitle(sArgs.Title, "skill"); resp != nil {
+		return *resp, nil
+	}
 
 	title := sArgs.Title
 	slug := Slugify(title)
 
 	// The OKF type carries the skill class; only free user/status tags ride here.
-	tags := validateAndCleanUserTags(sArgs.Tags, nil)
+	tags := validateAndCleanUserTags(sArgs.Tags, nil, ContentTypeSkill)
 
 	if _, err := srv.Storage.GetArticle(slug); err == nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: a skill with slug '%s' already exists", slug)}}}, nil
@@ -210,7 +213,7 @@ func (srv *Server) toolEditAgentSkill(args json.RawMessage) (interface{}, *JSONR
 
 	newTags := existing.Tags
 	if eArgs.Tags != nil {
-		newTags = validateAndCleanUserTags(*eArgs.Tags, existing.Tags)
+		newTags = validateAndCleanUserTags(*eArgs.Tags, existing.Tags, existing.Type)
 	}
 
 	summary := eArgs.EditSummary

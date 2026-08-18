@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 // toolDef pairs an MCP tool's JSON schema with the handler that executes it. Keeping them in
@@ -120,6 +121,42 @@ var toolsByName = func() map[string]*toolDef {
 	}
 	return m
 }()
+
+// bareToolVerbs are the imperative verbs that lead MCP tool names — create_wiki_article,
+// edit_agent_plan, append_agent_memory, and so on. A document title equal to one of these on its
+// own is never a subject anyone meant to write about.
+//
+// This is a static list rather than one derived from mcpToolRegistry, and it has to be: the
+// registry's initializer references the handlers, the handlers call rejectToolArtifactTitle, and
+// consulting the registry from there closes an initialization cycle the compiler rejects.
+// TestBareToolVerbsCoverRegistry walks the registry at test time — where there is no cycle — and
+// fails if a newly added tool introduces a leading verb this list does not cover.
+var bareToolVerbs = map[string]bool{
+	"create": true, "edit": true, "append": true, "delete": true,
+	"read": true, "search": true, "get": true, "list": true,
+	"update": true, "revert": true, "import": true, "export": true,
+}
+
+// rejectToolArtifactTitle guards against a tool call whose arguments were mangled in transit,
+// putting the tool's own verb into the title. It returns nil when the title is fine.
+//
+// This is not hypothetical: a local model served through LM Studio called create_wiki_article with
+// title "create" and an otherwise complete 2,500-word body, storing a real article at
+// /articles/create. The fault is the client's serialization, but accepting it silently turns a
+// recoverable client bug into wrong data in the wiki, under a slug derived from the bad title.
+//
+// Deliberately narrow: an exact match against a bare verb, nothing heuristic. Length and
+// letter-case tests were considered and rejected — "Go", "C", and "Zig" are all legitimate titles
+// in this wiki. Matching whole tool names (create_wiki_article) or snake_case titles led by a verb
+// was also rejected: it would catch "read_write_lock", which is a plausible subject.
+func rejectToolArtifactTitle(title, kind string) *ToolResponse {
+	if !bareToolVerbs[strings.ToLower(strings.TrimSpace(title))] {
+		return nil
+	}
+	return &ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf(
+		"Error: %q is a bare MCP tool verb, not a %s subject. This almost always means the tool call was serialized incorrectly and the tool's own name leaked into the 'title' argument. Re-send with 'title' set to the subject's human-readable name — the slug is derived from it.",
+		title, kind)}}}
+}
 
 // listedTools is the tools/list payload, built once: each tool's declared schema merged with
 // its rendered annotations. Computed at init rather than per request so the payload is stable

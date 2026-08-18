@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `memory-<scope>` tag on a non-memory document could never be removed.** `validateAndCleanUserTags` re-asserted every existing memory-scope tag before applying the caller's replacement set, so the tag survived any edit — and `DeleteTagGlobally` refuses memory-scope tags outright, which closed the last remaining path. The invariant is right for an `AI-Agent-Memory`, where `create_agent_memory` derives the tag from `memory_type` and dropping it would orphan the memory from its scope. On any other class the tag is stray data that no tool sets, and making it permanent was never intended. Found while trying to clean a stray `memory-rules` tag off a superseded `AI-Agent-Skill`: the tag made that document the **top hit for `search_wiki(query="style guide")`**, ahead of the actual article format templates, which is what misdirected the agent in the livelock described below. Preservation is now scoped to `AI-Agent-Memory`; forging a scope tag onto any class is still refused.
+- **A malformed tool call could store an article under the tool's own verb.** `create_wiki_article` was called with `title: "create"` and an otherwise complete 2,500-word body, and NexWiki saved it at `/articles/create`. The fault is client-side serialization — a local model served through LM Studio — but accepting it silently converts a recoverable client bug into wrong data under a slug derived from the bad title. The four `create_*` tools now refuse a title that is a bare tool verb (`create`, `edit`, `get`, …) and return an error naming the likely cause. The check is deliberately narrow: an exact match against a bare verb, nothing heuristic. `Go`, `C`, and `Zig` are all legitimate titles here, and `read_write_lock` is a plausible one, so neither short titles nor snake_case titles led by a verb are touched.
+
 ## [0.10.0] — 2026-08-10
 
 ### Added

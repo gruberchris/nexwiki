@@ -73,6 +73,9 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 	if mArgs.Title == "" || mArgs.Content == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title' and 'content' are required."}
 	}
+	if resp := rejectToolArtifactTitle(mArgs.Title, "memory"); resp != nil {
+		return *resp, nil
+	}
 
 	mType := strings.ToLower(strings.TrimSpace(mArgs.MemoryType))
 
@@ -86,7 +89,7 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 	// Caller tags are merged on top of the tool-managed scope tag, sanitized through the same
 	// helper the REST path uses: the scope tag is re-asserted first so it cannot be displaced, and
 	// a caller cannot forge a memory-<scope> tag of its own.
-	tags := validateAndCleanUserTags(mArgs.Tags, scopeTags)
+	tags := validateAndCleanUserTags(mArgs.Tags, scopeTags, ContentTypeMemory)
 
 	title := mArgs.Title
 	slug := Slugify(title)
