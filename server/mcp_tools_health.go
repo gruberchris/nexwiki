@@ -493,14 +493,15 @@ func liveReferencedSlugs(graph *LinkGraph) map[string]bool {
 		}
 	}
 
-	for mentioned, sources := range graph.MentionedBy {
-		for _, from := range sources {
-			source := graph.Meta[from]
-			if IsArchived(&source) {
-				continue
+	for from, mentions := range graph.Mentions {
+		source := graph.Meta[from]
+		if IsArchived(&source) {
+			continue
+		}
+		for _, mentioned := range mentions {
+			if mentioned != from {
+				live[mentioned] = true
 			}
-			live[mentioned] = true
-			break
 		}
 	}
 

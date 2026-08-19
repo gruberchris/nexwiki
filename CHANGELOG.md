@@ -12,7 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   - **A reference from an archived document does not count.** A skill whose only mention lives in a retired document is as unreachable as one with no mention at all — and that is exactly how the dead skill was found, since it looked referenced right until the document naming it was archived.
   - `nexwiki-agent-guidelines` is exempt: three tool descriptions name its slug in Go, so no document has to.
   - Deliberately not extended to memories or plans, which are reached through their own list tools and are meant to be link-less. Orphan detection already excludes them for the same reason — scanning every type once produced 70 findings on an 83-document corpus, 27 of them agent documents behaving as designed.
-  - Extraction rides on the body read `ScanLinkGraph` already performs and caches by mtime, so the scan still costs one stat per unchanged file.
+  - Extraction rides on the body read `ScanLinkGraph` already performs and caches by mtime, so the scan still costs one stat per unchanged file. Collecting the mentions costs `ScanLinkGraph` **~10%** on the large-corpus benchmarks (10,000 documents: 127 ms → 139 ms), from retaining the per-document slices; `get_backlinks` and `get_wiki_statistics` share that scan and pay it without reading the field. One scan was preferred over two.
 
 ## [0.10.0] — 2026-08-10
 

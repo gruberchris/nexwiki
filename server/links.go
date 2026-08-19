@@ -199,12 +199,23 @@ type LinkGraph struct {
 	Broken []BrokenLinkRef
 	// TotalLinks is every internal link scanned, broken or not, in either form.
 	TotalLinks int
-	// MentionedBy maps a slug to the documents whose body names it in code — a
+	// Mentions maps a document's slug to the slugs its body names in code — a
 	// `read_article(slug: "…")` call or a backticked slug reference. This is how a *skill* is
 	// referenced, and none of it is a link, so it is tracked separately from InboundCount and
 	// deliberately kept out of it: counting these would change what get_backlinks and the orphan
-	// check mean. Self-mentions are skipped. See ExtractSlugMentions.
-	MentionedBy map[string][]string
+	// check mean. See ExtractSlugMentions.
+	//
+	// Stored in the forward direction, as the walk produces it, because the only consumer
+	// (liveReferencedSlugs) iterates documents anyway. An inverted mentioned-by map was tried
+	// first and dropped as pointless indirection — measured, it made no difference either way.
+	//
+	// Collecting mentions at all costs ScanLinkGraph ~10% on the 1k/5k/10k benchmarks
+	// (10000 docs: 127ms → 139ms), from retaining the per-document slices and one extra map
+	// insert per file. Extraction itself is free, riding the body read cachedBodyRefs already
+	// performs and caches by mtime. get_backlinks and get_wiki_statistics share this scan and pay
+	// that overhead without reading the field; the absolute cost was judged small enough to
+	// prefer one scan over two.
+	Mentions map[string][]string
 }
 
 // ScanLinkGraph walks the article directory once and builds the whole link graph.
@@ -222,11 +233,10 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 		Outbound:     map[string][]LinkRef{},
 		InboundCount: map[string]int{},
 		Broken:       []BrokenLinkRef{},
-		MentionedBy:  map[string][]string{},
+		Mentions:     map[string][]string{},
 	}
 
 	var order []string
-	mentionsBySlug := map[string][]string{}
 	err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -248,7 +258,7 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 		}
 		graph.Meta[meta.Slug] = *meta
 		graph.Outbound[meta.Slug] = refs
-		mentionsBySlug[meta.Slug] = mentions
+		graph.Mentions[meta.Slug] = mentions
 		order = append(order, meta.Slug)
 		return nil
 	})
@@ -275,18 +285,6 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 			if ref.Slug != slug {
 				graph.InboundCount[ref.Slug]++
 			}
-		}
-	}
-
-	// Built in the same sorted pass so the mentioning-document lists are stable across runs, for
-	// the same reason `order` is sorted: an agent diffing two health reports should see only real
-	// changes.
-	for _, slug := range order {
-		for _, mentioned := range mentionsBySlug[slug] {
-			if mentioned == slug {
-				continue
-			}
-			graph.MentionedBy[mentioned] = append(graph.MentionedBy[mentioned], slug)
 		}
 	}
 
