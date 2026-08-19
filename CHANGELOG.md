@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- **CI resolves the Go toolchain from `go.mod` instead of a floating minor version.** All five `actions/setup-go` blocks across `ci.yml` and `release.yml` said `go-version: "1.26"`, which is supposed to float to the newest patch. It does not do so reliably: with `GO-2026-6218` (`net/url`) and `GO-2026-6090` (`crypto/tls`) fixed in **1.26.6**, three PRs opened within minutes of each other resolved differently — two got `go1.26.6` and passed `govulncheck`, one got `go1.26.5` and failed, and stayed on 1.26.5 across a rerun, a `--failed` rerun, and a fresh close/reopen run. Whether a PR went green was decided by which runner picked up the job. `go-version-file: "go.mod"` makes it deterministic and collapses six duplicated version strings into one.
+  - `go.mod` now declares `go 1.26.6`, which **raises the minimum Go for building from source**. That is the point: the version is a build requirement, not a suggestion.
+  - The Dockerfile deliberately keeps `golang:1.26-alpine`. It cannot read `go.mod` for a base image, and pinning it would reintroduce the drift this removes — Docker Hub's minor tag does track the newest patch reliably, which is exactly what the `setup-go` manifest failed to do.
+
 ### Fixed
 
 - **The orientation prerequisites formed a cycle with no exit, and agents livelocked in it.** Three tool descriptions told agents they must *ALWAYS* load `nexwiki-agent-guidelines` before executing, and the seeded guidelines told them to search for a style guide before writing — so intent to create led to re-reading the guidelines, which led to searching, which led back to intent to create. Nothing in either half said "you have already done this." Observed on a live wiki: an agent wrote its article successfully at 20:39 UTC, never registered the success, and then spent **31 minutes and ~170 tool calls alternating between `read_article` and `search_wiki`** before it was killed. Each lap appended another copy of the guidelines — measured at 11,733 characters, roughly 3,000 tokens — to its context until the original request was evicted, at which point the only instructions left were the ones telling it to orient. Frontier models escape by tracking satisfied preconditions; smaller local models do not.

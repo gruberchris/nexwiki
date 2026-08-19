@@ -38,7 +38,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: "go.mod"
           cache: true
 
       - name: Check formatting
@@ -140,7 +140,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: "go.mod"
           cache: true
 
       - name: Run govulncheck
@@ -160,7 +160,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: "go.mod"
           cache: true
 
       # frontend/dist is gitignored, so //go:embed frontend/dist/* fails to typecheck on a fresh
