@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-08-19
+
 ### Fixed
 
 - **A version conflict told the client to re-read without saying what to send, which is an unbounded retry.** All five optimistic-locking messages ended in "re-fetch and try again". That names no value and sets no bound, so a client that mis-threads `loaded_version` re-reads, retries, and can mis-thread again — the same unbounded-precondition shape as the orientation cycle fixed in 0.11.0, which had an agent alternating `read_article` and `search_wiki` for 31 minutes. The server already knows the version on disk at the moment it rejects the call, so it now says exactly what to send: *"The article is at version 15 on disk; you sent loaded_version 14. Retry once with loaded_version: 15. Re-read only if you need the current content before overwriting it — sending 14 again will fail identically."* Three properties carry it: name the value, say **once**, and foreclose the identical retry.
@@ -214,7 +216,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/gruberchris/nexwiki/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/gruberchris/nexwiki/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/gruberchris/nexwiki/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/gruberchris/nexwiki/compare/v0.8.0...v0.9.0
