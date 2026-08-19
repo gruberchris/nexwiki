@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- **CI resolves the Go toolchain from `go.mod` instead of a floating minor version.** All five `actions/setup-go` blocks across `ci.yml` and `release.yml` said `go-version: "1.26"`, which is supposed to float to the newest patch. It does not do so reliably: with `GO-2026-6218` (`net/url`) and `GO-2026-6090` (`crypto/tls`) fixed in **1.26.6**, three PRs opened within minutes of each other resolved differently — two got `go1.26.6` and passed `govulncheck`, one got `go1.26.5` and failed, and stayed on 1.26.5 across a rerun, a `--failed` rerun, and a fresh close/reopen run. Whether a PR went green was decided by which runner picked up the job. `go-version-file: "go.mod"` makes it deterministic and collapses six duplicated version strings into one.
+  - `go.mod` now declares `go 1.26.6`, which **raises the minimum Go for building from source**. That is the point: the version is a build requirement, not a suggestion.
+  - The Dockerfile deliberately keeps `golang:1.26-alpine`. It cannot read `go.mod` for a base image, and pinning it would reintroduce the drift this removes — Docker Hub's minor tag does track the newest patch reliably, which is exactly what the `setup-go` manifest failed to do.
+
 ## [0.10.0] — 2026-08-10
 
 ### Added
