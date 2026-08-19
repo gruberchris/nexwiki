@@ -322,7 +322,7 @@ func nonNilDocuments(articles []Article) []Article {
 var createWikiArticleTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "create_wiki_article",
-		"description": "Create a brand new wiki article. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand formatting and style guide check requirements before executing this tool.)",
+		"description": "Create a brand new wiki article. Set 'title' to the subject's human-readable name — never a tool name, an action verb, or a placeholder, since the slug is derived from it. (IMPORTANT: If you have not already loaded the global operational guidelines skill this session, load it once with 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand formatting and style-guide check requirements. If it is already in your context, do not re-read it — call this tool.)",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

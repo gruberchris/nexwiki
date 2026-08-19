@@ -54,9 +54,11 @@ Instead of duplicating rules in local files across countless folders, all instru
 To ensure the agent actually reads these guidelines without any manual user prompting, we embed explicit prerequisites directly into the **MCP tool schema descriptions** (`server/mcp.go`). 
 
 For example, the description for `create_wiki_article` is registered as:
-> *`Create a brand new wiki article. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: "nexwiki-agent-guidelines")' to understand formatting and style guide check requirements before executing this tool.)`*
+> *`Create a brand new wiki article. Set 'title' to the subject's human-readable name — never a tool name, an action verb, or a placeholder, since the slug is derived from it. (IMPORTANT: If you have not already loaded the global operational guidelines skill this session, load it once with 'read_article(slug: "nexwiki-agent-guidelines")' to understand formatting and style-guide check requirements. If it is already in your context, do not re-read it — call this tool.)`*
 
-When your agent parses these tools in *any* external workspace, the LLM planner reads this prerequisite and is **forced to execute `read_article(slug: "nexwiki-agent-guidelines")` in its first turn** before drafting or saving any content!
+When your agent parses these tools in *any* external workspace, the LLM planner reads this prerequisite and executes `read_article(slug: "nexwiki-agent-guidelines")` in its first turn, before drafting or saving any content.
+
+**The prerequisite is scoped to "once per session" on purpose.** An earlier phrasing said the agent must *always* load the guidelines before executing the tool, which reads as a precondition to re-check on every attempt. Combined with the guidelines' own "search for a style guide before writing" rule, that closes a cycle — intent to create → re-read guidelines → search → intent to create — with no exit. Models that track which prerequisites they have already satisfied break out of it; smaller local models generally do not, and will alternate between `read_article` and `search_wiki` until they are stopped. Keep both halves bounded: the tool description says load it *once*, and §0 of the seeded guidelines says a search returning nothing is a completed check.
 
 ---
 
@@ -90,6 +92,39 @@ Add a custom instruction rule prompting the agent to fetch the guidelines:
 1. Open Cursor **Settings** -> **Features** -> **Custom Instructions**.
 2. Paste the following global instruction:
    > *"You have the `nexwiki` MCP server registered. Before writing any documentation or saving development plans, always load and follow the global agent operational guidelines skill using `read_article(slug: 'nexwiki-agent-guidelines')`."*
+
+#### Option C: opencode
+Register the server in `opencode.json`, and put the session-start instruction in the agent's
+system prompt so it runs before the first tool selection:
+
+```json
+{
+  "mcp": {
+    "nexwiki": {
+      "type": "local",
+      "command": ["docker", "exec", "-i", "personal-wiki", "/app/nexwiki", "-mcp-only", "-data", "/app/data"]
+    }
+  },
+  "instructions": [
+    "You have the nexwiki MCP server registered. Once at the start of the session, read the operating rules with read_article(slug: \"nexwiki-agent-guidelines\") and follow them. Do not re-read that page later in the session."
+  ]
+}
+```
+
+> ⚠️ **Say "once" explicitly when the client model is small.** Local models served through LM Studio
+> or Ollama tend not to track which prerequisites they have already satisfied, and an instruction
+> phrased as an unconditional precondition can put them in a read → search → read loop that never
+> reaches the write. See the note in §2 above.
+
+#### Option D: GitHub Copilot CLI
+Reference the guidelines from `.github/copilot-instructions.md` in each repository:
+
+> *"This project uses a NexWiki second brain over MCP. At the start of a session, call `read_article(slug: "nexwiki-agent-guidelines")` once and follow it when creating articles, plans, or memories."*
+
+#### Option E: Any MCP-Compatible Agent
+1. The agent calls `list_agent_skills()` to discover the available skills.
+2. It calls `read_article(slug: "nexwiki-agent-guidelines")` once to load the operating rules.
+3. That content becomes active instructions for the rest of the session.
 
 ---
 
