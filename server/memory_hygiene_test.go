@@ -48,10 +48,16 @@ func TestMCPEditAgentMemory(t *testing.T) {
 		t.Errorf("expected scoped memory-nexwiki tag preserved, got %v", art2.Tags)
 	}
 
-	// Stale loaded_version yields a conflict telling the agent to re-read
+	// A stale loaded_version yields a conflict that names the value to retry with, rather than
+	// sending the agent off to re-read and possibly mis-thread the version again.
 	conflict := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"slug":"build-quirk","content":"# Should fail","loaded_version":1}}`)
-	if !conflict.IsError || !strings.Contains(conflict.Content[0].Text, "Re-read the memory") {
-		t.Errorf("expected version conflict with re-read hint, got: %v", conflict)
+	if !conflict.IsError {
+		t.Fatalf("expected a version conflict, got: %v", conflict)
+	}
+	for _, want := range []string{"version conflict", "version 3 on disk", "Retry once with loaded_version: 3"} {
+		if !strings.Contains(conflict.Content[0].Text, want) {
+			t.Errorf("conflict message missing %q, got: %s", want, conflict.Content[0].Text)
+		}
 	}
 
 	// Non-memory target is rejected

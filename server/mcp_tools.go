@@ -158,6 +158,26 @@ func rejectToolArtifactTitle(title, kind string) *ToolResponse {
 		title, kind)}}}
 }
 
+// versionConflictMessage renders a failed optimistic-locking check as a single corrected retry.
+//
+// Every conflict message used to end in "re-fetch and try again", which names no value and sets
+// no bound. A client that mis-threads loaded_version therefore re-reads, retries, and can
+// mis-thread again, with nothing capping the cycle — the same unbounded-precondition shape that
+// made a local model spend 31 minutes alternating read_article and search_wiki instead of
+// writing. The server already knows the version on disk at the moment it rejects the call, so it
+// can say exactly what to send instead of asking the client to go find out.
+//
+// Three properties carry the fix: it names the value, it says *once*, and it forecloses the
+// identical retry. Re-reading stays available for the case that actually needs it — wanting the
+// current content before overwriting it — rather than being the prescribed reflex.
+func versionConflictMessage(kind, slug string, disk, sent int) string {
+	return fmt.Sprintf(
+		"Error: version conflict on '%s'. The %s is at version %d on disk; you sent loaded_version %d. "+
+			"Retry once with loaded_version: %d. Re-read only if you need the current content before "+
+			"overwriting it — sending %d again will fail identically.",
+		slug, kind, disk, sent, disk, sent)
+}
+
 // listedTools is the tools/list payload, built once: each tool's declared schema merged with
 // its rendered annotations. Computed at init rather than per request so the payload is stable
 // and the registry's own Schema maps are never mutated.

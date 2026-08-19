@@ -263,7 +263,7 @@ func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSON
 	}
 
 	if existing.Version > 0 && existing.Version != eArgs.LoadedVersion {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: Version conflict! The memory was updated by another session. Disk version is %d, but you loaded version %d. Re-read the memory and try again.", existing.Version, eArgs.LoadedVersion)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: versionConflictMessage("memory", eArgs.Slug, existing.Version, eArgs.LoadedVersion)}}}, nil
 	}
 
 	newTitle := existing.Title

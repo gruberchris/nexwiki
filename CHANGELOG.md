@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **A version conflict told the client to re-read without saying what to send, which is an unbounded retry.** All five optimistic-locking messages ended in "re-fetch and try again". That names no value and sets no bound, so a client that mis-threads `loaded_version` re-reads, retries, and can mis-thread again — the same unbounded-precondition shape as the orientation cycle fixed in 0.11.0, which had an agent alternating `read_article` and `search_wiki` for 31 minutes. The server already knows the version on disk at the moment it rejects the call, so it now says exactly what to send: *"The article is at version 15 on disk; you sent loaded_version 14. Retry once with loaded_version: 15. Re-read only if you need the current content before overwriting it — sending 14 again will fail identically."* Three properties carry it: name the value, say **once**, and foreclose the identical retry.
+  - `update_article_tags` was the worst of the five and had no test coverage. `UpdateArticleTags` returned a bare `fmt.Errorf` that surfaced verbatim as `Error updating tags: version conflict: loaded version 1, current version 2` — no instruction at all. It now wraps the existing `ErrVersionConflict` sentinel, and the tool maps it with `errors.Is` like the article-edit path already did.
+  - The single exception is `edit_wiki_article` when the article cannot be read back after the conflict. There is genuinely no version to name, so that message still says to re-read — the one case where it is the honest instruction rather than a reflex.
+- **The `nexwiki-agent-guidelines` document shipped to agents is 28% smaller** (11,733 → 8,457 characters). §2–§4 fell from **44% of the mandatory read to 20%**, with the detail moved to the existing `create-plan-skill` and a new lean `agent-memory-rules` skill, loaded only when actually doing plan or memory work. Section numbers are unchanged on purpose: `server/links.go` cites §5 by number. This is a live-wiki change, not a code one; `defaultAgentGuidelines` in `server/guidelines.go` was already lean and is untouched.
+
 ## [0.11.0] — 2026-08-19
 
 ### Added
