@@ -183,12 +183,25 @@ type CreateArticleReq struct {
 // exist on a document and strips any the user tries to forge onto one. The document *class* is carried
 // by the OKF `type` field, not by tags, so there is no class-tag stripping here anymore. Free user tags
 // and recognized status tags pass through unchanged (deduplicated, case-insensitively).
-func validateAndCleanUserTags(incomingTags []string, existingTags []string) []string {
+//
+// The preservation is scoped to AI-Agent-Memory documents, because that is the only class where a
+// memory-<scope> tag is genuinely tool-managed: create_agent_memory derives it from memory_type, and
+// dropping it would orphan the memory from its scope. On any other class the tag is stray data — no
+// tool sets one there — and re-asserting it made such a tag permanently unremovable through every
+// write path, since DeleteTagGlobally refuses memory-scope tags outright. A superseded
+// AI-Agent-Skill carrying a stray `memory-rules` tag could therefore never be cleaned up, and kept
+// outranking the real format templates in style-guide searches.
+func validateAndCleanUserTags(incomingTags []string, existingTags []string, docType string) []string {
+	// Only a memory document has tool-managed scope tags worth defending.
+	toolManagesScope := docType == ContentTypeMemory
+
 	existingMemoryScope := make(map[string]bool)
-	for _, t := range existingTags {
-		tLower := strings.ToLower(strings.TrimSpace(t))
-		if strings.HasPrefix(tLower, MemoryScopeTagPrefix) {
-			existingMemoryScope[tLower] = true
+	if toolManagesScope {
+		for _, t := range existingTags {
+			tLower := strings.ToLower(strings.TrimSpace(t))
+			if strings.HasPrefix(tLower, MemoryScopeTagPrefix) {
+				existingMemoryScope[tLower] = true
+			}
 		}
 	}
 
@@ -196,12 +209,14 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string) []st
 	seen := make(map[string]bool)
 
 	// Re-assert existing memory-scope tags first so a user edit can never drop them.
-	for _, t := range existingTags {
-		tTrimmed := strings.TrimSpace(t)
-		tLower := strings.ToLower(tTrimmed)
-		if strings.HasPrefix(tLower, MemoryScopeTagPrefix) && !seen[tLower] {
-			seen[tLower] = true
-			result = append(result, tTrimmed)
+	if toolManagesScope {
+		for _, t := range existingTags {
+			tTrimmed := strings.TrimSpace(t)
+			tLower := strings.ToLower(tTrimmed)
+			if strings.HasPrefix(tLower, MemoryScopeTagPrefix) && !seen[tLower] {
+				seen[tLower] = true
+				result = append(result, tTrimmed)
+			}
 		}
 	}
 
@@ -245,7 +260,7 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clean tags (existingTags is nil on creation)
-	cleanedTags := validateAndCleanUserTags(req.Tags, nil)
+	cleanedTags := validateAndCleanUserTags(req.Tags, nil, ContentTypeWiki)
 
 	description := ""
 	if req.Description != nil {
@@ -396,7 +411,7 @@ func (srv *Server) HandleUpdateArticleTags(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Clean tags and preserve existing tool-managed "memory-<scope>" tags
-	cleanedTags := validateAndCleanUserTags(req.Tags, existing.Tags)
+	cleanedTags := validateAndCleanUserTags(req.Tags, existing.Tags, existing.Type)
 
 	summary := req.EditSummary
 	if summary == "" {

@@ -382,13 +382,16 @@ func (srv *Server) toolCreateWikiArticle(args json.RawMessage) (interface{}, *JS
 	if cArgs.Title == "" || cArgs.Content == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'title' or 'content' arguments"}
 	}
+	if resp := rejectToolArtifactTitle(cArgs.Title, "article"); resp != nil {
+		return *resp, nil
+	}
 
 	slug := Slugify(cArgs.Title)
 	if _, err := srv.Storage.GetArticle(slug); err == nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: an article with title '%s' (slug: '%s') already exists", cArgs.Title, slug)}}}, nil
 	}
 
-	tags := validateAndCleanUserTags(cArgs.Tags, nil)
+	tags := validateAndCleanUserTags(cArgs.Tags, nil, ContentTypeWiki)
 	// Regular article creation always produces a Wiki document; reserved types are tool-only.
 	art, err := srv.Storage.SaveArticle("", cArgs.Title, cArgs.Content, cArgs.Description, cArgs.Source, cArgs.Resource, cArgs.EditSummary, tags, ContentTypeWiki)
 	if err != nil {
@@ -573,7 +576,7 @@ func (srv *Server) toolUpdateArticleTags(args json.RawMessage) (interface{}, *JS
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", uArgs.Slug)}}}, nil
 	}
 
-	cleanedTags := validateAndCleanUserTags(uArgs.Tags, existing.Tags)
+	cleanedTags := validateAndCleanUserTags(uArgs.Tags, existing.Tags, existing.Type)
 
 	art, err := srv.Storage.UpdateArticleTags(uArgs.Slug, cleanedTags, uArgs.LoadedVersion, uArgs.EditSummary)
 	if err != nil {

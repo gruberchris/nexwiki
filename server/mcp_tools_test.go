@@ -440,3 +440,81 @@ func hasTagFold(tags []string, want string) bool {
 	}
 	return false
 }
+
+// TestRejectToolArtifactTitle covers the guard against a client that serializes a tool call badly
+// and leaks the tool's own verb into the title argument. Observed in the wild: a local model called
+// create_wiki_article with title "create" and a complete article body, storing it at /articles/create.
+func TestRejectToolArtifactTitle(t *testing.T) {
+	rejected := []string{"create", "Create", "CREATE", "  create  ", "edit", "delete", "append",
+		"read", "search", "get", "list", "update", "revert", "import", "export"}
+	for _, title := range rejected {
+		t.Run("reject/"+title, func(t *testing.T) {
+			if rejectToolArtifactTitle(title, "article") == nil {
+				t.Errorf("expected %q to be rejected as a bare tool verb", title)
+			}
+		})
+	}
+
+	// Every one of these is either a real title in this wiki or a plausible one. The guard must
+	// not touch them — a false positive here blocks legitimate authoring.
+	allowed := []string{"", "Go", "C", "Zig", "C++", "Large Language Models", "Markov Chains",
+		"read_write_lock", "Creating a Wiki Article", "Get Started with Go", "Editor",
+		"Reading List", "Import/Export Formats", "Updates"}
+	for _, title := range allowed {
+		t.Run("allow/"+title, func(t *testing.T) {
+			if resp := rejectToolArtifactTitle(title, "article"); resp != nil {
+				t.Errorf("expected %q to be allowed, got rejection: %s", title, resp.Content[0].Text)
+			}
+		})
+	}
+}
+
+// TestBareToolVerbsCoverRegistry keeps the static bareToolVerbs list honest. rejectToolArtifactTitle
+// cannot consult mcpToolRegistry — doing so closes an initialization cycle — so the coverage check
+// lives here, where reading the registry is free of that constraint.
+func TestBareToolVerbsCoverRegistry(t *testing.T) {
+	// wiki_health leads with a noun, not a verb, and "Wiki" is a plausible article title, so it is
+	// deliberately absent from bareToolVerbs.
+	exempt := map[string]bool{"wiki": true}
+
+	for i := range mcpToolRegistry {
+		name, ok := mcpToolRegistry[i].Schema["name"].(string)
+		if !ok || name == "" {
+			t.Fatalf("tool at index %d has no name", i)
+		}
+		head, _, found := strings.Cut(name, "_")
+		if !found {
+			continue
+		}
+		if !bareToolVerbs[head] && !exempt[head] {
+			t.Errorf("tool %q leads with verb %q, which is missing from bareToolVerbs "+
+				"(add it, or add it to this test's exempt set if it is not a verb)", name, head)
+		}
+	}
+}
+
+// TestCreateWikiArticleRejectsToolVerbTitle is the end-to-end assertion: the bad call is refused
+// and, critically, no article is written. The original incident left a real 2,500-word article
+// stranded at a meaningless slug precisely because the write went through.
+func TestCreateWikiArticleRejectsToolVerbTitle(t *testing.T) {
+	srv := newTestServer(t)
+
+	args := json.RawMessage(`{"title":"create","content":"# A complete article body that should not be saved."}`)
+	result, rpcErr := createWikiArticleTool.Handler(srv, args)
+	if rpcErr != nil {
+		t.Fatalf("expected a tool-level error response, got a JSON-RPC error: %v", rpcErr)
+	}
+	resp, ok := result.(ToolResponse)
+	if !ok {
+		t.Fatalf("expected ToolResponse, got %T", result)
+	}
+	if !resp.IsError {
+		t.Fatal("expected IsError on a bare-verb title")
+	}
+	if !strings.Contains(resp.Content[0].Text, "bare MCP tool verb") {
+		t.Errorf("error should explain the cause, got: %s", resp.Content[0].Text)
+	}
+	if _, err := srv.Storage.GetArticle("create"); err == nil {
+		t.Error("article was written despite the rejection")
+	}
+}

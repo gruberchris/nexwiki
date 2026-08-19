@@ -772,25 +772,35 @@ func TestValidateAndCleanUserTags(t *testing.T) {
 		name         string
 		incoming     []string
 		existing     []string
+		docType      string
 		expectedLen  int
 		expectTag    string
 		notExpectTag string
 	}{
-		{"nil inputs", nil, nil, 0, "", ""},
-		{"empty incoming", []string{}, nil, 0, "", ""},
-		{"normal tags", []string{"tag1", "tag2"}, nil, 2, "tag1", ""},
-		{"deduplication", []string{"tag1", "tag1"}, nil, 1, "tag1", ""},
-		{"forged memory-scope stripped", []string{"memory-rules", "normal"}, nil, 1, "normal", "memory-rules"},
-		{"existing memory-scope preserved", []string{"memory-rules", "normal"}, []string{"memory-rules"}, 2, "memory-rules", ""},
-		{"legacy aiagent tag now a free tag", []string{"aiagent-skill"}, nil, 1, "aiagent-skill", ""},
-		{"status tag allowed", []string{"completed"}, nil, 1, "completed", ""},
-		{"whitespace trimmed", []string{"  tag1  ", "tag2"}, nil, 2, "tag1", ""},
-		{"empty string skipped", []string{"", "tag1"}, nil, 1, "tag1", ""},
+		{"nil inputs", nil, nil, ContentTypeWiki, 0, "", ""},
+		{"empty incoming", []string{}, nil, ContentTypeWiki, 0, "", ""},
+		{"normal tags", []string{"tag1", "tag2"}, nil, ContentTypeWiki, 2, "tag1", ""},
+		{"deduplication", []string{"tag1", "tag1"}, nil, ContentTypeWiki, 1, "tag1", ""},
+		{"forged memory-scope stripped", []string{"memory-rules", "normal"}, nil, ContentTypeMemory, 1, "normal", "memory-rules"},
+		{"existing memory-scope preserved on a memory", []string{"memory-rules", "normal"}, []string{"memory-rules"}, ContentTypeMemory, 2, "memory-rules", ""},
+		{"legacy aiagent tag now a free tag", []string{"aiagent-skill"}, nil, ContentTypeWiki, 1, "aiagent-skill", ""},
+		{"status tag allowed", []string{"completed"}, nil, ContentTypeWiki, 1, "completed", ""},
+		{"whitespace trimmed", []string{"  tag1  ", "tag2"}, nil, ContentTypeWiki, 2, "tag1", ""},
+		{"empty string skipped", []string{"", "tag1"}, nil, ContentTypeWiki, 1, "tag1", ""},
+
+		// A memory-scope tag is only tool-managed on an AI-Agent-Memory. Anywhere else it is stray
+		// data that must be removable, or it can never be cleaned off: DeleteTagGlobally refuses
+		// memory-scope tags outright, so this helper was the only remaining path.
+		{"stray scope tag removable from a skill", []string{"nexwiki"}, []string{"memory-rules", "nexwiki"}, ContentTypeSkill, 1, "nexwiki", "memory-rules"},
+		{"stray scope tag removable from a wiki article", []string{"keep"}, []string{"memory-rules"}, ContentTypeWiki, 1, "keep", "memory-rules"},
+		{"stray scope tag removable from a plan", []string{"wip"}, []string{"memory-nexwiki"}, ContentTypePlan, 1, "wip", "memory-nexwiki"},
+		{"scope tag still unforgeable onto a skill", []string{"memory-rules", "ready"}, nil, ContentTypeSkill, 1, "ready", "memory-rules"},
+		{"scope tag cannot be re-added to a skill that had one", []string{"memory-rules"}, []string{"memory-rules"}, ContentTypeSkill, 0, "", "memory-rules"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := validateAndCleanUserTags(tc.incoming, tc.existing)
+			result := validateAndCleanUserTags(tc.incoming, tc.existing, tc.docType)
 			if len(result) != tc.expectedLen {
 				t.Errorf("expected %d tags, got %d: %v", tc.expectedLen, len(result), result)
 			}
