@@ -313,7 +313,7 @@ Lists all articles currently available in your knowledge base. This acts as a di
 Creates a new wiki article with a given title and raw Markdown content body.
 
 * **Arguments**:
-  * `title` (string, **required**): The human-readable title of the new article (e.g. "React Hooks Guide").
+  * `title` (string, **required**): The human-readable title of the new article (e.g. "React Hooks Guide"). Use the subject's own name — never a tool name, an action verb, or a placeholder, since the slug is derived from it and a wrong title strands the article at a meaningless URL.
   * `content` (string, **required**): The raw Markdown content of the article body.
   * `description` (string, **optional**): A one-line summary shown in list indexes and the context overview.
   * `source` (string, **optional**): Provenance — the URL, document, or reference this knowledge came from. AI-created articles SHOULD cite their source.
