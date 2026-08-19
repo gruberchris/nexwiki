@@ -83,6 +83,42 @@ Plan and implement <small task> — save the plan to NexWiki first.
 
 Then, tomorrow: *"What changed in the wiki in the last 24 hours?"*
 
+### Optional: argument autocomplete in Claude Code
+
+Typing `/nexwiki` shows no hint about what can follow it. Claude Code can display one, via an
+`argument-hint` field in the skill's frontmatter:
+
+```yaml
+---
+name: nexwiki
+description: Use NexWiki as a persistent second brain via the nexwiki MCP server. ...
+argument-hint: "[remember|plan|search|ingest] [topic or text]"
+---
+```
+
+The hint then appears inline in the `/` menu as you type. It is presentation only — the skill
+already accepts free text either way, because Claude Code appends anything you type after the
+command as `ARGUMENTS: <value>` when the body contains no `$ARGUMENTS` placeholder.
+
+**This field is deliberately not shipped in `nexwiki/SKILL.md`, and adding it upstream would be a
+regression.** `argument-hint` is a Claude Code extension, not part of the [Agent
+Skills](https://agentskills.io) spec, whose frontmatter allows only `allowed-tools`,
+`compatibility`, `description`, `license`, `metadata`, and `name`. The shipped skill uses just
+`name` and `description`, so it stays spec-conformant and portable across all five CLIs above.
+Adding `argument-hint` makes packaging or uploading the skill fail outright:
+
+```
+Unexpected key(s) in SKILL.md frontmatter: argument-hint.
+Allowed properties are: allowed-tools, compatibility, description, license, metadata, name
+```
+
+So add it to *your installed copy* if you want it, not to the repo — and remember it is lost the
+next time you re-copy the folder. Whether the other CLIs ignore an unknown key or reject it has
+not been verified here.
+
+For the same reason, `/nexwiki` works everywhere without configuration: the command name comes
+from the **directory** name (`nexwiki/`), not from the frontmatter `name` field.
+
 ## Customizing agent behavior
 
 **Don't fork `SKILL.md` to change the rules.** The skill points every agent at a live,
