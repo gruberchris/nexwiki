@@ -182,7 +182,7 @@ func (srv *Server) toolEditAgentSkill(args json.RawMessage) (interface{}, *JSONR
 	}
 
 	if existing.Version > 0 && existing.Version != eArgs.LoadedVersion {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: Version conflict! The skill was updated by another session. Disk version is %d, but you loaded version %d. Re-fetch the skill and try again.", existing.Version, eArgs.LoadedVersion)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: versionConflictMessage("skill", eArgs.Slug, existing.Version, eArgs.LoadedVersion)}}}, nil
 	}
 
 	newTitle := existing.Title

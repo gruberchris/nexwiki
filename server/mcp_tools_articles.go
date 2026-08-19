@@ -506,11 +506,13 @@ func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSON
 	art, err := srv.Storage.ApplyArticleEdit(eArgs.Slug, edit)
 	switch {
 	case errors.Is(err, ErrVersionConflict):
-		current := "unknown"
 		if existing, gErr := srv.Storage.GetArticle(eArgs.Slug); gErr == nil {
-			current = fmt.Sprintf("%d", existing.Version)
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: versionConflictMessage("article", eArgs.Slug, existing.Version, eArgs.LoadedVersion)}}}, nil
 		}
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: Version conflict! The article was updated by another session. Disk version is %s, but you loaded version %d. Re-fetch the article and try again.", current, eArgs.LoadedVersion)}}}, nil
+		// The article changed under us and then could not be read back, so there is no version to
+		// name. This is the only conflict where "re-read" is the honest instruction rather than a
+		// reflex — everywhere else the server already knows the answer.
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: version conflict on '%s'. It was updated by another session and its current version could not be read back. Re-read it with read_article and retry once with the version that reports.", eArgs.Slug)}}}, nil
 	case err != nil && strings.Contains(err.Error(), "article not found"):
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", eArgs.Slug)}}}, nil
 	case err != nil:
@@ -579,6 +581,16 @@ func (srv *Server) toolUpdateArticleTags(args json.RawMessage) (interface{}, *JS
 	cleanedTags := validateAndCleanUserTags(uArgs.Tags, existing.Tags, existing.Type)
 
 	art, err := srv.Storage.UpdateArticleTags(uArgs.Slug, cleanedTags, uArgs.LoadedVersion, uArgs.EditSummary)
+	if errors.Is(err, ErrVersionConflict) {
+		// Re-read rather than reusing the `existing` fetched above: the conflict was detected
+		// against a fresher read inside UpdateArticleTags, and naming a version that is already
+		// stale would send the caller straight back into the loop this message exists to end.
+		disk := uArgs.LoadedVersion
+		if fresh, gErr := srv.Storage.GetArticle(uArgs.Slug); gErr == nil {
+			disk = fresh.Version
+		}
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: versionConflictMessage("article", uArgs.Slug, disk, uArgs.LoadedVersion)}}}, nil
+	}
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error updating tags: %v", err)}}}, nil
 	}

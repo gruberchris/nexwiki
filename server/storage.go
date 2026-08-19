@@ -1197,7 +1197,10 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 	}
 
 	if loadedVersion > 0 && art.Version > 0 && art.Version != loadedVersion {
-		return nil, fmt.Errorf("version conflict: loaded version %d, current version %d", loadedVersion, art.Version)
+		// Wraps the sentinel so the MCP layer can errors.Is it and answer with the version to
+		// retry on. The REST handler never reaches this: HandleUpdateArticleTags does its own
+		// check and returns 409 before calling in.
+		return nil, fmt.Errorf("%w: loaded version %d, current version %d", ErrVersionConflict, loadedVersion, art.Version)
 	}
 
 	if editSummary == "" {

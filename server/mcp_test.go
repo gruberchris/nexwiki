@@ -100,8 +100,13 @@ func TestMCPEditAgentPlan(t *testing.T) {
 	if !ok3 || !resp3.IsError {
 		t.Fatalf("Expected conflict error response, got: %v", resp3)
 	}
-	if !strings.Contains(resp3.Content[0].Text, "Version conflict") {
-		t.Errorf("Expected version conflict error message, got: %s", resp3.Content[0].Text)
+	// The message must name the version to send and bound the retry to one attempt. "Re-fetch and
+	// try again" named no value and set no bound, which is an unbounded loop for a client that
+	// mis-threads loaded_version.
+	for _, want := range []string{"version conflict", "version 2 on disk", "Retry once with loaded_version: 2"} {
+		if !strings.Contains(resp3.Content[0].Text, want) {
+			t.Errorf("conflict message missing %q, got: %s", want, resp3.Content[0].Text)
+		}
 	}
 
 	// 4. Test target validation: try editing a standard article (not a plan)
@@ -986,8 +991,11 @@ func TestEditingAnUnversionedArticle(t *testing.T) {
 	// The article now has a version, so a stale 0 must be rejected rather than silently
 	// overwriting — the check this relaxation must not weaken.
 	resp = toolCall(t, srv, `{"name":"edit_wiki_article","arguments":{"slug":"legacy-page","title":"Legacy Page","content":"# Clobbered","loaded_version":0}}`)
-	if !resp.IsError || !strings.Contains(resp.Content[0].Text, "Version conflict") {
+	if !resp.IsError || !strings.Contains(resp.Content[0].Text, "version conflict") {
 		t.Errorf("a 0 against a versioned article must be a conflict, got: %+v", resp)
+	}
+	if !strings.Contains(resp.Content[0].Text, "Retry once with loaded_version: 2") {
+		t.Errorf("conflict must name the version to retry with, got: %s", resp.Content[0].Text)
 	}
 
 	// A negative version is still nonsense and stays a hard argument error.
@@ -1248,5 +1256,66 @@ func TestModernSubscriptionsListenOnStdio(t *testing.T) {
 				t.Errorf("method = %v, want the acknowledgment", resp["method"])
 			}
 		})
+	}
+}
+
+// TestUpdateArticleTagsVersionConflict covers the fifth optimistic-locking site, which had no
+// conflict coverage at all. It was also the worst of the five: UpdateArticleTags returned a bare
+// Go error that the tool surfaced verbatim as "Error updating tags: version conflict: loaded
+// version 1, current version 2" — no instruction, no value to retry with.
+func TestUpdateArticleTagsVersionConflict(t *testing.T) {
+	srv := newTestServer(t)
+
+	_, err := srv.Storage.SaveArticle("", "Tag Target", "# body", "", "", "", "seed", []string{"one"}, ContentTypeWiki)
+	if err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+	// Bump to version 2 so a loaded_version of 1 is genuinely stale.
+	if _, err := srv.Storage.UpdateArticleTags("tag-target", []string{"two"}, 1, "bump"); err != nil {
+		t.Fatalf("bump failed: %v", err)
+	}
+
+	resp := toolCall(t, srv, `{"name":"update_article_tags","arguments":{"slug":"tag-target","tags":["three"],"loaded_version":1}}`)
+	if !resp.IsError {
+		t.Fatalf("a stale loaded_version must conflict, got: %+v", resp)
+	}
+	for _, want := range []string{"version conflict", "version 2 on disk", "Retry once with loaded_version: 2"} {
+		if !strings.Contains(resp.Content[0].Text, want) {
+			t.Errorf("conflict message missing %q, got: %s", want, resp.Content[0].Text)
+		}
+	}
+	// The raw storage error must not leak through: it names no value and no bound.
+	if strings.Contains(resp.Content[0].Text, "Error updating tags:") {
+		t.Errorf("raw storage error leaked instead of the guided message: %s", resp.Content[0].Text)
+	}
+
+	// The instruction must actually work — one corrected retry, no re-read required.
+	ok := toolCall(t, srv, `{"name":"update_article_tags","arguments":{"slug":"tag-target","tags":["three"],"loaded_version":2}}`)
+	if ok.IsError {
+		t.Errorf("the retry the message prescribes must succeed, got: %+v", ok)
+	}
+}
+
+// TestVersionConflictMessage pins the three properties that make the message a bounded retry
+// rather than an open-ended one.
+func TestVersionConflictMessage(t *testing.T) {
+	msg := versionConflictMessage("plan", "my-plan", 7, 4)
+
+	for _, want := range []string{
+		"'my-plan'",                             // which document
+		"plan is at version 7 on disk",          // the truth
+		"you sent loaded_version 4",             // what was wrong
+		"Retry once with loaded_version: 7",     // the value, and the bound
+		"sending 4 again will fail identically", // forecloses the identical retry
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message missing %q, got: %s", want, msg)
+		}
+	}
+
+	// Re-reading must be offered as conditional, not prescribed — prescribing it is what made the
+	// old message an unbounded loop.
+	if !strings.Contains(msg, "Re-read only if") {
+		t.Errorf("re-reading should be conditional, got: %s", msg)
 	}
 }

@@ -337,7 +337,19 @@ Modifies the title, Markdown content, tags, or edit the summary of an existing w
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
   * `edit_summary` (string, **optional**): A summary detailing the modifications.
 * **Behavior**:
-  Employs **optimistic locking** to prevent write collision conflicts. If the `loaded_version` does not match the active version on disk, it aborts the writing with a conflict message (notifying the agent to re-fetch and try again). On success, it creates a new gzipped history backup snapshot (`.md.gz`), writes the updated flat Markdown file, and refreshes the search index.
+  Employs **optimistic locking** to prevent write collision conflicts. If the `loaded_version` does not match the active version on disk, the write aborts with a conflict message. On success, it creates a new gzipped history backup snapshot (`.md.gz`), writes the updated flat Markdown file, and refreshes the search index.
+
+> **A conflict names the value to retry with.** Every optimistic-locking failure — on `edit_wiki_article`, `edit_agent_memory`, `edit_agent_plan`, `edit_agent_skill`, and `update_article_tags` — reports the version on disk *and* the exact `loaded_version` to send next:
+>
+> ```
+> Error: version conflict on 'home'. The article is at version 15 on disk; you sent
+> loaded_version 14. Retry once with loaded_version: 15. Re-read only if you need the
+> current content before overwriting it — sending 14 again will fail identically.
+> ```
+>
+> **One corrected retry is the expected resolution**, not a re-read. The earlier wording said only "re-fetch and try again", which names no value and sets no bound: a client that mis-threads `loaded_version` re-reads, retries, and can mis-thread again, with nothing capping the cycle. That is the same unbounded-precondition shape that once had an agent alternating `read_article` and `search_wiki` for 31 minutes. The server knows the answer at the moment it rejects the call, so it gives it.
+>
+> The one exception is `edit_wiki_article` when the article cannot be read back after the conflict — there is genuinely no version to name, and the message says to re-read.
 
 ---
 
