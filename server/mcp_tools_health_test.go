@@ -496,3 +496,90 @@ func TestScanLinkGraphIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestExtractSlugMentions pins the extraction that the unreferenced-skill check is built on: a
+// skill reference is code, not a link.
+func TestExtractSlugMentions(t *testing.T) {
+	body := "Load it with `read_article(slug: \"my-agent-skill\")` first.\n\n" +
+		"Bare span: `other-skill-here`\n\n" +
+		"```json\n{\"slug\": \"fenced-skill-ref\"}\n```\n\n" +
+		"Prose naming plain-prose-slug outside code must not count.\n" +
+		"A [[wiki-link-target]] is a link, not a mention.\n"
+
+	got := map[string]bool{}
+	for _, m := range ExtractSlugMentions(body) {
+		got[m] = true
+	}
+
+	for _, want := range []string{"my-agent-skill", "other-skill-here", "fenced-skill-ref"} {
+		if !got[want] {
+			t.Errorf("expected %q to be extracted, got %v", want, got)
+		}
+	}
+	// Prose is excluded: an unbacked mention is too weak a signal, and the link graph already
+	// covers the case where the author actually linked the target.
+	if got["plain-prose-slug"] {
+		t.Error("slugs in plain prose should not count as mentions")
+	}
+	if got["wiki-link-target"] {
+		t.Error("wikilink targets are links, not code mentions; InboundCount already covers them")
+	}
+}
+
+// TestWikiHealthUnreferencedSkills covers the four cases that shaped this check, each of which the
+// naive link-graph version gets wrong.
+func TestWikiHealthUnreferencedSkills(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Reached only by a read_article call in another document's prose — zero inbound links.
+	// This is the shape of every real skill reference in the corpus.
+	_, _ = srv.Storage.SaveArticle("", "Referenced By Call", "# s", "", "", "", "", nil, ContentTypeSkill)
+	// Reached by an ordinary link.
+	_, _ = srv.Storage.SaveArticle("", "Referenced By Link", "# s", "", "", "", "", nil, ContentTypeSkill)
+	// Reached only from an archived document, which must not count.
+	_, _ = srv.Storage.SaveArticle("", "Referenced Only By Archived", "# s", "", "", "", "", nil, ContentTypeSkill)
+	// Reached by nothing at all.
+	_, _ = srv.Storage.SaveArticle("", "Wholly Unreferenced", "# s", "", "", "", "", nil, ContentTypeSkill)
+	// The governance skill is referenced from Go, so no document need name it.
+	_, _ = srv.Storage.SaveArticle("", agentGuidelinesTitle, "# g", "", "", "", "", nil, ContentTypeSkill)
+
+	_, _ = srv.Storage.SaveArticle("", "Live Pointer",
+		"Call `read_article(slug: \"referenced-by-call\")`, then see [it](/articles/referenced-by-link).",
+		"", "", "", "", nil, ContentTypeWiki)
+	_, _ = srv.Storage.SaveArticle("", "Retired Pointer",
+		"Superseded. Once said `read_article(slug: \"referenced-only-by-archived\")`.",
+		"", "", "", "", []string{"archived"}, ContentTypeWiki)
+
+	flagged := findingSlugs(healthReport(t, srv, `{}`).UnreferencedSkills)
+
+	for _, live := range []string{"referenced-by-call", "referenced-by-link", AgentGuidelinesSlug} {
+		if flagged[live] {
+			t.Errorf("%s is reachable and must not be flagged", live)
+		}
+	}
+	for _, dead := range []string{"wholly-unreferenced", "referenced-only-by-archived"} {
+		if !flagged[dead] {
+			t.Errorf("%s is unreachable and should be flagged, got %v", dead, flagged)
+		}
+	}
+}
+
+// TestWikiHealthUnreferencedSkillsIgnoresNonSkills guards the scope decision. Memories and plans
+// are reached through their own list tools and are meant to be link-less; flagging them would fire
+// on most of the corpus, which is why orphan detection already excludes them.
+func TestWikiHealthUnreferencedSkillsIgnoresNonSkills(t *testing.T) {
+	srv := newTestServer(t)
+	_, _ = srv.Storage.SaveArticle("", "Lonely Memory", "# m", "", "src", "", "", nil, ContentTypeMemory)
+	_, _ = srv.Storage.SaveArticle("", "Lonely Plan", "# p", "", "", "", "", nil, ContentTypePlan)
+	_, _ = srv.Storage.SaveArticle("", "Lonely Article", "# a", "", "", "", "", nil, ContentTypeWiki)
+
+	out := healthReport(t, srv, `{}`)
+	if out.UnreferencedSkillCount != 0 {
+		t.Errorf("only skills belong in this check, got %v", out.UnreferencedSkills)
+	}
+	// An archived skill is out of scope for every check, the same as every other type.
+	_, _ = srv.Storage.SaveArticle("", "Retired Skill", "# s", "", "", "", "", []string{"archived"}, ContentTypeSkill)
+	if c := healthReport(t, srv, `{}`).UnreferencedSkillCount; c != 0 {
+		t.Errorf("archived skills must not be flagged, got %d", c)
+	}
+}

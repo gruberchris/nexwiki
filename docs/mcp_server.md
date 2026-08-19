@@ -658,7 +658,7 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   * `cold_days` (integer, *optional*): How many days a memory may go unread and unedited before counting as cold. Default `90`.
   * `limit` (integer, *optional*): Maximum items reported **per category**. Default `50`, maximum `500`. Counts are always complete even when the lists are capped.
 * **Behavior**:
-  Runs six checks over a single cached pass of the article directory — the same `LinkGraph` scan `get_wiki_statistics` uses, so the two tools can never disagree about the same wiki:
+  Runs seven checks over a single cached pass of the article directory — the same `LinkGraph` scan `get_wiki_statistics` uses, so the two tools can never disagree about the same wiki:
 
   | Check | Finds | Why it matters |
   |---|---|---|
@@ -668,11 +668,15 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   | **Stale plans** | An `AI-Agent-Plan` untouched for `stale_days`, never marked finished, and not parked | Work that quietly stopped |
   | **Cold memories** | An `AI-Agent-Memory` neither read nor edited within `cold_days` | Knowledge nothing consults is either settled or quietly wrong |
   | **Duplicate memories** | Two memories in the same `memory-<scope>` with closely matching titles | Two answers to one question drift apart |
+  | **Unreferenced skills** | An `AI-Agent-Skill` no live document links *or* names in a `read_article` call | A skill nothing points an agent at will never be loaded |
 
   Several rules keep the report actionable rather than noisy:
 
   * **Archived documents are skipped entirely.** Archiving is you saying "this is done"; reporting it as needing attention inverts that.
   * **Both internal link forms are counted.** The graph reads `[[WikiLinks]]` *and* absolute `[text](/articles/<slug>)` Markdown links, so orphan detection, broken-link detection, and `get_backlinks` all see the same wiki. Counting only the double-bracket form reported 0 broken links against 26 real ones on an 84-document corpus, and called 44 of those documents orphans — most of them linked from the home page in Markdown syntax.
+  * **Skills are checked for *references*, not links — they are different things.** An article is linked; a skill is *invoked*, by a `read_article(slug: "…")` call written into another document's prose or a backticked slug reference. Neither is a link, so the link graph never sees them. Measured on the real corpus: `nexwiki-agent-core-guidelines` named `enhanced-memory-decision-making-skill` four times in exactly those forms and `get_backlinks` still returned **0**, while `create-plan-skill` — live and wanted — also reports 0 inbound links. A check built on the link graph alone would flag the healthy skill and stay silent on the dead one, so this check counts links **and** in-code slug mentions. Those mentions are tracked separately from `InboundCount`, so `get_backlinks` and orphan detection keep their existing meaning.
+  * **A reference from an archived document does not count.** Archiving is a retirement, and a skill whose only mention lives in a retired document is as unreachable as one with no mention at all. This is what makes the check useful rather than decorative: `enhanced-memory-decision-making-skill` looked referenced right up until the document naming it was archived.
+  * **`nexwiki-agent-guidelines` is never unreferenced.** Three MCP tool descriptions name its slug in Go, so no document has to.
   * **Orphan detection covers wiki articles only.** Memories, plans, and skills are reached through their own list tools, the search facets, and `get_context_overview` — nobody links to a memory, so flagging every one of them is noise. On an 83-document corpus, scanning every type produced 70 findings, 27 of which were agent documents behaving exactly as designed.
   * **`home` is never an orphan.** Nothing links to a front page.
   * **A plan tagged `completed`, `done`, or `superseded` is never stale**, however old, even if it still also carries `wip`. The terminal tag wins.
@@ -682,7 +686,7 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   * **Duplicate detection is scoped, and skips pairs that already link to each other.** A "Deployment Notes" memory about `docker` and one about `nexwiki` are separate by design. And when two memories reference one another, their author already knows both exist and has decided to keep them apart. It reports similarity, not disagreement: telling the two apart needs semantics NexWiki deliberately does not have.
 
   A stale plan does **not** need an in-flight tag. Requiring `wip` sounds tidier but makes the check incapable of firing on a real wiki, where plans typically carry a project tag and nothing else — what matters is that the plan was never marked finished and nobody has touched it since. When an in-flight tag (`wip`, `in-progress`, `draft`, `active`, `todo`, `pending`, `review`, `blocked`) *is* present, the report names it.
-* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], stale_plan_count, stale_plans[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`).
+* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], stale_plan_count, stale_plans[], unreferenced_skill_count, unreferenced_skills[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`).
 
 **Examples**
 

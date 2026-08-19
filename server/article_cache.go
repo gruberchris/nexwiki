@@ -36,6 +36,10 @@ type articleCacheEntry struct {
 	// only link scans need them, and they require reading the body.
 	links       []LinkRef
 	linksLoaded bool
+	// slugMentions are the slug-shaped tokens found in the body's code spans and fenced blocks.
+	// Populated in the same read as links, since both need the body and a skill reference is
+	// written as code (`read_article(slug: "…")`) rather than as a link. See ExtractSlugMentions.
+	slugMentions []string
 }
 
 func newArticleCache() *articleCache {
@@ -72,20 +76,23 @@ func (c *articleCache) store(path string, info fs.FileInfo, meta Article) *artic
 	return entry
 }
 
-// setLinks attaches the outbound links to an entry, under the cache lock so a concurrent reader
-// never observes a half-populated slice.
-func (c *articleCache) setLinks(entry *articleCacheEntry, refs []LinkRef) {
+// setLinks attaches the outbound links and slug mentions to an entry, under the cache lock so a
+// concurrent reader never observes a half-populated slice. Both are set together because both
+// come from the one body read that populated them.
+func (c *articleCache) setLinks(entry *articleCacheEntry, refs []LinkRef, mentions []string) {
 	c.mu.Lock()
 	entry.links = refs
+	entry.slugMentions = mentions
 	entry.linksLoaded = true
 	c.mu.Unlock()
 }
 
-// links reads an entry's cached outbound links, reporting whether they have been populated.
-func (c *articleCache) links(entry *articleCacheEntry) ([]LinkRef, bool) {
+// links reads an entry's cached outbound links and slug mentions, reporting whether they have
+// been populated.
+func (c *articleCache) links(entry *articleCacheEntry) ([]LinkRef, []string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return entry.links, entry.linksLoaded
+	return entry.links, entry.slugMentions, entry.linksLoaded
 }
 
 // prune drops entries for files that no longer exist, so a long-lived process does not accumulate
@@ -138,21 +145,29 @@ func (a Article) clone() Article {
 // have not been scanned yet. Link scans are O(articles) by nature; caching the parse keeps
 // repeated lookups from re-reading the whole wiki.
 func (s *Storage) cachedLinkTargets(path string, info fs.FileInfo) ([]LinkRef, error) {
+	refs, _, err := s.cachedBodyRefs(path, info)
+	return refs, err
+}
+
+// cachedBodyRefs returns both the outbound internal links and the slug mentions for one article,
+// from a single body read. ScanLinkGraph needs both, and reading the file twice to get them would
+// undo the point of the cache.
+func (s *Storage) cachedBodyRefs(path string, info fs.FileInfo) ([]LinkRef, []string, error) {
 	entry, _, err := s.cachedMeta(path, info)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if refs, ok := s.cache.links(entry); ok {
-		return refs, nil
+	if refs, mentions, ok := s.cache.links(entry); ok {
+		return refs, mentions, nil
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	full, err := parseArticleFile(data, true)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// ExtractLinkRefs resolves each target once here, so Slugify stays off the hot path of every
@@ -160,7 +175,8 @@ func (s *Storage) cachedLinkTargets(path string, info fs.FileInfo) ([]LinkRef, e
 	// link as the author wrote it — "[[Search Design]]" or "(/articles/search-design)" is what
 	// they have to find in the file to fix it.
 	refs := ExtractLinkRefs(full.Content)
+	mentions := ExtractSlugMentions(full.Content)
 
-	s.cache.setLinks(entry, refs)
-	return refs, nil
+	s.cache.setLinks(entry, refs, mentions)
+	return refs, mentions, nil
 }
