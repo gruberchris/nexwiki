@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- **`wiki_health` reports skills nothing references** — a seventh check, no new tool, so the count stays at 29. A skill is not reached the way an article is: articles are *linked*, skills are *invoked*, by a `read_article(slug: "…")` call written into another document's prose or a backticked slug reference. None of that is a link, so the link graph never saw it. Measured on a real corpus: `nexwiki-agent-core-guidelines` named `enhanced-memory-decision-making-skill` **four times** in exactly those forms and `get_backlinks` still returned **0**, while `create-plan-skill` — live and wanted — also reports 0 inbound links. An unreferenced-skill check built on the link graph alone would therefore have flagged the healthy skill and stayed silent on the dead one. The check counts links **and** in-code slug mentions, the latter tracked separately from `InboundCount` so `get_backlinks` and orphan detection keep their existing meaning.
+  - **A reference from an archived document does not count.** A skill whose only mention lives in a retired document is as unreachable as one with no mention at all — and that is exactly how the dead skill was found, since it looked referenced right until the document naming it was archived.
+  - `nexwiki-agent-guidelines` is exempt: three tool descriptions name its slug in Go, so no document has to.
+  - Deliberately not extended to memories or plans, which are reached through their own list tools and are meant to be link-less. Orphan detection already excludes them for the same reason — scanning every type once produced 70 findings on an 83-document corpus, 27 of them agent documents behaving as designed.
+  - Extraction rides on the body read `ScanLinkGraph` already performs and caches by mtime, so the scan still costs one stat per unchanged file. Collecting the mentions costs `ScanLinkGraph` **~10%** on the large-corpus benchmarks (10,000 documents: 127 ms → 139 ms), from retaining the per-document slices; `get_backlinks` and `get_wiki_statistics` share that scan and pay it without reading the field. One scan was preferred over two.
+
 ### Changed
 
 - **CI resolves the Go toolchain from `go.mod` instead of a floating minor version.** All five `actions/setup-go` blocks across `ci.yml` and `release.yml` said `go-version: "1.26"`, which is supposed to float to the newest patch. It does not do so reliably: with `GO-2026-6218` (`net/url`) and `GO-2026-6090` (`crypto/tls`) fixed in **1.26.6**, three PRs opened within minutes of each other resolved differently — two got `go1.26.6` and passed `govulncheck`, one got `go1.26.5` and failed, and stayed on 1.26.5 across a rerun, a `--failed` rerun, and a fresh close/reopen run. Whether a PR went green was decided by which runner picked up the job. `go-version-file: "go.mod"` makes it deterministic and collapses six duplicated version strings into one.

@@ -71,6 +71,13 @@ type HealthOutput struct {
 	StalePlanCount  int             `json:"stale_plan_count"`
 	StalePlans      []HealthFinding `json:"stale_plans"`
 
+	// UnreferencedSkillCount and UnreferencedSkills report skills nothing points an agent at.
+	// Kept separate from Orphans because the remedy differs: an orphaned article wants a link
+	// from a related page, whereas an unreferenced skill wants a read_article call in the
+	// guidelines — or retiring.
+	UnreferencedSkillCount int             `json:"unreferenced_skill_count"`
+	UnreferencedSkills     []HealthFinding `json:"unreferenced_skills"`
+
 	// --- memory hygiene (§6.8) ---
 
 	// ColdDays is the recency threshold applied to memories.
@@ -117,6 +124,8 @@ func healthOutputSchema() map[string]interface{} {
 		"unsourced_memories":         schemaArrayOf(finding, "Memories missing provenance, up to the limit."),
 		"stale_plan_count":           schemaOf("integer", "In-flight plans untouched for longer than stale_days. Excludes plans tagged finished or parked."),
 		"stale_plans":                schemaArrayOf(finding, "Stale plans, up to the limit."),
+		"unreferenced_skill_count":   schemaOf("integer", "Skills no live document links or names in a read_article call. Excludes the nexwiki-agent-guidelines skill, which the MCP tool descriptions reference from code."),
+		"unreferenced_skills":        schemaArrayOf(finding, "Unreferenced skills, up to the limit."),
 		"cold_days":                  schemaOf("integer", "Recency threshold applied to memories."),
 		"cold_memory_scan_ran":       schemaOf("boolean", "False when the activity log does not reach back cold_days, in which case the cold-memory check was skipped rather than reporting every memory."),
 		"cold_memory_skipped_reason": schemaOf("string", "Why the cold-memory check did not run, when it did not."),
@@ -128,6 +137,7 @@ func healthOutputSchema() map[string]interface{} {
 	}, "total_documents", "stale_days", "limit", "truncated",
 		"orphan_count", "orphans", "broken_link_count", "broken_links",
 		"unsourced_memory_count", "unsourced_memories", "stale_plan_count", "stale_plans",
+		"unreferenced_skill_count", "unreferenced_skills",
 		"cold_days", "cold_memory_scan_ran", "cold_memory_count", "cold_memories",
 		"duplicate_memory_count", "duplicate_memories", "parked_plan_count")
 }
@@ -135,7 +145,7 @@ func healthOutputSchema() map[string]interface{} {
 var wikiHealthTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "wiki_health",
-		"description": "Audit the knowledge base for maintenance work: orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source', in-flight plans that have gone stale, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
+		"description": "Audit the knowledge base for maintenance work: orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -208,8 +218,11 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 	orphans := []HealthFinding{}
 	unsourced := []HealthFinding{}
 	stalePlans := []HealthFinding{}
+	unreferencedSkills := []HealthFinding{}
 	memories := []Article{}
 	parkedPlans := 0
+
+	liveRefs := liveReferencedSlugs(graph)
 
 	for _, slug := range slugs {
 		doc := graph.Meta[slug]
@@ -235,6 +248,22 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 			orphans = append(orphans, HealthFinding{
 				Slug: slug, Title: doc.Title, Type: doc.Type,
 				Detail: "No article links here. Link it from a related page, or archive it if it is finished.",
+			})
+		}
+
+		// A skill is not reached the way an article is. Articles are linked; skills are invoked by
+		// name, through a read_article(slug: "…") call written into another document. So this
+		// check counts both links and in-code slug mentions, and reusing the orphan check here
+		// would be wrong in both directions — measured on the real corpus, create-plan-skill (live
+		// and wanted) has 0 inbound links, while enhanced-memory-decision-making-skill (dead) also
+		// had 0 despite being named four times by the guidelines that referenced it.
+		//
+		// The guidelines skill is always reachable: three tool descriptions name its slug in Go,
+		// so no document has to.
+		if doc.Type == ContentTypeSkill && slug != AgentGuidelinesSlug && !liveRefs[slug] {
+			unreferencedSkills = append(unreferencedSkills, HealthFinding{
+				Slug: slug, Title: doc.Title, Type: doc.Type,
+				Detail: "Nothing points agents at this skill — no document links it or names its slug in a read_article call. Reference it from the guidelines or another skill, or archive it if it is retired.",
 			})
 		}
 
@@ -273,18 +302,19 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 	duplicates := findDuplicateMemories(memories, graph.Outbound)
 
 	out := HealthOutput{
-		TotalDocuments:    len(graph.Meta),
-		StaleDays:         staleDays,
-		Limit:             limit,
-		OrphanCount:       len(orphans),
-		BrokenLinkCount:   len(graph.Broken),
-		UnsourcedCount:    len(unsourced),
-		StalePlanCount:    len(stalePlans),
-		ColdDays:          coldDays,
-		ColdMemoryScanRan: cold.Ran,
-		ColdMemoryCount:   len(cold.Findings),
-		DuplicateCount:    len(duplicates),
-		ParkedPlanCount:   parkedPlans,
+		TotalDocuments:         len(graph.Meta),
+		StaleDays:              staleDays,
+		Limit:                  limit,
+		UnreferencedSkillCount: len(unreferencedSkills),
+		OrphanCount:            len(orphans),
+		BrokenLinkCount:        len(graph.Broken),
+		UnsourcedCount:         len(unsourced),
+		StalePlanCount:         len(stalePlans),
+		ColdDays:               coldDays,
+		ColdMemoryScanRan:      cold.Ran,
+		ColdMemoryCount:        len(cold.Findings),
+		DuplicateCount:         len(duplicates),
+		ParkedPlanCount:        parkedPlans,
 	}
 	if !cold.Ran {
 		out.ColdMemorySkipped = fmt.Sprintf("the activity log only reaches back %d days, less than the %d-day "+
@@ -296,6 +326,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 	out.Orphans, out.Truncated = capFindings(orphans, limit, out.Truncated)
 	out.UnsourcedMemory, out.Truncated = capFindings(unsourced, limit, out.Truncated)
 	out.StalePlans, out.Truncated = capFindings(stalePlans, limit, out.Truncated)
+	out.UnreferencedSkills, out.Truncated = capFindings(unreferencedSkills, limit, out.Truncated)
 	out.ColdMemories, out.Truncated = capFindings(cold.Findings, limit, out.Truncated)
 	out.DuplicateMemories = duplicates
 	if len(out.DuplicateMemories) > limit {
@@ -368,6 +399,7 @@ func renderHealthReport(out HealthOutput) string {
 	fmt.Fprintf(&b, "- Broken internal links: %d\n", out.BrokenLinkCount)
 	fmt.Fprintf(&b, "- Memories with no source: %d\n", out.UnsourcedCount)
 	fmt.Fprintf(&b, "- Stale plans (unfinished, untouched for %d+ days): %d\n", out.StaleDays, out.StalePlanCount)
+	fmt.Fprintf(&b, "- Skills nothing references: %d\n", out.UnreferencedSkillCount)
 	if out.ColdMemoryScanRan {
 		fmt.Fprintf(&b, "- Cold memories (not read or edited in %d+ days): %d\n", out.ColdDays, out.ColdMemoryCount)
 	} else {
@@ -381,7 +413,7 @@ func renderHealthReport(out HealthOutput) string {
 	}
 
 	needsAttention := out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount +
-		out.StalePlanCount + out.ColdMemoryCount + out.DuplicateCount
+		out.StalePlanCount + out.ColdMemoryCount + out.DuplicateCount + out.UnreferencedSkillCount
 	if needsAttention == 0 {
 		b.WriteString("\nNothing needs attention — the wiki is healthy. 🎉\n")
 		return b.String()
@@ -401,6 +433,7 @@ func renderHealthReport(out HealthOutput) string {
 	}
 
 	writeFindings("Orphan pages", out.OrphanCount, out.Orphans)
+	writeFindings("Skills nothing references", out.UnreferencedSkillCount, out.UnreferencedSkills)
 
 	if out.BrokenLinkCount > 0 {
 		fmt.Fprintf(&b, "\n== Broken internal links (%d) ==\n", out.BrokenLinkCount)
@@ -435,4 +468,42 @@ func renderHealthReport(out HealthOutput) string {
 	}
 
 	return b.String()
+}
+
+// liveReferencedSlugs returns every slug reachable from a *non-archived* document, by either an
+// internal link or an in-code slug mention.
+//
+// References from archived documents deliberately do not count. Archiving is the user saying "this
+// is done", and a skill whose only mention lives in a retired document is as unreachable as one
+// with no mention at all. This is not a hypothetical refinement: nexwiki-agent-core-guidelines was
+// the only document naming enhanced-memory-decision-making-skill, and the skill became genuinely
+// dead the moment that document was archived. Without this rule the check would have stayed quiet.
+func liveReferencedSlugs(graph *LinkGraph) map[string]bool {
+	live := map[string]bool{}
+
+	for from, refs := range graph.Outbound {
+		source := graph.Meta[from]
+		if IsArchived(&source) {
+			continue
+		}
+		for _, ref := range refs {
+			if ref.Slug != from {
+				live[ref.Slug] = true
+			}
+		}
+	}
+
+	for from, mentions := range graph.Mentions {
+		source := graph.Meta[from]
+		if IsArchived(&source) {
+			continue
+		}
+		for _, mentioned := range mentions {
+			if mentioned != from {
+				live[mentioned] = true
+			}
+		}
+	}
+
+	return live
 }

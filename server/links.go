@@ -199,6 +199,23 @@ type LinkGraph struct {
 	Broken []BrokenLinkRef
 	// TotalLinks is every internal link scanned, broken or not, in either form.
 	TotalLinks int
+	// Mentions maps a document's slug to the slugs its body names in code — a
+	// `read_article(slug: "…")` call or a backticked slug reference. This is how a *skill* is
+	// referenced, and none of it is a link, so it is tracked separately from InboundCount and
+	// deliberately kept out of it: counting these would change what get_backlinks and the orphan
+	// check mean. See ExtractSlugMentions.
+	//
+	// Stored in the forward direction, as the walk produces it, because the only consumer
+	// (liveReferencedSlugs) iterates documents anyway. An inverted mentioned-by map was tried
+	// first and dropped as pointless indirection — measured, it made no difference either way.
+	//
+	// Collecting mentions at all costs ScanLinkGraph ~10% on the 1k/5k/10k benchmarks
+	// (10000 docs: 127ms → 139ms), from retaining the per-document slices and one extra map
+	// insert per file. Extraction itself is free, riding the body read cachedBodyRefs already
+	// performs and caches by mtime. get_backlinks and get_wiki_statistics share this scan and pay
+	// that overhead without reading the field; the absolute cost was judged small enough to
+	// prefer one scan over two.
+	Mentions map[string][]string
 }
 
 // ScanLinkGraph walks the article directory once and builds the whole link graph.
@@ -216,6 +233,7 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 		Outbound:     map[string][]LinkRef{},
 		InboundCount: map[string]int{},
 		Broken:       []BrokenLinkRef{},
+		Mentions:     map[string][]string{},
 	}
 
 	var order []string
@@ -234,12 +252,13 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 		if err != nil {
 			return nil
 		}
-		refs, err := s.cachedLinkTargets(path, info)
+		refs, mentions, err := s.cachedBodyRefs(path, info)
 		if err != nil {
 			return nil
 		}
 		graph.Meta[meta.Slug] = *meta
 		graph.Outbound[meta.Slug] = refs
+		graph.Mentions[meta.Slug] = mentions
 		order = append(order, meta.Slug)
 		return nil
 	})
@@ -485,4 +504,48 @@ func TranslateBundleLinksToWikiLinks(content string) string {
 		}
 		return "[[" + slug + "]]"
 	})
+}
+
+// slugMentionCandidate matches a slug-shaped token: lowercase alphanumerics in two or more
+// hyphen-separated parts. Requiring a hyphen keeps the extracted set small — a single-word slug
+// is not detected, which is a deliberate trade. Skills are slugified from their titles, and a
+// one-word skill title is rare; the cost of missing one is a hint that says "nothing references
+// this" about something that is referenced, which the reader resolves by looking.
+var slugMentionCandidate = regexp.MustCompile(`[a-z0-9]+(?:-[a-z0-9]+)+`)
+
+// markdownCodeRegions matches fenced code blocks and inline code spans — the inverse of what
+// stripCodeForLinkScan blanks out.
+var markdownCodeRegions = regexp.MustCompile("(?s)```.*?```|~~~.*?~~~|`[^`\n]+`")
+
+// ExtractSlugMentions returns the slug-shaped tokens appearing inside Markdown code — fenced
+// blocks and inline spans — deduplicated and sorted.
+//
+// This exists because a skill is not referenced the way an article is. Articles are linked;
+// skills are *invoked*, by a `read_article(slug: "…")` call written into another document's
+// prose, or named in a backticked slug reference. Neither form is a link, so ScanLinkGraph never
+// sees them and get_backlinks reports zero.
+//
+// Measured on the real corpus: nexwiki-agent-core-guidelines referenced
+// enhanced-memory-decision-making-skill four times in exactly these forms, and
+// get_backlinks(enhanced-memory-decision-making-skill) still returned 0. create-plan-skill, a
+// live and wanted skill, also reports 0 inbound links. An unreferenced-skill check built on the
+// link graph alone would therefore flag the healthy skill and stay silent on the dead one.
+//
+// Code regions are scanned rather than avoided, and fenced blocks are included rather than
+// skipped, because being generous about what counts as a reference errs toward silence — the
+// safe direction for a hint whose remedy is "reference this or retire it".
+func ExtractSlugMentions(content string) []string {
+	seen := map[string]bool{}
+	var mentions []string
+	for _, region := range markdownCodeRegions.FindAllString(content, -1) {
+		for _, token := range slugMentionCandidate.FindAllString(region, -1) {
+			if seen[token] {
+				continue
+			}
+			seen[token] = true
+			mentions = append(mentions, token)
+		}
+	}
+	sort.Strings(mentions)
+	return mentions
 }
