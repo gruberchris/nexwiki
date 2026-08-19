@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-08-19
+
 ### Added
 
 - **`wiki_health` reports skills nothing references** — a seventh check, no new tool, so the count stays at 29. A skill is not reached the way an article is: articles are *linked*, skills are *invoked*, by a `read_article(slug: "…")` call written into another document's prose or a backticked slug reference. None of that is a link, so the link graph never saw it. Measured on a real corpus: `nexwiki-agent-core-guidelines` named `enhanced-memory-decision-making-skill` **four times** in exactly those forms and `get_backlinks` still returned **0**, while `create-plan-skill` — live and wanted — also reports 0 inbound links. An unreferenced-skill check built on the link graph alone would therefore have flagged the healthy skill and stayed silent on the dead one. The check counts links **and** in-code slug mentions, the latter tracked separately from `InboundCount` so `get_backlinks` and orphan detection keep their existing meaning.
@@ -205,7 +207,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/gruberchris/nexwiki/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/gruberchris/nexwiki/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/gruberchris/nexwiki/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/gruberchris/nexwiki/compare/v0.7.0...v0.8.0
