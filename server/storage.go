@@ -1163,7 +1163,7 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 	// Preserve tool-managed memory-scope tags a user edit must not be able to drop or forge.
 	cleanedTags := existing.Tags
 	if edit.Tags != nil {
-		cleanedTags = validateAndCleanUserTags(*edit.Tags, existing.Tags)
+		cleanedTags = validateAndCleanUserTags(*edit.Tags, existing.Tags, existing.Type)
 	}
 
 	return s.saveArticleLocked(slug, edit.Title, edit.Content, description, source, resource,

@@ -14,7 +14,7 @@ import (
 var createAgentPlanTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "create_agent_plan",
-		"description": "Create a brand new Collaborative AI Plan. Automatically sets the reserved AI-Agent-Plan type, which must NEVER be relabelled unless explicitly instructed. After a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to mark it as completed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand how plans must be saved and structured before executing this tool.)",
+		"description": "Create a brand new Collaborative AI Plan. Automatically sets the reserved AI-Agent-Plan type, which must NEVER be relabelled unless explicitly instructed. After a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to mark it as completed. (IMPORTANT: If you have not already loaded the global operational guidelines skill this session, load it once with 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand how plans must be saved and structured. If it is already in your context, do not re-read it — call this tool.)",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -72,6 +72,9 @@ func (srv *Server) toolCreateAgentPlan(args json.RawMessage) (interface{}, *JSON
 	if pArgs.Title == "" || pArgs.Content == "" || pArgs.ProjectContext == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title', 'content', and 'project_context' are required."}
 	}
+	if resp := rejectToolArtifactTitle(pArgs.Title, "plan"); resp != nil {
+		return *resp, nil
+	}
 
 	title := pArgs.Title
 	slug := Slugify(title)
@@ -97,7 +100,7 @@ func (srv *Server) toolCreateAgentPlan(args json.RawMessage) (interface{}, *JSON
 	for _, t := range contextTags {
 		seen[strings.ToLower(t)] = true
 	}
-	for _, t := range validateAndCleanUserTags(pArgs.Tags, nil) {
+	for _, t := range validateAndCleanUserTags(pArgs.Tags, nil, ContentTypePlan) {
 		if lower := strings.ToLower(t); !seen[lower] {
 			seen[lower] = true
 			tags = append(tags, t)

@@ -14,7 +14,7 @@ import (
 var createAgentMemoryTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "create_agent_memory",
-		"description": "Create a brand new protected AI Agent Memory document. The 'memory_type' controls the tag applied and how the memory is scoped: use the project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for reusable cross-project knowledge, or omit it for general knowledge (no scope tag). Memories must be succinct and high-value — they are loaded into agent context windows, so keep them short, specific, and free of repetition. Search for an existing memory first; if one becomes stale later, use 'edit_agent_memory' to correct it or 'delete_agent_memory' to retire it rather than creating near-duplicates. The reserved AI-Agent-Memory type must NEVER be relabelled unless explicitly instructed. (IMPORTANT: AI agents must ALWAYS load the global operational guidelines skill using 'read_article(slug: \"nexwiki-agent-guidelines\")' before executing this tool.)",
+		"description": "Create a brand new protected AI Agent Memory document. The 'memory_type' controls the tag applied and how the memory is scoped: use the project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for reusable cross-project knowledge, or omit it for general knowledge (no scope tag). Memories must be succinct and high-value — they are loaded into agent context windows, so keep them short, specific, and free of repetition. Search for an existing memory first; if one becomes stale later, use 'edit_agent_memory' to correct it or 'delete_agent_memory' to retire it rather than creating near-duplicates. The reserved AI-Agent-Memory type must NEVER be relabelled unless explicitly instructed. (IMPORTANT: If you have not already loaded the global operational guidelines skill this session, load it once with 'read_article(slug: \"nexwiki-agent-guidelines\")'. If it is already in your context, do not re-read it — call this tool.)",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -73,6 +73,9 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 	if mArgs.Title == "" || mArgs.Content == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title' and 'content' are required."}
 	}
+	if resp := rejectToolArtifactTitle(mArgs.Title, "memory"); resp != nil {
+		return *resp, nil
+	}
 
 	mType := strings.ToLower(strings.TrimSpace(mArgs.MemoryType))
 
@@ -86,7 +89,7 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 	// Caller tags are merged on top of the tool-managed scope tag, sanitized through the same
 	// helper the REST path uses: the scope tag is re-asserted first so it cannot be displaced, and
 	// a caller cannot forge a memory-<scope> tag of its own.
-	tags := validateAndCleanUserTags(mArgs.Tags, scopeTags)
+	tags := validateAndCleanUserTags(mArgs.Tags, scopeTags, ContentTypeMemory)
 
 	title := mArgs.Title
 	slug := Slugify(title)
