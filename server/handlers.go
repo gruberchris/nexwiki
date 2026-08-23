@@ -109,11 +109,12 @@ type ConfigResp struct {
 	Version                string `json:"version"`
 }
 
-// HandleGetStatusTags returns the canonical list of recognized status tags.
+// HandleGetStatusTags returns the recognized values for the `status` field. The browser uses them
+// only to give a status badge priority over free tags on a card.
 func (srv *Server) HandleGetStatusTags(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"tags":        StatusTags,
-		"description": "Status tags indicate the current lifecycle state of a wiki article or collaborative AI plan. These tags are displayed with priority on the home dashboard.",
+		"description": "Recognized values for the 'status' field, which only agent plans and agent skills have. Wiki articles and memories have no status. Displayed with priority on the home dashboard.",
 	})
 }
 

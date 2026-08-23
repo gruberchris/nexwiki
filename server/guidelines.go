@@ -46,8 +46,10 @@ These rules bound every other rule on this page. Orientation is a prerequisite, 
 - Any task with more than two steps must be saved with ` + "`create_agent_plan`" + ` (set
   ` + "`project_context`" + `) before work begins — never just print a plan in chat.
 - Append progress with ` + "`append_agent_plan`" + ` after each milestone.
-- Rewrite plan steps with ` + "`edit_agent_plan`" + ` (full ` + "`content`" + ` replacement); add the
-  ` + "`completed`" + ` tag with ` + "`edit_agent_plan`" + ` when done.
+- Rewrite plan steps with ` + "`edit_agent_plan`" + ` (full ` + "`content`" + ` replacement); set
+  ` + "`status: \"completed\"`" + ` with ` + "`edit_agent_plan`" + ` when done.
+- Lifecycle state is the ` + "`status`" + ` **field**, never a tag. A plan carries exactly one of
+  draft, implementing, blocked, completed, superseded, parked, evergreen, archived.
 
 ## 4. Memory hygiene
 - Keep memories succinct — one clear insight each, bullets over paragraphs.
@@ -60,8 +62,10 @@ These rules bound every other rule on this page. Orientation is a prerequisite, 
 ## 5. Respect reserved types and tags
 - Never relabel a reserved document type (` + "`AI-Agent-Plan`, `AI-Agent-Skill`, `AI-Agent-Memory`" + `)
   to a non-reserved one, and never strip a tool-managed ` + "`memory-<scope>`" + ` tag.
-- Slugs are lowercase, hyphenated, and descriptive. Use ` + "`get_status_tags`" + ` for valid
-  lifecycle tags (draft, wip, completed, ...).
+- Slugs are lowercase, hyphenated, and descriptive.
+- Only plans and skills have a ` + "`status`" + `; call ` + "`get_status_tags`" + ` for each closed
+  vocabulary. Never invent a value, and never put one in ` + "`tags`" + ` — both are rejected.
+  Wiki articles and memories have no status and no tag rules.
 
 ## 6. Style preferences
 - Add the wiki owner's personal writing conventions here (header casing, code-block
