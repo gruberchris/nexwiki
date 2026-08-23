@@ -34,7 +34,7 @@ export interface UseTagEditorResult {
   focusedIndex: number;
   /** Rejects reserved prefixes as they are typed. */
   handleInputChange: (value: string) => void;
-  /** Tab / Shift+Tab to move through suggestions, Enter or comma to commit. */
+  /** ArrowDown / ArrowUp to move through suggestions, Enter or comma to commit. */
   handleKeyDown: (e: React.KeyboardEvent) => void;
   /** Commits a suggestion the user clicked. */
   selectSuggestion: (tag: string) => void;
@@ -110,11 +110,12 @@ export function useTagEditor(initialTags: string[], articles: Article[]): UseTag
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (suggestions.length > 0) {
-        if (e.key === 'Tab') {
+        // Arrow keys navigate suggestions; Tab keeps its ordinary focus-movement meaning.
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault();
           // Cycles through -1 (the input itself) so the user can always get back to free typing.
           setFocusedIndex((prev) =>
-            e.shiftKey
+            e.key === 'ArrowUp'
               ? prev <= -1 ? suggestions.length - 1 : prev - 1
               : prev >= suggestions.length - 1 ? -1 : prev + 1,
           );

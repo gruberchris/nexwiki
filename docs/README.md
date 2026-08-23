@@ -75,6 +75,14 @@ A step-by-step walkthrough of using NexWiki as an AI second brain with your agen
 * **Capture-and-Compile**: The `inbox` tag convention and the `ingest-source` skill implementing the one-source-at-a-time Karpathy ingestion loop.
 * **Tuning Tips**: Activity log filtering, description/source discipline, and transport caveats.
 
+### 11. [NexWiki Reader & Dashboard Experience Guide](./reader_dashboard_guide.md)
+A user guide to the reading and dashboard experience features:
+* **Mermaid Diagrams**: Authoring ```` ```mermaid ```` fenced diagrams that render as theme-aware SVGs in the viewer, editor preview, and print/PDF exports.
+* **Responsive Reading Width**: How the article column scales with the display instead of staying a fixed 672px ribbon.
+* **Agent Plans Filter Default**: The dashboard's `!completed` default plans view, and how to clear it.
+* **Dashboard State Restoration**: How Back/Forward return the dashboard — filters, sections, and scroll — exactly as you left it.
+* **Keyboard Suggestion Navigation**: Arrow-key combobox navigation in every filter box and the tag editor.
+
 ---
 
 ## 🏗️ Architecture Overview

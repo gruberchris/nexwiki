@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useId } from 'react';
 import { Search, X, HelpCircle } from 'lucide-react';
 import { applyAutocompleteSelection } from '../filterUtils';
 import { useClickOutside } from '../hooks/useClickOutside';
@@ -34,8 +34,17 @@ export const FilterInput: React.FC<FilterInputProps> = ({
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const [prevSuggestionsLength, setPrevSuggestionsLength] = useState(suggestions.length);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const listboxId = useId();
 
   useClickOutside(dropdownRef, () => setShowDropdown(false));
+
+  // The dropdown caps its height and scrolls; past that, arrowing below the fold would move a
+  // highlight the user cannot see.
+  useEffect(() => {
+    if (focusedIndex >= 0) {
+      document.getElementById(`${listboxId}-option-${focusedIndex}`)?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [focusedIndex, listboxId]);
 
   // React "adjust state while rendering" pattern: reset focusedIndex when the
   // suggestion list changes size. This avoids a useEffect (which would cascade)
@@ -52,12 +61,23 @@ export const FilterInput: React.FC<FilterInputProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // With nothing to navigate, every key — arrows included — keeps its normal behavior.
     if (suggestions.length === 0) return;
 
-    if (e.key === 'Tab') {
+    // The arrow keys own suggestion navigation; Tab is deliberately not intercepted, so it
+    // moves focus out of the input like any other control (and onBlur closes the dropdown).
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
+      if (!showDropdown) {
+        // Standard combobox idiom: an arrow on a closed dropdown opens it, starting from the
+        // nearest end of the list.
+        setShowDropdown(true);
+        setFocusedIndex(e.key === 'ArrowDown' ? 0 : suggestions.length - 1);
+        return;
+      }
+      // Cycles through -1 (the input itself) so the user can always get back to free typing.
       setFocusedIndex(prev =>
-        e.shiftKey
+        e.key === 'ArrowUp'
           ? prev <= -1 ? suggestions.length - 1 : prev - 1
           : prev >= suggestions.length - 1 ? -1 : prev + 1
       );
@@ -76,15 +96,33 @@ export const FilterInput: React.FC<FilterInputProps> = ({
     }
   };
 
+  // Attached to the container (React's onBlur is the bubbling focusout), so tabbing out of any
+  // part of the control — input or clear button — closes the dropdown rather than leaving it
+  // orphaned over the page. Focus moving within the control keeps it open; suggestion clicks
+  // never blur at all (the dropdown swallows mousedown below).
+  const handleBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    if (!dropdownRef.current?.contains(e.relatedTarget as Node | null)) {
+      setShowDropdown(false);
+      setFocusedIndex(-1);
+    }
+  };
+
   return (
     <div className={`flex items-center gap-1.5 animate-fade-in ${className}`}>
-      <div ref={dropdownRef} className="relative flex-1 group z-30">
+      <div ref={dropdownRef} onBlur={handleBlur} className="relative flex-1 group z-30">
         <Search
           size={14}
           className="absolute left-3.5 top-1/2 -translate-y-1/2 text-themeTextMuted group-focus-within:text-themeAccent transition-colors"
         />
         <input
           type="text"
+          role="combobox"
+          aria-expanded={showDropdown && suggestions.length > 0}
+          aria-controls={listboxId}
+          aria-autocomplete="list"
+          aria-activedescendant={
+            showDropdown && focusedIndex >= 0 ? `${listboxId}-option-${focusedIndex}` : undefined
+          }
           placeholder={placeholder}
           value={value}
           onFocus={() => setShowDropdown(true)}
@@ -106,10 +144,20 @@ export const FilterInput: React.FC<FilterInputProps> = ({
         )}
 
         {showDropdown && suggestions.length > 0 && (
-          <div className="absolute left-0 top-full mt-1.5 z-50 w-full bg-themeBgSecondary backdrop-blur-lg border border-themeBorder shadow-xl rounded-2xl max-h-48 overflow-y-auto py-1.5 select-none font-sans text-xs text-themeTextSecondary">
+          <div
+            id={listboxId}
+            role="listbox"
+            // Keep focus in the input while clicking a suggestion, so the blur handler above
+            // cannot tear the dropdown down before the click registers.
+            onMouseDown={e => e.preventDefault()}
+            className="absolute left-0 top-full mt-1.5 z-50 w-full bg-themeBgSecondary backdrop-blur-lg border border-themeBorder shadow-xl rounded-2xl max-h-48 overflow-y-auto py-1.5 select-none font-sans text-xs text-themeTextSecondary"
+          >
             {suggestions.map((s, idx) => (
               <div
                 key={`${s.type}-${s.value}`}
+                id={`${listboxId}-option-${idx}`}
+                role="option"
+                aria-selected={idx === focusedIndex}
                 onClick={() => handleSelect(s)}
                 className={`px-3.5 py-2 cursor-pointer flex items-center justify-between transition-colors ${
                   idx === focusedIndex

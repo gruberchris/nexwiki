@@ -55,9 +55,18 @@ export function parseRoute(path: string, search: string): RouteInfo {
   return { route: '404', slug: '' };
 }
 
+/**
+ * How the current route was reached: the initial page load, a pushState navigation (a click),
+ * or the browser's back/forward buttons. Consumers use this to decide whether leaving-state
+ * should be restored — deliberately navigating somewhere gives a fresh view, going Back gives
+ * back the view you left.
+ */
+export type NavigationKind = 'initial' | 'push' | 'pop';
+
 export interface UseRouterResult {
   currentPath: string;
   currentSearch: string;
+  navigationKind: NavigationKind;
   /** Pushes a URL. Accepts a path with or without a leading slash. */
   navigate: (fullUrl: string) => void;
   /**
@@ -75,6 +84,15 @@ export interface UseRouterResult {
 export function useRouter(onRouteChange?: () => void): UseRouterResult {
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
   const [currentSearch, setCurrentSearch] = useState(window.location.search);
+  const [navigationKind, setNavigationKind] = useState<NavigationKind>('initial');
+
+  // The app scrolls inside its own containers, so the browser's automatic scroll restoration
+  // has nothing to restore and can only fight the app's explicit restoration on back-navigation.
+  useEffect(() => {
+    if ('scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'manual';
+    }
+  }, []);
 
   const navigate = useCallback(
     (fullUrl: string) => {
@@ -84,6 +102,7 @@ export function useRouter(onRouteChange?: () => void): UseRouterResult {
       const [path, search] = cleanUrl.split('?');
       setCurrentPath(path);
       setCurrentSearch(search ? '?' + search : '');
+      setNavigationKind('push');
       onRouteChange?.();
     },
     [onRouteChange],
@@ -110,11 +129,12 @@ export function useRouter(onRouteChange?: () => void): UseRouterResult {
     const handlePopState = () => {
       setCurrentPath(window.location.pathname);
       setCurrentSearch(window.location.search);
+      setNavigationKind('pop');
       onRouteChange?.();
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, [onRouteChange]);
 
-  return { currentPath, currentSearch, navigate, navigateTo };
+  return { currentPath, currentSearch, navigationKind, navigate, navigateTo };
 }

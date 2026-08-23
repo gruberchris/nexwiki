@@ -57,7 +57,7 @@ export const App: React.FC = () => {
 
   // Hand-rolled routing: history, back/forward, and URL parsing.
   const closeEditorOnRouteChange = useCallback(() => setIsEditing(false), []);
-  const { currentPath, currentSearch, navigate, navigateTo: handleNavigate } =
+  const { currentPath, currentSearch, navigationKind, navigate, navigateTo: handleNavigate } =
     useRouter(closeEditorOnRouteChange);
 
   
@@ -466,6 +466,9 @@ export const App: React.FC = () => {
           onNavigate={handleNavigate}
           onCreateNew={(type: 'article' | 'plan' | 'skill') => navigate(`/new?type=${type}`)}
           wikiName={wikiName}
+          // Back/forward and reloads restore the dashboard as it was left; clicking Home
+          // deliberately gives a clean one.
+          restoreUiState={navigationKind !== 'push'}
         />
       ) : routeInfo.route === 'search' ? (
         // Dedicated Google-Style Search Results View
@@ -495,7 +498,7 @@ export const App: React.FC = () => {
           <div className="flex-1 overflow-y-auto h-full px-8 py-10 sm:px-12 md:px-16 bg-white dark:bg-slate-950/20">
             {isArticleLoading ? (
               // Article Loading Skeleton
-              <div className="max-w-2xl mx-auto space-y-6 animate-pulse select-none">
+              <div className="max-w-2xl lg:max-w-3xl 2xl:max-w-5xl mx-auto space-y-6 animate-pulse select-none">
                 <div className="h-10 bg-slate-200 dark:bg-slate-800 rounded-xl w-3/4"></div>
                 <div className="flex gap-4">
                   <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded-md w-1/4"></div>
@@ -511,7 +514,10 @@ export const App: React.FC = () => {
               </div>
             ) : currentArticle ? (
               // Active Article Layout
-              <article className="max-w-2xl mx-auto space-y-6">
+              // The reading column grows with the viewport instead of staying a 672px ribbon on
+              // large displays, but keeps a cap: unbounded line length hurts readability too.
+              // The skeleton and not-found fallback use the same ladder so nothing reflows.
+              <article className="max-w-2xl lg:max-w-3xl 2xl:max-w-5xl mx-auto space-y-6">
                 
                 {/* Article Header controls */}
                 <div className="flex flex-col gap-4 border-b border-slate-200/60 dark:border-slate-800/60 pb-6 select-none no-print">
@@ -756,7 +762,7 @@ export const App: React.FC = () => {
               </article>
             ) : (
               // Fallback Article Not Found
-              <div className="max-w-2xl mx-auto py-12 text-center select-none">
+              <div className="max-w-2xl lg:max-w-3xl 2xl:max-w-5xl mx-auto py-12 text-center select-none">
                 <h2 className="text-lg font-bold text-slate-800 dark:text-white">Article could not be loaded</h2>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">The requested article body is either blank or was deleted from the disk.</p>
                 <button

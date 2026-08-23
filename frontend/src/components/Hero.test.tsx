@@ -7,6 +7,7 @@ import type { Article } from '../types';
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  sessionStorage.clear();
 });
 
 const mockFetch = (data: unknown = { tags: ['completed', 'wip', 'draft'] }) => {
@@ -92,5 +93,73 @@ describe('Hero', () => {
     });
     await userEvent.click(screen.getByText('Create Agent Plan'));
     expect(onCreateNew).toHaveBeenCalledWith('plan');
+  });
+});
+
+const completedPlan: Article = {
+  type: 'AI-Agent-Plan', title: 'Old Plan', slug: 'old-plan', tags: ['nexwiki', 'completed'],
+  created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1,
+};
+
+const renderHero = (articles: Article[], restoreUiState = false) =>
+  act(async () => {
+    render(<Hero articles={articles} onNavigate={vi.fn()} onCreateNew={vi.fn()} wikiName="Wiki" restoreUiState={restoreUiState} />);
+  });
+
+describe('Hero plans filter default', () => {
+  it('defaults the Agent Plans filter to !completed, hiding completed plans', async () => {
+    mockFetch();
+    await renderHero([...mockArticles, completedPlan]);
+    await userEvent.click(screen.getByRole('button', { name: /Agent Plans/ }));
+
+    expect(screen.getByPlaceholderText('Filter plans by title or tag...')).toHaveValue('!completed');
+    expect(screen.getByText('AI Plan')).toBeInTheDocument();
+    expect(screen.queryByText('Old Plan')).not.toBeInTheDocument();
+  });
+
+  // A filter the user did not type must be obvious and clearable, or missing plans look like
+  // data loss. The default lives in the input itself, so the standard clear (X) removes it.
+  it('clearing the default filter reveals completed plans', async () => {
+    mockFetch();
+    await renderHero([...mockArticles, completedPlan]);
+    await userEvent.click(screen.getByRole('button', { name: /Agent Plans/ }));
+
+    await userEvent.click(screen.getByRole('button', { name: /clear filter/i }));
+    expect(screen.getByText('Old Plan')).toBeInTheDocument();
+  });
+});
+
+describe('Hero dashboard state persistence', () => {
+  it('round-trips filters and expanded sections through a simulated back-navigation', async () => {
+    mockFetch();
+    let unmountHero: () => void;
+    await act(async () => {
+      const { unmount } = render(
+        <Hero articles={mockArticles} onNavigate={vi.fn()} onCreateNew={vi.fn()} wikiName="Wiki" />,
+      );
+      unmountHero = unmount;
+    });
+    await userEvent.click(screen.getByRole('button', { name: /Wiki Index/ }));
+    await userEvent.type(screen.getByPlaceholderText('Filter articles by title or tag...'), 'go');
+
+    unmountHero!(); // navigating to an article unmounts the dashboard and saves its state
+
+    await renderHero(mockArticles, true); // pressing Back remounts with restoreUiState
+    expect(screen.getByPlaceholderText('Filter articles by title or tag...')).toHaveValue('go');
+  });
+
+  it('a deliberate navigation home gets a clean dashboard despite saved state', async () => {
+    mockFetch();
+    sessionStorage.setItem(
+      'nexwiki-home-state',
+      JSON.stringify({ wikiSearchQuery: 'stale', wikiExpanded: true, plansSearchQuery: 'stale-too' }),
+    );
+
+    await renderHero(mockArticles, false);
+    // The Wiki Index section is collapsed (its filter input is not even rendered) and the
+    // plans filter is back to its default.
+    expect(screen.queryByPlaceholderText('Filter articles by title or tag...')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Agent Plans/ }));
+    expect(screen.getByPlaceholderText('Filter plans by title or tag...')).toHaveValue('!completed');
   });
 });
