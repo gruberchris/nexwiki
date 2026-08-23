@@ -75,10 +75,21 @@ export function FilterHelpModal({ onClose }: FilterHelpModalProps) {
               <Row code="draft OR wip !archived" desc="(draft OR wip) and not archived" />
             </div>
           </div>
+
+          <div className="space-y-2">
+            <p className="font-semibold text-themeTextPrimary">Keyboard</p>
+            <div className="space-y-1.5">
+              <Row code="↓ / ↑" desc="Navigate the suggestion dropdown (opens it if closed)" />
+              <Row code="Enter" desc="Accept the highlighted suggestion" />
+              <Row code="Esc" desc="Dismiss the dropdown" />
+              <Row code="Tab" desc="Move focus to the next control, closing the dropdown" />
+            </div>
+          </div>
         </div>
 
         <p className="text-[10px] text-themeTextMuted pt-1 border-t border-themeBorder">
           Filters match against article titles and all assigned tags. Operators are case-insensitive.
+          The Agent Plans section starts with a <code className="text-themeAccent">!completed</code> filter by default — clear it to see finished plans.
         </p>
       </div>
     </div>

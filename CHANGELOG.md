@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- **Mermaid diagrams render natively.** A ```` ```mermaid ```` fenced code block renders as an SVG diagram in the article viewer, the editor's live preview (debounced so typing stays smooth), and print/PDF exports — previously it displayed as a plain highlighted code dump, which mattered because the plan-authoring convention puts a diagram in nearly every agent plan. Diagrams follow the active light/dark theme and re-render on toggle; wide diagrams scroll in their own container on screen and shrink to page width in print; a diagram with a syntax error falls back to its source with an inline error note, never a blank hole. The ~800KB library is lazy-loaded via dynamic `import()` only on pages that actually contain a diagram — the initial bundle is unchanged.
+- **The reading column uses the display.** The article body, loading skeleton, not-found fallback, and search results were all pinned at `max-w-2xl` (672px) — correct on a laptop, a ribbon in whitespace on a 4K display. They now share a responsive ladder: 672px below 1024px viewports, 768px from 1024px, 1024px from 1536px. A cap is kept deliberately; unbounded line length reads worse than a narrow column.
+- **The Agent Plans dashboard section defaults its filter to `!completed`.** Most plans in a long-lived wiki are finished; the useful default view is the open work. The default is typed into the filter box itself, so it is visible and clearable like any filter the user wrote.
+- **Back-navigation restores the home dashboard.** Opening an article and pressing Back previously discarded every filter, expanded section, and the scroll position. The dashboard now saves its UI state to per-tab `sessionStorage` on unmount and restores it on back/forward navigation and reloads. Deliberately navigating Home still gives a clean dashboard.
+
+### Changed
+
+- **⚠️ Behavior change: filter suggestion dropdowns are navigated with `↓` / `↑`, not `Tab`.** Every filter box (dashboard sections, sidebar, activity log) and the editor's tag input previously cycled suggestions with `Tab` / `Shift+Tab` and swallowed the key — so the arrows every keyboard user reaches for in a combobox did nothing, and `Tab` could not move focus out of the input. The arrow keys now own suggestion navigation (opening a closed dropdown, wrapping through the input at each end, scrolling the highlight into view); `Tab` is an ordinary focus-movement key again and closes the dropdown on the way out without accepting the highlighted suggestion — `Enter` remains the one commit key. The controls also gained full combobox ARIA (`role="combobox"`, `aria-activedescendant`, `listbox`/`option` roles), so the keyboard interaction is announced to screen readers.
+
 ## [0.11.1] — 2026-08-19
 
 ### Fixed
