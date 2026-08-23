@@ -516,6 +516,107 @@ All cross-compiled binaries are saved inside the `./bin/` directory:
 
 ---
 
+## 🔖 Cutting a Release
+
+Releases are cut by pushing a Git tag. Everything after that is automated by [`.github/workflows/release.yml`](./.github/workflows/release.yml) — binaries, checksums, the GitHub Release, and the container images are all produced by the tag push, so **the tag is the release**.
+
+### Version numbering
+
+NexWiki follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and is **pre-1.0**, which loosens one rule: breaking changes may land in a **minor** release rather than forcing a major, provided they are called out under `### Changed` in [`CHANGELOG.md`](./CHANGELOG.md).
+
+| Bump | When |
+|---|---|
+| **Patch** (`0.11.1`) | Bug fixes and documentation only — no new capability, nothing a user must adapt to |
+| **Minor** (`0.12.0`) | New features, **or** any breaking change (behavior removals, storage/schema migrations, defaults that alter what a user sees) |
+| **Major** (`1.0.0`) | Reserved for the 1.0 stability commitment |
+
+### Step 1 — Confirm `main` is green
+
+Every release is cut from `main`, and `main` must be passing all four CI jobs: **Test**, **Container image builds**, **Vulnerability scan**, and **Lint (advisory)**.
+
+```bash
+gh run list --branch main --limit 3
+```
+
+To reproduce the gating **Test** job locally before you tag — it is stricter than `go build && go test`, and formatting and the race detector are the two things that most often fail only in CI:
+
+```bash
+gofmt -l main.go server/          # must print nothing
+go vet ./server/... .
+go test -race ./server/... .      # -race is what CI runs; a plain `go test` can hide failures
+(cd frontend && npm ci && npm run build && npm test)
+CGO_ENABLED=0 go build -ldflags="-w -s" -o /tmp/nexwiki main.go
+```
+
+### Step 2 — Stamp the changelog (a PR, not a direct commit)
+
+`CHANGELOG.md` accumulates entries under `## [Unreleased]` as work merges. Releasing means promoting that section to the version being cut, so the tagged commit already contains the finished changelog.
+
+```bash
+git checkout main && git pull
+git checkout -b docs/changelog-0.12.0
+```
+
+Edit `CHANGELOG.md` so the top reads like this — keep an **empty** `[Unreleased]` heading for the next cycle, and date the new section:
+
+```markdown
+## [Unreleased]
+
+## [0.12.0] — 2026-08-23
+
+### Added
+...
+```
+
+While you are here, check the docs for claims that go stale between releases — the MCP tool count in `README.md`, `AGENTS.md`, and `docs/` is the usual offender. Then open a PR, let CI pass, and merge it.
+
+### Step 3 — Tag and push
+
+The tag must be the version prefixed with `v`; the workflow strips the `v` to form the version string, and only tags matching `v*` trigger it.
+
+```bash
+git checkout main && git pull            # pick up the merged changelog commit
+git tag -a v0.12.0 -m "NexWiki 0.12.0"
+git push origin v0.12.0
+```
+
+> ⚠️ **Pushing the tag publishes immediately.** It creates a public GitHub Release and pushes container images to GHCR, **including moving the `latest` tag**. There is no dry run — verify Steps 1 and 2 first.
+
+### Step 4 — What the pipeline produces
+
+| Job | Output |
+|---|---|
+| **Test** | Gate for the other two — `npm ci && npm run build`, then `go test ./...`. Nothing publishes if it fails |
+| **Build Binaries** | `linux-amd64`, `linux-arm64`, `darwin-arm64`, `windows-amd64.exe`, plus `SHA256SUMS.txt`, attached to a GitHub Release with auto-generated notes |
+| **Build and Push Docker Image** | Multi-arch (`linux/amd64`, `linux/arm64`) image pushed to `ghcr.io/<owner>/nexwiki` tagged both **`<version>`** and **`latest`** |
+
+Every binary is stamped with `-ldflags "-X main.Version=<version>"`, so the running server reports its own version at `GET /api/config` and in the sidebar footer — which is how you verify a deployment is actually running what you think it is.
+
+### Step 5 — Verify
+
+```bash
+gh run watch                                    # follow the Release workflow to completion
+gh release view v0.12.0                         # binaries + checksums attached?
+docker pull ghcr.io/gruberchris/nexwiki:0.12.0
+curl -s localhost:8080/api/config | jq .version # after deploying, confirm the version served
+```
+
+### Step 6 — Roll it out
+
+Deployments pin an explicit version rather than tracking `latest`, so a release is not live anywhere until the pin moves — for example in a Docker Compose stack:
+
+```yaml
+image: ghcr.io/gruberchris/nexwiki:0.12.0
+```
+
+If the release contains a **one-time data migration**, read its entry in `CHANGELOG.md` before deploying: migrations run on first boot, rewrite documents in place, and are logged to stderr with a per-document edit summary. Every rewrite is an ordinary revision, so the previous state stays in the article's history.
+
+### Fixing a bad release
+
+Prefer **rolling forward** with a new patch version. By the time a problem is visible the images are already on GHCR and `latest` has moved, so deleting the tag and release removes the download links but does not un-publish what anyone has already pulled — and re-using a version number leaves two different artifacts with the same name.
+
+---
+
 ## 🚢 Production Deployment
 
 When deploying NexWiki for production use, containerized deployments are highly recommended due to the zero-dependency nature of the single compiled binary.
