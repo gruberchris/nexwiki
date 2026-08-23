@@ -376,7 +376,7 @@ var listAgentPlansTool = toolDef{
 			},
 		},
 	},
-	Output:   documentListOutputSchema("Matching agent plans. Lifecycle state lives in the status tags."),
+	Output:   documentListOutputSchema("Matching agent plans. Lifecycle state lives in the status field."),
 	Handler:  (*Server).toolListAgentPlans,
 	Behavior: toolBehavior{Title: "List Agent Plans", ReadOnly: true},
 }

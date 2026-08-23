@@ -103,7 +103,7 @@ Please follow these strict steps:
 4. Inform the user that the plan is saved in NexWiki, provide the article slug, and ask for their feedback or approval on the plan.
 5. As tasks are completed or updated during implementation, use 'append_agent_plan' to log the progress and update the checklists.
 6. When the plan is fully implemented, use 'append_agent_plan' to add final notes documenting anything worth noting (plan deviations, files created, tools used, unexpected challenges, or other observations).
-7. After adding final notes, use 'edit_agent_plan' to mark the plan as completed by adding the 'completed' status tag.
+7. After adding final notes, use 'edit_agent_plan' with status: "completed" to close the plan. Lifecycle state is the 'status' field, not a tag — a status word passed in 'tags' is rejected.
 
 IMPORTANT: The reserved AI-Agent-Plan type must NEVER be relabelled unless explicitly instructed by the user.`, project, title, project)
 
