@@ -50,13 +50,15 @@ edit_summary: Updated connection pool size
 
 ---
 
-## 📌 Status & Lifecycle Tags
+## 📌 Lifecycle Status — a Field, Not a Tag
 
-NexWiki recognizes two separate status vocabularies, split by document type. Status tags are displayed with **highest priority** on the home dashboard article cards, making it easy to see what's active, blocked, or done at a glance.
+Lifecycle state lives in a dedicated `status` front-matter field. It is deliberately **not** a tag: a status is a single value with a state machine, while tags are an unordered folksonomy, and storing one inside the other made it possible for a document to claim two contradictory states at once.
 
-### Plan Lifecycle Statuses (AI-Agent-Plan only)
+Two document classes have an **enforced** vocabulary; the rest are unconstrained.
 
-Every Collaborative AI Plan carries **exactly one** of these eight states — enforced on every write path (editor, REST, and MCP). All but `archived` are **invalid on any other document type**.
+### Plan Lifecycle Statuses (AI-Agent-Plan)
+
+Every Collaborative AI Plan has **exactly one** of these eight states in its `status` field — enforced on every write path (editor, REST, and MCP).
 
 | Status | Meaning | Auto-transitions? |
 |---|---|---|
@@ -71,28 +73,33 @@ Every Collaborative AI Plan carries **exactly one** of these eight states — en
 
 The automatic transitions are driven by the background plan lifecycle worker — see the [Plan Lifecycle Guide](./plan_lifecycle_guide.md) for the state machine, the timers, the `status_changed_at` clock, and the safety guards (dry-run mode and the backlink guard that refuses to delete a plan other documents still link to).
 
-### General Status Tags (wiki articles, memories, skills)
+### Skill Statuses (AI-Agent-Skill)
 
-| Tag | Meaning |
+A Custom AI Skill has **at most one** of these — a skill may have no status at all:
+
+| Status | Meaning |
 |---|---|
-| `wip` | Actively being worked on |
-| `in-progress` | Same as `wip` — task underway |
-| `todo` | Queued but not yet started |
-| `active` | Currently in use or being maintained |
-| `review` | Ready for review by another person or agent |
-| `ready` | Approved and ready to act on |
-| `pending` | Awaiting an external event or decision |
-| `done` | Fully implemented or resolved |
-| `archived` | Retired — kept for reference, no longer active |
-| `inbox` | Raw, unprocessed capture awaiting compilation into the wiki |
+| `draft` | Being written or revised; not yet trustworthy to follow |
+| `ready` | Complete and safe for an agent to load and follow |
+| `archived` | Retired, kept for reference |
 
-`archived` is the sole tag shared by both vocabularies: on a plan it is a lifecycle state reached automatically; on any other type it keeps the manual archive-then-delete behavior described below.
+Skills have no timers: nothing auto-archives or auto-deletes a skill.
 
-### How Status Tags Work
+### Wiki Articles and Agent Memories — no rules
 
-Most status tags are **purely semantic labels** — they do not trigger automatic filtering, hiding, or routing in the backend. The exceptions are `archived` (visibility and auto-deletion, below) and the plan lifecycle statuses (validation and timers, above).
+Wiki articles and agent memories may put **any value** in `status`, or none, and may carry **any tags at all**. Nothing is enforced and nothing is stripped. These conventional values are what the UI suggests and colors, but they are suggestions only:
 
-* Applying `archived` to a document **hides it from search results by default** — a search only returns archived documents when the query text mentions "archived" (browser) or the caller passes `include_archived` / an `archived` tag facet (MCP `search_wiki`).
+`draft` · `wip` · `in-progress` · `active` · `todo` · `pending` · `review` · `ready` · `done` · `inbox` · `archived`
+
+### The One Rule for Plans and Skills
+
+A plan or a skill may not use a **lifecycle word as a tag**. Tagging a plan `completed` while its field says `implementing` would be two contradictory sources of truth, so the tag is rejected with a message pointing at the field. Project-context tags, topics, and every other free tag are unaffected.
+
+### How Status Works
+
+A status value is a **semantic label** — it does not trigger automatic filtering, hiding, or routing — with two exceptions: `archived` (visibility and deletion, below) and the plan lifecycle statuses (validation and timers, above).
+
+* Marking a document archived — the `status` field on a plan or skill, the `archived` **tag** on a wiki article or memory — **hides it from search results by default** — a search only returns archived documents when the query text mentions "archived" (browser) or the caller passes `include_archived` / an `archived` tag facet (MCP `search_wiki`).
 * Archived documents are also **hidden from the home dashboard sections and the sidebar by default**; typing `archived` in a filter box brings them back. Direct URLs always work — hiding from discovery never means 404.
 * The filter help modals (accessible via the `?` icon in the filter bar) document the syntax and these defaults.
 
@@ -115,13 +122,13 @@ export NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS=30
 
 > **Note:** Deletion is permanent and not recoverable (unless you have a backup). The server logs a line to stderr for each article deleted: `Deleted archived article: <slug> (archived at: <timestamp>)`.
 
-### Applying Status Tags
+### Setting a Status
 
-* **In the Editor**: Type a status tag (e.g., `archived`) in the Tags input field. Status tags appear with higher visual priority than regular user tags on article cards, and plan lifecycle statuses render with a per-state color palette.
-* **Via MCP**: AI agents can apply status tags using `update_article_tags` or the `tags` parameter on `create_wiki_article`, `edit_wiki_article`, `create_agent_plan`, or `edit_agent_plan`. Call `get_status_tags` to retrieve both vocabularies, grouped by document type.
-* **Via REST API**: Use `PUT /api/articles/{slug}/tags` with your updated tags array.
+* **In the Editor**: use the **Status** control beside the Tags row. Plans and skills get a dropdown of their vocabulary; other document types get a free-text box. Statuses render as a colored badge on article cards and in the article header.
+* **Via MCP**: pass `status` to `create_agent_plan`, `edit_agent_plan`, `create_agent_skill`, `edit_agent_skill`, `create_wiki_article`, or `edit_wiki_article`. Call `get_status_tags` for the vocabularies, grouped by document type. `list_agent_plans` takes a `status` filter.
+* **Via REST API**: include `"status"` in the `POST /api/articles` or `PUT /api/articles/{slug}` body. Omitting it **preserves** the current status, so an editor that does not manage lifecycle state cannot silently reset a completed plan.
 
-Every write path enforces the plan status contract: a save that leaves a plan with zero or several lifecycle statuses — or puts a plan-exclusive status on a non-plan document — is rejected with an error naming the valid vocabulary.
+Every write path enforces the contract: a save that leaves a plan without a valid status, gives a skill an unrecognized one, or puts a lifecycle word in either one's tags is rejected with an error naming the valid vocabulary.
 
 ---
 
@@ -194,7 +201,7 @@ When you launch a complex project, either you or your connected AI assistant can
 ```
 The page slug is named directly after the feature (e.g. `migration-to-go-122`). Both you and your AI agent can collaboratively edit, check tasks, and complete this plan. The page remains safely stored under your **📋 AI plans** directory, keeping your main wiki page list clean.
 
-When the work is finished, the agent appends closing notes with `append_agent_plan` and then swaps the plan's status to `completed` via `edit_agent_plan` (replacing `implementing` — a plan carries exactly one lifecycle status). The `AI-Agent-Plan` type is preserved through both operations.
+When the work is finished, the agent appends closing notes with `append_agent_plan` and then sets `status: "completed"` via `edit_agent_plan`. The `AI-Agent-Plan` type is preserved through both operations.
 
 ### 3. AI-Driven Troubleshooting Log (type `AI-Agent-Memory`)
 If a server build fails, the agent can document the investigation with `create_agent_memory`:

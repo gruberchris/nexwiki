@@ -20,10 +20,10 @@ import { FilterHelpModal } from './FilterHelpModal';
 
 /**
  * Most plans in a long-lived wiki are finished, so the dashboard's useful default view is the
- * work still open. Under the eight-state plan lifecycle that is an inclusion list — it also
- * keeps archived, superseded, parked, and evergreen plans out of the default view. The default
- * is typed into the filter box itself, so it is visible and clearable like any filter the user
- * wrote.
+ * work still open. Under the eight-state plan lifecycle that is an inclusion list — it also keeps
+ * archived, superseded, parked, and evergreen plans out of the default view. The filter matches
+ * the status field alongside tags, so these read as plain terms. The default is typed into the
+ * filter box itself, so it is visible and clearable like any filter the user wrote.
  */
 export const DEFAULT_PLANS_FILTER = 'draft || implementing || blocked';
 

@@ -126,12 +126,6 @@ func (w *PlanLifecycleWorker) Sweep() {
 		if err != nil {
 			continue
 		}
-		statuses := planStatusesIn(art.Tags)
-		if len(statuses) != 1 {
-			continue // pre-migration or hand-mangled; validation fixes it on the next real edit
-		}
-		status := statuses[0]
-
 		// Absent means "not yet eligible", never "infinitely old" — a parsing gap on a legacy
 		// plan must not be able to trigger an archive, let alone a deletion.
 		if art.StatusChangedAt.IsZero() {
@@ -139,12 +133,12 @@ func (w *PlanLifecycleWorker) Sweep() {
 		}
 		age := now.Sub(art.StatusChangedAt)
 
-		switch status {
+		switch art.Status {
 		case "completed", "superseded":
 			if w.Cfg.ArchiveAfterDays > 0 && age > daysToDuration(w.Cfg.ArchiveAfterDays) {
-				w.archivePlan(art, status)
+				w.archivePlan(art, art.Status)
 			}
-		case "archived":
+		case StatusArchived:
 			if w.Cfg.DeleteAfterDays > 0 && age > daysToDuration(w.Cfg.DeleteAfterDays) {
 				w.deletePlan(art)
 			}
@@ -157,17 +151,16 @@ func daysToDuration(days int) time.Duration {
 	return time.Duration(days) * 24 * time.Hour
 }
 
-// archivePlan moves a finished plan to archived, swapping its status tag. saveArticleLocked sets
-// archived_at and restamps status_changed_at as part of the save.
+// archivePlan moves a finished plan to archived. The storage layer sets archived_at and restamps
+// status_changed_at as part of the same save.
 func (w *PlanLifecycleWorker) archivePlan(art *Article, fromStatus string) {
 	if w.Cfg.DryRun {
 		_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker (dry-run): would archive plan '%s' (%s for %dd)\n",
 			art.Slug, fromStatus, w.Cfg.ArchiveAfterDays)
 		return
 	}
-	newTags := replacePlanStatus(art.Tags, "archived")
 	summary := fmt.Sprintf("Auto-archived by the plan lifecycle worker: %s for more than %d days", fromStatus, w.Cfg.ArchiveAfterDays)
-	updated, err := w.Storage.UpdateArticleTags(art.Slug, newTags, 0, summary)
+	updated, err := w.Storage.SetStatus(art.Slug, StatusArchived, 0, summary)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker: failed to archive plan '%s': %v\n", art.Slug, err)
 		return
@@ -242,76 +235,4 @@ func (w *PlanLifecycleWorker) publish(action, slug, title string, art *Article, 
 	})
 }
 
-// replacePlanStatus returns tags with every plan status removed and newStatus appended, keeping
-// free tags (project context etc.) untouched.
-func replacePlanStatus(tags []string, newStatus string) []string {
-	var out []string
-	for _, t := range tags {
-		lower := strings.ToLower(strings.TrimSpace(t))
-		isStatus := false
-		for _, s := range PlanStatusTags {
-			if lower == s {
-				isStatus = true
-				break
-			}
-		}
-		if !isStatus {
-			out = append(out, t)
-		}
-	}
-	return append(out, newStatus)
-}
 
-// legacyPlanStatusSynonyms maps the retired free-form vocabulary onto the closed one.
-var legacyPlanStatusSynonyms = map[string]string{
-	"wip":         "implementing",
-	"in-progress": "implementing",
-	"active":      "implementing",
-	"done":        "completed",
-	"todo":        "draft",
-	"ready":       "draft",
-}
-
-// planStatusPrecedence resolves a plan carrying several statuses to the single one that is most
-// true: a terminal or deliberate state always beats an in-flight one (a plan tagged both
-// "superseded" and "completed" is superseded — only the first is still true).
-var planStatusPrecedence = []string{
-	"superseded", "archived", "parked", "evergreen", "completed", "blocked", "implementing", "draft",
-}
-
-// normalizeLegacyPlanStatusTags maps legacy synonyms onto the closed vocabulary and collapses the
-// result to exactly one plan status (defaulting to "draft" when none is present). Free tags pass
-// through untouched. Used by the startup migration, OKF bundle import, and version revert — the
-// three paths that can legitimately hand the write layer a pre-lifecycle tag set.
-func normalizeLegacyPlanStatusTags(tags []string) []string {
-	var free []string
-	statusSet := make(map[string]bool)
-	for _, t := range tags {
-		lower := strings.ToLower(strings.TrimSpace(t))
-		if mapped, ok := legacyPlanStatusSynonyms[lower]; ok {
-			statusSet[mapped] = true
-			continue
-		}
-		isStatus := false
-		for _, s := range PlanStatusTags {
-			if lower == s {
-				isStatus = true
-				break
-			}
-		}
-		if isStatus {
-			statusSet[lower] = true
-		} else {
-			free = append(free, t)
-		}
-	}
-
-	chosen := "draft"
-	for _, s := range planStatusPrecedence {
-		if statusSet[s] {
-			chosen = s
-			break
-		}
-	}
-	return append(free, chosen)
-}

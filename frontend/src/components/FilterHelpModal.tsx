@@ -88,7 +88,7 @@ export function FilterHelpModal({ onClose }: FilterHelpModalProps) {
         </div>
 
         <p className="text-[10px] text-themeTextMuted pt-1 border-t border-themeBorder">
-          Filters match against article titles and all assigned tags. Operators are case-insensitive.
+          Filters match against article titles, lifecycle status, and all assigned tags. Operators are case-insensitive.
           The Agent Plans section starts with a <code className="text-themeAccent">draft || implementing || blocked</code> filter
           by default — clear it to see finished plans. Archived documents are hidden everywhere by default;
           type <code className="text-themeAccent">archived</code> in a filter to reveal them.

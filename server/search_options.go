@@ -48,8 +48,13 @@ func IsArchived(art *Article) bool {
 	if !art.ArchivedAt.IsZero() {
 		return true
 	}
+	// Plans and skills archive through the status field; wiki articles and memories through the
+	// tag. Both are checked because a caller that inspects only one silently misses half.
+	if strings.EqualFold(art.Status, StatusArchived) {
+		return true
+	}
 	for _, tag := range art.Tags {
-		if strings.EqualFold(tag, "archived") {
+		if strings.EqualFold(tag, StatusArchived) {
 			return true
 		}
 	}

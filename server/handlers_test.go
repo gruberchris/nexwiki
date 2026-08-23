@@ -626,7 +626,7 @@ func TestHandleGetWikiStats(t *testing.T) {
 	// Add articles with different tag categories
 	_, _ = srv.Storage.SaveArticle("", "Wiki Article", "# content", "", "", "", "", nil, "")
 	_, _ = srv.Storage.SaveArticle("", "Memory Article", "# content", "", "", "", "", []string{"aiagent-memory-rules"}, ContentTypeMemory)
-	_, _ = srv.Storage.SaveArticle("", "Plan Article", "# content", "", "", "", "", []string{"aiagent-plan", "draft"}, ContentTypePlan)
+	_, _ = srv.Storage.SaveArticle("", "Plan Article", "# content", "", "", "", "", []string{"aiagent-plan"}, ContentTypePlan)
 	_, _ = srv.Storage.SaveArticle("", "Skill Article", "# content", "", "", "", "", []string{"aiagent-skill"}, ContentTypeSkill)
 
 	req2 := httptest.NewRequest("GET", "/api/stats", nil)
@@ -966,7 +966,7 @@ func TestHandleImportOKFBundle(t *testing.T) {
 	// Happy path: export from a populated store, import into a fresh one.
 	src := newTestServer(t)
 	_, _ = src.Storage.SaveArticle("", "Import Article", "# hello", "desc", "", "", "init", []string{"tag"}, ContentTypeWiki)
-	_, _ = src.Storage.SaveArticle("", "A Plan", "# plan content", "", "", "", "init", []string{"draft"}, ContentTypePlan)
+	_, _ = src.Storage.SaveArticle("", "A Plan", "# plan content", "", "", "", "init", nil, ContentTypePlan)
 
 	bundle, err := src.Storage.ExportOKFBundle()
 	if err != nil {

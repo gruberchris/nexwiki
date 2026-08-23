@@ -109,7 +109,6 @@ func planStatusCensusSchema() map[string]interface{} {
 		props[s] = schemaOf("integer", "Plans currently in '"+s+"'.")
 	}
 	props["(none)"] = schemaOf("integer", "Plans carrying no status (pre-migration stragglers).")
-	props["(multiple)"] = schemaOf("integer", "Plans carrying several statuses (pre-migration stragglers).")
 	census := schemaObject(props)
 	census["description"] = "Plans per lifecycle status, archived included."
 	return census
@@ -255,14 +254,10 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		// The census counts every plan, archived included, before the archived skip below —
 		// "archived: 12" is exactly the kind of standing the report exists to surface.
 		if doc.Type == ContentTypePlan {
-			statuses := planStatusesIn(doc.Tags)
-			switch len(statuses) {
-			case 1:
-				planCensus[statuses[0]]++
-			case 0:
+			if doc.Status == "" {
 				planCensus["(none)"]++
-			default:
-				planCensus["(multiple)"]++
+			} else {
+				planCensus[doc.Status]++
 			}
 		}
 
@@ -316,18 +311,18 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 			}
 		}
 
-		if doc.Type == ContentTypePlan && isParked(doc.Tags) && !isFinished(doc.Tags) {
+		if doc.Type == ContentTypePlan && isParked(doc.Status) && !isFinished(doc.Status) {
 			parkedPlans++
 		}
 
-		if doc.Type == ContentTypePlan && doc.Timestamp.Before(staleBefore) && !isFinished(doc.Tags) && !isParked(doc.Tags) {
+		if doc.Type == ContentTypePlan && doc.Timestamp.Before(staleBefore) && !isFinished(doc.Status) && !isParked(doc.Status) {
 			// An in-flight tag is not required. On the real corpus almost no plan carries one —
 			// they hold a project tag and nothing else — so requiring "wip" made the check
 			// incapable of ever firing. What actually matters is that the plan was never marked
 			// finished and nobody has touched it since.
 			since := doc.Timestamp.Format("2006-01-02")
 			detail := fmt.Sprintf("Untouched since %s and never marked finished. Finish it, tag it 'completed', or archive it.", since)
-			if status, inFlight := inFlightStatus(doc.Tags); inFlight {
+			if status, inFlight := inFlightStatus(doc.Status); inFlight {
 				detail = fmt.Sprintf("Tagged '%s' but untouched since %s. Finish it, tag it 'completed', or archive it.", status, since)
 			}
 			stalePlans = append(stalePlans, HealthFinding{
@@ -385,16 +380,15 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 	}, nil
 }
 
-// isFinished reports whether a plan's tags say its life is over. A plan tagged both "wip" and
-// "completed" is finished: the terminal state wins.
-func isFinished(tags []string) bool {
-	return hasAnyTag(tags, finishedStatusTags)
+// isFinished reports whether a plan's status says its life is over.
+func isFinished(status string) bool {
+	return hasAnyTag([]string{status}, finishedStatusTags)
 }
 
 // isParked reports whether a plan has been deliberately set aside. Parked is not finished — the
 // work may still happen — but it is a decision, and re-reporting a decision is noise.
-func isParked(tags []string) bool {
-	return hasAnyTag(tags, parkedStatusTags)
+func isParked(status string) bool {
+	return hasAnyTag([]string{status}, parkedStatusTags)
 }
 
 func hasAnyTag(tags []string, candidates []string) bool {
@@ -410,12 +404,10 @@ func hasAnyTag(tags []string, candidates []string) bool {
 
 // inFlightStatus reports the first in-flight status tag a document carries, so the report can name
 // it. Absence is not exoneration — see the stale-plan check.
-func inFlightStatus(tags []string) (string, bool) {
-	for _, tag := range tags {
-		for _, inFlight := range inFlightStatusTags {
-			if strings.EqualFold(tag, inFlight) {
-				return strings.ToLower(tag), true
-			}
+func inFlightStatus(status string) (string, bool) {
+	for _, inFlight := range inFlightStatusTags {
+		if strings.EqualFold(status, inFlight) {
+			return strings.ToLower(status), true
 		}
 	}
 	return "", false
@@ -461,7 +453,7 @@ func renderHealthReport(out HealthOutput) string {
 				fmt.Fprintf(&b, " %s=%d", s, n)
 			}
 		}
-		for _, s := range []string{"(none)", "(multiple)"} {
+		for _, s := range []string{"(none)"} {
 			if n := out.PlanStatusCensus[s]; n > 0 {
 				fmt.Fprintf(&b, " %s=%d", s, n)
 			}

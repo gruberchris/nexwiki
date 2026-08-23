@@ -131,14 +131,18 @@ type StatisticsOutput struct {
 	BrokenLinks     []BrokenLinkRef `json:"broken_links"`
 }
 
-// StatusTagsOutput is the `get_status_tags` payload. The two typed groups are the authoritative
-// vocabularies; status_tags remains their union for backward compatibility.
+// StatusTagsOutput is the `get_status_tags` payload. The two agent vocabularies are enforced;
+// the general list is advisory, and status_tags remains their union for backward compatibility.
 type StatusTagsOutput struct {
 	StatusTags []string `json:"status_tags"`
 	// PlanStatusTags is the closed plan lifecycle vocabulary: every AI-Agent-Plan carries
-	// exactly one of these, and all but "archived" are invalid on any other document type.
+	// exactly one of these, and no other lifecycle word.
 	PlanStatusTags []string `json:"plan_status_tags"`
-	// GeneralStatusTags are the lifecycle tags recognized on non-plan documents.
+	// SkillStatusTags is the closed skill lifecycle vocabulary: an AI-Agent-Skill carries at
+	// most one of these, and no other lifecycle word.
+	SkillStatusTags []string `json:"skill_status_tags"`
+	// GeneralStatusTags are conventional lifecycle words for wiki articles and memories. They
+	// are suggestions, not rules — those documents may carry any tags at all.
 	GeneralStatusTags []string `json:"general_status_tags"`
 }
 
@@ -193,7 +197,8 @@ func articleSchema(withContent bool) map[string]interface{} {
 		"version":      schemaOf("integer", "Current revision number. Pass this as 'loaded_version' when editing."),
 		"edit_summary": schemaOf("string", "Summary of the most recent edit."),
 		"tags":         schemaStringArray("Tags carried by the document, including status and memory-scope tags."),
-		"archived_at":  schemaOf("string", "RFC3339 archival time; absent unless the document is archived."),
+		"archived_at":       schemaOf("string", "RFC3339 archival time; absent unless the document is archived."),
+		"status":            schemaOf("string", "Lifecycle status. Plans and skills use a closed vocabulary (see get_status_tags); other documents may use any value or none."),
 		"status_changed_at": schemaOf("string", "RFC3339 time a plan last changed lifecycle status; drives the auto-archive/auto-delete timers. Only present on AI-Agent-Plan documents."),
 	}
 	if withContent {
@@ -293,10 +298,11 @@ func statisticsOutputSchema() map[string]interface{} {
 
 func statusTagsOutputSchema() map[string]interface{} {
 	return schemaObject(map[string]interface{}{
-		"status_tags":         schemaStringArray("Union of both vocabularies, kept for backward compatibility."),
-		"plan_status_tags":    schemaStringArray("The closed plan lifecycle vocabulary. Every AI-Agent-Plan carries exactly ONE of these; all but 'archived' are invalid on other document types."),
-		"general_status_tags": schemaStringArray("Lifecycle tags recognized on non-plan documents (wiki articles, memories, skills)."),
-	}, "status_tags", "plan_status_tags", "general_status_tags")
+		"status_tags":         schemaStringArray("Union of all three lists, kept for backward compatibility."),
+		"plan_status_tags":    schemaStringArray("The closed plan lifecycle vocabulary. Every AI-Agent-Plan carries exactly ONE of these and no other lifecycle word."),
+		"skill_status_tags":   schemaStringArray("The closed skill lifecycle vocabulary. An AI-Agent-Skill carries at most ONE of these and no other lifecycle word."),
+		"general_status_tags": schemaStringArray("Conventional lifecycle words for wiki articles and memories. Advisory only — those documents may carry any tags."),
+	}, "status_tags", "plan_status_tags", "skill_status_tags", "general_status_tags")
 }
 
 func activityOutputSchema() map[string]interface{} {

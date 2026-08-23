@@ -34,12 +34,16 @@ var createAgentSkillTool = toolDef{
 					"type":        "string",
 					"description": "Optional provenance: where this skill's procedure came from (URL, document, or session context).",
 				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional lifecycle status: 'draft' while the procedure is still being written, 'ready' once it is safe for an agent to follow, or 'archived' when retired. Omit for none. Never invent a value — an unrecognized status is rejected.",
+				},
 				"tags": map[string]interface{}{
 					"type": "array",
 					"items": map[string]interface{}{
 						"type": "string",
 					},
-					"description": "Optional tags to apply to the skill. Use status tags to signal the skill's state — call get_status_tags to see recognized values (e.g. 'draft', 'ready').",
+					"description": "Optional tags for topics and grouping. Lifecycle state does NOT go here — it belongs in 'status', and a status word passed as a tag is rejected.",
 				},
 				"edit_summary": map[string]interface{}{
 					"type":        "string",
@@ -59,6 +63,7 @@ func (srv *Server) toolCreateAgentSkill(args json.RawMessage) (interface{}, *JSO
 		Content     string   `json:"content"`
 		Description string   `json:"description"`
 		Source      string   `json:"source"`
+		Status      string   `json:"status"`
 		Tags        []string `json:"tags"`
 		EditSummary string   `json:"edit_summary"`
 	}
@@ -76,8 +81,10 @@ func (srv *Server) toolCreateAgentSkill(args json.RawMessage) (interface{}, *JSO
 	title := sArgs.Title
 	slug := Slugify(title)
 
-	// The OKF type carries the skill class; only free user/status tags ride here.
+	// The OKF type carries the skill class; only free user tags ride here — lifecycle state
+	// lives in the status field.
 	tags := validateAndCleanUserTags(sArgs.Tags, nil, ContentTypeSkill)
+	status := NormalizeStatus(sArgs.Status)
 
 	if _, err := srv.Storage.GetArticle(slug); err == nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: a skill with slug '%s' already exists", slug)}}}, nil
@@ -88,20 +95,20 @@ func (srv *Server) toolCreateAgentSkill(args json.RawMessage) (interface{}, *JSO
 		summary = "Created Custom AI Agent Skill"
 	}
 
-	art, err := srv.Storage.SaveArticle("", title, sArgs.Content, sArgs.Description, sArgs.Source, "", summary, tags, ContentTypeSkill)
+	art, err := srv.Storage.SaveArticleWithStatus("", title, sArgs.Content, sArgs.Description, sArgs.Source, "", summary, tags, ContentTypeSkill, &status)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent skill: %v", err)}}}, nil
 	}
 
-	respText := fmt.Sprintf("Success! Custom AI Skill '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\nTags: %s\n",
-		art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Version, strings.Join(art.Tags, ", "))
+	respText := fmt.Sprintf("Success! Custom AI Skill '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\nStatus: %s\nTags: %s\n",
+		art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Version, art.Status, strings.Join(art.Tags, ", "))
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
 var editAgentSkillTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "edit_agent_skill",
-		"description": "Modify the title, content, description, source, tags, or edit summary of an existing Custom AI Skill. The reserved AI-Agent-Skill type is strictly preserved and must NEVER be relabelled. Use this to refine a skill's procedure in place, or to promote it from 'draft' to 'ready'.",
+		"description": "Modify the title, content, description, source, status, tags, or edit summary of an existing Custom AI Skill. The reserved AI-Agent-Skill type is strictly preserved and must NEVER be relabelled. Use this to refine a skill's procedure in place, or to promote it from 'draft' to 'ready' with the 'status' field.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -125,12 +132,16 @@ var editAgentSkillTool = toolDef{
 					"type":        "string",
 					"description": "Optional provenance reference. Pointer semantics: omit to preserve, empty string to clear.",
 				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional new lifecycle status: 'draft', 'ready', or 'archived'. Omit to leave the skill's current state untouched. Never invent a value — an unrecognized status is rejected.",
+				},
 				"tags": map[string]interface{}{
 					"type": "array",
 					"items": map[string]interface{}{
 						"type": "string",
 					},
-					"description": "Optional tags to set on the skill (replaces existing user tags; the AI-Agent-Skill type is preserved). Call get_status_tags to see recognized status values (e.g. 'draft', 'ready').",
+					"description": "Optional tags to set on the skill — topics and grouping only (replaces existing user tags; the AI-Agent-Skill type is preserved). Lifecycle state belongs in 'status'; a status word passed as a tag is rejected.",
 				},
 				"loaded_version": map[string]interface{}{
 					"type":        "integer",
@@ -160,6 +171,7 @@ func (srv *Server) toolEditAgentSkill(args json.RawMessage) (interface{}, *JSONR
 		Content       *string   `json:"content,omitempty"`
 		Description   *string   `json:"description,omitempty"`
 		Source        *string   `json:"source,omitempty"`
+		Status        *string   `json:"status,omitempty"`
 		Tags          *[]string `json:"tags,omitempty"`
 		LoadedVersion int       `json:"loaded_version"`
 		EditSummary   string    `json:"edit_summary"`
@@ -221,13 +233,13 @@ func (srv *Server) toolEditAgentSkill(args json.RawMessage) (interface{}, *JSONR
 		summary = "Updated Custom AI Agent Skill"
 	}
 
-	art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type)
+	art, err := srv.Storage.SaveArticleWithStatus(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type, eArgs.Status)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent skill: %v", err)}}}, nil
 	}
 
-	respText := fmt.Sprintf("Success! Custom AI Skill '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nTags: %s\n",
-		art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339), strings.Join(art.Tags, ", "))
+	respText := fmt.Sprintf("Success! Custom AI Skill '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nStatus: %s\nTags: %s\n",
+		art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339), art.Status, strings.Join(art.Tags, ", "))
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 

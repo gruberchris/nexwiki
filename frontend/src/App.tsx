@@ -9,7 +9,7 @@ import { TOC } from './components/TOC';
 import { Hero } from './components/Hero';
 import { SearchResults } from './components/SearchResults';
 import { Slugify, formatRelativeTime } from './utils';
-import { planStatusBadgeClass, planStatusOf } from './planStatus';
+import { statusBadgeClass } from './statusTags';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { ThemeManagerModal } from './components/ThemeManagerModal';
 import { useSSE } from './hooks/useSSE';
@@ -281,7 +281,7 @@ export const App: React.FC = () => {
   }, [currentPath]);
 
   // CRUD: Saving Article edits/creates
-  const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string) => {
+  const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string, status: string) => {
     const targetSlug = editorSlug; // empty if new
     const isNew = targetSlug === '';
     const newComputedSlug = Slugify(title);
@@ -294,7 +294,8 @@ export const App: React.FC = () => {
       resource,
       edit_summary: editSummary,
       loaded_version: currentArticle ? currentArticle.version : 0,
-      tags
+      tags,
+      status
     };
     const url = isNew ? '/api/articles' : `/api/articles/${targetSlug}`;
     const method = isNew ? 'POST' : 'PUT';
@@ -445,6 +446,7 @@ export const App: React.FC = () => {
           initialTitle={editorTitle}
           initialContent={editorContent}
           initialTags={editorSlug === '' ? editorTags : (currentArticle ? currentArticle.tags : [])}
+          initialStatus={editorSlug !== '' && currentArticle ? currentArticle.status : ''}
           initialDescription={editorSlug !== '' && currentArticle ? currentArticle.description : ''}
           initialSource={editorSlug !== '' && currentArticle ? currentArticle.source : ''}
           initialResource={editorSlug !== '' && currentArticle ? currentArticle.resource : ''}
@@ -572,16 +574,24 @@ export const App: React.FC = () => {
                       )}
                       {/* An approaching auto-archive should be visible rather than a surprise, so
                           a plan's header says how long it has held its current status. */}
-                      {isPlan(currentArticle) && currentArticle.status_changed_at && planStatusOf(currentArticle.tags) && (
+                      {isPlan(currentArticle) && currentArticle.status_changed_at && currentArticle.status && (
                         <span className="flex items-center gap-1">
                           <ClipboardList size={11} className="text-teal-400" />
-                          {planStatusOf(currentArticle.tags)} since {formatRelativeTime(currentArticle.status_changed_at)}
+                          {currentArticle.status} since {formatRelativeTime(currentArticle.status_changed_at)}
                         </span>
                       )}
                     </div>
-                    {/* Read-only type badge + tag badges */}
-                    {(isAgentDoc(currentArticle) || (currentArticle.tags && currentArticle.tags.length > 0)) && (
+                    {/* Read-only type badge + status + tag badges */}
+                    {(isAgentDoc(currentArticle) || currentArticle.status || (currentArticle.tags && currentArticle.tags.length > 0)) && (
                       <div className="flex flex-wrap gap-1.5 mt-3 select-none">
+                        {currentArticle.status && (
+                          <span
+                            title="Lifecycle status"
+                            className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs ${statusBadgeClass(currentArticle.status)}`}
+                          >
+                            {currentArticle.status}
+                          </span>
+                        )}
                         {isAgentDoc(currentArticle) && (
                           <span
                             title="Document type (set by the agent tools)"
@@ -602,14 +612,6 @@ export const App: React.FC = () => {
                               className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/10 dark:bg-emerald-400/10 border border-indigo-500/30 dark:border-emerald-400/30 text-indigo-650 dark:text-emerald-400 shadow-xs"
                             >
                               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-emerald-400"></span>
-                              {tag}
-                            </span>
-                          ) : planStatusBadgeClass(tag) ? (
-                            <span
-                              key={tag}
-                              title="Plan lifecycle status"
-                              className={`inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-0.5 rounded-full shadow-xs ${planStatusBadgeClass(tag)}`}
-                            >
                               {tag}
                             </span>
                           ) : (

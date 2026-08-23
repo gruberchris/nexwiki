@@ -42,6 +42,10 @@ type Article struct {
 	EditSummary string    `json:"edit_summary,omitempty"` // Summary of edits
 	Tags        []string  `json:"tags,omitempty"`         // Tags list (system and free user tags)
 	ArchivedAt  time.Time `json:"archived_at,omitempty"`  // When the article was archived
+	// Status is the document's lifecycle state — a single value, deliberately not a tag. Plans
+	// and skills validate it against a closed vocabulary (see tags.go); wiki articles and
+	// memories may use any value or none.
+	Status string `json:"status,omitempty"`
 	// StatusChangedAt records when a plan last changed lifecycle status. It exists because the
 	// article Timestamp cannot drive the lifecycle timers — fixing a typo in a completed plan
 	// would restart its archive clock. Only ever set on AI-Agent-Plan documents; the lifecycle
@@ -138,9 +142,10 @@ func NewStorage(dataDir string) (*Storage, error) {
 		return nil, err
 	}
 
-	// One-time sweep onto the closed plan status vocabulary (no-op once its marker exists).
-	if err := s.MigratePlanStatuses(); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "Warning: plan status migration failed: %v\n", err)
+	// One-time sweep lifting lifecycle status out of tags into the status field (no-op once its
+	// marker exists).
+	if err := s.MigrateStatusToField(); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: status field migration failed: %v\n", err)
 	}
 
 	// Cleanup archived articles that have exceeded their retention period
@@ -267,13 +272,43 @@ func (s *Storage) GetArticle(slug string) (*Article, error) {
 // Description, source, and resource are written as given (callers preserve existing values by passing them through).
 // articleType sets the OKF document class; pass "" to preserve an existing article's type (or default a new one to Wiki).
 func (s *Storage) SaveArticle(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string) (*Article, error) {
+	return s.SaveArticleWithStatus(oldSlug, title, content, description, source, resource, editSummary, tags, articleType, nil)
+}
+
+// SaveArticleWithStatus is SaveArticle plus an explicit lifecycle status.
+//
+// Status is deliberately *not* a parameter of SaveArticle. A status change is a state transition,
+// not a content edit, and the two travel separately: a nil status here means "leave it alone",
+// so every ordinary save — a body edit, a rename, a tag change, a link heal — preserves the
+// document's state the same way it preserves created_at. Only callers that genuinely mean to move
+// a document through its lifecycle pass a value.
+func (s *Storage) SaveArticleWithStatus(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string, status *string) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.saveArticleLocked(oldSlug, title, content, description, source, resource, editSummary, tags, articleType)
+	return s.saveArticleLocked(oldSlug, title, content, description, source, resource, editSummary, tags, articleType, status)
+}
+
+// SetStatus moves a document to a new lifecycle status, leaving its content, title, and tags
+// untouched. This is the one write path that changes state.
+func (s *Storage) SetStatus(slug string, status string, loadedVersion int, editSummary string) (*Article, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	art, err := s.GetArticle(slug)
+	if err != nil {
+		return nil, err
+	}
+	if loadedVersion > 0 && art.Version > 0 && art.Version != loadedVersion {
+		return nil, fmt.Errorf("%w: loaded version %d, current version %d", ErrVersionConflict, loadedVersion, art.Version)
+	}
+	if editSummary == "" {
+		editSummary = fmt.Sprintf("Status changed to '%s'", NormalizeStatus(status))
+	}
+	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, art.Tags, art.Type, &status)
 }
 
 // saveArticleLocked is SaveArticle's body. The caller must hold writeMu.
-func (s *Storage) saveArticleLocked(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string) (*Article, error) {
+func (s *Storage) saveArticleLocked(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string, statusOverride *string) (*Article, error) {
 	newSlug := Slugify(title)
 	if newSlug == "" {
 		return nil, fmt.Errorf("article title must contain valid characters to generate a slug")
@@ -283,7 +318,8 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	now := time.Now()
 	resolvedType := normalizeType(articleType) // empty/unknown → Wiki
 	renamedFromSlug := ""                      // set when a slug rename occurs, to heal inbound WikiLinks
-	prevPlanStatus := ""                       // the plan status before this save, for change stamping
+	prevStatus := ""                           // the status before this save, for change stamping
+	isNewDocument := true
 
 	// If updating an existing article
 	if oldSlug != "" {
@@ -298,17 +334,15 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 				if articleType == "" {
 					resolvedType = existingArt.Type
 				}
-				if existingArt.Type == ContentTypePlan {
-					if prev := planStatusesIn(existingArt.Tags); len(prev) > 0 {
-						prevPlanStatus = prev[0]
-					}
-				}
+				isNewDocument = false
+				prevStatus = existingArt.Status
 				art = &Article{
 					Type:            resolvedType,
 					Title:           title,
 					Slug:            newSlug,
 					CreatedAt:       existingArt.CreatedAt,
 					ArchivedAt:      existingArt.ArchivedAt,
+					Status:          existingArt.Status,
 					StatusChangedAt: existingArt.StatusChangedAt,
 					Timestamp:       now,
 					Content:         content,
@@ -318,10 +352,24 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 		}
 	}
 
-	// The status contract holds at every write path — REST, MCP, revert, tag deletion, import —
-	// and this is the one choke point they all pass through. Validated before the rename below so
-	// a rejected save cannot leave a half-moved article behind.
-	if err := ValidatePlanStatus(resolvedType, tags); err != nil {
+	// Resolve the status this save lands on: an explicit override wins, otherwise the document
+	// keeps the state it already had, and a brand-new plan enters the lifecycle at draft.
+	resolvedStatus := prevStatus
+	if statusOverride != nil {
+		resolvedStatus = NormalizeStatus(*statusOverride)
+	}
+	if resolvedType == ContentTypePlan && resolvedStatus == "" && isNewDocument {
+		resolvedStatus = DefaultPlanStatus
+	}
+
+	// The status contract holds at every write path — REST, MCP, revert, import — and this is the
+	// one choke point they all pass through. Validated before the rename below so a rejected save
+	// cannot leave a half-moved article behind. Only plans and skills have a contract; wiki
+	// articles and memories may use any status and any tags.
+	if err := ValidateStatus(resolvedType, resolvedStatus); err != nil {
+		return nil, err
+	}
+	if err := ValidateStatusFreeTags(resolvedType, tags); err != nil {
 		return nil, err
 	}
 
@@ -424,40 +472,43 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	art.Source = source
 	art.Resource = resource
 
-	if art.Type == ContentTypePlan {
-		// ValidatePlanStatus above guarantees exactly one status.
-		newStatus := planStatusesIn(art.Tags)[0]
-		if newStatus != prevPlanStatus {
-			// Log-and-allow: unusual transitions are worth a trace, but a human correcting a
-			// mis-tagged plan in the editor must always win over the state machine.
-			if prevPlanStatus != "" && !isLegalPlanTransition(prevPlanStatus, newStatus) {
+	art.Status = resolvedStatus
+
+	switch art.Type {
+	case ContentTypePlan, ContentTypeSkill:
+		if resolvedStatus != prevStatus {
+			// Log-and-allow: an unusual transition is worth a trace, but a human correcting a
+			// mis-set plan in the editor must always win over the state machine.
+			if art.Type == ContentTypePlan && prevStatus != "" && !isLegalPlanTransition(prevStatus, resolvedStatus) {
 				_, _ = fmt.Fprintf(os.Stderr, "Note: plan '%s' made an unusual status transition %s → %s (allowed)\n",
-					art.Slug, prevPlanStatus, newStatus)
+					art.Slug, prevStatus, resolvedStatus)
 			}
 			art.StatusChangedAt = now
 		}
-		if art.StatusChangedAt.IsZero() {
-			// A plan predating the lifecycle (or written by an external tool) gets its clock
-			// started now rather than being treated as infinitely old.
+		// A plan predating the lifecycle (or written by an external tool) gets its clock started
+		// now rather than being treated as infinitely old. Skills have no timers and no clock.
+		if art.Type == ContentTypePlan && art.StatusChangedAt.IsZero() {
 			art.StatusChangedAt = now
 		}
-		// For a plan, archived_at is an exact mirror of the archived status: set on entry so the
-		// deletion clock starts, cleared on revival so IsArchived cannot keep hiding a plan that
-		// is nominally back in flight (the one-way-door asymmetry the lifecycle design flagged).
-		if newStatus == "archived" {
+		// archived_at exactly mirrors the archived status here: set on entry so the deletion
+		// clock starts, cleared on revival so IsArchived cannot keep hiding a document that is
+		// nominally back in flight (the one-way-door asymmetry the lifecycle design flagged).
+		if resolvedStatus == StatusArchived {
 			if art.ArchivedAt.IsZero() {
 				art.ArchivedAt = now
 			}
 		} else if !art.ArchivedAt.IsZero() {
 			art.ArchivedAt = time.Time{}
 		}
-	} else if art.ArchivedAt.IsZero() {
-		// Non-plan documents keep the long-standing semantics: archiving is manual, the stamp is
-		// written once, and removing the tag deliberately does not clear it.
-		for _, tag := range art.Tags {
-			if strings.ToLower(tag) == "archived" {
-				art.ArchivedAt = now
-				break
+	default:
+		// Wiki articles and memories keep the long-standing tag semantics: archiving is manual,
+		// the stamp is written once, and removing the tag deliberately does not clear it.
+		if art.ArchivedAt.IsZero() {
+			for _, tag := range art.Tags {
+				if strings.EqualFold(tag, StatusArchived) {
+					art.ArchivedAt = now
+					break
+				}
 			}
 		}
 	}
@@ -516,7 +567,7 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 			continue
 		}
 		summary := fmt.Sprintf("Auto-healed internal link: '%s' renamed to '%s'", oldSlug, newSlug)
-		if _, err := s.saveArticleLocked(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type); err != nil {
+		if _, err := s.saveArticleLocked(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type, nil); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to heal links in '%s' after rename: %v\n", linker.Slug, err)
 		}
 	}
@@ -679,6 +730,7 @@ type articleFrontMatter struct {
 	Description string   `yaml:"description,omitempty"`
 	Resource    string   `yaml:"resource,omitempty"`
 	Tags        []string `yaml:"tags,omitempty"`
+	Status      string   `yaml:"status,omitempty"`
 	Timestamp   string   `yaml:"timestamp,omitempty"`
 	CreatedAt   string   `yaml:"created_at,omitempty"`
 	Version     int      `yaml:"version,omitempty"`
@@ -722,6 +774,7 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 		Source:       fm.Source,
 		Version:      fm.Version,
 		EditSummary:  fm.EditSummary,
+		Status:       NormalizeStatus(fm.Status),
 	}
 	// Clean and copy the tag list (drop blanks).
 	for _, t := range fm.Tags {
@@ -803,6 +856,7 @@ func serializeFrontMatter(art *Article) string {
 		Description: art.Description,
 		Resource:    art.Resource,
 		Tags:        art.Tags,
+		Status:      art.Status,
 		Version:     art.Version,
 		EditSummary: art.EditSummary,
 		Source:      art.Source,
@@ -1197,7 +1251,10 @@ type ArticleEdit struct {
 	// article's current tags untouched, while a non-nil (even empty) slice replaces them after
 	// memory-scope validation. Collapsing the two would make a caller that simply doesn't manage
 	// tags silently strip every free tag off the document.
-	Tags          *[]string
+	Tags *[]string
+	// Status is a pointer for the same reason: nil preserves the document's current lifecycle
+	// state, so an editor that does not manage status cannot silently reset a completed plan.
+	Status        *string
 	LoadedVersion int
 }
 
@@ -1245,7 +1302,7 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 	}
 
 	return s.saveArticleLocked(slug, edit.Title, edit.Content, description, source, resource,
-		edit.EditSummary, cleanedTags, existing.Type)
+		edit.EditSummary, cleanedTags, existing.Type, edit.Status)
 }
 
 // RevertArticle rolls the current active document back to the content of a historical version.
@@ -1259,13 +1316,14 @@ func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 	}
 
 	summary := fmt.Sprintf("Reverted to version %d", version)
-	// A historical version of a plan can carry the pre-lifecycle tag vocabulary (or several
-	// statuses); normalize so a revert cannot resurrect a tag set validation now rejects.
-	tags := histArt.Tags
-	if histArt.Type == ContentTypePlan {
-		tags = normalizeLegacyPlanStatusTags(tags)
+	// A revision written before status became a field carries it as a tag, so lift it out rather
+	// than let a revert resurrect a tag set that validation now rejects. A revision that already
+	// has the field keeps it.
+	status, tags := ExtractLegacyStatus(histArt.Type, histArt.Tags)
+	if histArt.Status != "" {
+		status = histArt.Status
 	}
-	return s.saveArticleLocked(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, tags, histArt.Type)
+	return s.saveArticleLocked(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, tags, histArt.Type, &status)
 }
 
 // UpdateArticleTags updates only the tag array for an article without modifying the title or content.
@@ -1291,7 +1349,7 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 		editSummary = "Updated article tags"
 	}
 
-	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, tags, art.Type)
+	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, tags, art.Type, nil)
 }
 
 // Close releases resources held by the Storage, including the Bleve search index.
@@ -1360,13 +1418,6 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 	if strings.HasPrefix(tagLower, MemoryScopeTagPrefix) {
 		return fmt.Errorf("cannot delete protected memory-scope tag: %s", tag)
 	}
-	// Plan statuses are structural: every plan carries exactly one, so deleting one globally
-	// would strip plans of their status and fail validation partway through the sweep.
-	for _, s := range PlanStatusTags {
-		if tagLower == s {
-			return fmt.Errorf("cannot globally delete '%s': it is a plan lifecycle status. Change each plan's status individually instead", tagLower)
-		}
-	}
 
 	// Held across the whole sweep so the operation is all-or-nothing with respect to other
 	// writers, rather than interleaving per-article saves with concurrent edits.
@@ -1397,7 +1448,7 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 			// Remove the tag
 			newTags := append(art.Tags[:tagIndex], art.Tags[tagIndex+1:]...)
 			// Save the updated article
-			_, err = s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type)
+			_, err = s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type, nil)
 			if err != nil {
 				return fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
 			}

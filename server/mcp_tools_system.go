@@ -75,7 +75,7 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 var getStatusTagsTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_status_tags",
-		"description": "Returns the recognized status tags, grouped by document type: the closed plan lifecycle vocabulary (every AI-Agent-Plan carries exactly ONE plan status; all but 'archived' are invalid on other types) and the general status tags for wiki articles, memories, and skills. Use the right group when creating or editing content. Status tags are displayed with highest priority on the home dashboard.",
+		"description": "Returns the recognized status tags, grouped by document type. Agent plans and agent skills each have a CLOSED vocabulary that is enforced on save — a plan carries exactly one plan status, a skill at most one skill status, and neither may use a lifecycle word from anywhere else (a plan tagged 'wip' or a skill tagged 'implementing' is rejected). Wiki articles and agent memories have no status rules and may carry any tags. Status tags are displayed with highest priority on the home dashboard.",
 		"inputSchema": map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -88,26 +88,36 @@ var getStatusTagsTool = toolDef{
 
 func (srv *Server) toolGetStatusTags(args json.RawMessage) (interface{}, *JSONRPCError) {
 	text := "NexWiki Status Tags\n\n" +
-		"Plan lifecycle statuses (AI-Agent-Plan documents carry EXACTLY ONE of these;\n" +
-		"all but 'archived' are invalid on any other document type):\n"
+		"ENFORCED — Plan lifecycle statuses (an AI-Agent-Plan carries EXACTLY ONE):\n"
 	for _, tag := range PlanStatusTags {
 		text += fmt.Sprintf("  • %s\n", tag)
 	}
-	text += "\nGeneral status tags (wiki articles, memories, skills):\n"
+	text += "\nENFORCED — Skill lifecycle statuses (an AI-Agent-Skill carries AT MOST ONE):\n"
+	for _, tag := range SkillStatusTags {
+		text += fmt.Sprintf("  • %s\n", tag)
+	}
+	text += "\nAdvisory — conventional words for wiki articles and agent memories.\n" +
+		"Those documents have NO status rules; use any tags that are useful:\n"
 	for _, tag := range GeneralStatusTags {
 		text += fmt.Sprintf("  • %s\n", tag)
 	}
+	text += "\nRules:\n"
+	text += "  • Never invent a status word for a plan or a skill. A lifecycle word from outside that class's list is rejected — a plan tagged 'wip' or a skill tagged 'implementing' fails to save, and the error names the right word.\n"
+	text += "  • Free tags (project context, topics) are unaffected on every document type.\n"
 	text += "\nPlan lifecycle notes:\n"
 	text += "  • New plans start in 'draft' (create_agent_plan defaults it); move to 'implementing' when work begins.\n"
 	text += "  • When a plan is fully implemented, use 'append_agent_plan' to add final notes, then 'edit_agent_plan' to swap its status to 'completed'.\n"
 	text += "  • 'completed' and 'superseded' plans auto-archive after a configurable period, and 'archived' plans are eventually auto-deleted. Use 'parked' for deferred designs worth keeping, 'evergreen' for running backlogs — both are exempt from every timer.\n"
 	text += "  • Use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"implementing\").\n"
-	text += "  • The reserved AI-Agent-Plan type must NEVER be relabelled.\n"
+	text += "\nSkill lifecycle notes:\n"
+	text += "  • A skill may carry no status at all; promote 'draft' → 'ready' once it is safe to follow, and 'archived' when it is retired.\n"
+	text += "  • The reserved AI-Agent-Plan and AI-Agent-Skill types must NEVER be relabelled.\n"
 	return ToolResponse{
 		Content: []ToolContent{{Type: "text", Text: text}},
 		StructuredContent: StatusTagsOutput{
 			StatusTags:        StatusTags,
 			PlanStatusTags:    PlanStatusTags,
+			SkillStatusTags:   SkillStatusTags,
 			GeneralStatusTags: GeneralStatusTags,
 		},
 	}, nil

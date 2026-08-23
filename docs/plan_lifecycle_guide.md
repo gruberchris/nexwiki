@@ -1,6 +1,8 @@
 # NexWiki Plan Lifecycle Guide 🔄
 
-Every Collaborative AI Plan (`AI-Agent-Plan`) moves through a closed, validated lifecycle of eight states, and a background worker automates the tail of it: finished plans archive themselves, and long-archived plans are eventually deleted. This guide covers the state machine, the enforcement rules, the timers, and the safety guards.
+Every Collaborative AI Plan (`AI-Agent-Plan`) moves through a closed, validated lifecycle of eight states held in its `status` front-matter field, and a background worker automates the tail of it: finished plans archive themselves, and long-archived plans are eventually deleted. This guide covers the state machine, the enforcement rules, the timers, and the safety guards.
+
+> Status is a **field**, not a tag — see the [Tags Guide](./tags.md) for why, and for the skill vocabulary and the (absent) rules for wiki articles and memories.
 
 ---
 
@@ -53,14 +55,14 @@ stateDiagram-v2
 
 ## Enforcement
 
-* Every plan carries **exactly one** status — zero is as invalid as two. `create_agent_plan` defaults a status-less plan to `draft`; every other write path (the web editor, `PUT /api/articles/*`, `update_article_tags`, `edit_agent_plan`, revert, import) rejects a save that would leave a plan without exactly one.
-* All statuses except `archived` are **plan-exclusive**: putting `draft` or `completed` on a wiki article, memory, or skill is rejected. `archived` remains available wiki-wide with its long-standing manual semantics (see [Tags Guide](./tags.md)).
-* **Values are validated strictly; transitions are log-and-allow.** A jump outside the designed state machine (say, `draft` straight to `archived`) is applied but noted to the server log — a human correcting a mis-tagged plan must always win.
-* Plan statuses cannot be deleted globally (`DELETE /api/tags/{tag}` refuses them) — that would strip every plan in that state of its status.
+* Every plan has **exactly one** status, drawn from the eight. `create_agent_plan` defaults a status-less plan to `draft`, and an unrecognized value is rejected with a message naming the right one — an agent cannot invent `in-flight` or reach for `wip`.
+* **Status never travels in tags.** A lifecycle word used as a *tag* on a plan or a skill is rejected, because a plan tagged `completed` whose field says `implementing` is two contradictory sources of truth. Project-context tags and topics are unaffected.
+* **An ordinary edit preserves state.** `status` is omitted-means-preserve on every write path, so editing a plan's body, renaming it, or changing its tags can never silently reset a `completed` plan to `draft`.
+* **Values are validated strictly; transitions are log-and-allow.** A jump outside the designed state machine (say, `draft` straight to `archived`) is applied but noted to the server log — a human correcting a mis-set plan must always win.
 
 ## The Status Clock: `status_changed_at`
 
-Each plan's front matter carries `status_changed_at`, stamped whenever its status changes. The lifecycle timers run off this clock, **never** the article's modified time — fixing a typo in a completed plan does not restart its archive countdown. The plan's header in the UI shows it ("completed since 2 months ago"), so an approaching auto-archive is visible rather than a surprise. A plan without the field (written by an external tool) is treated as *not yet eligible*, never as infinitely old.
+Each plan's front matter carries `status_changed_at`, stamped whenever its status changes — and only then. The lifecycle timers run off this clock, **never** the article's modified time, so fixing a typo in a completed plan does not restart its archive countdown. The plan's header in the UI shows it ("completed since 2 months ago"), so an approaching auto-archive is visible rather than a surprise. A plan without the field (written by an external tool) is treated as *not yet eligible*, never as infinitely old.
 
 ---
 
@@ -96,18 +98,17 @@ The deletion stage has no human in the loop, so it carries three guards:
 
 ### Revival
 
-Reviving a plan out of `archived` (swapping its status back to `draft` or `implementing`) also clears its `archived_at` stamp, so it returns to search results, listings, and the dashboard — archival is fully reversible right up until deletion.
+Reviving a plan out of `archived` (setting its status back to `draft` or `implementing`) also clears its `archived_at` stamp, so it returns to search results, listings, and the dashboard — archival is fully reversible right up until deletion. Skills behave identically.
 
 ---
 
 ## The One-Time Migration
 
-The first boot after upgrading runs a one-time sweep (marker file: `.plan-status-migration-v1` in the data directory):
+Status used to live in the tag list. The first boot after upgrading runs a one-time sweep that moves it into the field (marker file: `.status-field-migration-v1` in the data directory):
 
-* Legacy plan statuses are remapped onto the closed vocabulary: `wip`/`in-progress`/`active` → `implementing`, `done` → `completed`, `todo`/`ready` → `draft`.
-* A plan with several statuses keeps the one that is most true (terminal states win: a plan tagged both `superseded` and `completed` becomes `superseded`); a plan with none becomes `draft`.
-* `status_changed_at` is backfilled to the migration date — **not** the article timestamp, which would put months-old completed plans on an immediate archive countdown. Every plan gets a fresh clock.
-* Plan-exclusive statuses are stripped from non-plan documents.
+* **Plans**: legacy words are remapped onto the closed vocabulary (`wip`/`in-progress`/`active` → `implementing`, `done` → `completed`, `todo`/`ready` → `draft`); several statuses collapse to the one that is most true (terminal wins — both `superseded` and `completed` becomes `superseded`); a plan with none becomes `draft`. `status_changed_at` is backfilled to the migration date — **not** the article timestamp, which would put months-old completed plans on an immediate archive countdown.
+* **Skills**: the same remapping onto `draft`/`ready`/`archived`. A skill with no status keeps none.
+* **Wiki articles and memories**: a recognized status word moves from tags into the field verbatim — no vocabulary is imposed — and every other tag is left exactly as it was. `archived` is the deliberate exception: on those types it is a *mechanism* (it stamps `archived_at` and hides the document from search), so it stays a tag.
 
 Each change is logged to stderr with a per-document edit summary, and the sweep never re-runs.
 
@@ -115,7 +116,7 @@ Each change is logged to stderr with a per-document edit summary, and the sweep 
 
 ## Working With the Lifecycle as an Agent
 
-* `get_status_tags` returns both vocabularies grouped by document type.
-* Create plans with `create_agent_plan` (starts in `draft`), move them with `edit_agent_plan` by replacing the status tag, and log progress with `append_agent_plan` (which never touches tags).
-* `list_agent_plans(tag: "implementing")` filters by state; `wiki_health` reports a per-state census of the whole plan corpus and exempts `parked`/`evergreen` plans from its staleness check.
+* `get_status_tags` returns the plan and skill vocabularies grouped by document type, plus the advisory list for everything else.
+* Create plans with `create_agent_plan` (starts in `draft`, or pass `status`), move them with `edit_agent_plan`'s `status` argument, and log progress with `append_agent_plan` (which never touches status or tags).
+* `list_agent_plans(status: "implementing")` filters by state; `wiki_health` reports a per-state census of the whole plan corpus and exempts `parked`/`evergreen` plans from its staleness check.
 * Searching archived content: `search_wiki(tags: ["archived"])` or `include_archived: true` — an explicit `archived` tag facet implies inclusion.

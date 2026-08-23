@@ -139,7 +139,7 @@ func TestStorageVersioning(t *testing.T) {
 	}
 
 	// Verify search filtering of agent documents (by type) by default
-	_, err = storage.SaveArticle("", "AI Plan Page", "# Content", "", "", "", "Summary", []string{"draft"}, ContentTypePlan)
+	_, err = storage.SaveArticle("", "AI Plan Page", "# Content", "", "", "", "Summary", nil, ContentTypePlan)
 	if err != nil {
 		t.Fatalf("SaveArticle for AI plan failed: %v", err)
 	}

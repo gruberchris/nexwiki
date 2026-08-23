@@ -60,13 +60,12 @@ func TestArchivedTagFunctionality(t *testing.T) {
 	}
 
 	// 4. Test updating article tags to add the archived tag
-	// "draft" is now a plan-exclusive status; wiki articles use general tags like "wip".
-	article2, err := storage.SaveArticle("", "Another Page", "# Another Content", "", "", "", "Initial commit", []string{"wip"}, "")
+	article2, err := storage.SaveArticle("", "Another Page", "# Another Content", "", "", "", "Initial commit", []string{"draft"}, "")
 	if err != nil {
 		t.Fatalf("SaveArticle failed: %v", err)
 	}
 
-	article2Updated, err := storage.UpdateArticleTags(article2.Slug, []string{"wip", "archived"}, article2.Version, "Add archived tag")
+	article2Updated, err := storage.UpdateArticleTags(article2.Slug, []string{"draft", "archived"}, article2.Version, "Add archived tag")
 	if err != nil {
 		t.Fatalf("UpdateArticleTags failed: %v", err)
 	}
