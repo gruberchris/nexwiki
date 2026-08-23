@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import type { Article } from './types';
-import { ContentTypes, isAgentDoc, isSkill, isPlan, typeLabel } from './types';
+import { ContentTypes, isAgentDoc, isSkill, isPlan, isRealTimestamp, typeLabel } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Viewer } from './components/Viewer';
 import { BacklinksPanel } from './components/BacklinksPanel';
@@ -574,7 +574,7 @@ export const App: React.FC = () => {
                       )}
                       {/* An approaching auto-archive should be visible rather than a surprise, so
                           a plan's header says how long it has held its current status. */}
-                      {isPlan(currentArticle) && currentArticle.status_changed_at && currentArticle.status && (
+                      {isPlan(currentArticle) && isRealTimestamp(currentArticle.status_changed_at) && currentArticle.status && (
                         <span className="flex items-center gap-1">
                           <ClipboardList size={11} className="text-teal-400" />
                           {currentArticle.status} since {formatRelativeTime(currentArticle.status_changed_at)}

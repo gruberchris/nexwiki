@@ -33,12 +33,24 @@ export interface Article {
 }
 
 /**
+ * A timestamp that represents a real moment, rather than Go's zero value serialized as a string.
+ * Declared as a type predicate so callers still narrow away `undefined`, which a plain boolean
+ * return would silently stop doing.
+ */
+export function isRealTimestamp(value: string | undefined): value is string {
+  return !!value && !value.startsWith('0001-01-01');
+}
+
+/**
  * Whether a document counts as archived — mirroring the server's IsArchived. All three forms are
  * checked because plans and skills archive through the status field while wiki articles and
  * memories archive through the tag, and a caller that inspects only one silently misses half.
  */
 export function isArchivedDoc(art: Pick<Article, 'archived_at' | 'tags' | 'status'>): boolean {
-  if (art.archived_at) return true;
+  // Not `if (art.archived_at)`. A Go zero time serializes as "0001-01-01T00:00:00Z", which is a
+  // truthy string — reading it as a boolean marked every document archived and emptied the
+  // dashboard and sidebar while the counts, taken from the unfiltered list, still showed.
+  if (isRealTimestamp(art.archived_at)) return true;
   if (art.status?.toLowerCase() === 'archived') return true;
   return !!art.tags?.some((t) => t.toLowerCase() === 'archived');
 }

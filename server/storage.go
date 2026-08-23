@@ -38,10 +38,13 @@ type Article struct {
 	// field entirely for articles written to disk before versioning existed — so read_article's
 	// structured output had no `version` at all, and the documented loop of feeding it straight
 	// back to edit_wiki_article as `loaded_version` dead-ended on exactly those articles.
-	Version     int       `json:"version"`
-	EditSummary string    `json:"edit_summary,omitempty"` // Summary of edits
-	Tags        []string  `json:"tags,omitempty"`         // Tags list (system and free user tags)
-	ArchivedAt  time.Time `json:"archived_at,omitempty"`  // When the article was archived
+	Version     int      `json:"version"`
+	EditSummary string   `json:"edit_summary,omitempty"` // Summary of edits
+	Tags        []string `json:"tags,omitempty"`         // Tags list (system and free user tags)
+	// omitzero, not omitempty: encoding/json's omitempty does NOT drop a zero-valued struct, so
+	// `omitempty` emitted "0001-01-01T00:00:00Z" on every unarchived document — a string every
+	// JSON consumer reads as truthy. That hid every document from the dashboard and sidebar.
+	ArchivedAt time.Time `json:"archived_at,omitzero"` // When the article was archived
 	// Status is the document's lifecycle state — a single value, deliberately not a tag. Plans
 	// and skills validate it against a closed vocabulary (see tags.go); wiki articles and
 	// memories may use any value or none.
@@ -50,7 +53,7 @@ type Article struct {
 	// article Timestamp cannot drive the lifecycle timers — fixing a typo in a completed plan
 	// would restart its archive clock. Only ever set on AI-Agent-Plan documents; the lifecycle
 	// worker treats a missing value as "not yet eligible", never as "infinitely old".
-	StatusChangedAt time.Time `json:"status_changed_at,omitempty"`
+	StatusChangedAt time.Time `json:"status_changed_at,omitzero"`
 
 	// ContentPreview holds the first content line during metadata-only parses
 	// (used as a description fallback in indexes); never serialized.

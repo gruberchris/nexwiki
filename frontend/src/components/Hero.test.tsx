@@ -225,3 +225,35 @@ describe('Hero status field filtering', () => {
     expect(screen.queryByText('Archived Plan')).not.toBeInTheDocument();
   });
 });
+
+// A Go zero time serializes as "0001-01-01T00:00:00Z". Reading that string as a boolean marked
+// every document archived, so the dashboard hid all of them while the section counts — taken from
+// the unfiltered list — still showed the real totals. That shipped in 0.12.0 and made the wiki
+// look empty.
+describe('Hero zero-timestamp handling', () => {
+  const zeroStamped: Article[] = mockArticles.map((a) => ({
+    ...a,
+    archived_at: '0001-01-01T00:00:00Z',
+    status_changed_at: '0001-01-01T00:00:00Z',
+  }));
+
+  it('still renders documents whose archived_at is a zero timestamp', async () => {
+    mockFetch();
+    await renderHero(zeroStamped);
+    await userEvent.click(screen.getByRole('button', { name: /Wiki Index/ }));
+    expect(screen.getByRole('heading', { name: 'Go Guide' })).toBeInTheDocument();
+  });
+
+  it('hides only genuinely archived documents', async () => {
+    mockFetch();
+    const reallyArchived: Article = {
+      type: 'Wiki', title: 'Truly Retired', slug: 'truly-retired', tags: ['archived'],
+      created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1,
+      archived_at: '2024-02-01T00:00:00Z',
+    };
+    await renderHero([...zeroStamped, reallyArchived]);
+    await userEvent.click(screen.getByRole('button', { name: /Wiki Index/ }));
+    expect(screen.getByRole('heading', { name: 'Go Guide' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Truly Retired' })).not.toBeInTheDocument();
+  });
+});
