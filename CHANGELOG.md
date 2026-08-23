@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **The startup index-lock deadline covered far more than the lock, and killed a migration mid-run.** `main.go` wrapped the whole of `NewStorage` — index open, home seeding, the one-time status migration, and the boot index sync — in a 15-second timeout that exists solely to bound Bleve's exclusive bbolt lock. On a Synology NAS the 0.12.0 status-field migration ran past that budget and the process was killed with *"could not open the search index … another process is holding it open"*, blaming a lock conflict that had not occurred. It recovered only because the migration is idempotent, its completion marker is written last, and the stack had `restart: unless-stopped`; a stack without a restart policy would have been left down after a partial migration.
+  - The deadline now lives inside `NewStorage` and covers **only** the Bleve open (`server.IndexOpenTimeout`, `server.ErrSearchIndexLocked`). Everything after it takes as long as the corpus requires.
+  - Guarded by `server/index_open_timeout_test.go`: a contended index still reports `ErrSearchIndexLocked` promptly, and a boot whose migration has real work to do completes it — asserting every seeded plan was migrated and the marker written.
+
 ## [0.12.2] — 2026-08-23
 
 ### Fixed
