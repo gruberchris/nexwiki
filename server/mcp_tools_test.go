@@ -338,13 +338,14 @@ func TestSchemaTypeNameSpeaksJSONSchema(t *testing.T) {
 
 // TestAgentCreateToolsAcceptTags is the §9.2 regression. create_wiki_article and
 // create_agent_skill always took a `tags` argument; create_agent_memory and create_agent_plan did
-// not, so an agent that wanted a plan marked "wip" had to follow with update_article_tags — a tool
+// not, so an agent that wanted a plan already in flight had to follow with a second call — one
 // annotated destructiveHint:true, which makes a cautious client stop and ask the user to approve a
-// second call that only existed because the first tool lacked an argument its siblings had.
+// call that only existed because the first tool lacked an argument its siblings had. Lifecycle
+// state now travels in `status` rather than `tags`, and both are settable at creation.
 func TestAgentCreateToolsAcceptTags(t *testing.T) {
-	t.Run("plan is created wip in one call", func(t *testing.T) {
+	t.Run("plan is created in flight in one call", func(t *testing.T) {
 		srv := newMCPServer(t)
-		resp := toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Tagged Plan","content":"# Plan","project_context":"nexwiki","tags":["wip"]}}`)
+		resp := toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Tagged Plan","content":"# Plan","project_context":"nexwiki","status":"implementing","tags":["postgres"]}}`)
 		if resp.IsError {
 			t.Fatalf("create failed: %s", resp.Content[0].Text)
 		}
@@ -352,7 +353,10 @@ func TestAgentCreateToolsAcceptTags(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetArticle failed: %v", err)
 		}
-		if !hasTagFold(art.Tags, "wip") {
+		if art.Status != "implementing" {
+			t.Errorf("status was dropped: %q", art.Status)
+		}
+		if !hasTagFold(art.Tags, "postgres") {
 			t.Errorf("caller tag was dropped: %v", art.Tags)
 		}
 		// The derived project tag must survive alongside it, not be replaced by it.
@@ -379,12 +383,12 @@ func TestAgentCreateToolsAcceptTags(t *testing.T) {
 	t.Run("a caller cannot forge a memory scope tag", func(t *testing.T) {
 		srv := newMCPServer(t)
 		// Forging memory-<scope> would let a plan masquerade as scoped memory in list_agent_memories.
-		toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Forging Plan","content":"# P","project_context":"proj","tags":["memory-secret","wip"]}}`)
+		toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Forging Plan","content":"# P","project_context":"proj","tags":["memory-secret","postgres"]}}`)
 		art, _ := srv.Storage.GetArticle("forging-plan")
 		if hasTagFold(art.Tags, MemoryScopeTagPrefix+"secret") {
 			t.Errorf("a forged memory-scope tag was accepted: %v", art.Tags)
 		}
-		if !hasTagFold(art.Tags, "wip") {
+		if !hasTagFold(art.Tags, "postgres") {
 			t.Errorf("legitimate tags must survive alongside a rejected one: %v", art.Tags)
 		}
 
@@ -406,18 +410,22 @@ func TestAgentCreateToolsAcceptTags(t *testing.T) {
 		if len(art.Tags) != 1 || !hasTagFold(art.Tags, "nexwiki") {
 			t.Errorf("expected only the project tag, got %v", art.Tags)
 		}
+		// Lifecycle state lives in the field, never in the tag list.
+		if art.Status != "draft" {
+			t.Errorf("a plan created without a status starts in draft, got %q", art.Status)
+		}
 	})
 
 	t.Run("a project_context that slugifies to nothing does not panic", func(t *testing.T) {
 		srv := newMCPServer(t)
 		// contextTags ends up empty here; the dedupe set must not be nil when written to.
-		resp := toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Odd Context","content":"# P","project_context":"!!!","tags":["wip"]}}`)
+		resp := toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Odd Context","content":"# P","project_context":"!!!","status":"implementing"}}`)
 		if resp.IsError {
 			t.Fatalf("create failed: %s", resp.Content[0].Text)
 		}
 		art, _ := srv.Storage.GetArticle("odd-context")
-		if !hasTagFold(art.Tags, "wip") {
-			t.Errorf("caller tag was dropped: %v", art.Tags)
+		if art.Status != "implementing" {
+			t.Errorf("status was dropped: %q", art.Status)
 		}
 	})
 

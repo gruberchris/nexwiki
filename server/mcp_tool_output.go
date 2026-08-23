@@ -131,9 +131,16 @@ type StatisticsOutput struct {
 	BrokenLinks     []BrokenLinkRef `json:"broken_links"`
 }
 
-// StatusTagsOutput is the `get_status_tags` payload.
+// StatusTagsOutput is the `get_status_tags` payload. Only plans and skills have a status field;
+// status_tags remains the union of their vocabularies for backward compatibility.
 type StatusTagsOutput struct {
 	StatusTags []string `json:"status_tags"`
+	// PlanStatusTags is the closed plan lifecycle vocabulary: every AI-Agent-Plan has exactly
+	// one of these, and no other lifecycle word.
+	PlanStatusTags []string `json:"plan_status_tags"`
+	// SkillStatusTags is the closed skill lifecycle vocabulary: an AI-Agent-Skill has at most
+	// one of these, and no other lifecycle word.
+	SkillStatusTags []string `json:"skill_status_tags"`
 }
 
 // ActivityOutput is the `get_recent_activity` payload, oldest event first to match the prose.
@@ -187,7 +194,9 @@ func articleSchema(withContent bool) map[string]interface{} {
 		"version":      schemaOf("integer", "Current revision number. Pass this as 'loaded_version' when editing."),
 		"edit_summary": schemaOf("string", "Summary of the most recent edit."),
 		"tags":         schemaStringArray("Tags carried by the document, including status and memory-scope tags."),
-		"archived_at":  schemaOf("string", "RFC3339 archival time; absent unless the document is archived."),
+		"archived_at":       schemaOf("string", "RFC3339 archival time; absent unless the document is archived."),
+		"status":            schemaOf("string", "Lifecycle status. Plans and skills use a closed vocabulary (see get_status_tags); other documents may use any value or none."),
+		"status_changed_at": schemaOf("string", "RFC3339 time a plan last changed lifecycle status; drives the auto-archive/auto-delete timers. Only present on AI-Agent-Plan documents."),
 	}
 	if withContent {
 		props["content"] = schemaOf("string", "Full raw Markdown body.")
@@ -286,8 +295,10 @@ func statisticsOutputSchema() map[string]interface{} {
 
 func statusTagsOutputSchema() map[string]interface{} {
 	return schemaObject(map[string]interface{}{
-		"status_tags": schemaStringArray("Canonical lifecycle tags recognized by NexWiki."),
-	}, "status_tags")
+		"status_tags":       schemaStringArray("Union of both vocabularies, kept for backward compatibility."),
+		"plan_status_tags":  schemaStringArray("The closed plan lifecycle vocabulary. Every AI-Agent-Plan has exactly ONE of these and no other lifecycle word."),
+		"skill_status_tags": schemaStringArray("The closed skill lifecycle vocabulary. An AI-Agent-Skill has at most ONE of these. Wiki articles and memories have no status field at all."),
+	}, "status_tags", "plan_status_tags", "skill_status_tags")
 }
 
 func activityOutputSchema() map[string]interface{} {

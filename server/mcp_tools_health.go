@@ -27,22 +27,26 @@ const (
 
 // inFlightStatusTags are the lifecycle tags that say work is underway. Carrying one is not
 // required for a plan to be stale — it only makes the report more specific about why.
-var inFlightStatusTags = []string{"wip", "in-progress", "draft", "active", "todo", "pending", "review", "blocked"}
+// "implementing" is the closed-vocabulary state; the legacy synonyms stay listed so a corpus
+// imported from an older bundle still reads correctly.
+var inFlightStatusTags = []string{"implementing", "wip", "in-progress", "draft", "active", "todo", "pending", "review", "blocked"}
 
 // finishedStatusTags are the tags that end a plan's life. A plan carrying one is never stale,
 // however old: nagging about work the user has already marked done is worse than staying quiet.
 // "superseded" counts as finished because a replaced plan is not waiting on anyone either.
 var finishedStatusTags = []string{"completed", "done", "superseded"}
 
-// parkedStatusTags mark work deliberately set aside. A parked plan is not stale and is not
-// finished, and until now the tool had no way to say so.
+// parkedStatusTags mark work deliberately set aside or deliberately unending. A parked plan is
+// not stale and is not finished, and until now the tool had no way to say so. "evergreen" —
+// a running backlog with no finish line — is exempt for the same reason: it is a decision, and
+// re-reporting a decision is noise.
 //
 // This gap was found by running the report against the real corpus: two of its five stale plans
 // were `git-backed-storage-backend-for-nexwiki` and `hybrid-vector-semantic-search-for-nexwiki` —
 // the two product bets this very code review deliberately deferred. They are not abandoned and
 // they are not done, so they would have been reported as needing attention forever. A check that
 // keeps naming things the user has already decided about is one they learn to ignore.
-var parkedStatusTags = []string{"parked", "deferred", "tabled", "on-hold", "someday"}
+var parkedStatusTags = []string{"parked", "evergreen", "deferred", "tabled", "on-hold", "someday"}
 
 // HealthFinding is one item needing attention, in whichever category found it.
 type HealthFinding struct {
@@ -91,6 +95,23 @@ type HealthOutput struct {
 	DuplicateCount    int                   `json:"duplicate_memory_count"`
 	DuplicateMemories []DuplicateMemoryPair `json:"duplicate_memories"`
 	ParkedPlanCount   int                   `json:"parked_plan_count"`
+
+	// PlanStatusCensus counts plans per lifecycle status (archived plans included, unlike every
+	// other check), so the report answers "where does the plan corpus stand?" at a glance.
+	PlanStatusCensus map[string]int `json:"plan_status_census,omitempty"`
+}
+
+// planStatusCensusSchema declares one integer property per possible census key, since the schema
+// walker used by the conformance tests has no additionalProperties support.
+func planStatusCensusSchema() map[string]interface{} {
+	props := map[string]interface{}{}
+	for _, s := range PlanStatusTags {
+		props[s] = schemaOf("integer", "Plans currently in '"+s+"'.")
+	}
+	props["(none)"] = schemaOf("integer", "Plans carrying no status (pre-migration stragglers).")
+	census := schemaObject(props)
+	census["description"] = "Plans per lifecycle status, archived included."
+	return census
 }
 
 func healthOutputSchema() map[string]interface{} {
@@ -134,6 +155,7 @@ func healthOutputSchema() map[string]interface{} {
 		"duplicate_memory_count":     schemaOf("integer", "Pairs of memories in the same scope with closely matching titles."),
 		"duplicate_memories":         schemaArrayOf(duplicate, "Near-duplicate memory pairs, up to the limit."),
 		"parked_plan_count":          schemaOf("integer", "Plans deliberately set aside; reported as a count only, since they need no action."),
+		"plan_status_census":         planStatusCensusSchema(),
 	}, "total_documents", "stale_days", "limit", "truncated",
 		"orphan_count", "orphans", "broken_link_count", "broken_links",
 		"unsourced_memory_count", "unsourced_memories", "stale_plan_count", "stale_plans",
@@ -224,8 +246,20 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 
 	liveRefs := liveReferencedSlugs(graph)
 
+	planCensus := make(map[string]int)
+
 	for _, slug := range slugs {
 		doc := graph.Meta[slug]
+
+		// The census counts every plan, archived included, before the archived skip below —
+		// "archived: 12" is exactly the kind of standing the report exists to surface.
+		if doc.Type == ContentTypePlan {
+			if doc.Status == "" {
+				planCensus["(none)"]++
+			} else {
+				planCensus[doc.Status]++
+			}
+		}
 
 		// Archived documents are deliberately out of scope for every check. Archiving is the
 		// user saying "this is done"; reporting it as needing attention inverts that.
@@ -277,18 +311,18 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 			}
 		}
 
-		if doc.Type == ContentTypePlan && isParked(doc.Tags) && !isFinished(doc.Tags) {
+		if doc.Type == ContentTypePlan && isParked(doc.Status) && !isFinished(doc.Status) {
 			parkedPlans++
 		}
 
-		if doc.Type == ContentTypePlan && doc.Timestamp.Before(staleBefore) && !isFinished(doc.Tags) && !isParked(doc.Tags) {
+		if doc.Type == ContentTypePlan && doc.Timestamp.Before(staleBefore) && !isFinished(doc.Status) && !isParked(doc.Status) {
 			// An in-flight tag is not required. On the real corpus almost no plan carries one —
 			// they hold a project tag and nothing else — so requiring "wip" made the check
 			// incapable of ever firing. What actually matters is that the plan was never marked
 			// finished and nobody has touched it since.
 			since := doc.Timestamp.Format("2006-01-02")
 			detail := fmt.Sprintf("Untouched since %s and never marked finished. Finish it, tag it 'completed', or archive it.", since)
-			if status, inFlight := inFlightStatus(doc.Tags); inFlight {
+			if status, inFlight := inFlightStatus(doc.Status); inFlight {
 				detail = fmt.Sprintf("Tagged '%s' but untouched since %s. Finish it, tag it 'completed', or archive it.", status, since)
 			}
 			stalePlans = append(stalePlans, HealthFinding{
@@ -315,6 +349,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		ColdMemoryCount:        len(cold.Findings),
 		DuplicateCount:         len(duplicates),
 		ParkedPlanCount:        parkedPlans,
+		PlanStatusCensus:       planCensus,
 	}
 	if !cold.Ran {
 		out.ColdMemorySkipped = fmt.Sprintf("the activity log only reaches back %d days, less than the %d-day "+
@@ -345,16 +380,15 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 	}, nil
 }
 
-// isFinished reports whether a plan's tags say its life is over. A plan tagged both "wip" and
-// "completed" is finished: the terminal state wins.
-func isFinished(tags []string) bool {
-	return hasAnyTag(tags, finishedStatusTags)
+// isFinished reports whether a plan's status says its life is over.
+func isFinished(status string) bool {
+	return hasAnyTag([]string{status}, finishedStatusTags)
 }
 
 // isParked reports whether a plan has been deliberately set aside. Parked is not finished — the
 // work may still happen — but it is a decision, and re-reporting a decision is noise.
-func isParked(tags []string) bool {
-	return hasAnyTag(tags, parkedStatusTags)
+func isParked(status string) bool {
+	return hasAnyTag([]string{status}, parkedStatusTags)
 }
 
 func hasAnyTag(tags []string, candidates []string) bool {
@@ -370,12 +404,10 @@ func hasAnyTag(tags []string, candidates []string) bool {
 
 // inFlightStatus reports the first in-flight status tag a document carries, so the report can name
 // it. Absence is not exoneration — see the stale-plan check.
-func inFlightStatus(tags []string) (string, bool) {
-	for _, tag := range tags {
-		for _, inFlight := range inFlightStatusTags {
-			if strings.EqualFold(tag, inFlight) {
-				return strings.ToLower(tag), true
-			}
+func inFlightStatus(status string) (string, bool) {
+	for _, inFlight := range inFlightStatusTags {
+		if strings.EqualFold(status, inFlight) {
+			return strings.ToLower(status), true
 		}
 	}
 	return "", false
@@ -410,6 +442,23 @@ func renderHealthReport(out HealthOutput) string {
 		// Reported so the number is not mistaken for plans that vanished from the stale list by
 		// accident. Parked is a decision, so there is nothing to act on and no list to print.
 		fmt.Fprintf(&b, "- Parked plans (deliberately set aside, not reported as stale): %d\n", out.ParkedPlanCount)
+	}
+	if len(out.PlanStatusCensus) > 0 {
+		// Rendered in the canonical lifecycle order rather than map order, so the report reads
+		// as a pipeline: draft → implementing → blocked → completed → superseded → parked →
+		// evergreen → archived.
+		b.WriteString("- Plan status census:")
+		for _, s := range PlanStatusTags {
+			if n := out.PlanStatusCensus[s]; n > 0 {
+				fmt.Fprintf(&b, " %s=%d", s, n)
+			}
+		}
+		for _, s := range []string{"(none)"} {
+			if n := out.PlanStatusCensus[s]; n > 0 {
+				fmt.Fprintf(&b, " %s=%d", s, n)
+			}
+		}
+		b.WriteString("\n")
 	}
 
 	needsAttention := out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount +

@@ -38,10 +38,14 @@ var createAgentPlanTool = toolDef{
 					"type":        "string",
 					"description": "Optional provenance: where this plan originated (URL, ticket, or session context).",
 				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional lifecycle status: draft (default), implementing, blocked, completed, superseded, parked, evergreen, or archived. Call get_status_tags for what each means. Never invent a value — an unrecognized status is rejected.",
+				},
 				"tags": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Optional status or user tags to apply, e.g. ['wip']. Call get_status_tags to see the recognized status values. The project-context tag is added automatically from 'project_context'.",
+					"description": "Optional tags for project context and topics. Lifecycle state does NOT go here — it belongs in 'status', and a status word passed as a tag is rejected. The project-context tag is added automatically from 'project_context'.",
 				},
 				"edit_summary": map[string]interface{}{
 					"type":        "string",
@@ -62,6 +66,7 @@ func (srv *Server) toolCreateAgentPlan(args json.RawMessage) (interface{}, *JSON
 		ProjectContext string   `json:"project_context"`
 		Description    string   `json:"description"`
 		Source         string   `json:"source"`
+		Status         string   `json:"status"`
 		Tags           []string `json:"tags"`
 		EditSummary    string   `json:"edit_summary"`
 	}
@@ -107,6 +112,13 @@ func (srv *Server) toolCreateAgentPlan(args json.RawMessage) (interface{}, *JSON
 		}
 	}
 
+	// Every plan enters the lifecycle in exactly one state; a caller that names none starts in
+	// draft. An unrecognized value is rejected by validation in the save below.
+	status := NormalizeStatus(pArgs.Status)
+	if status == "" {
+		status = DefaultPlanStatus
+	}
+
 	if _, err := srv.Storage.GetArticle(slug); err == nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: a plan with slug '%s' already exists", slug)}}}, nil
 	}
@@ -116,13 +128,13 @@ func (srv *Server) toolCreateAgentPlan(args json.RawMessage) (interface{}, *JSON
 		summary = "Created Collaborative AI Plan"
 	}
 
-	art, err := srv.Storage.SaveArticle("", title, pArgs.Content, pArgs.Description, pArgs.Source, "", summary, tags, ContentTypePlan)
+	art, err := srv.Storage.SaveArticleWithStatus("", title, pArgs.Content, pArgs.Description, pArgs.Source, "", summary, tags, ContentTypePlan, &status)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent plan: %v", err)}}}, nil
 	}
 
-	respText := fmt.Sprintf("Success! Collaborative AI Plan '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\nTags: %s\n",
-		art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Version, strings.Join(art.Tags, ", "))
+	respText := fmt.Sprintf("Success! Collaborative AI Plan '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\nStatus: %s\nTags: %s\n",
+		art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Version, art.Status, strings.Join(art.Tags, ", "))
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
@@ -196,7 +208,7 @@ func (srv *Server) toolAppendAgentPlan(args json.RawMessage) (interface{}, *JSON
 var editAgentPlanTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "edit_agent_plan",
-		"description": "Modify the title, content, description, source, tags, or edit summary of an existing Collaborative AI Plan. The reserved AI-Agent-Plan type is strictly preserved and must NEVER be relabelled. Use this to correct or rewrite plan content in-place, or to mark a plan as 'completed' by adding the 'completed' status tag.",
+		"description": "Modify the title, content, description, source, status, tags, or edit summary of an existing Collaborative AI Plan. The reserved AI-Agent-Plan type is strictly preserved and must NEVER be relabelled. Use this to correct or rewrite plan content in-place, or to move the plan through its lifecycle with the 'status' field (e.g. set 'completed' when the work ships). 'completed' and 'superseded' plans auto-archive after a configurable period, and 'archived' plans are eventually auto-deleted — use 'parked' for deferred work that must be kept.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -220,12 +232,16 @@ var editAgentPlanTool = toolDef{
 					"type":        "string",
 					"description": "Optional provenance reference — where the plan's knowledge came from. Pointer semantics: omit to preserve, empty string to clear.",
 				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional new lifecycle status: draft, implementing, blocked, completed, superseded, parked, evergreen, or archived. Omit to leave the plan's current state untouched. Never invent a value — an unrecognized status is rejected.",
+				},
 				"tags": map[string]interface{}{
 					"type": "array",
 					"items": map[string]interface{}{
 						"type": "string",
 					},
-					"description": "Optional tags to set on the plan (replaces existing tags; the AI-Agent-Plan type is preserved). Use status tags to signal plan state — call get_status_tags to see recognized values (e.g. 'completed', 'wip', 'blocked').",
+					"description": "Optional tags to set on the plan — project context and topics only (replaces existing tags; the AI-Agent-Plan type is preserved). Lifecycle state belongs in 'status'; a status word passed as a tag is rejected.",
 				},
 				"loaded_version": map[string]interface{}{
 					"type":        "integer",
@@ -256,6 +272,7 @@ func (srv *Server) toolEditAgentPlan(args json.RawMessage) (interface{}, *JSONRP
 		Content       *string   `json:"content,omitempty"`
 		Description   *string   `json:"description,omitempty"`
 		Source        *string   `json:"source,omitempty"`
+		Status        *string   `json:"status,omitempty"`
 		Tags          *[]string `json:"tags,omitempty"`
 		LoadedVersion int       `json:"loaded_version"`
 		EditSummary   string    `json:"edit_summary"`
@@ -327,13 +344,13 @@ func (srv *Server) toolEditAgentPlan(args json.RawMessage) (interface{}, *JSONRP
 		summary = "Updated Collaborative AI Plan"
 	}
 
-	art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type)
+	art, err := srv.Storage.SaveArticleWithStatus(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type, eArgs.Status)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent plan: %v", err)}}}, nil
 	}
 
-	respText := fmt.Sprintf("Success! Collaborative AI Plan '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nTags: %s\n",
-		art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339), strings.Join(art.Tags, ", "))
+	respText := fmt.Sprintf("Success! Collaborative AI Plan '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nStatus: %s\nTags: %s\n",
+		art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339), art.Status, strings.Join(art.Tags, ", "))
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
@@ -348,9 +365,13 @@ var listAgentPlansTool = toolDef{
 					"type":        "string",
 					"description": "Optional project context name to filter plans by.",
 				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional lifecycle status to filter plans by, e.g. 'implementing' or 'completed'. Call get_status_tags for the full vocabulary.",
+				},
 				"tag": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional tag to filter plans by. Use a status tag to find plans in a specific state (e.g. 'completed', 'wip'). Call get_status_tags to see all recognized status values.",
+					"description": "Optional tag to filter plans by — project context or topic. Use 'status' to filter by lifecycle state.",
 				},
 			},
 		},
@@ -363,10 +384,12 @@ var listAgentPlansTool = toolDef{
 func (srv *Server) toolListAgentPlans(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type ListPlansArgs struct {
 		ProjectContext string `json:"project_context"`
+		Status         string `json:"status"`
 		Tag            string `json:"tag"`
 	}
 	var lArgs ListPlansArgs
 	_ = json.Unmarshal(args, &lArgs) // ignore err, it is optional
+	filterStatus := NormalizeStatus(lArgs.Status)
 
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
@@ -386,6 +409,9 @@ func (srv *Server) toolListAgentPlans(args json.RawMessage) (interface{}, *JSONR
 		}
 
 		if art.Type != ContentTypePlan {
+			continue
+		}
+		if filterStatus != "" && art.Status != filterStatus {
 			continue
 		}
 		matchProjFilter := filterProj == ""
@@ -411,8 +437,8 @@ func (srv *Server) toolListAgentPlans(args json.RawMessage) (interface{}, *JSONR
 			if count == 1 {
 				text = "Collaborative AI Plans Index:\n\n"
 			}
-			text += fmt.Sprintf("[%d] %s (Slug: %s, Edited: %s)\n",
-				count, art.Title, art.Slug, art.Timestamp.Format("2006-01-02 15:04:05"))
+			text += fmt.Sprintf("[%d] %s (Slug: %s, Status: %s, Edited: %s)\n",
+				count, art.Title, art.Slug, art.Status, art.Timestamp.Format("2006-01-02 15:04:05"))
 			if art.Description != "" {
 				text += fmt.Sprintf("    Summary: %s\n", art.Description)
 			}

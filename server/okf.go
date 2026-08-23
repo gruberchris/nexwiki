@@ -271,7 +271,13 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 
 		body := TranslateBundleLinksToWikiLinks(art.Content)
 		summary := "Imported from OKF bundle"
-		if _, err := s.SaveArticle(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, art.Tags, normalizeType(art.Type)); err != nil {
+		// A bundle written before status became a field carries it as a tag; lift it out so the
+		// permissive importer keeps accepting older bundles.
+		importStatus, importTags := ExtractLegacyStatus(art.Type, art.Tags)
+		if art.Status != "" {
+			importStatus = art.Status
+		}
+		if _, err := s.SaveArticleWithStatus(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, normalizeType(art.Type), &importStatus); err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: save failed: %v", f.Name, err))
 			continue
 		}

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import type { Article, ThemeMode } from '../types';
-import { isAgentDoc, isMemory, isPlan, isSkill } from '../types';
+import { isAgentDoc, isArchivedDoc, isMemory, isPlan, isSkill } from '../types';
 import { formatRelativeTime } from '../utils';
 import {
   FileText,
@@ -86,10 +86,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return buildSuggestionsFromArticles(articles, autocompleteTerm);
   }, [autocompleteTerm, articles]);
 
+  // Archived documents are hidden from the sidebar by default, matching the dashboard and
+  // search. Typing "archived" in the filter (or selecting the archived tag) brings them back;
+  // direct URLs always work regardless.
+  const archivedVisible = useMemo(
+    () => filterQuery.toLowerCase().includes('archived') || selectedTag?.toLowerCase() === 'archived',
+    [filterQuery, selectedTag],
+  );
+
   // Standard articles filter (excl. agent docs, and matching tag + search query)
   const standardArticles = useMemo(() => {
     return articles.filter(art => {
       if (isAgentDoc(art)) return false;
+      if (isArchivedDoc(art) && !archivedVisible) return false;
 
       const matchesQuery = matchesSidebarFilter(art, filterQuery);
 
@@ -97,40 +106,43 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       return matchesQuery && matchesTag;
     });
-  }, [articles, filterQuery, selectedTag]);
+  }, [articles, filterQuery, selectedTag, archivedVisible]);
 
   // AI Agent memories filter (OKF type AI-Agent-Memory)
   const aiMemories = useMemo(() => {
     return articles.filter(art => {
       if (!isMemory(art)) return false;
+      if (isArchivedDoc(art) && !archivedVisible) return false;
 
       const matchesQuery = matchesSidebarFilter(art, filterQuery);
       const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
       return matchesQuery && matchesTag;
     });
-  }, [articles, filterQuery, selectedTag]);
+  }, [articles, filterQuery, selectedTag, archivedVisible]);
 
   // AI Agent skills filter (OKF type AI-Agent-Skill)
   const aiSkills = useMemo(() => {
     return articles.filter(art => {
       if (!isSkill(art)) return false;
+      if (isArchivedDoc(art) && !archivedVisible) return false;
 
       const matchesQuery = matchesSidebarFilter(art, filterQuery);
       const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
       return matchesQuery && matchesTag;
     });
-  }, [articles, filterQuery, selectedTag]);
+  }, [articles, filterQuery, selectedTag, archivedVisible]);
 
   // AI Agent plans filter (OKF type AI-Agent-Plan)
   const aiPlans = useMemo(() => {
     return articles.filter(art => {
       if (!isPlan(art)) return false;
+      if (isArchivedDoc(art) && !archivedVisible) return false;
 
       const matchesQuery = matchesSidebarFilter(art, filterQuery);
       const matchesTag = !selectedTag || art.tags?.includes(selectedTag);
       return matchesQuery && matchesTag;
     });
-  }, [articles, filterQuery, selectedTag]);
+  }, [articles, filterQuery, selectedTag, archivedVisible]);
 
   return (
     <aside className="w-80 h-screen flex flex-col theme-sidebar backdrop-blur-md transition-all select-none relative">

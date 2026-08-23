@@ -208,14 +208,14 @@ func TestParkedPlansAreNotStale(t *testing.T) {
 	srv := newTestServer(t)
 
 	for _, tc := range []struct {
-		title string
-		tags  []string
+		title  string
+		status string
 	}{
-		{"Genuinely Abandoned Plan", []string{"project"}},
-		{"Deliberately Parked Plan", []string{"project", "parked"}},
-		{"Finished Plan", []string{"project", "completed"}},
+		{"Genuinely Abandoned Plan", "implementing"},
+		{"Deliberately Parked Plan", "parked"},
+		{"Finished Plan", "completed"},
 	} {
-		art, err := srv.Storage.SaveArticle("", tc.title, "# body", "d", "", "", "seed", tc.tags, ContentTypePlan)
+		art, err := srv.Storage.SaveArticleWithStatus("", tc.title, "# body", "d", "", "", "seed", []string{"project"}, ContentTypePlan, &tc.status)
 		if err != nil {
 			t.Fatalf("SaveArticle(%q) failed: %v", tc.title, err)
 		}

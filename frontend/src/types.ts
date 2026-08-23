@@ -25,6 +25,22 @@ export interface Article {
   version?: number;
   edit_summary?: string;
   tags?: string[];
+  archived_at?: string;
+  /** Lifecycle state. Plans and skills use a closed vocabulary; other types may use anything. */
+  status?: string;
+  /** When a plan last changed lifecycle status; drives the auto-archive/auto-delete timers. */
+  status_changed_at?: string;
+}
+
+/**
+ * Whether a document counts as archived — mirroring the server's IsArchived. All three forms are
+ * checked because plans and skills archive through the status field while wiki articles and
+ * memories archive through the tag, and a caller that inspects only one silently misses half.
+ */
+export function isArchivedDoc(art: Pick<Article, 'archived_at' | 'tags' | 'status'>): boolean {
+  if (art.archived_at) return true;
+  if (art.status?.toLowerCase() === 'archived') return true;
+  return !!art.tags?.some((t) => t.toLowerCase() === 'archived');
 }
 
 // Classification helpers keyed off the OKF `type` (replacing the old aiagent-* tag scan).

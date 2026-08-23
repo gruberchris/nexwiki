@@ -52,9 +52,13 @@ func TestMCPEditAgentPlan(t *testing.T) {
 	if len(plan.Tags) != 1 || plan.Tags[0] != "nexwiki" {
 		t.Errorf("Expected tags ['nexwiki'], got %v", plan.Tags)
 	}
+	// A plan created with no status starts in draft (the lifecycle default).
+	if plan.Status != "draft" {
+		t.Errorf("Expected status 'draft', got %q", plan.Status)
+	}
 
 	// 2. Perform a successful edit using edit_agent_plan
-	editArgs := json.RawMessage(`{"name":"edit_agent_plan","arguments":{"slug":"migration-plan","title":"Final Migration Plan","tags":["postgres","nexwiki"],"loaded_version":1,"edit_summary":"Renamed and updated tags"}}`)
+	editArgs := json.RawMessage(`{"name":"edit_agent_plan","arguments":{"slug":"migration-plan","title":"Final Migration Plan","tags":["postgres","nexwiki"],"status":"implementing","loaded_version":1,"edit_summary":"Renamed and updated tags"}}`)
 	res2, rpcErr2 := srv.executeToolCallInternal(editArgs)
 	if rpcErr2 != nil {
 		t.Fatalf("edit_agent_plan failed: %v", rpcErr2)
@@ -87,6 +91,9 @@ func TestMCPEditAgentPlan(t *testing.T) {
 	}
 	if len(updatedPlan.Tags) != 2 || updatedPlan.Tags[0] != "postgres" || updatedPlan.Tags[1] != "nexwiki" {
 		t.Errorf("Expected tags [postgres, nexwiki], got %v", updatedPlan.Tags)
+	}
+	if updatedPlan.Status != "implementing" {
+		t.Errorf("Expected status 'implementing', got %q", updatedPlan.Status)
 	}
 
 	// 3. Test optimistic locking: try editing with outdated loaded_version = 1 (current disk is 2)
@@ -823,7 +830,7 @@ func TestMCPEditAgentPlanContentEditing(t *testing.T) {
 	}
 
 	// 2. Content preservation: omitting content leaves body unchanged.
-	resp2 := toolCall(t, srv, `{"name":"edit_agent_plan","arguments":{"slug":"content-test-plan","tags":["test","completed"],"loaded_version":2,"edit_summary":"Mark completed"}}`)
+	resp2 := toolCall(t, srv, `{"name":"edit_agent_plan","arguments":{"slug":"content-test-plan","tags":["test"],"status":"completed","loaded_version":2,"edit_summary":"Mark completed"}}`)
 	if resp2.IsError {
 		t.Fatalf("expected success on metadata-only edit, got: %s", resp2.Content[0].Text)
 	}
@@ -908,10 +915,10 @@ func TestMCPEditAgentPlanDescriptionAndSource(t *testing.T) {
 func TestMCPEditAgentSkill(t *testing.T) {
 	srv := newMCPServer(t)
 
-	toolCall(t, srv, `{"name":"create_agent_skill","arguments":{"title":"Prune Containers","content":"# Steps\n\n1. docker system prune","description":"how to prune","tags":["draft"]}}`)
+	toolCall(t, srv, `{"name":"create_agent_skill","arguments":{"title":"Prune Containers","content":"# Steps\n\n1. docker system prune","description":"how to prune","status":"draft"}}`)
 
 	// Content, description, and a draft -> ready promotion in one edit.
-	resp := toolCall(t, srv, `{"name":"edit_agent_skill","arguments":{"slug":"prune-containers","content":"# Steps\n\n1. docker system prune -af","description":"how to prune aggressively","tags":["ready"],"loaded_version":1,"edit_summary":"Promote to ready"}}`)
+	resp := toolCall(t, srv, `{"name":"edit_agent_skill","arguments":{"slug":"prune-containers","content":"# Steps\n\n1. docker system prune -af","description":"how to prune aggressively","status":"ready","loaded_version":1,"edit_summary":"Promote to ready"}}`)
 	if resp.IsError {
 		t.Fatalf("edit_agent_skill failed: %s", resp.Content[0].Text)
 	}
@@ -928,8 +935,11 @@ func TestMCPEditAgentSkill(t *testing.T) {
 	if art.Type != ContentTypeSkill {
 		t.Errorf("the reserved AI-Agent-Skill type must survive an edit, got %q", art.Type)
 	}
-	if len(art.Tags) != 1 || art.Tags[0] != "ready" {
-		t.Errorf("tags = %v, want [ready]", art.Tags)
+	if art.Status != "ready" {
+		t.Errorf("expected the skill promoted to status 'ready', got %q", art.Status)
+	}
+	if len(art.Tags) != 0 {
+		t.Errorf("tags = %v, want none — lifecycle state lives in the status field", art.Tags)
 	}
 
 	// Optimistic locking, matching every other edit tool.

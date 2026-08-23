@@ -49,10 +49,11 @@ A cap is kept deliberately — unbounded line length hurts readability as much a
 
 ## 3. Agent Plans Filter Default ✅
 
-The **Agent Plans** section on the home dashboard now starts with `!completed` typed into its filter box, so the default view is the work that is still open — in a long-lived wiki, the large majority of plans are finished.
+The **Agent Plans** section on the home dashboard starts with `draft || implementing || blocked` typed into its filter box, so the default view is the work that is still open — in a long-lived wiki, the large majority of plans are finished, parked, or archived.
 
 * The default is an ordinary filter value: it is **visible in the filter box** and removable with the standard clear (✕) button or by editing the text.
-* Clearing it shows every plan, completed ones included.
+* Clearing it shows every plan, finished ones included. (Archived documents stay hidden everywhere until you type `archived` — see the [Tags Guide](./tags.md).)
+* Filters match a document's lifecycle **status** alongside its title and tags, which is why these read as plain terms even though status is a field rather than a tag.
 * The other dashboard sections (Wiki Index, Agent Memories, Agent Skills) have no default filter — this is a plan-lifecycle concern.
 
 See the filter help (the `?` button beside any filter box) for the full filter syntax.

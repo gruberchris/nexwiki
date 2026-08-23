@@ -177,6 +177,7 @@ type CreateArticleReq struct {
 	EditSummary   string   `json:"edit_summary"`   // Summary for revision history
 	LoadedVersion int      `json:"loaded_version"` // Version loaded by client for conflict validation
 	Tags          []string `json:"tags"`           // Tags list
+	Status        *string  `json:"status"`         // Optional lifecycle status; omit to preserve
 }
 
 // validateAndCleanUserTags preserves tool-managed memory-scope tags (memory-<scope>) that already
@@ -276,7 +277,7 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Regular article creation always produces a Wiki document; reserved types are tool-only.
-	art, err := srv.Storage.SaveArticle("", req.Title, req.Content, description, source, resource, req.EditSummary, cleanedTags, ContentTypeWiki)
+	art, err := srv.Storage.SaveArticleWithStatus("", req.Title, req.Content, description, source, resource, req.EditSummary, cleanedTags, ContentTypeWiki, req.Status)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -339,7 +340,10 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		EditSummary: req.EditSummary,
 		// The REST editor always submits the full tag set, so tags are always replaced here
 		// (an omitted "tags" key clears them, which is the pre-existing behavior).
-		Tags:          &req.Tags,
+		Tags: &req.Tags,
+		// Status, by contrast, is preserved when omitted: an editor that does not manage
+		// lifecycle state must not be able to silently reset a completed plan.
+		Status:        req.Status,
 		LoadedVersion: req.LoadedVersion,
 	})
 	switch {

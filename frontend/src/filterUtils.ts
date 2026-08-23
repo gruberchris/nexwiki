@@ -148,18 +148,22 @@ export function evaluateBooleanQuery(fields: string[], query: string): boolean {
 }
 
 /**
- * Evaluates a filter query against an article's title and tags.
+ * Evaluates a filter query against an article's title, status, and tags.
+ *
+ * Status is matched alongside tags so the filter grammar did not have to grow a `status:` term
+ * when lifecycle state moved out of the tag list: typing `implementing` still finds the plans in
+ * that state, exactly as it did when the state was a tag.
  */
 export function matchesFilter(art: Article, query: string): boolean {
-  const fields = [art.title, ...(art.tags ?? [])];
+  const fields = [art.title, art.status ?? '', ...(art.tags ?? [])];
   return evaluateBooleanQuery(fields, query);
 }
 
 /**
- * Evaluates a filter query against an article's title, slug, and tags.
+ * Evaluates a filter query against an article's title, slug, status, and tags.
  */
 export function matchesSidebarFilter(art: Article, query: string): boolean {
-  const fields = [art.title, art.slug, ...(art.tags ?? [])];
+  const fields = [art.title, art.slug, art.status ?? '', ...(art.tags ?? [])];
   return evaluateBooleanQuery(fields, query);
 }
 

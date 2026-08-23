@@ -85,19 +85,19 @@ func seedHealthFixture(t *testing.T) *Server {
 	// A memory with provenance, and one without.
 	must(`{"name":"create_agent_memory","arguments":{"title":"Sourced Fact","content":"# Fact","memory_type":"nexwiki","description":"has provenance","source":"design review"}}`)
 	must(`{"name":"create_agent_memory","arguments":{"title":"Floating Fact","content":"# Fact","memory_type":"nexwiki","description":"no provenance"}}`)
-	// Plans: one stale, one recent, one finished-but-old, one old with no status tag.
-	// create_agent_plan takes no tags argument — it derives only the project-context tag — so
-	// status tags are applied the way an agent would, with update_article_tags.
+	// Plans: one stale, one recent, one finished-but-old, one old still in its default draft.
+	// Statuses are set the way an agent would, through edit_agent_plan's status field
+	// (creation defaults every plan to 'draft').
 	must(`{"name":"create_agent_plan","arguments":{"title":"Stalled Plan","content":"# Plan","project_context":"nexwiki","description":"in flight"}}`)
 	must(`{"name":"create_agent_plan","arguments":{"title":"Fresh Plan","content":"# Plan","project_context":"nexwiki","description":"in flight"}}`)
 	must(`{"name":"create_agent_plan","arguments":{"title":"Finished Plan","content":"# Plan","project_context":"nexwiki","description":"done"}}`)
 	must(`{"name":"create_agent_plan","arguments":{"title":"Untagged Plan","content":"# Plan","project_context":"nexwiki","description":"old and never marked finished"}}`)
 	must(`{"name":"create_agent_plan","arguments":{"title":"Superseded Plan","content":"# Plan","project_context":"nexwiki","description":"replaced by another plan"}}`)
 
-	must(`{"name":"update_article_tags","arguments":{"slug":"stalled-plan","tags":["nexwiki","wip"]}}`)
-	must(`{"name":"update_article_tags","arguments":{"slug":"fresh-plan","tags":["nexwiki","wip"]}}`)
-	must(`{"name":"update_article_tags","arguments":{"slug":"finished-plan","tags":["nexwiki","wip","completed"]}}`)
-	must(`{"name":"update_article_tags","arguments":{"slug":"superseded-plan","tags":["nexwiki","superseded"]}}`)
+	must(`{"name":"edit_agent_plan","arguments":{"slug":"stalled-plan","status":"implementing","loaded_version":1}}`)
+	must(`{"name":"edit_agent_plan","arguments":{"slug":"fresh-plan","status":"implementing","loaded_version":1}}`)
+	must(`{"name":"edit_agent_plan","arguments":{"slug":"finished-plan","status":"completed","loaded_version":1}}`)
+	must(`{"name":"edit_agent_plan","arguments":{"slug":"superseded-plan","status":"superseded","loaded_version":1}}`)
 
 	// Backdate last, so the tag edits above do not refresh the timestamps being aged.
 	for _, slug := range []string{"stalled-plan", "finished-plan", "untagged-plan", "superseded-plan"} {

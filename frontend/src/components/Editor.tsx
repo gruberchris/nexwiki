@@ -35,6 +35,7 @@ import type { LintDiagnostic } from '../utils/markdownLinter';
 import { MarkdownSyntaxModal } from './MarkdownSyntaxModal';
 import { MarkdownLintErrorModal } from './MarkdownLintErrorModal';
 import type { Article, ContentType } from '../types';
+import { statusBadgeClass, statusOptionsFor } from '../statusTags';
 import { ContentTypes } from '../types';
 import { useSplitPane } from '../hooks/useSplitPane';
 import { useTagEditor } from '../hooks/useTagEditor';
@@ -44,12 +45,13 @@ interface EditorProps {
   initialTitle: string;
   initialContent: string;
   initialTags?: string[];
+  initialStatus?: string;
   initialDescription?: string;
   initialSource?: string;
   initialResource?: string;
   articleType?: ContentType;
   slug: string; // empty if new page
-  onSave: (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string) => Promise<void>;
+  onSave: (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string, status: string) => Promise<void>;
   onCancel: () => void;
   articles: Article[];
   version?: number;
@@ -59,6 +61,7 @@ export const Editor: React.FC<EditorProps> = ({
   initialTitle,
   initialContent,
   initialTags,
+  initialStatus,
   initialDescription,
   initialSource,
   initialResource,
@@ -128,6 +131,11 @@ export const Editor: React.FC<EditorProps> = ({
     handleInputChange: handleTagInputChange, handleKeyDown: handleTagKeyDown,
     selectSuggestion: selectTagSuggestion, removeTag,
   } = useTagEditor(initialTags || [], articles);
+
+  // Lifecycle status is a field, not a tag, and only plans and skills have one. Wiki articles and
+  // memories are not offered the control at all — they describe themselves with free tags.
+  const [status, setStatus] = useState(initialStatus || '');
+  const statusOptions = statusOptionsFor(resolvedType);
 
   const errorCount = useMemo(() => diagnostics.filter(d => d.severity === 'error').length, [diagnostics]);
   const warningCount = useMemo(() => diagnostics.filter(d => d.severity === 'warning').length, [diagnostics]);
@@ -262,7 +270,7 @@ export const Editor: React.FC<EditorProps> = ({
     setErrorMsg('');
 
     try {
-      await onSave(title.trim(), content, editSummary, tags, description.trim(), source.trim(), resource.trim());
+      await onSave(title.trim(), content, editSummary, tags, description.trim(), source.trim(), resource.trim(), status);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to save article.';
       setErrorMsg(msg);
@@ -348,6 +356,26 @@ export const Editor: React.FC<EditorProps> = ({
                       <BookOpen size={10} className="text-slate-400" />
                       <span>Wiki Article Mode{version ? ` (V${version})` : ''}</span>
                     </div>
+                  )}
+
+                  {statusOptions && (
+                    <>
+                      <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-1">
+                        Status:
+                      </span>
+                      <select
+                        aria-label="Lifecycle status"
+                        value={status}
+                        onChange={(e) => setStatus(e.target.value)}
+                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full mr-2 border cursor-pointer ${statusBadgeClass(status)}`}
+                      >
+                        {/* A plan always has one; a skill may have none. */}
+                        {!isPlan && <option value="">(none)</option>}
+                        {statusOptions.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </>
                   )}
 
                   <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-1">

@@ -166,6 +166,17 @@ func main() {
 	// so agents can load nexwiki-agent-guidelines out of the box. Idempotent.
 	srv.SeedAgentGuidelinesIfMissing()
 
+	// Plan lifecycle worker: archives finished plans and deletes long-archived ones on a timer.
+	// Primary-only by construction — this code path is only reached by the web primary (the
+	// -mcp-only branch returned above), which is the one process that owns the data directory.
+	// A sidecar must never run a second sweep over the same files.
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	go (&server.PlanLifecycleWorker{
+		Storage: storage,
+		Bus:     eventBus,
+		Cfg:     server.LoadPlanLifecycleConfig(),
+	}).Run(workerCtx)
+
 	// Spin up the stdio MCP JSON-RPC server in a background goroutine!
 	go srv.StartMCPServer()
 
@@ -268,6 +279,7 @@ func main() {
 		// go *idle*, and an SSE stream never does — a single browser tab on the wiki would
 		// otherwise hold shutdown open until the deadline.
 		srv.BeginShutdown()
+		stopWorker()
 
 		// The deadline sits below a container runtime's default 10s stop grace (docker stop,
 		// Kubernetes terminationGracePeriodSeconds) on purpose: if shutdown overruns it, the

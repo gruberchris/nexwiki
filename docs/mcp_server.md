@@ -317,7 +317,7 @@ Creates a new wiki article with a given title and raw Markdown content body.
   * `content` (string, **required**): The raw Markdown content of the article body.
   * `description` (string, **optional**): A one-line summary shown in list indexes and the context overview.
   * `source` (string, **optional**): Provenance — the URL, document, or reference this knowledge came from. AI-created articles SHOULD cite their source.
-  * `tags` (array of strings, **optional**): Status or user tags to apply to the article. Call `get_status_tags` to see the recognized status values (e.g. `draft`, `wip`). Tool-managed `memory-<scope>` tags are reserved and will be ignored if provided.
+  * `tags` (array of strings, **optional**): Any tags you like — wiki articles are never policed and have no lifecycle status. Tool-managed `memory-<scope>` tags are reserved and will be ignored if provided.
   * `edit_summary` (string, **optional**): A summary describing the reason for creating the page.
 * **Behavior**:
   Automatically handles title slugification, checks for slug collisions, serializes the metadata block, commits the first version backup snapshot, saves the flat Markdown file on disk, and indexes the new article in Bleve for search.
@@ -461,7 +461,8 @@ Creates a new Collaborative AI Plan that can be collaboratively edited/viewed by
   * `project_context` (string, **required**): The name of the project this plan is for (e.g. "nexwiki"). Generates a custom project tag.
   * `description` (string, **optional**): One-line summary shown in list indexes and the context overview.
   * `source` (string, **optional**): Provenance — where this plan originated (URL, ticket, or session context).
-  * `tags` (array of string, **optional**): Status or user tags to apply, e.g. `["wip"]`, so a plan can be created in flight in **one call**. Call `get_status_tags` for the recognized status values. Tool-managed `memory-*` tags are reserved and dropped.
+  * `status` (string, **optional**): Lifecycle status — `draft` (default), `implementing`, `blocked`, `completed`, `superseded`, `parked`, `evergreen`, or `archived`. Lets a plan be created already in flight in **one call**. An unrecognized value is rejected.
+  * `tags` (array of string, **optional**): Project-context and topic tags. Lifecycle state does **not** go here; a status word passed as a tag is rejected. Tool-managed `memory-*` tags are reserved and dropped.
   * `edit_summary` (string, **optional**): Optional summary detailing the creation of the plan.
 * **Behavior**:
   Checks for slug collision, sets the OKF `type` to `AI-Agent-Plan`, applies a tag for the project name, merges any caller `tags` on top of it, saves the Markdown file, commits the first version snapshot, and indexes the plan in Bleve for search.
@@ -489,7 +490,8 @@ Modifies the title, content, tags, or edit summary of an existing Collaborative 
   * `slug` (string, **required**): The unique URL slug of the plan to edit.
   * `title` (string, **optional**): The updated title of the plan (preserves existing title if omitted).
   * `content` (string, **optional**): Replacement Markdown body. Omit to preserve existing content. Use `append_agent_plan` to add progress notes without replacing.
-  * `tags` (array of strings, **optional**): Tags to set on the plan (replaces existing tags; the `AI-Agent-Plan` OKF type is always preserved). Use status tags to signal plan state — call `get_status_tags` to see recognized values (e.g. `completed`, `wip`, `blocked`).
+  * `status` (string, **optional**): New lifecycle status, e.g. `completed` when the work ships. **Omit to preserve** the plan's current state — an edit that does not manage lifecycle can never reset it.
+  * `tags` (array of strings, **optional**): Tags to set on the plan — project context and topics only (replaces existing tags; the `AI-Agent-Plan` OKF type is always preserved). A status word passed as a tag is rejected.
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent for optimistic locking checks.
   * `edit_summary` (string, **optional**): Description summarizing what changed.
 * **Behavior**:
@@ -502,7 +504,8 @@ Lists all Collaborative AI Plans (OKF type `AI-Agent-Plan`) currently saved insi
 
 * **Arguments**:
   * `project_context` (string, **optional**): An optional project context name to filter plans by.
-  * `tag` (string, **optional**): An optional tag to filter plans by. Use a status tag to find plans in a specific state (e.g. `completed`, `wip`). Call `get_status_tags` to see all recognized status values.
+  * `status` (string, **optional**): Filter plans by lifecycle status, e.g. `implementing` or `completed`. Call `get_status_tags` for the vocabulary.
+  * `tag` (string, **optional**): Filter plans by a project-context or topic tag.
 * **Behavior**:
   Scans all active articles, isolates pages of OKF type `AI-Agent-Plan`, filters them by project context tag and/or additional tags if provided, and returns a bulleted index of matching plans.
 * **Structured output**: `structuredContent` as `{count, documents[]}`, the shared listing shape. Lifecycle state lives in each document's status tags.
@@ -517,7 +520,8 @@ Creates a new Custom AI Skill, automatically making it part of the custom Skills
   * `content` (string, **required**): The raw Markdown content of the skill instructions (procedural SKILL.md format).
   * `description` (string, **optional**): One-line summary of what the skill does, shown in list indexes and the context overview.
   * `source` (string, **optional**): Provenance — where this skill's procedure came from.
-  * `tags` (array of strings, **optional**): Optional tags to apply to the skill. Use status tags to signal the skill's state — call `get_status_tags` to see recognized values (e.g. `draft`, `ready`).
+  * `status` (string, **optional**): Lifecycle status — `draft`, `ready`, or `archived`. Omit for none. An unrecognized value is rejected.
+  * `tags` (array of strings, **optional**): Topic and grouping tags. Lifecycle state does **not** go here; a status word passed as a tag is rejected.
   * `edit_summary` (string, **optional**): Optional summary describing why the skill was created.
 * **Behavior**:
   Checks for slug collision, sets the OKF `type` to `AI-Agent-Skill`, applies any user-provided tags, saves the Markdown file, commits the first version snapshot, and indexes the skill in Bleve.
@@ -534,7 +538,8 @@ Modifies an existing Custom AI Skill in place. The reserved `AI-Agent-Skill` typ
   * `content` (string, **optional**): Replacement Markdown body in SKILL.md format; omit to preserve.
   * `description` (string, **optional**): One-line summary. Pointer semantics — omit to preserve, empty string to clear.
   * `source` (string, **optional**): Provenance. Pointer semantics, as above.
-  * `tags` (array of strings, **optional**): Replaces existing user tags. Call `get_status_tags` for recognized values (e.g. promoting `draft` → `ready`).
+  * `status` (string, **optional**): New lifecycle status — typically promoting `draft` → `ready`. **Omit to preserve** the skill's current state.
+  * `tags` (array of strings, **optional**): Replaces existing user tags — topics and grouping only.
   * `edit_summary` (string, **optional**): What changed.
 * **Behavior**:
   Rejects a target whose type is not `AI-Agent-Skill`, enforces optimistic locking, merges the optional fields, and writes a new version snapshot.
@@ -553,14 +558,15 @@ Lists all Custom AI Skills (OKF type `AI-Agent-Skill`) currently saved in the kn
 ---
 
 ### 21. `get_status_tags`
-Returns the canonical list of recognized status tags used to indicate the lifecycle state of wiki articles and AI plans.
+Returns the recognized values for the `status` **field**, which only agent plans and agent skills have.
 
 * **Arguments**: None (empty object `{}`).
 * **Behavior**:
-  Returns the server-authoritative list of status tag values along with usage tips. Call this before tagging articles, plans, or skills to ensure you use a recognized value. Status tags are displayed with the highest visual priority on the home dashboard. Output includes a tip about the plan completion workflow: after a plan is fully implemented, use `append_agent_plan` to add final notes, then use `edit_agent_plan` to add the `completed` status tag.
+  Lifecycle state is a document field, not a tag. An `AI-Agent-Plan` has **exactly one** plan status; an `AI-Agent-Skill` has **at most one** skill status. Neither may use a lifecycle word from anywhere else — a plan with `status: "wip"` or a skill with `status: "implementing"` is rejected with a message naming the right value, and a lifecycle word passed as a *tag* on either is rejected too. **Wiki articles and agent memories have no status field and no tag rules at all.** The output also explains the completion workflow (append final notes with `append_agent_plan`, then set `status: "completed"` with `edit_agent_plan`) and the automatic tail of the lifecycle. See the [Plan Lifecycle Guide](./plan_lifecycle_guide.md).
 
-* **Recognized values**: `completed`, `done`, `wip`, `draft`, `in-progress`, `archived`, `active`, `todo`, `pending`, `review`, `blocked`, `ready`, `inbox`
-* **Structured output**: `structuredContent` as `{status_tags[]}`.
+* **Plan statuses**: `draft`, `implementing`, `blocked`, `completed`, `superseded`, `parked`, `evergreen`, `archived`
+* **Skill statuses**: `draft`, `ready`, `archived`
+* **Structured output**: `structuredContent` as `{status_tags[], plan_status_tags[], skill_status_tags[]}` — `status_tags` remains the union of the two for backward compatibility.
 
 ---
 

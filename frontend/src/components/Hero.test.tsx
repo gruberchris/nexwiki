@@ -19,7 +19,7 @@ const mockFetch = (data: unknown = { tags: ['completed', 'wip', 'draft'] }) => {
 
 const mockArticles: Article[] = [
   { type: 'Wiki', title: 'Go Guide', slug: 'go-guide', tags: ['golang'], created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1 },
-  { type: 'AI-Agent-Plan', title: 'AI Plan', slug: 'ai-plan', tags: ['nexwiki'], created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1 },
+  { type: 'AI-Agent-Plan', title: 'AI Plan', slug: 'ai-plan', tags: ['nexwiki'], status: 'implementing', created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1 },
   { type: 'AI-Agent-Skill', title: 'My Skill', slug: 'my-skill', tags: [], created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1 },
   { type: 'AI-Agent-Memory', title: 'AI Memory', slug: 'ai-memory', tags: ['memory-rules'], created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1 },
 ];
@@ -97,7 +97,7 @@ describe('Hero', () => {
 });
 
 const completedPlan: Article = {
-  type: 'AI-Agent-Plan', title: 'Old Plan', slug: 'old-plan', tags: ['nexwiki', 'completed'],
+  type: 'AI-Agent-Plan', title: 'Old Plan', slug: 'old-plan', tags: ['nexwiki'], status: 'completed',
   created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1,
 };
 
@@ -107,12 +107,12 @@ const renderHero = (articles: Article[], restoreUiState = false) =>
   });
 
 describe('Hero plans filter default', () => {
-  it('defaults the Agent Plans filter to !completed, hiding completed plans', async () => {
+  it('defaults the Agent Plans filter to the open-work inclusion list, hiding completed plans', async () => {
     mockFetch();
     await renderHero([...mockArticles, completedPlan]);
     await userEvent.click(screen.getByRole('button', { name: /Agent Plans/ }));
 
-    expect(screen.getByPlaceholderText('Filter plans by title or tag...')).toHaveValue('!completed');
+    expect(screen.getByPlaceholderText('Filter plans by title or tag...')).toHaveValue('draft || implementing || blocked');
     expect(screen.getByText('AI Plan')).toBeInTheDocument();
     expect(screen.queryByText('Old Plan')).not.toBeInTheDocument();
   });
@@ -160,6 +160,68 @@ describe('Hero dashboard state persistence', () => {
     // plans filter is back to its default.
     expect(screen.queryByPlaceholderText('Filter articles by title or tag...')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Agent Plans/ }));
-    expect(screen.getByPlaceholderText('Filter plans by title or tag...')).toHaveValue('!completed');
+    expect(screen.getByPlaceholderText('Filter plans by title or tag...')).toHaveValue('draft || implementing || blocked');
+  });
+});
+
+describe('Hero archived visibility', () => {
+  const archivedArticle: Article = {
+    type: 'Wiki', title: 'Retired Guide', slug: 'retired-guide', tags: ['archived'],
+    created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1,
+    archived_at: '2024-02-01T00:00:00Z',
+  };
+
+  it('hides archived documents from the dashboard by default, even with a cleared filter', async () => {
+    mockFetch();
+    await renderHero([...mockArticles, archivedArticle]);
+    await userEvent.click(screen.getByRole('button', { name: /Wiki Index/ }));
+
+    expect(screen.getByText('Go Guide')).toBeInTheDocument();
+    expect(screen.queryByText('Retired Guide')).not.toBeInTheDocument();
+  });
+
+  it('typing "archived" in the filter reveals them', async () => {
+    mockFetch();
+    await renderHero([...mockArticles, archivedArticle]);
+    await userEvent.click(screen.getByRole('button', { name: /Wiki Index/ }));
+
+    await userEvent.type(screen.getByPlaceholderText('Filter articles by title or tag...'), 'archived');
+    expect(screen.getByText('Retired Guide')).toBeInTheDocument();
+  });
+});
+
+describe('Hero status field filtering', () => {
+  // Status left the tag list, so the dashboard default only keeps working because matchesFilter
+  // matches the status field alongside tags. This is the test that pins that.
+  it('filters plans by their status field, not by tags', async () => {
+    mockFetch();
+    const parked: Article = {
+      type: 'AI-Agent-Plan', title: 'Parked Plan', slug: 'parked-plan', tags: ['nexwiki'], status: 'parked',
+      created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1,
+    };
+    await renderHero([...mockArticles, parked]);
+    await userEvent.click(screen.getByRole('button', { name: /Agent Plans/ }));
+
+    // Default view: the implementing plan is in, the parked one is out.
+    expect(screen.getByText('AI Plan')).toBeInTheDocument();
+    expect(screen.queryByText('Parked Plan')).not.toBeInTheDocument();
+
+    const filter = screen.getByPlaceholderText('Filter plans by title or tag...');
+    await userEvent.clear(filter);
+    await userEvent.type(filter, 'parked');
+    // Query the card heading: the autocomplete dropdown also echoes the matching title.
+    expect(screen.getByRole('heading', { name: 'Parked Plan' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'AI Plan' })).not.toBeInTheDocument();
+  });
+
+  it('hides a plan archived through its status field', async () => {
+    mockFetch();
+    const archivedPlan: Article = {
+      type: 'AI-Agent-Plan', title: 'Archived Plan', slug: 'archived-plan', tags: [], status: 'archived',
+      created_at: '2024-01-01T00:00:00Z', timestamp: '2024-01-15T00:00:00Z', version: 1,
+    };
+    await renderHero([...mockArticles, archivedPlan]);
+    await userEvent.click(screen.getByRole('button', { name: /Agent Plans/ }));
+    expect(screen.queryByText('Archived Plan')).not.toBeInTheDocument();
   });
 });

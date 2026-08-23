@@ -8,7 +8,8 @@ import { Editor } from './components/Editor';
 import { TOC } from './components/TOC';
 import { Hero } from './components/Hero';
 import { SearchResults } from './components/SearchResults';
-import { Slugify } from './utils';
+import { Slugify, formatRelativeTime } from './utils';
+import { statusBadgeClass } from './statusTags';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { ThemeManagerModal } from './components/ThemeManagerModal';
 import { useSSE } from './hooks/useSSE';
@@ -280,7 +281,7 @@ export const App: React.FC = () => {
   }, [currentPath]);
 
   // CRUD: Saving Article edits/creates
-  const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string) => {
+  const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string, status: string) => {
     const targetSlug = editorSlug; // empty if new
     const isNew = targetSlug === '';
     const newComputedSlug = Slugify(title);
@@ -293,7 +294,8 @@ export const App: React.FC = () => {
       resource,
       edit_summary: editSummary,
       loaded_version: currentArticle ? currentArticle.version : 0,
-      tags
+      tags,
+      status
     };
     const url = isNew ? '/api/articles' : `/api/articles/${targetSlug}`;
     const method = isNew ? 'POST' : 'PUT';
@@ -444,6 +446,7 @@ export const App: React.FC = () => {
           initialTitle={editorTitle}
           initialContent={editorContent}
           initialTags={editorSlug === '' ? editorTags : (currentArticle ? currentArticle.tags : [])}
+          initialStatus={editorSlug !== '' && currentArticle ? currentArticle.status : ''}
           initialDescription={editorSlug !== '' && currentArticle ? currentArticle.description : ''}
           initialSource={editorSlug !== '' && currentArticle ? currentArticle.source : ''}
           initialResource={editorSlug !== '' && currentArticle ? currentArticle.resource : ''}
@@ -569,10 +572,26 @@ export const App: React.FC = () => {
                           V{currentArticle.version || 1} Edited {formatDate(currentArticle.timestamp)}
                         </span>
                       )}
+                      {/* An approaching auto-archive should be visible rather than a surprise, so
+                          a plan's header says how long it has held its current status. */}
+                      {isPlan(currentArticle) && currentArticle.status_changed_at && currentArticle.status && (
+                        <span className="flex items-center gap-1">
+                          <ClipboardList size={11} className="text-teal-400" />
+                          {currentArticle.status} since {formatRelativeTime(currentArticle.status_changed_at)}
+                        </span>
+                      )}
                     </div>
-                    {/* Read-only type badge + tag badges */}
-                    {(isAgentDoc(currentArticle) || (currentArticle.tags && currentArticle.tags.length > 0)) && (
+                    {/* Read-only type badge + status + tag badges */}
+                    {(isAgentDoc(currentArticle) || currentArticle.status || (currentArticle.tags && currentArticle.tags.length > 0)) && (
                       <div className="flex flex-wrap gap-1.5 mt-3 select-none">
+                        {currentArticle.status && (
+                          <span
+                            title="Lifecycle status"
+                            className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs ${statusBadgeClass(currentArticle.status)}`}
+                          >
+                            {currentArticle.status}
+                          </span>
+                        )}
                         {isAgentDoc(currentArticle) && (
                           <span
                             title="Document type (set by the agent tools)"

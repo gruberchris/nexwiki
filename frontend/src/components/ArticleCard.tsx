@@ -3,6 +3,7 @@ import { isAgentDoc, typeLabel } from '../types';
 import { formatRelativeTime } from '../utils';
 import { Clock, ArrowRight } from 'lucide-react';
 import { sortCardTags } from '../filterUtils';
+import { statusBadgeClass } from '../statusTags';
 
 const MAX_VISIBLE_TAGS = 3;
 
@@ -31,8 +32,13 @@ export function ArticleCard({ art, onNavigate, secondary = false, statusTags }: 
             {art.description}
           </p>
         )}
-        {(isAgentDoc(art) || (art.tags && art.tags.length > 0)) && (
+        {(isAgentDoc(art) || art.status || (art.tags && art.tags.length > 0)) && (
           <div className="flex flex-wrap gap-1">
+            {art.status && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${statusBadgeClass(art.status)}`}>
+                {art.status}
+              </span>
+            )}
             {isAgentDoc(art) && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-themeBgSecondary text-themeTextMuted border border-themeBorder font-semibold">
                 {typeLabel(art.type)}

@@ -75,7 +75,7 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 var getStatusTagsTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_status_tags",
-		"description": "Returns the canonical list of recognized status tags used in NexWiki to indicate the lifecycle state of wiki articles and AI plans. Use these tags when creating or editing articles and plans to signal their current status. Status tags are displayed with highest priority on the home dashboard.",
+		"description": "Returns the recognized values for the 'status' field, which only agent plans and agent skills have. Each has a CLOSED vocabulary enforced on save: a plan has exactly one plan status, a skill at most one skill status, and neither may use a lifecycle word from anywhere else — an unrecognized value, or a status word passed as a tag, is rejected. Wiki articles and agent memories have NO status and NO tag rules: tag them however is useful.",
 		"inputSchema": map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -87,17 +87,37 @@ var getStatusTagsTool = toolDef{
 }
 
 func (srv *Server) toolGetStatusTags(args json.RawMessage) (interface{}, *JSONRPCError) {
-	text := "NexWiki Status Tags\n\nThe following tags indicate the lifecycle state of a wiki article or AI plan.\nApply them when creating or editing content to signal its current status.\nStatus tags are displayed with highest priority on the home dashboard.\n\nRecognized status tags:\n"
-	for _, tag := range StatusTags {
+	text := "NexWiki Lifecycle Status\n\n" +
+		"Status is a FIELD, not a tag, and only two document classes have one.\n\n" +
+		"AI-Agent-Plan — exactly one of:\n"
+	for _, tag := range PlanStatusTags {
 		text += fmt.Sprintf("  • %s\n", tag)
 	}
-	text += "\nTips:\n"
-	text += "  • Use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"completed\").\n"
-	text += "  • When a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to add the 'completed' status tag.\n"
-	text += "  • The reserved AI-Agent-Plan type must NEVER be relabelled.\n"
+	text += "\nAI-Agent-Skill — at most one of (a skill may have none):\n"
+	for _, tag := range SkillStatusTags {
+		text += fmt.Sprintf("  • %s\n", tag)
+	}
+	text += "\nWiki articles and agent memories have NO status field and NO tag rules.\n" +
+		"Tag them with whatever is useful; nothing is validated or reserved.\n"
+	text += "\nRules:\n"
+	text += "  • Never invent a status for a plan or a skill. A value outside that class's list is rejected, and so is a lifecycle word passed as a *tag* — the error names the right value.\n"
+	text += "  • Free tags (project context, topics) are unaffected on every document type.\n"
+	text += "  • Omitting 'status' on an edit preserves it, so you never need to pass it to change content.\n"
+	text += "\nPlan lifecycle notes:\n"
+	text += "  • New plans start in 'draft' (create_agent_plan defaults it); move to 'implementing' when work begins.\n"
+	text += "  • When a plan is fully implemented, use 'append_agent_plan' to add final notes, then 'edit_agent_plan' with status: \"completed\".\n"
+	text += "  • 'completed' and 'superseded' plans auto-archive after a configurable period, and 'archived' plans are eventually auto-deleted. Use 'parked' for deferred designs worth keeping, 'evergreen' for running backlogs — both are exempt from every timer.\n"
+	text += "  • Use 'list_agent_plans' with the 'status' parameter to filter plans by state (e.g. status: \"implementing\").\n"
+	text += "\nSkill lifecycle notes:\n"
+	text += "  • A skill may have no status at all; promote 'draft' → 'ready' once it is safe to follow, and 'archived' when it is retired.\n"
+	text += "  • The reserved AI-Agent-Plan and AI-Agent-Skill types must NEVER be relabelled.\n"
 	return ToolResponse{
-		Content:           []ToolContent{{Type: "text", Text: text}},
-		StructuredContent: StatusTagsOutput{StatusTags: StatusTags},
+		Content: []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: StatusTagsOutput{
+			StatusTags:      StatusTags,
+			PlanStatusTags:  PlanStatusTags,
+			SkillStatusTags: SkillStatusTags,
+		},
 	}, nil
 }
 
