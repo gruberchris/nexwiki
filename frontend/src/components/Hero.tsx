@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { Article } from '../types';
 import { isAgentDoc, isMemory, isPlan, isSkill } from '../types';
 import {
@@ -18,15 +18,59 @@ import { matchesFilter } from '../filterUtils';
 import { DirectorySection } from './DirectorySection';
 import { FilterHelpModal } from './FilterHelpModal';
 
+/**
+ * Most plans in a long-lived wiki are finished, so the dashboard's useful default view is the
+ * work still open. The default is typed into the filter box itself, so it is visible and
+ * clearable like any filter the user wrote.
+ */
+export const DEFAULT_PLANS_FILTER = '!completed';
+
+/** sessionStorage key for the dashboard UI state saved when navigating away. */
+export const HOME_STATE_KEY = 'nexwiki-home-state';
+
+interface HomeUiState {
+  ftsQuery: string;
+  wikiSearchQuery: string;
+  memoriesSearchQuery: string;
+  plansSearchQuery: string;
+  skillsSearchQuery: string;
+  wikiExpanded: boolean;
+  memoriesExpanded: boolean;
+  plansExpanded: boolean;
+  skillsExpanded: boolean;
+  scrollTop: number;
+}
+
+function readHomeUiState(): Partial<HomeUiState> | null {
+  try {
+    const raw = sessionStorage.getItem(HOME_STATE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as Partial<HomeUiState>) : null;
+  } catch {
+    return null;
+  }
+}
+
 interface HeroProps {
   articles: Article[];
   onNavigate: (slug: string) => void;
   onCreateNew: (type: 'article' | 'plan' | 'skill') => void;
   wikiName: string;
+  /**
+   * Restore the filters, expanded sections, and scroll position saved when the dashboard was
+   * last unmounted. True for back/forward navigation and reloads; false for a deliberate
+   * navigation to Home, which gives a clean dashboard.
+   */
+  restoreUiState?: boolean;
 }
 
-export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, wikiName }) => {
-  const [ftsQuery, setFtsQuery] = useState('');
+export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, wikiName, restoreUiState = false }) => {
+  // Read once at mount: lazy useState initializers only run then, which is exactly the
+  // restore-on-remount semantics wanted (SSE-driven re-renders never reset the state).
+  const [saved] = useState<Partial<HomeUiState> | null>(() => (restoreUiState ? readHomeUiState() : null));
+
+  const [ftsQuery, setFtsQuery] = useState(saved?.ftsQuery ?? '');
   const [statusTags, setStatusTags] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -36,16 +80,65 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
       .catch(() => {});
   }, []);
 
-  const [wikiSearchQuery, setWikiSearchQuery] = useState('');
-  const [memoriesSearchQuery, setMemoriesSearchQuery] = useState('');
-  const [plansSearchQuery, setPlansSearchQuery] = useState('');
-  const [skillsSearchQuery, setSkillsSearchQuery] = useState('');
+  const [wikiSearchQuery, setWikiSearchQuery] = useState(saved?.wikiSearchQuery ?? '');
+  const [memoriesSearchQuery, setMemoriesSearchQuery] = useState(saved?.memoriesSearchQuery ?? '');
+  const [plansSearchQuery, setPlansSearchQuery] = useState(saved?.plansSearchQuery ?? DEFAULT_PLANS_FILTER);
+  const [skillsSearchQuery, setSkillsSearchQuery] = useState(saved?.skillsSearchQuery ?? '');
   const [showFilterHelp, setShowFilterHelp] = useState(false);
 
-  const [wikiExpanded, setWikiExpanded] = useState(false);
-  const [memoriesExpanded, setMemoriesExpanded] = useState(false);
-  const [plansExpanded, setPlansExpanded] = useState(false);
-  const [skillsExpanded, setSkillsExpanded] = useState(false);
+  const [wikiExpanded, setWikiExpanded] = useState(saved?.wikiExpanded ?? false);
+  const [memoriesExpanded, setMemoriesExpanded] = useState(saved?.memoriesExpanded ?? false);
+  const [plansExpanded, setPlansExpanded] = useState(saved?.plansExpanded ?? false);
+  const [skillsExpanded, setSkillsExpanded] = useState(saved?.skillsExpanded ?? false);
+
+  // Persist the UI state so Back returns the user to the dashboard they left. The snapshot
+  // lives in a ref — refreshed after every render — so the unmount cleanup and pagehide
+  // listener always see current values.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const snapshotRef = useRef<HomeUiState | null>(null);
+  useEffect(() => {
+    snapshotRef.current = {
+      ftsQuery,
+      wikiSearchQuery,
+      memoriesSearchQuery,
+      plansSearchQuery,
+      skillsSearchQuery,
+      wikiExpanded,
+      memoriesExpanded,
+      plansExpanded,
+      skillsExpanded,
+      scrollTop: 0, // filled in from scrollRef at save time
+    };
+  });
+
+  useEffect(() => {
+    const save = () => {
+      if (!snapshotRef.current) return;
+      try {
+        sessionStorage.setItem(
+          HOME_STATE_KEY,
+          JSON.stringify({ ...snapshotRef.current, scrollTop: scrollRef.current?.scrollTop ?? 0 }),
+        );
+      } catch {
+        // Storage unavailable (private mode, quota): back-navigation simply gets defaults.
+      }
+    };
+    // pagehide covers reloads and tab closes, where React never unmounts the component.
+    window.addEventListener('pagehide', save);
+    return () => {
+      window.removeEventListener('pagehide', save);
+      save();
+    };
+  }, []);
+
+  // The dashboard scrolls in its own container, so the browser cannot restore this scroll
+  // position itself (history.scrollRestoration is set to 'manual' in useRouter).
+  useEffect(() => {
+    if (saved?.scrollTop && scrollRef.current) {
+      scrollRef.current.scrollTop = saved.scrollTop;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const wikiArticles = articles.filter(art => !isAgentDoc(art));
   const aiMemories = articles.filter(art => isMemory(art));
@@ -66,7 +159,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
   };
 
   return (
-    <div className="flex-1 overflow-y-auto h-screen bg-themeBgPrimary p-8 sm:p-12 md:p-16 selection:bg-themeAccent selection:text-white transition-colors min-w-0">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto h-screen bg-themeBgPrimary p-8 sm:p-12 md:p-16 selection:bg-themeAccent selection:text-white transition-colors min-w-0">
       <div className="max-w-4xl mx-auto space-y-12 animate-slide-up">
 
         {/* Hero Header */}

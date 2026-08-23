@@ -109,7 +109,7 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
 
       {/* Results Main Scroll Panel */}
       <div className="flex-1 overflow-y-auto p-6 sm:p-10">
-        <div className="max-w-2xl mx-auto space-y-6">
+        <div className="max-w-2xl lg:max-w-3xl 2xl:max-w-5xl mx-auto space-y-6">
           
           {/* Search Metrics Bar */}
           {!isLoading && (
