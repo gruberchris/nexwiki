@@ -52,33 +52,49 @@ edit_summary: Updated connection pool size
 
 ## 📌 Status & Lifecycle Tags
 
-NexWiki recognizes a fixed set of **status tags** that signal the lifecycle state of any article or AI plan. These tags are displayed with **highest priority** on the home dashboard article cards, making it easy to see what's active, blocked, or done at a glance.
+NexWiki recognizes two separate status vocabularies, split by document type. Status tags are displayed with **highest priority** on the home dashboard article cards, making it easy to see what's active, blocked, or done at a glance.
 
-### Recognized Status Values
+### Plan Lifecycle Statuses (AI-Agent-Plan only)
+
+Every Collaborative AI Plan carries **exactly one** of these eight states — enforced on every write path (editor, REST, and MCP). All but `archived` are **invalid on any other document type**.
+
+| Status | Meaning | Auto-transitions? |
+|---|---|---|
+| `draft` | Being written, or written and not yet started (the default for new plans) | No |
+| `implementing` | Work has begun, not finished | No |
+| `blocked` | Started but stuck on an external dependency | No |
+| `completed` | Implementation finished | → `archived` after `NEXWIKI_PLAN_ARCHIVE_AFTER_DAYS` |
+| `superseded` | Terminal; the work moved to another plan | → `archived`, same timer |
+| `parked` | Deliberately deferred; a design worth keeping | **Never** — the exemption is its purpose |
+| `evergreen` | A running backlog with no finish line | **Never** |
+| `archived` | Retired, retained for reference | → **deleted** after `NEXWIKI_PLAN_DELETE_AFTER_DAYS` |
+
+The automatic transitions are driven by the background plan lifecycle worker — see the [Plan Lifecycle Guide](./plan_lifecycle_guide.md) for the state machine, the timers, the `status_changed_at` clock, and the safety guards (dry-run mode and the backlink guard that refuses to delete a plan other documents still link to).
+
+### General Status Tags (wiki articles, memories, skills)
 
 | Tag | Meaning |
 |---|---|
-| `draft` | Work in progress, not ready for review |
 | `wip` | Actively being worked on |
 | `in-progress` | Same as `wip` — task underway |
 | `todo` | Queued but not yet started |
 | `active` | Currently in use or being maintained |
 | `review` | Ready for review by another person or agent |
 | `ready` | Approved and ready to act on |
-| `blocked` | Cannot proceed — waiting on a dependency |
 | `pending` | Awaiting an external event or decision |
-| `completed` | Fully implemented or resolved |
-| `done` | Equivalent to `completed` |
+| `done` | Fully implemented or resolved |
 | `archived` | Retired — kept for reference, no longer active |
 | `inbox` | Raw, unprocessed capture awaiting compilation into the wiki |
 
+`archived` is the sole tag shared by both vocabularies: on a plan it is a lifecycle state reached automatically; on any other type it keeps the manual archive-then-delete behavior described below.
+
 ### How Status Tags Work
 
-Most status tags are **purely semantic labels** — they do not trigger automatic filtering, hiding, or routing in the backend. The `archived` tag is the exception: it has optional auto-deletion behavior.
+Most status tags are **purely semantic labels** — they do not trigger automatic filtering, hiding, or routing in the backend. The exceptions are `archived` (visibility and auto-deletion, below) and the plan lifecycle statuses (validation and timers, above).
 
-* Applying `archived` to an article does **not** remove it from search results or move it to a separate folder. The article remains fully visible and searchable.
-* To exclude archived articles from a filter query, use the negation operator explicitly: `!archived` in the sidebar filter or search bar.
-* The filter help modals (accessible via the `?` icon in the filter bar) include examples like `draft OR wip !archived`.
+* Applying `archived` to a document **hides it from search results by default** — a search only returns archived documents when the query text mentions "archived" (browser) or the caller passes `include_archived` / an `archived` tag facet (MCP `search_wiki`).
+* Archived documents are also **hidden from the home dashboard sections and the sidebar by default**; typing `archived` in a filter box brings them back. Direct URLs always work — hiding from discovery never means 404.
+* The filter help modals (accessible via the `?` icon in the filter bar) document the syntax and these defaults.
 
 ### Auto-Deletion of Archived Articles
 
@@ -101,9 +117,11 @@ export NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS=30
 
 ### Applying Status Tags
 
-* **In the Editor**: Type a status tag (e.g., `archived`) in the Tags input field. Status tags appear with higher visual priority than regular user tags on article cards.
-* **Via MCP**: AI agents can apply status tags using `update_article_tags` or the `tags` parameter on `create_wiki_article`, `edit_wiki_article`, `create_agent_plan`, or `edit_agent_plan`. Call `get_status_tags` to retrieve the canonical list.
+* **In the Editor**: Type a status tag (e.g., `archived`) in the Tags input field. Status tags appear with higher visual priority than regular user tags on article cards, and plan lifecycle statuses render with a per-state color palette.
+* **Via MCP**: AI agents can apply status tags using `update_article_tags` or the `tags` parameter on `create_wiki_article`, `edit_wiki_article`, `create_agent_plan`, or `edit_agent_plan`. Call `get_status_tags` to retrieve both vocabularies, grouped by document type.
 * **Via REST API**: Use `PUT /api/articles/{slug}/tags` with your updated tags array.
+
+Every write path enforces the plan status contract: a save that leaves a plan with zero or several lifecycle statuses — or puts a plan-exclusive status on a non-plan document — is rejected with an error naming the valid vocabulary.
 
 ---
 
@@ -176,7 +194,7 @@ When you launch a complex project, either you or your connected AI assistant can
 ```
 The page slug is named directly after the feature (e.g. `migration-to-go-122`). Both you and your AI agent can collaboratively edit, check tasks, and complete this plan. The page remains safely stored under your **📋 AI plans** directory, keeping your main wiki page list clean.
 
-When the work is finished, the agent appends closing notes with `append_agent_plan` and then adds the `completed` status tag via `edit_agent_plan` — the `AI-Agent-Plan` type is preserved through both operations.
+When the work is finished, the agent appends closing notes with `append_agent_plan` and then swaps the plan's status to `completed` via `edit_agent_plan` (replacing `implementing` — a plan carries exactly one lifecycle status). The `AI-Agent-Plan` type is preserved through both operations.
 
 ### 3. AI-Driven Troubleshooting Log (type `AI-Agent-Memory`)
 If a server build fails, the agent can document the investigation with `create_agent_memory`:

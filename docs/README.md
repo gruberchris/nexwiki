@@ -83,6 +83,14 @@ A user guide to the reading and dashboard experience features:
 * **Dashboard State Restoration**: How Back/Forward return the dashboard — filters, sections, and scroll — exactly as you left it.
 * **Keyboard Suggestion Navigation**: Arrow-key combobox navigation in every filter box and the tag editor.
 
+### 12. [NexWiki Plan Lifecycle Guide](./plan_lifecycle_guide.md)
+A technical and user guide to the enforced plan status lifecycle:
+* **The Eight States**: The closed plan status vocabulary, its state machine, and the exactly-one-status rule enforced on every write path.
+* **The Status Clock**: How `status_changed_at` drives the timers without content edits restarting them.
+* **The Background Worker**: Auto-archiving finished plans, auto-deleting long-archived ones, and the configuration environment variables.
+* **Safety Guards**: Dry-run mode, the activity-log audit trail, and the backlink guard that refuses to delete referenced plans.
+* **The One-Time Migration**: How legacy status tags are remapped on first boot.
+
 ---
 
 ## 🏗️ Architecture Overview
