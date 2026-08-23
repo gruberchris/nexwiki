@@ -2,7 +2,7 @@
 
 **A wiki that is a first-class MCP citizen — your notes and your AI agent's memory in the same human-editable Markdown files, with an in-wiki page that governs how every connected agent behaves.**
 
-NexWiki is a self-contained, zero-dependency knowledge base: a single Go binary with the React UI embedded, storing everything as portable Markdown on your disk. It also runs an always-on **Model Context Protocol** server, so Claude, Cursor, Copilot, and custom agents can search it, write to it, and remember through it — using 28 built-in tools over stdio or Streamable HTTP.
+NexWiki is a self-contained, zero-dependency knowledge base: a single Go binary with the React UI embedded, storing everything as portable Markdown on your disk. It also runs an always-on **Model Context Protocol** server, so Claude, Cursor, Copilot, and custom agents can search it, write to it, and remember through it — using 29 built-in tools over stdio or Streamable HTTP.
 
 <!--suppress CheckImageSize -->
 <img src="images/home-view.png" alt="NexWiki Home View" width="800" />
