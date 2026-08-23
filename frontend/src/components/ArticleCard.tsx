@@ -3,6 +3,7 @@ import { isAgentDoc, typeLabel } from '../types';
 import { formatRelativeTime } from '../utils';
 import { Clock, ArrowRight } from 'lucide-react';
 import { sortCardTags } from '../filterUtils';
+import { planStatusBadgeClass } from '../planStatus';
 
 const MAX_VISIBLE_TAGS = 3;
 
@@ -41,7 +42,10 @@ export function ArticleCard({ art, onNavigate, secondary = false, statusTags }: 
             {art.tags && sortCardTags(art.tags, statusTags).slice(0, MAX_VISIBLE_TAGS).map((tag) => (
               <span
                 key={tag}
-                className="text-[10px] px-1.5 py-0.5 rounded-full bg-themeAccentBg text-themeAccent font-medium"
+                // Plan lifecycle statuses get their own palette so eight states read at a glance.
+                className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                  planStatusBadgeClass(tag) ?? 'bg-themeAccentBg text-themeAccent'
+                }`}
               >
                 {tag}
               </span>

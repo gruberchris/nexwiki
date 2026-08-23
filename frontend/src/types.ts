@@ -25,6 +25,18 @@ export interface Article {
   version?: number;
   edit_summary?: string;
   tags?: string[];
+  archived_at?: string;
+  /** When a plan last changed lifecycle status; drives the auto-archive/auto-delete timers. */
+  status_changed_at?: string;
+}
+
+/**
+ * Whether a document counts as archived, by timestamp or tag — mirroring the server's IsArchived,
+ * which checks both because the browser archives by tag while storage records a timestamp.
+ */
+export function isArchivedDoc(art: Pick<Article, 'archived_at' | 'tags'>): boolean {
+  if (art.archived_at) return true;
+  return !!art.tags?.some((t) => t.toLowerCase() === 'archived');
 }
 
 // Classification helpers keyed off the OKF `type` (replacing the old aiagent-* tag scan).

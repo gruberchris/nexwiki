@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { Article } from '../types';
-import { isAgentDoc, isMemory, isPlan, isSkill } from '../types';
+import { isAgentDoc, isArchivedDoc, isMemory, isPlan, isSkill } from '../types';
 import {
   BookOpen,
   Plus,
@@ -20,10 +20,12 @@ import { FilterHelpModal } from './FilterHelpModal';
 
 /**
  * Most plans in a long-lived wiki are finished, so the dashboard's useful default view is the
- * work still open. The default is typed into the filter box itself, so it is visible and
- * clearable like any filter the user wrote.
+ * work still open. Under the eight-state plan lifecycle that is an inclusion list — it also
+ * keeps archived, superseded, parked, and evergreen plans out of the default view. The default
+ * is typed into the filter box itself, so it is visible and clearable like any filter the user
+ * wrote.
  */
-export const DEFAULT_PLANS_FILTER = '!completed';
+export const DEFAULT_PLANS_FILTER = 'draft || implementing || blocked';
 
 /** sessionStorage key for the dashboard UI state saved when navigating away. */
 export const HOME_STATE_KEY = 'nexwiki-home-state';
@@ -145,11 +147,20 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
   const aiPlans = articles.filter(art => isPlan(art));
   const aiSkills = articles.filter(art => isSkill(art));
 
+  // Archived documents are hidden from the dashboard by default — with plans archiving
+  // themselves on a timer, a document that vanishes from search but lingers here would have no
+  // visible explanation. Typing "archived" in a section's filter box brings them back, matching
+  // the search heuristic; direct URLs always work regardless.
+  const matchesSection = (art: Article, query: string) => {
+    if (isArchivedDoc(art) && !query.toLowerCase().includes('archived')) return false;
+    return matchesFilter(art, query);
+  };
+
   // Filtered lists for display (applies both category filter AND search query)
-  const filteredWikiArticles = wikiArticles.filter(art => matchesFilter(art, wikiSearchQuery));
-  const filteredAiMemories = aiMemories.filter(art => matchesFilter(art, memoriesSearchQuery));
-  const filteredAiPlans = aiPlans.filter(art => matchesFilter(art, plansSearchQuery));
-  const filteredAiSkills = aiSkills.filter(art => matchesFilter(art, skillsSearchQuery));
+  const filteredWikiArticles = wikiArticles.filter(art => matchesSection(art, wikiSearchQuery));
+  const filteredAiMemories = aiMemories.filter(art => matchesSection(art, memoriesSearchQuery));
+  const filteredAiPlans = aiPlans.filter(art => matchesSection(art, plansSearchQuery));
+  const filteredAiSkills = aiSkills.filter(art => matchesSection(art, skillsSearchQuery));
 
   // Original unfiltered lists for autocomplete suggestions (only category filter)
 
