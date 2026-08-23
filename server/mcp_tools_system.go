@@ -75,7 +75,7 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 var getStatusTagsTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_status_tags",
-		"description": "Returns the canonical list of recognized status tags used in NexWiki to indicate the lifecycle state of wiki articles and AI plans. Use these tags when creating or editing articles and plans to signal their current status. Status tags are displayed with highest priority on the home dashboard.",
+		"description": "Returns the recognized status tags, grouped by document type: the closed plan lifecycle vocabulary (every AI-Agent-Plan carries exactly ONE plan status; all but 'archived' are invalid on other types) and the general status tags for wiki articles, memories, and skills. Use the right group when creating or editing content. Status tags are displayed with highest priority on the home dashboard.",
 		"inputSchema": map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -87,17 +87,29 @@ var getStatusTagsTool = toolDef{
 }
 
 func (srv *Server) toolGetStatusTags(args json.RawMessage) (interface{}, *JSONRPCError) {
-	text := "NexWiki Status Tags\n\nThe following tags indicate the lifecycle state of a wiki article or AI plan.\nApply them when creating or editing content to signal its current status.\nStatus tags are displayed with highest priority on the home dashboard.\n\nRecognized status tags:\n"
-	for _, tag := range StatusTags {
+	text := "NexWiki Status Tags\n\n" +
+		"Plan lifecycle statuses (AI-Agent-Plan documents carry EXACTLY ONE of these;\n" +
+		"all but 'archived' are invalid on any other document type):\n"
+	for _, tag := range PlanStatusTags {
 		text += fmt.Sprintf("  • %s\n", tag)
 	}
-	text += "\nTips:\n"
-	text += "  • Use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"completed\").\n"
-	text += "  • When a plan is fully implemented, use 'append_agent_plan' to add final notes, then use 'edit_agent_plan' to add the 'completed' status tag.\n"
+	text += "\nGeneral status tags (wiki articles, memories, skills):\n"
+	for _, tag := range GeneralStatusTags {
+		text += fmt.Sprintf("  • %s\n", tag)
+	}
+	text += "\nPlan lifecycle notes:\n"
+	text += "  • New plans start in 'draft' (create_agent_plan defaults it); move to 'implementing' when work begins.\n"
+	text += "  • When a plan is fully implemented, use 'append_agent_plan' to add final notes, then 'edit_agent_plan' to swap its status to 'completed'.\n"
+	text += "  • 'completed' and 'superseded' plans auto-archive after a configurable period, and 'archived' plans are eventually auto-deleted. Use 'parked' for deferred designs worth keeping, 'evergreen' for running backlogs — both are exempt from every timer.\n"
+	text += "  • Use 'list_agent_plans' with the 'tag' parameter to filter plans by status (e.g. tag: \"implementing\").\n"
 	text += "  • The reserved AI-Agent-Plan type must NEVER be relabelled.\n"
 	return ToolResponse{
-		Content:           []ToolContent{{Type: "text", Text: text}},
-		StructuredContent: StatusTagsOutput{StatusTags: StatusTags},
+		Content: []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: StatusTagsOutput{
+			StatusTags:        StatusTags,
+			PlanStatusTags:    PlanStatusTags,
+			GeneralStatusTags: GeneralStatusTags,
+		},
 	}, nil
 }
 

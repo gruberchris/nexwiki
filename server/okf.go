@@ -271,7 +271,13 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 
 		body := TranslateBundleLinksToWikiLinks(art.Content)
 		summary := "Imported from OKF bundle"
-		if _, err := s.SaveArticle(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, art.Tags, normalizeType(art.Type)); err != nil {
+		// A bundle from an older NexWiki (or another tool) can carry the pre-lifecycle plan tag
+		// vocabulary; normalize so the permissive importer keeps accepting it.
+		importTags := art.Tags
+		if normalizeType(art.Type) == ContentTypePlan {
+			importTags = normalizeLegacyPlanStatusTags(importTags)
+		}
+		if _, err := s.SaveArticle(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, normalizeType(art.Type)); err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: save failed: %v", f.Name, err))
 			continue
 		}

@@ -131,9 +131,15 @@ type StatisticsOutput struct {
 	BrokenLinks     []BrokenLinkRef `json:"broken_links"`
 }
 
-// StatusTagsOutput is the `get_status_tags` payload.
+// StatusTagsOutput is the `get_status_tags` payload. The two typed groups are the authoritative
+// vocabularies; status_tags remains their union for backward compatibility.
 type StatusTagsOutput struct {
 	StatusTags []string `json:"status_tags"`
+	// PlanStatusTags is the closed plan lifecycle vocabulary: every AI-Agent-Plan carries
+	// exactly one of these, and all but "archived" are invalid on any other document type.
+	PlanStatusTags []string `json:"plan_status_tags"`
+	// GeneralStatusTags are the lifecycle tags recognized on non-plan documents.
+	GeneralStatusTags []string `json:"general_status_tags"`
 }
 
 // ActivityOutput is the `get_recent_activity` payload, oldest event first to match the prose.
@@ -188,6 +194,7 @@ func articleSchema(withContent bool) map[string]interface{} {
 		"edit_summary": schemaOf("string", "Summary of the most recent edit."),
 		"tags":         schemaStringArray("Tags carried by the document, including status and memory-scope tags."),
 		"archived_at":  schemaOf("string", "RFC3339 archival time; absent unless the document is archived."),
+		"status_changed_at": schemaOf("string", "RFC3339 time a plan last changed lifecycle status; drives the auto-archive/auto-delete timers. Only present on AI-Agent-Plan documents."),
 	}
 	if withContent {
 		props["content"] = schemaOf("string", "Full raw Markdown body.")
@@ -286,8 +293,10 @@ func statisticsOutputSchema() map[string]interface{} {
 
 func statusTagsOutputSchema() map[string]interface{} {
 	return schemaObject(map[string]interface{}{
-		"status_tags": schemaStringArray("Canonical lifecycle tags recognized by NexWiki."),
-	}, "status_tags")
+		"status_tags":         schemaStringArray("Union of both vocabularies, kept for backward compatibility."),
+		"plan_status_tags":    schemaStringArray("The closed plan lifecycle vocabulary. Every AI-Agent-Plan carries exactly ONE of these; all but 'archived' are invalid on other document types."),
+		"general_status_tags": schemaStringArray("Lifecycle tags recognized on non-plan documents (wiki articles, memories, skills)."),
+	}, "status_tags", "plan_status_tags", "general_status_tags")
 }
 
 func activityOutputSchema() map[string]interface{} {

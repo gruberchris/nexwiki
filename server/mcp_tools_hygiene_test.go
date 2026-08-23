@@ -211,7 +211,7 @@ func TestParkedPlansAreNotStale(t *testing.T) {
 		title string
 		tags  []string
 	}{
-		{"Genuinely Abandoned Plan", []string{"project"}},
+		{"Genuinely Abandoned Plan", []string{"project", "implementing"}},
 		{"Deliberately Parked Plan", []string{"project", "parked"}},
 		{"Finished Plan", []string{"project", "completed"}},
 	} {

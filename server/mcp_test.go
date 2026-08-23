@@ -49,12 +49,13 @@ func TestMCPEditAgentPlan(t *testing.T) {
 	if plan.Type != ContentTypePlan {
 		t.Errorf("Expected type AI-Agent-Plan, got %q", plan.Type)
 	}
-	if len(plan.Tags) != 1 || plan.Tags[0] != "nexwiki" {
-		t.Errorf("Expected tags ['nexwiki'], got %v", plan.Tags)
+	// A plan created with no status starts in draft (the lifecycle default).
+	if len(plan.Tags) != 2 || plan.Tags[0] != "nexwiki" || plan.Tags[1] != "draft" {
+		t.Errorf("Expected tags ['nexwiki', 'draft'], got %v", plan.Tags)
 	}
 
 	// 2. Perform a successful edit using edit_agent_plan
-	editArgs := json.RawMessage(`{"name":"edit_agent_plan","arguments":{"slug":"migration-plan","title":"Final Migration Plan","tags":["postgres","nexwiki"],"loaded_version":1,"edit_summary":"Renamed and updated tags"}}`)
+	editArgs := json.RawMessage(`{"name":"edit_agent_plan","arguments":{"slug":"migration-plan","title":"Final Migration Plan","tags":["postgres","nexwiki","implementing"],"loaded_version":1,"edit_summary":"Renamed and updated tags"}}`)
 	res2, rpcErr2 := srv.executeToolCallInternal(editArgs)
 	if rpcErr2 != nil {
 		t.Fatalf("edit_agent_plan failed: %v", rpcErr2)
@@ -85,8 +86,8 @@ func TestMCPEditAgentPlan(t *testing.T) {
 	if updatedPlan.Type != ContentTypePlan {
 		t.Errorf("Expected type AI-Agent-Plan to be preserved, got %q", updatedPlan.Type)
 	}
-	if len(updatedPlan.Tags) != 2 || updatedPlan.Tags[0] != "postgres" || updatedPlan.Tags[1] != "nexwiki" {
-		t.Errorf("Expected tags [postgres, nexwiki], got %v", updatedPlan.Tags)
+	if len(updatedPlan.Tags) != 3 || updatedPlan.Tags[0] != "postgres" || updatedPlan.Tags[1] != "nexwiki" || updatedPlan.Tags[2] != "implementing" {
+		t.Errorf("Expected tags [postgres, nexwiki, implementing], got %v", updatedPlan.Tags)
 	}
 
 	// 3. Test optimistic locking: try editing with outdated loaded_version = 1 (current disk is 2)
@@ -427,7 +428,7 @@ func TestMCPAppendAgentPlan(t *testing.T) {
 	}
 
 	// Valid append
-	_, _ = srv.Storage.SaveArticle("", "Active Plan", "# Plan\n\nStep 1", "", "", "", "", []string{"aiagent-plan"}, ContentTypePlan)
+	_, _ = srv.Storage.SaveArticle("", "Active Plan", "# Plan\n\nStep 1", "", "", "", "", []string{"aiagent-plan", "implementing"}, ContentTypePlan)
 	resp2 := toolCall(t, srv, `{"name":"append_agent_plan","arguments":{"slug":"active-plan","content_to_append":"\n\n## Step 2\n\nDo the thing."}}`)
 	if resp2.IsError {
 		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
@@ -449,8 +450,8 @@ func TestMCPListAgentPlans(t *testing.T) {
 	}
 
 	// Create plans
-	_, _ = srv.Storage.SaveArticle("", "Project Alpha Plan", "# plan", "", "", "", "", []string{"aiagent-plan", "alpha"}, ContentTypePlan)
-	_, _ = srv.Storage.SaveArticle("", "Project Beta Plan", "# plan", "", "", "", "", []string{"aiagent-plan", "beta"}, ContentTypePlan)
+	_, _ = srv.Storage.SaveArticle("", "Project Alpha Plan", "# plan", "", "", "", "", []string{"aiagent-plan", "alpha", "draft"}, ContentTypePlan)
+	_, _ = srv.Storage.SaveArticle("", "Project Beta Plan", "# plan", "", "", "", "", []string{"aiagent-plan", "beta", "draft"}, ContentTypePlan)
 
 	resp2 := toolCall(t, srv, `{"name":"list_agent_plans","arguments":{}}`)
 	if resp2.IsError {
@@ -786,7 +787,7 @@ func TestLogMCPToolCallBranches(t *testing.T) {
 	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"edit_wiki_article","arguments":{"slug":"log-edit-me","title":"Log Edit Me","content":"# v2","loaded_version":1}}`), "Test Client")
 
 	// Covers append_ prefix → "edit" action
-	_, _ = srv.Storage.SaveArticle("", "Log Append Me", "# base", "", "", "", "", []string{"aiagent-plan"}, ContentTypePlan)
+	_, _ = srv.Storage.SaveArticle("", "Log Append Me", "# base", "", "", "", "", []string{"aiagent-plan", "draft"}, ContentTypePlan)
 	_, _ = srv.executeToolCall(json.RawMessage(`{"name":"append_agent_plan","arguments":{"slug":"log-append-me","content_to_append":"\n\n## Appended"}}`), "Test Client")
 
 	// Verify EventBus received events
@@ -908,9 +909,10 @@ func TestMCPEditAgentPlanDescriptionAndSource(t *testing.T) {
 func TestMCPEditAgentSkill(t *testing.T) {
 	srv := newMCPServer(t)
 
-	toolCall(t, srv, `{"name":"create_agent_skill","arguments":{"title":"Prune Containers","content":"# Steps\n\n1. docker system prune","description":"how to prune","tags":["draft"]}}`)
+	// "draft" became a plan-exclusive status; skills signal immaturity with "wip" now.
+	toolCall(t, srv, `{"name":"create_agent_skill","arguments":{"title":"Prune Containers","content":"# Steps\n\n1. docker system prune","description":"how to prune","tags":["wip"]}}`)
 
-	// Content, description, and a draft -> ready promotion in one edit.
+	// Content, description, and a wip -> ready promotion in one edit.
 	resp := toolCall(t, srv, `{"name":"edit_agent_skill","arguments":{"slug":"prune-containers","content":"# Steps\n\n1. docker system prune -af","description":"how to prune aggressively","tags":["ready"],"loaded_version":1,"edit_summary":"Promote to ready"}}`)
 	if resp.IsError {
 		t.Fatalf("edit_agent_skill failed: %s", resp.Content[0].Text)

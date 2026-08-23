@@ -22,7 +22,7 @@ func TestMCPGetContextOverview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed 3 failed: %v", err)
 	}
-	_, err = srv.Storage.SaveArticle("", "A Plan", "# plan steps", "", "", "", "", []string{"aiagent-plan", "nexwiki"}, ContentTypePlan)
+	_, err = srv.Storage.SaveArticle("", "A Plan", "# plan steps", "", "", "", "", []string{"aiagent-plan", "nexwiki", "draft"}, ContentTypePlan)
 	if err != nil {
 		t.Fatalf("seed 4 failed: %v", err)
 	}

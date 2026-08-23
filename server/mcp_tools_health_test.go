@@ -85,18 +85,18 @@ func seedHealthFixture(t *testing.T) *Server {
 	// A memory with provenance, and one without.
 	must(`{"name":"create_agent_memory","arguments":{"title":"Sourced Fact","content":"# Fact","memory_type":"nexwiki","description":"has provenance","source":"design review"}}`)
 	must(`{"name":"create_agent_memory","arguments":{"title":"Floating Fact","content":"# Fact","memory_type":"nexwiki","description":"no provenance"}}`)
-	// Plans: one stale, one recent, one finished-but-old, one old with no status tag.
-	// create_agent_plan takes no tags argument — it derives only the project-context tag — so
-	// status tags are applied the way an agent would, with update_article_tags.
+	// Plans: one stale, one recent, one finished-but-old, one old still in its default draft.
+	// Status tags are applied the way an agent would correct them, with update_article_tags
+	// (creation defaults every plan to 'draft').
 	must(`{"name":"create_agent_plan","arguments":{"title":"Stalled Plan","content":"# Plan","project_context":"nexwiki","description":"in flight"}}`)
 	must(`{"name":"create_agent_plan","arguments":{"title":"Fresh Plan","content":"# Plan","project_context":"nexwiki","description":"in flight"}}`)
 	must(`{"name":"create_agent_plan","arguments":{"title":"Finished Plan","content":"# Plan","project_context":"nexwiki","description":"done"}}`)
 	must(`{"name":"create_agent_plan","arguments":{"title":"Untagged Plan","content":"# Plan","project_context":"nexwiki","description":"old and never marked finished"}}`)
 	must(`{"name":"create_agent_plan","arguments":{"title":"Superseded Plan","content":"# Plan","project_context":"nexwiki","description":"replaced by another plan"}}`)
 
-	must(`{"name":"update_article_tags","arguments":{"slug":"stalled-plan","tags":["nexwiki","wip"]}}`)
-	must(`{"name":"update_article_tags","arguments":{"slug":"fresh-plan","tags":["nexwiki","wip"]}}`)
-	must(`{"name":"update_article_tags","arguments":{"slug":"finished-plan","tags":["nexwiki","wip","completed"]}}`)
+	must(`{"name":"update_article_tags","arguments":{"slug":"stalled-plan","tags":["nexwiki","implementing"]}}`)
+	must(`{"name":"update_article_tags","arguments":{"slug":"fresh-plan","tags":["nexwiki","implementing"]}}`)
+	must(`{"name":"update_article_tags","arguments":{"slug":"finished-plan","tags":["nexwiki","completed"]}}`)
 	must(`{"name":"update_article_tags","arguments":{"slug":"superseded-plan","tags":["nexwiki","superseded"]}}`)
 
 	// Backdate last, so the tag edits above do not refresh the timestamps being aged.
@@ -570,7 +570,7 @@ func TestWikiHealthUnreferencedSkills(t *testing.T) {
 func TestWikiHealthUnreferencedSkillsIgnoresNonSkills(t *testing.T) {
 	srv := newTestServer(t)
 	_, _ = srv.Storage.SaveArticle("", "Lonely Memory", "# m", "", "src", "", "", nil, ContentTypeMemory)
-	_, _ = srv.Storage.SaveArticle("", "Lonely Plan", "# p", "", "", "", "", nil, ContentTypePlan)
+	_, _ = srv.Storage.SaveArticle("", "Lonely Plan", "# p", "", "", "", "", []string{"draft"}, ContentTypePlan)
 	_, _ = srv.Storage.SaveArticle("", "Lonely Article", "# a", "", "", "", "", nil, ContentTypeWiki)
 
 	out := healthReport(t, srv, `{}`)

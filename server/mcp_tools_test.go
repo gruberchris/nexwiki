@@ -399,12 +399,12 @@ func TestAgentCreateToolsAcceptTags(t *testing.T) {
 		}
 	})
 
-	t.Run("omitting tags is unchanged", func(t *testing.T) {
+	t.Run("omitting tags yields the project tag plus the draft default", func(t *testing.T) {
 		srv := newMCPServer(t)
 		toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Bare Plan","content":"# P","project_context":"nexwiki"}}`)
 		art, _ := srv.Storage.GetArticle("bare-plan")
-		if len(art.Tags) != 1 || !hasTagFold(art.Tags, "nexwiki") {
-			t.Errorf("expected only the project tag, got %v", art.Tags)
+		if len(art.Tags) != 2 || !hasTagFold(art.Tags, "nexwiki") || !hasTagFold(art.Tags, "draft") {
+			t.Errorf("expected the project tag plus the draft lifecycle default, got %v", art.Tags)
 		}
 	})
 

@@ -41,7 +41,7 @@ var createAgentPlanTool = toolDef{
 				"tags": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Optional status or user tags to apply, e.g. ['wip']. Call get_status_tags to see the recognized status values. The project-context tag is added automatically from 'project_context'.",
+					"description": "Optional tags to apply. A plan carries exactly one lifecycle status tag (draft, implementing, blocked, completed, superseded, parked, evergreen, archived — call get_status_tags for details); omit a status to start in 'draft'. The project-context tag is added automatically from 'project_context'.",
 				},
 				"edit_summary": map[string]interface{}{
 					"type":        "string",
@@ -105,6 +105,12 @@ func (srv *Server) toolCreateAgentPlan(args json.RawMessage) (interface{}, *JSON
 			seen[lower] = true
 			tags = append(tags, t)
 		}
+	}
+
+	// Every plan enters the lifecycle in exactly one state; a caller that names none starts in
+	// draft. A caller that names several is rejected by validation in the save below.
+	if len(planStatusesIn(tags)) == 0 {
+		tags = append(tags, "draft")
 	}
 
 	if _, err := srv.Storage.GetArticle(slug); err == nil {
@@ -196,7 +202,7 @@ func (srv *Server) toolAppendAgentPlan(args json.RawMessage) (interface{}, *JSON
 var editAgentPlanTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "edit_agent_plan",
-		"description": "Modify the title, content, description, source, tags, or edit summary of an existing Collaborative AI Plan. The reserved AI-Agent-Plan type is strictly preserved and must NEVER be relabelled. Use this to correct or rewrite plan content in-place, or to mark a plan as 'completed' by adding the 'completed' status tag.",
+		"description": "Modify the title, content, description, source, tags, or edit summary of an existing Collaborative AI Plan. The reserved AI-Agent-Plan type is strictly preserved and must NEVER be relabelled. Use this to correct or rewrite plan content in-place, or to change the plan's lifecycle status by replacing its status tag (e.g. swap 'implementing' for 'completed' when the work ships). A plan carries exactly one status; 'completed' and 'superseded' plans auto-archive after a configurable period, and 'archived' plans are eventually auto-deleted — use 'parked' for deferred work that must be kept.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -225,7 +231,7 @@ var editAgentPlanTool = toolDef{
 					"items": map[string]interface{}{
 						"type": "string",
 					},
-					"description": "Optional tags to set on the plan (replaces existing tags; the AI-Agent-Plan type is preserved). Use status tags to signal plan state — call get_status_tags to see recognized values (e.g. 'completed', 'wip', 'blocked').",
+					"description": "Optional tags to set on the plan (replaces existing tags; the AI-Agent-Plan type is preserved). The set must include exactly one plan lifecycle status: draft, implementing, blocked, completed, superseded, parked, evergreen, or archived (call get_status_tags for details).",
 				},
 				"loaded_version": map[string]interface{}{
 					"type":        "integer",

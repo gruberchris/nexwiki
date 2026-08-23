@@ -124,7 +124,7 @@ func TestOKFRoundTrip(t *testing.T) {
 
 	_, _ = src.SaveArticle("", "Concept A", "# A\n\nLinks to [[Concept B]].", "summary a", "", "https://example.com/a", "init", []string{"topic"}, ContentTypeWiki)
 	_, _ = src.SaveArticle("", "Concept B", "# B", "", "", "", "init", nil, ContentTypeWiki)
-	_, _ = src.SaveArticle("", "A Plan", "# plan", "", "", "", "init", []string{"proj"}, ContentTypePlan)
+	_, _ = src.SaveArticle("", "A Plan", "# plan", "", "", "", "init", []string{"proj", "draft"}, ContentTypePlan)
 	_, _ = src.SaveArticle("", "A Memory", "# mem", "", "", "", "init", []string{"memory-proj"}, ContentTypeMemory)
 
 	bundle, err := src.ExportOKFBundle()

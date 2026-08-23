@@ -42,6 +42,11 @@ type Article struct {
 	EditSummary string    `json:"edit_summary,omitempty"` // Summary of edits
 	Tags        []string  `json:"tags,omitempty"`         // Tags list (system and free user tags)
 	ArchivedAt  time.Time `json:"archived_at,omitempty"`  // When the article was archived
+	// StatusChangedAt records when a plan last changed lifecycle status. It exists because the
+	// article Timestamp cannot drive the lifecycle timers — fixing a typo in a completed plan
+	// would restart its archive clock. Only ever set on AI-Agent-Plan documents; the lifecycle
+	// worker treats a missing value as "not yet eligible", never as "infinitely old".
+	StatusChangedAt time.Time `json:"status_changed_at,omitempty"`
 
 	// ContentPreview holds the first content line during metadata-only parses
 	// (used as a description fallback in indexes); never serialized.
@@ -131,6 +136,11 @@ func NewStorage(dataDir string) (*Storage, error) {
 	if err := s.seedDefaultHome(); err != nil {
 		_ = index.Close()
 		return nil, err
+	}
+
+	// One-time sweep onto the closed plan status vocabulary (no-op once its marker exists).
+	if err := s.MigratePlanStatuses(); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: plan status migration failed: %v\n", err)
 	}
 
 	// Cleanup archived articles that have exceeded their retention period
@@ -273,6 +283,7 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	now := time.Now()
 	resolvedType := normalizeType(articleType) // empty/unknown → Wiki
 	renamedFromSlug := ""                      // set when a slug rename occurs, to heal inbound WikiLinks
+	prevPlanStatus := ""                       // the plan status before this save, for change stamping
 
 	// If updating an existing article
 	if oldSlug != "" {
@@ -287,18 +298,35 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 				if articleType == "" {
 					resolvedType = existingArt.Type
 				}
+				if existingArt.Type == ContentTypePlan {
+					if prev := planStatusesIn(existingArt.Tags); len(prev) > 0 {
+						prevPlanStatus = prev[0]
+					}
+				}
 				art = &Article{
-					Type:       resolvedType,
-					Title:      title,
-					Slug:       newSlug,
-					CreatedAt:  existingArt.CreatedAt,
-					ArchivedAt: existingArt.ArchivedAt,
-					Timestamp:  now,
-					Content:    content,
-					Tags:       tags,
+					Type:            resolvedType,
+					Title:           title,
+					Slug:            newSlug,
+					CreatedAt:       existingArt.CreatedAt,
+					ArchivedAt:      existingArt.ArchivedAt,
+					StatusChangedAt: existingArt.StatusChangedAt,
+					Timestamp:       now,
+					Content:         content,
+					Tags:            tags,
 				}
 			}
 		}
+	}
+
+	// The status contract holds at every write path — REST, MCP, revert, tag deletion, import —
+	// and this is the one choke point they all pass through. Validated before the rename below so
+	// a rejected save cannot leave a half-moved article behind.
+	if err := ValidatePlanStatus(resolvedType, tags); err != nil {
+		return nil, err
+	}
+
+	if oldSlug != "" {
+		oldPath := filepath.Join(s.ArticleDir, oldSlug+".md")
 
 		// If the slug has changed, rename files and move assets
 		if oldSlug != newSlug {
@@ -396,8 +424,36 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	art.Source = source
 	art.Resource = resource
 
-	// Set ArchivedAt if the article is being tagged as archived for the first time
-	if art.ArchivedAt.IsZero() {
+	if art.Type == ContentTypePlan {
+		// ValidatePlanStatus above guarantees exactly one status.
+		newStatus := planStatusesIn(art.Tags)[0]
+		if newStatus != prevPlanStatus {
+			// Log-and-allow: unusual transitions are worth a trace, but a human correcting a
+			// mis-tagged plan in the editor must always win over the state machine.
+			if prevPlanStatus != "" && !isLegalPlanTransition(prevPlanStatus, newStatus) {
+				_, _ = fmt.Fprintf(os.Stderr, "Note: plan '%s' made an unusual status transition %s → %s (allowed)\n",
+					art.Slug, prevPlanStatus, newStatus)
+			}
+			art.StatusChangedAt = now
+		}
+		if art.StatusChangedAt.IsZero() {
+			// A plan predating the lifecycle (or written by an external tool) gets its clock
+			// started now rather than being treated as infinitely old.
+			art.StatusChangedAt = now
+		}
+		// For a plan, archived_at is an exact mirror of the archived status: set on entry so the
+		// deletion clock starts, cleared on revival so IsArchived cannot keep hiding a plan that
+		// is nominally back in flight (the one-way-door asymmetry the lifecycle design flagged).
+		if newStatus == "archived" {
+			if art.ArchivedAt.IsZero() {
+				art.ArchivedAt = now
+			}
+		} else if !art.ArchivedAt.IsZero() {
+			art.ArchivedAt = time.Time{}
+		}
+	} else if art.ArchivedAt.IsZero() {
+		// Non-plan documents keep the long-standing semantics: archiving is manual, the stamp is
+		// written once, and removing the tag deliberately does not clear it.
 		for _, tag := range art.Tags {
 			if strings.ToLower(tag) == "archived" {
 				art.ArchivedAt = now
@@ -629,6 +685,9 @@ type articleFrontMatter struct {
 	EditSummary string   `yaml:"edit_summary,omitempty"`
 	Source      string   `yaml:"source,omitempty"`
 	ArchivedAt  string   `yaml:"archived_at,omitempty"`
+	// StatusChangedAt is a NexWiki custom key carried only by AI-Agent-Plan documents; it feeds
+	// the plan lifecycle timers (see server/plan_lifecycle.go).
+	StatusChangedAt string `yaml:"status_changed_at,omitempty"`
 }
 
 // parseArticleFile parses the OKF YAML front-matter block and Markdown body.
@@ -680,6 +739,11 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 	if fm.ArchivedAt != "" {
 		if t, err := time.Parse(time.RFC3339, fm.ArchivedAt); err == nil {
 			art.ArchivedAt = t
+		}
+	}
+	if fm.StatusChangedAt != "" {
+		if t, err := time.Parse(time.RFC3339, fm.StatusChangedAt); err == nil {
+			art.StatusChangedAt = t
 		}
 	}
 
@@ -751,6 +815,9 @@ func serializeFrontMatter(art *Article) string {
 	}
 	if !art.ArchivedAt.IsZero() {
 		fm.ArchivedAt = art.ArchivedAt.Format(time.RFC3339)
+	}
+	if !art.StatusChangedAt.IsZero() {
+		fm.StatusChangedAt = art.StatusChangedAt.Format(time.RFC3339)
 	}
 
 	out, err := yaml.Marshal(&fm)
@@ -909,6 +976,17 @@ func (s *Storage) SearchArticlesWithOptions(queryStr string, opts SearchOptions)
 	}
 	if limit > maxSearchLimit {
 		limit = maxSearchLimit
+	}
+
+	// An explicit "archived" entry in the tags facet implies IncludeArchived, mirroring the
+	// browser's query-text heuristic. Without this, asking for archived documents the obvious way
+	// — search_wiki(tags: ["archived"]) — returned zero results with no explanation: the archived
+	// filter ran before the tag filter and discarded every hit the caller was asking for.
+	for _, t := range opts.Tags {
+		if strings.EqualFold(strings.TrimSpace(t), "archived") {
+			opts.IncludeArchived = true
+			break
+		}
 	}
 
 	// Create a query matching terms (supports boolean logic, wildcards, fuzzy matching natively!)
@@ -1181,7 +1259,13 @@ func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 	}
 
 	summary := fmt.Sprintf("Reverted to version %d", version)
-	return s.saveArticleLocked(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, histArt.Tags, histArt.Type)
+	// A historical version of a plan can carry the pre-lifecycle tag vocabulary (or several
+	// statuses); normalize so a revert cannot resurrect a tag set validation now rejects.
+	tags := histArt.Tags
+	if histArt.Type == ContentTypePlan {
+		tags = normalizeLegacyPlanStatusTags(tags)
+	}
+	return s.saveArticleLocked(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, tags, histArt.Type)
 }
 
 // UpdateArticleTags updates only the tag array for an article without modifying the title or content.
@@ -1275,6 +1359,13 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 	tagLower := strings.ToLower(tag)
 	if strings.HasPrefix(tagLower, MemoryScopeTagPrefix) {
 		return fmt.Errorf("cannot delete protected memory-scope tag: %s", tag)
+	}
+	// Plan statuses are structural: every plan carries exactly one, so deleting one globally
+	// would strip plans of their status and fail validation partway through the sweep.
+	for _, s := range PlanStatusTags {
+		if tagLower == s {
+			return fmt.Errorf("cannot globally delete '%s': it is a plan lifecycle status. Change each plan's status individually instead", tagLower)
+		}
 	}
 
 	// Held across the whole sweep so the operation is all-or-nothing with respect to other

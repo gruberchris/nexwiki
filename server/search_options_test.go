@@ -25,7 +25,7 @@ func seedSearchCorpus(t *testing.T) *Storage {
 	}{
 		{"Elasticsearch Notes", ContentTypeWiki, []string{"database"}, "zqterm comparing search engines"},
 		{"Bleve Decision Record", ContentTypeMemory, []string{"memory-nexwiki"}, "zqterm we chose Bleve over Elasticsearch for the zero-dependency constraint"},
-		{"Search Rework Plan", ContentTypePlan, []string{"wip"}, "zqterm rework the retrieval layer"},
+		{"Search Rework Plan", ContentTypePlan, []string{"implementing"}, "zqterm rework the retrieval layer"},
 		{"Search Tuning Skill", ContentTypeSkill, []string{"ready"}, "zqterm how to tune the index"},
 	}
 
