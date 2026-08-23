@@ -32,8 +32,12 @@ export interface Article {
   status_changed_at?: string;
 }
 
-/** A timestamp that represents a real moment, rather than Go's zero value serialized as a string. */
-export function isRealTimestamp(value: string | undefined): boolean {
+/**
+ * A timestamp that represents a real moment, rather than Go's zero value serialized as a string.
+ * Declared as a type predicate so callers still narrow away `undefined`, which a plain boolean
+ * return would silently stop doing.
+ */
+export function isRealTimestamp(value: string | undefined): value is string {
   return !!value && !value.startsWith('0001-01-01');
 }
 
