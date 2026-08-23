@@ -12,7 +12,7 @@ The workflow combines three ideas from the second-brain literature (captured in 
 
 ## 🚀 One-Time Setup
 
-### 1. Deploy a build with the 28-tool MCP surface
+### 1. Deploy a build with the 29-tool MCP surface
 
 The second-brain tools (`get_context_overview`, `get_backlinks`, `edit_agent_memory`, `delete_agent_memory`, `get_recent_activity`, `export_okf_bundle`, `import_okf_bundle`, plus the `description`/`source` front-matter fields) require a current build. If you run the Docker container, rebuild and redeploy:
 
@@ -20,7 +20,7 @@ The second-brain tools (`get_context_overview`, `get_backlinks`, `edit_agent_mem
 docker compose up -d --build
 ```
 
-**Verify**: ask your agent to list NexWiki's tools — you should see **28**, including `get_context_overview` and `get_recent_activity`.
+**Verify**: ask your agent to list NexWiki's tools — you should see **29**, including `get_context_overview` and `get_recent_activity`.
 
 ### 2. Connect your CLI over Streamable HTTP
 

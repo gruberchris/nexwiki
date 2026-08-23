@@ -134,7 +134,7 @@ These are the two conventions a new contributor is most likely to miss, and both
 | [`docs/`](./docs) | One in-depth guide per feature area; every guide is linked from [`docs/README.md`](./docs/README.md) |
 | [`docs/mcp_server.md`](./docs/mcp_server.md) | **The** canonical MCP tool reference — never restate the full tool list anywhere else |
 | [`AGENTS.md`](./AGENTS.md) | MCP architecture, protocol eras, prompts, and client configuration |
-| [`CHANGELOG.md`](./CHANGELOG.md) | User-visible changes, added under `[Unreleased]` |
+| [`CHANGELOG.md`](./CHANGELOG.md) | User-visible changes, added under `[Unreleased]`. Promoted to a version heading when a release is cut — see [Cutting a Release](./README.md#-cutting-a-release) |
 
 ### The Documentation Integrity Rule
 
@@ -143,7 +143,7 @@ When you add a feature ([full rule in `AGENTS.md`](./AGENTS.md#-project-document
 1. Add it to the feature list in `README.md`.
 2. Write a user guide in `docs/` that teaches the feature with practical examples.
 3. Link that guide from `docs/README.md`.
-4. Add a `CHANGELOG.md` entry under `[Unreleased]`.
+4. Add a `CHANGELOG.md` entry under `[Unreleased]`. Leave it there — a maintainer promotes the whole section when the next version is tagged ([Cutting a Release](./README.md#-cutting-a-release)).
 
 **If you add or remove an MCP tool**, document it in `docs/mcp_server.md` and update the tool count in *every* place it is stated — `README.md`, `AGENTS.md`, `docs/README.md`, `docs/second_brain_workflow_guide.md`, and the `expectedToolCount` constant in `server/mcp_tools_test.go`. That constant makes CI fail with the list of files to update, so a stale count cannot merge unnoticed.
 

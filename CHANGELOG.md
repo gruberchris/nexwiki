@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-08-23
+
 ### Added
 
 - **Lifecycle status is now a first-class `status` field, with enforced vocabularies for agent plans and agent skills.** Status used to be a tag, and that was the source of a long tail of awkwardness: a status is a single value with a state machine, while tags are an unordered folksonomy, so storing one inside the other forced "exactly one" counting, precedence tables to collapse duplicates, and a denylist to catch an agent writing `wip` when it meant `implementing`. A dedicated field makes the invalid states unrepresentable rather than merely detectable.

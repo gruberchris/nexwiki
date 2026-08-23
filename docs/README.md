@@ -70,7 +70,7 @@ A detailed guide explaining how to programmatically manage plan metadata and vie
 
 ### 10. [NexWiki Second Brain Workflow Guide](./second_brain_workflow_guide.md)
 A step-by-step walkthrough of using NexWiki as an AI second brain with your agent CLI (Claude Code, Cursor, Copilot CLI):
-* **One-Time Setup**: Deploying the 28-tool build, connecting over Streamable HTTP, and activating session-start orientation via `CLAUDE.md`.
+* **One-Time Setup**: Deploying the 29-tool build, connecting over Streamable HTTP, and activating session-start orientation via `CLAUDE.md`.
 * **The Session Loop**: Progressive disclosure with `get_context_overview`, catching up via `get_recent_activity`, selective reads with backlinks, plan lifecycle, and memory hygiene.
 * **Capture-and-Compile**: The `inbox` tag convention and the `ingest-source` skill implementing the one-source-at-a-time Karpathy ingestion loop.
 * **Tuning Tips**: Activity log filtering, description/source discipline, and transport caveats.
