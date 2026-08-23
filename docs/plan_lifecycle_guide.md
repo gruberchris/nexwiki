@@ -70,6 +70,8 @@ Each plan's front matter carries `status_changed_at`, stamped whenever its statu
 
 The web primary runs a lifecycle worker that sweeps all plans **once at startup and then on an interval**. It never runs in `-mcp-only` mode — a sidecar must not mutate a data directory the primary owns.
 
+Besides applying due transitions, the sweep backfills `draft` onto any plan it finds with no status — the pre-field documents the migration deliberately skipped.
+
 ### Configuration
 
 | Variable | Default | Purpose |
@@ -106,9 +108,11 @@ Reviving a plan out of `archived` (setting its status back to `draft` or `implem
 
 Status used to live in the tag list. The first boot after upgrading runs a one-time sweep that moves it into the field (marker file: `.status-field-migration-v1` in the data directory):
 
-* **Plans**: legacy words are remapped onto the closed vocabulary (`wip`/`in-progress`/`active` → `implementing`, `done` → `completed`, `todo`/`ready` → `draft`); several statuses collapse to the one that is most true (terminal wins — both `superseded` and `completed` becomes `superseded`); a plan with none becomes `draft`. `status_changed_at` is backfilled to the migration date — **not** the article timestamp, which would put months-old completed plans on an immediate archive countdown.
+* **Plans**: legacy words are remapped onto the closed vocabulary (`wip`/`in-progress`/`active` → `implementing`, `done` → `completed`, `todo`/`ready` → `draft`); several statuses collapse to the one that is most true (terminal wins — both `superseded` and `completed` becomes `superseded`). `status_changed_at` is stamped with the migration date — **not** the article timestamp, which would put months-old completed plans on an immediate archive countdown.
 * **Skills**: the same remapping onto `draft`/`ready`/`archived`. A skill with no status keeps none.
 * **Wiki articles and memories**: these have no status, so a retired status *tag* (`ready`, `draft`, `wip`, `done`, …) is simply **removed** — nothing replaces it. Every other tag survives untouched, including `archived` (the archival mechanism) and `inbox` (a raw capture awaiting compilation).
+
+Carrying a status tag is the only trigger. A plan that never had one is deliberately **not** rewritten at boot: doing so costs a file write, a gzip history entry, and a reindex per document, which on a 2,000-document corpus measured 201 writes and about a second of startup — a cost every deployment would pay to fix a handful of documents. Such a plan gets `draft` from the lifecycle worker's first sweep, which runs in the background after the server is already serving, or from its next edit, whichever comes first.
 
 Each change is logged to stderr with a per-document edit summary, and the sweep never re-runs.
 

@@ -126,6 +126,14 @@ func (w *PlanLifecycleWorker) Sweep() {
 		if err != nil {
 			continue
 		}
+		// A plan written before the status field existed gets one here. The migration deliberately
+		// leaves these alone so first boot stays fast; this sweep runs in the background after the
+		// server is already serving, which is the right place to pay for it.
+		if art.Status == "" {
+			w.backfillStatus(art)
+			continue
+		}
+
 		// Absent means "not yet eligible", never "infinitely old" — a parsing gap on a legacy
 		// plan must not be able to trigger an archive, let alone a deletion.
 		if art.StatusChangedAt.IsZero() {
@@ -145,6 +153,23 @@ func (w *PlanLifecycleWorker) Sweep() {
 		}
 		// draft, implementing, blocked, parked, evergreen: never auto-transition.
 	}
+}
+
+// backfillStatus gives a pre-field plan the default status, so it stops being invisible to the
+// dashboard's open-work filter and to the lifecycle timers.
+func (w *PlanLifecycleWorker) backfillStatus(art *Article) {
+	if w.Cfg.DryRun {
+		_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker (dry-run): would set plan '%s' to '%s' (no status on disk)\n",
+			art.Slug, DefaultPlanStatus)
+		return
+	}
+	updated, err := w.Storage.SetStatus(art.Slug, DefaultPlanStatus, 0, "Backfilled the default status: this plan predates the status field")
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker: failed to backfill status for '%s': %v\n", art.Slug, err)
+		return
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker: set plan '%s' to '%s' (no status on disk)\n", art.Slug, DefaultPlanStatus)
+	w.publish("edit", updated.Slug, updated.Title, updated, "article-edited")
 }
 
 func daysToDuration(days int) time.Duration {
@@ -234,5 +259,3 @@ func (w *PlanLifecycleWorker) publish(action, slug, title string, art *Article, 
 		DirectoryCount: dirCount,
 	})
 }
-
-
