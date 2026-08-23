@@ -92,20 +92,19 @@ func main() {
 
 	// Ensure storage is initialized.
 	//
-	// This is bounded by a timeout because the Bleve index holds an exclusive bbolt file lock on
-	// its directory: if another NexWiki process already has this data directory open, bleve.Open
-	// blocks *forever* — no error, no timeout of its own. A `-mcp-only` sidecar pointed at a
-	// running instance's data directory therefore used to hang silently at startup and never reach
-	// the MCP loop, which is precisely the documented Claude Desktop stdio configuration.
-	storage, err := openStorageWithTimeout(*dataDir, storageOpenTimeout)
+	// The index-lock deadline lives inside NewStorage and covers only the Bleve open, which is the
+	// one step that can block forever. It used to wrap this whole call, which put seeding, the
+	// one-time migration, and the boot index sync on the same 15-second budget — a migration that
+	// legitimately took longer was killed and reported as a lock conflict.
+	storage, err := server.NewStorage(*dataDir)
 	if err != nil {
 		// A primary on the configured port is handled above by proxying, so reaching here with a
 		// locked index means some other process owns the directory — a second instance on a
 		// different port, or a stale one that never shut down.
-		if errors.Is(err, errStorageLocked) {
+		if errors.Is(err, server.ErrSearchIndexLocked) {
 			log.Fatalf("Fatal: could not open the search index in %s within %s — another process is "+
 				"holding it open.\nStop any other NexWiki process using this data directory, or pass "+
-				"a different -data path.", *dataDir, storageOpenTimeout)
+				"a different -data path.", *dataDir, server.IndexOpenTimeout)
 		}
 		log.Fatalf("Fatal: failed to initialize storage: %v", err)
 	}
@@ -318,39 +317,6 @@ func main() {
 // shutdownTimeout bounds graceful shutdown. Deliberately under the 10s stop grace period a
 // container runtime allows by default, so the index is always closed before any SIGKILL.
 const shutdownTimeout = 5 * time.Second
-
-// storageOpenTimeout bounds how long startup waits for the search-index lock before concluding
-// another process holds it. Generous enough for a cold index rebuild on slow disks, short enough
-// that a stdio MCP client reports a failure instead of appearing to hang.
-const storageOpenTimeout = 15 * time.Second
-
-// errStorageLocked indicates the search index could not be opened within storageOpenTimeout,
-// which in practice always means another process holds its exclusive lock.
-var errStorageLocked = errors.New("search index is locked by another process")
-
-// openStorageWithTimeout runs server.NewStorage under a deadline. bleve.Open blocks indefinitely
-// on a contended index lock rather than returning an error, so the timeout is the only way to
-// distinguish "still indexing" from "another process owns this directory". The goroutine is left
-// running on timeout; every caller treats that as fatal and exits.
-func openStorageWithTimeout(dataDir string, timeout time.Duration) (*server.Storage, error) {
-	type result struct {
-		storage *server.Storage
-		err     error
-	}
-	done := make(chan result, 1)
-
-	go func() {
-		s, err := server.NewStorage(dataDir)
-		done <- result{storage: s, err: err}
-	}()
-
-	select {
-	case res := <-done:
-		return res.storage, res.err
-	case <-time.After(timeout):
-		return nil, errStorageLocked
-	}
-}
 
 // probeForPrimary reports whether a NexWiki web server is already running on the given port,
 // by issuing a short GET /api/config against the loopback interface.

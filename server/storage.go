@@ -113,20 +113,21 @@ func NewStorage(dataDir string) (*Storage, error) {
 		return nil, fmt.Errorf("failed to create history directory: %w", err)
 	}
 
-	// Open or create Bleve index
-	var index bleve.Index
-	var err error
-	if _, err = os.Stat(indexPath); os.IsNotExist(err) {
-		mapping := bleve.NewIndexMapping()
-		index, err = bleve.New(indexPath, mapping)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create search index: %w", err)
-		}
-	} else {
-		index, err = bleve.Open(indexPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open search index: %w", err)
-		}
+	// Open or create the Bleve index, under a deadline.
+	//
+	// The deadline covers this call and nothing else. bleve.Open takes an exclusive bbolt lock on
+	// the index directory and blocks *forever* if another process holds it — no error, no timeout
+	// of its own — so a bound is the only way to tell "another instance owns this directory" from
+	// "still working".
+	//
+	// It used to bound the whole of NewStorage from main.go, which quietly put seeding, the
+	// one-time migration, and the boot index sync on the same 15-second budget. On a NAS the
+	// status-field migration exceeded it and the process was killed mid-migration, reporting a
+	// lock conflict that had not happened. Only the lock wait is unbounded; the rest is work that
+	// legitimately takes as long as the corpus requires.
+	index, err := openSearchIndex(indexPath, IndexOpenTimeout)
+	if err != nil {
+		return nil, err
 	}
 
 	s := &Storage{
@@ -163,6 +164,50 @@ func NewStorage(dataDir string) (*Storage, error) {
 	}
 
 	return s, nil
+}
+
+// IndexOpenTimeout bounds how long startup waits for the search index's exclusive lock before
+// concluding another process holds it. Generous enough for a cold open on slow disks, short
+// enough that a stdio MCP client reports a failure instead of appearing to hang.
+const IndexOpenTimeout = 15 * time.Second
+
+// ErrSearchIndexLocked means the index could not be opened within IndexOpenTimeout, which in
+// practice always means another NexWiki process owns the data directory.
+var ErrSearchIndexLocked = errors.New("search index is locked by another process")
+
+// openSearchIndex opens (or creates) the Bleve index under a deadline.
+//
+// The goroutine is deliberately abandoned on timeout rather than cancelled: bleve.Open offers no
+// cancellation, and every caller treats this failure as fatal and exits the process.
+func openSearchIndex(indexPath string, timeout time.Duration) (bleve.Index, error) {
+	type result struct {
+		index bleve.Index
+		err   error
+	}
+	done := make(chan result, 1)
+
+	go func() {
+		if _, statErr := os.Stat(indexPath); os.IsNotExist(statErr) {
+			idx, err := bleve.New(indexPath, bleve.NewIndexMapping())
+			if err != nil {
+				err = fmt.Errorf("failed to create search index: %w", err)
+			}
+			done <- result{idx, err}
+			return
+		}
+		idx, err := bleve.Open(indexPath)
+		if err != nil {
+			err = fmt.Errorf("failed to open search index: %w", err)
+		}
+		done <- result{idx, err}
+	}()
+
+	select {
+	case res := <-done:
+		return res.index, res.err
+	case <-time.After(timeout):
+		return nil, ErrSearchIndexLocked
+	}
 }
 
 // Slugify standardizes title strings into valid URL-safe and file-safe slug formats.
