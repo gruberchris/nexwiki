@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-08-23
+
 ### Fixed
 
 - **Three shipped instruction texts still told agents to put lifecycle status in a tag — which the same release made a rejected write.** 0.12.0 moved status from a tag to the `status` field and began rejecting a status word in a plan's or skill's `tags`, but the guidelines seeded into a **fresh wiki** still said to "add the `completed` tag with `edit_agent_plan`", the `project_planning_workflow` MCP prompt still said to "mark the plan as completed by adding the 'completed' status tag", and the seeded tag rules still pointed at the retired `wip` vocabulary. An agent following any of them to the letter got its next call rejected. Also corrects two descriptive strings: the `GET /api/status-tags` payload described status as belonging to "a wiki article or collaborative AI plan" (wiki articles have no status), and `list_agent_plans` advertised that "lifecycle state lives in the status tags".
