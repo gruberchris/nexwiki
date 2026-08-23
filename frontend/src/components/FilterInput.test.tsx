@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { FilterInput } from './FilterInput';
 
@@ -24,7 +24,7 @@ describe('FilterInput', () => {
   it('calls onChange when typing', async () => {
     const onChange = vi.fn();
     render(<FilterInput {...baseProps} onChange={onChange} />);
-    await userEvent.type(screen.getByRole('textbox'), 'g');
+    await userEvent.type(screen.getByRole('combobox'), 'g');
     expect(onChange).toHaveBeenCalled();
   });
 
@@ -71,7 +71,7 @@ describe('FilterInput', () => {
       { type: 'tag', value: 'golang' },
     ];
     render(<FilterInput {...baseProps} value="go" suggestions={suggestions} />);
-    const input = screen.getByRole('textbox');
+    const input = screen.getByRole('combobox');
     await userEvent.click(input);
     // Dropdown should show
     expect(screen.queryByText('Go Programming Guide') || document.body.textContent?.includes('Go Programming Guide')).toBeTruthy();
@@ -81,13 +81,108 @@ describe('FilterInput', () => {
     const onChange = vi.fn();
     const suggestions = [{ type: 'title', value: 'Go Guide' }];
     render(<FilterInput {...baseProps} value="go" onChange={onChange} suggestions={suggestions} />);
-    const input = screen.getByRole('textbox');
+    const input = screen.getByRole('combobox');
     await userEvent.click(input);
     const option = screen.queryByText('Go Guide');
     if (option) {
       await userEvent.click(option);
       expect(onChange).toHaveBeenCalled();
     }
+  });
+});
+
+describe('FilterInput keyboard navigation', () => {
+  const suggestions = [
+    { type: 'tag', value: 'golang' },
+    { type: 'tag', value: 'gossip' },
+    { type: 'title', value: 'Go Guide' },
+  ];
+
+  const focusedOption = () => screen.queryByRole('option', { selected: true });
+
+  it('ArrowDown opens a closed dropdown and highlights the first suggestion', () => {
+    render(<FilterInput {...baseProps} value="go" suggestions={suggestions} />);
+    const input = screen.getByRole('combobox');
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(input).toHaveAttribute('aria-expanded', 'true');
+    expect(focusedOption()).toHaveTextContent('golang');
+  });
+
+  it('ArrowDown advances the highlight and wraps through the input (-1)', async () => {
+    render(<FilterInput {...baseProps} value="go" suggestions={suggestions} />);
+    const input = screen.getByRole('combobox');
+    await userEvent.click(input); // opens dropdown
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(focusedOption()).toHaveTextContent('gossip');
+
+    // Off the end: highlight passes through the input itself before wrapping.
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(focusedOption()).toBeNull();
+    expect(input).not.toHaveAttribute('aria-activedescendant');
+  });
+
+  it('ArrowUp moves backwards, wrapping to the last suggestion', async () => {
+    render(<FilterInput {...baseProps} value="go" suggestions={suggestions} />);
+    const input = screen.getByRole('combobox');
+    await userEvent.click(input);
+
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(focusedOption()).toHaveTextContent('Go Guide');
+  });
+
+  it('Enter selects the highlighted suggestion', async () => {
+    const onChange = vi.fn();
+    render(<FilterInput {...baseProps} value="go" onChange={onChange} suggestions={suggestions} />);
+    const input = screen.getByRole('combobox');
+    await userEvent.click(input);
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onChange).toHaveBeenCalledWith('golang');
+  });
+
+  it('Escape dismisses the dropdown and clears the highlight', async () => {
+    render(<FilterInput {...baseProps} value="go" suggestions={suggestions} />);
+    const input = screen.getByRole('combobox');
+    await userEvent.click(input);
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    // Reopening must not resume on a stale highlight.
+    await userEvent.click(input);
+    expect(focusedOption()).toBeNull();
+  });
+
+  it('does not swallow the arrows when the suggestion list is empty', () => {
+    render(<FilterInput {...baseProps} value="go" suggestions={[]} />);
+    const input = screen.getByRole('combobox');
+    // fireEvent.keyDown returns false when preventDefault was called.
+    expect(fireEvent.keyDown(input, { key: 'ArrowDown' })).toBe(true);
+    expect(fireEvent.keyDown(input, { key: 'ArrowUp' })).toBe(true);
+  });
+
+  it('no longer intercepts Tab', async () => {
+    render(<FilterInput {...baseProps} value="go" suggestions={suggestions} />);
+    const input = screen.getByRole('combobox');
+    await userEvent.click(input);
+
+    expect(fireEvent.keyDown(input, { key: 'Tab' })).toBe(true); // not preventDefault-ed
+    expect(focusedOption()).toBeNull(); // and the highlight did not move
+  });
+
+  it('closes the dropdown when focus leaves the control', async () => {
+    render(<FilterInput {...baseProps} value="go" suggestions={suggestions} />);
+    const input = screen.getByRole('combobox');
+    await userEvent.click(input);
+    expect(input).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.blur(input, { relatedTarget: document.body });
+    expect(input).toHaveAttribute('aria-expanded', 'false');
   });
 });
 

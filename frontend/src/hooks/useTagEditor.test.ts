@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useTagEditor, isReservedTag } from './useTagEditor';
 import type { Article } from '../types';
@@ -94,38 +94,38 @@ describe('suggestions', () => {
 });
 
 describe('keyboard navigation', () => {
-  it('cycles forward through suggestions and back to the input', () => {
+  it('cycles forward through suggestions with ArrowDown and back to the input', () => {
     const { result } = renderHook(() => useTagEditor([], articles));
     act(() => result.current.handleInputChange('a')); // database, golang
     const count = result.current.suggestions.length;
     expect(count).toBeGreaterThan(1);
 
-    act(() => result.current.handleKeyDown(key('Tab')));
+    act(() => result.current.handleKeyDown(key('ArrowDown')));
     expect(result.current.focusedIndex).toBe(0);
 
     for (let i = 1; i < count; i++) {
-      act(() => result.current.handleKeyDown(key('Tab')));
+      act(() => result.current.handleKeyDown(key('ArrowDown')));
     }
     expect(result.current.focusedIndex).toBe(count - 1);
 
     // Past the end returns to -1 so the user can always get back to free typing.
-    act(() => result.current.handleKeyDown(key('Tab')));
+    act(() => result.current.handleKeyDown(key('ArrowDown')));
     expect(result.current.focusedIndex).toBe(-1);
   });
 
-  it('Shift+Tab moves backwards, wrapping to the last suggestion', () => {
+  it('ArrowUp moves backwards, wrapping to the last suggestion', () => {
     const { result } = renderHook(() => useTagEditor([], articles));
     act(() => result.current.handleInputChange('a'));
     const count = result.current.suggestions.length;
 
-    act(() => result.current.handleKeyDown(key('Tab', true)));
+    act(() => result.current.handleKeyDown(key('ArrowUp')));
     expect(result.current.focusedIndex).toBe(count - 1);
   });
 
   it('Enter commits the focused suggestion rather than the raw text', () => {
     const { result } = renderHook(() => useTagEditor([], articles));
     act(() => result.current.handleInputChange('data'));
-    act(() => result.current.handleKeyDown(key('Tab')));
+    act(() => result.current.handleKeyDown(key('ArrowDown')));
 
     const focused = result.current.suggestions[result.current.focusedIndex];
     act(() => result.current.handleKeyDown(key('Enter')));
@@ -137,12 +137,38 @@ describe('keyboard navigation', () => {
   it('resets the highlight when the suggestion set changes', () => {
     const { result } = renderHook(() => useTagEditor([], articles));
     act(() => result.current.handleInputChange('a'));
-    act(() => result.current.handleKeyDown(key('Tab')));
+    act(() => result.current.handleKeyDown(key('ArrowDown')));
     expect(result.current.focusedIndex).toBe(0);
 
     // Narrowing the query changes which tags are listed, so a stale index would highlight a
     // different tag than the one the user was looking at.
     act(() => result.current.handleInputChange('data'));
     expect(result.current.focusedIndex).toBe(-1);
+  });
+
+  // Tab is an ordinary focus-movement key: it must fall through to the browser untouched even
+  // while suggestions are visible, and it must not move the highlight.
+  it('does not intercept Tab', () => {
+    const { result } = renderHook(() => useTagEditor([], articles));
+    act(() => result.current.handleInputChange('a'));
+    expect(result.current.suggestions.length).toBeGreaterThan(0);
+
+    const preventDefault = vi.fn();
+    act(() =>
+      result.current.handleKeyDown({ key: 'Tab', shiftKey: false, preventDefault } as unknown as React.KeyboardEvent),
+    );
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(result.current.focusedIndex).toBe(-1);
+  });
+
+  it('does not swallow the arrows when there are no suggestions', () => {
+    const { result } = renderHook(() => useTagEditor([], articles));
+    expect(result.current.suggestions).toEqual([]);
+
+    const preventDefault = vi.fn();
+    act(() =>
+      result.current.handleKeyDown({ key: 'ArrowDown', shiftKey: false, preventDefault } as unknown as React.KeyboardEvent),
+    );
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 });
