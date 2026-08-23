@@ -234,5 +234,3 @@ func (w *PlanLifecycleWorker) publish(action, slug, title string, art *Article, 
 		DirectoryCount: dirCount,
 	})
 }
-
-
