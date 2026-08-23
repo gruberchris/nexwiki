@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **The dashboard and sidebar showed no documents at all — every article, memory, plan, and skill was hidden.** 0.12.0 began hiding archived documents from listings, and the check read `archived_at` as a boolean. `encoding/json`'s `omitempty` does **not** omit a zero-valued struct, so every unarchived document serialized `"archived_at": "0001-01-01T00:00:00Z"` — a string that is truthy in JavaScript. The browser concluded every document was archived and rendered none of them, while each section's count kept reporting the real total, because counts come from the unfiltered list. Search was unaffected, since it filters server-side where Go compares with `.IsZero()`.
+  - `Article.ArchivedAt` and `Article.StatusChangedAt` now use **`omitzero`** (Go 1.24+), which does drop a zero `time.Time`. The API no longer emits either key for a document that has neither.
+  - The frontend no longer trusts a timestamp's truthiness: `isRealTimestamp()` rejects Go's zero value, so the UI is correct even against an older server. The plan header's "status since …" carried the same latent trap and uses it too.
+  - Guarded at both layers: `server/article_json_test.go` asserts the payload omits zero timestamps and keeps real ones, and `Hero.test.tsx` renders documents stamped with the zero value. Both were verified to fail against the broken code.
+
 ## [0.12.1] — 2026-08-23
 
 ### Fixed
