@@ -50,26 +50,22 @@ func (s *Storage) MigrateStatusToField() error {
 		if meta.Status != "" {
 			status = meta.Status // already migrated or authored with the field
 		}
-		tagsChanged := len(remainingTags) != len(meta.Tags)
-		statusChanged := status != meta.Status
 
-		// A plan whose status is already correct still needs one write to backfill its
-		// status_changed_at clock (saveArticleLocked stamps a zero value with "now"). Other types
-		// have no clock, so an unchanged document needs no write at all.
-		needsClock := meta.Type == ContentTypePlan && meta.StatusChangedAt.IsZero()
-		if !tagsChanged && !statusChanged && !needsClock {
+		// Carrying a status tag is the *only* trigger. A plan that never had one is deliberately
+		// left alone: rewriting it costs a file write, a gzip history entry, and a reindex per
+		// document — measured at 201 writes and ~1s of boot on a 2,000-document corpus, a
+		// regression every deployment would pay to fix a handful of documents. Such a plan is
+		// defaulted to draft the first time anything writes it, and the lifecycle worker backfills
+		// it off the boot path on its first sweep.
+		if len(remainingTags) == len(meta.Tags) {
 			continue
 		}
 
-		summary := "Status field migration: backfilled status_changed_at"
-		switch {
-		case status != "" && (tagsChanged || statusChanged):
+		summary := fmt.Sprintf("Status field migration: removed retired status tag(s) from [%s]",
+			strings.Join(meta.Tags, ","))
+		if status != "" {
 			summary = fmt.Sprintf("Status field migration: status '%s' moved out of tags [%s]",
 				status, strings.Join(meta.Tags, ","))
-		case tagsChanged:
-			// A type with no lifecycle: the retired status tag is dropped, nothing replaces it.
-			summary = fmt.Sprintf("Status field migration: removed retired status tag(s) from [%s]",
-				strings.Join(meta.Tags, ","))
 		}
 
 		art, err := s.GetArticle(meta.Slug)

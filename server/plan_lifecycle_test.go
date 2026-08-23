@@ -313,6 +313,49 @@ func TestLifecycleWorkerDryRunTouchesNothing(t *testing.T) {
 	}
 }
 
+// TestLifecycleWorkerBackfillsStatuslessPlans covers the other half of the migration decision:
+// boot stays fast because statusless plans are left alone there, and the worker — which already
+// sweeps at startup, off the boot path — is what gives them a status.
+func TestLifecycleWorkerBackfillsStatuslessPlans(t *testing.T) {
+	s := newLifecycleStorage(t)
+
+	// Write a pre-field plan straight to disk; SaveArticle would default it on the way in.
+	now := time.Now()
+	a := &Article{Type: ContentTypePlan, Title: "Legacy Plan", Slug: "legacy-plan", Tags: []string{"nexwiki"},
+		CreatedAt: now, Timestamp: now, Version: 1, Content: "# p"}
+	if err := os.WriteFile(filepath.Join(s.ArticleDir, "legacy-plan.md"), []byte(serializeFrontMatter(a)+a.Content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	w := &PlanLifecycleWorker{Storage: s, Cfg: PlanLifecycleConfig{ArchiveAfterDays: 90, DeleteAfterDays: 365}}
+	w.Sweep()
+
+	got, err := s.GetArticle("legacy-plan")
+	if err != nil {
+		t.Fatalf("plan disappeared: %v", err)
+	}
+	if got.Status != DefaultPlanStatus {
+		t.Errorf("the worker must give a statusless plan a status, got %q", got.Status)
+	}
+	if got.StatusChangedAt.IsZero() {
+		t.Error("backfilling a status must stamp status_changed_at")
+	}
+	if len(got.Tags) != 1 || got.Tags[0] != "nexwiki" {
+		t.Errorf("free tags must survive the backfill, got %v", got.Tags)
+	}
+
+	// A dry run proposes it without writing.
+	s2 := newLifecycleStorage(t)
+	if err := os.WriteFile(filepath.Join(s2.ArticleDir, "legacy-plan.md"), []byte(serializeFrontMatter(a)+a.Content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	dry := &PlanLifecycleWorker{Storage: s2, Cfg: PlanLifecycleConfig{ArchiveAfterDays: 90, DeleteAfterDays: 365, DryRun: true}}
+	dry.Sweep()
+	if again, _ := s2.GetArticle("legacy-plan"); again.Status != "" {
+		t.Errorf("a dry run must not write a status, got %q", again.Status)
+	}
+}
+
 func TestLifecycleWorkerSkipsPlansWithoutStatusClock(t *testing.T) {
 	s := newLifecycleStorage(t)
 	art := savePlan(t, s, "Clockless Completed", "completed")
@@ -396,7 +439,10 @@ func TestMigrationTakesStatusOutOfTags(t *testing.T) {
 	if plan.StatusChangedAt.IsZero() {
 		t.Error("migration must backfill status_changed_at on plans")
 	}
-	check("statusless-plan", "draft", "nexwiki")
+	// A plan that never carried a status tag is deliberately left alone by the migration: there
+	// is nothing to move, and rewriting every such plan costs a write, a history entry, and a
+	// reindex each on first boot. It gets its status from the worker or its next edit instead.
+	check("statusless-plan", "", "nexwiki")
 	// Precedence: the terminal state wins — only "superseded" is still true of a replaced plan.
 	check("double-plan", "superseded")
 	check("ready-skill", "ready", "second-brain")

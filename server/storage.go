@@ -319,7 +319,6 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	resolvedType := normalizeType(articleType) // empty/unknown → Wiki
 	renamedFromSlug := ""                      // set when a slug rename occurs, to heal inbound WikiLinks
 	prevStatus := ""                           // the status before this save, for change stamping
-	isNewDocument := true
 
 	// If updating an existing article
 	if oldSlug != "" {
@@ -334,7 +333,6 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 				if articleType == "" {
 					resolvedType = existingArt.Type
 				}
-				isNewDocument = false
 				prevStatus = existingArt.Status
 				art = &Article{
 					Type:            resolvedType,
@@ -358,7 +356,10 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	if statusOverride != nil {
 		resolvedStatus = NormalizeStatus(*statusOverride)
 	}
-	if resolvedType == ContentTypePlan && resolvedStatus == "" && isNewDocument {
+	// A plan always ends up with a status: a new one enters at draft, and one written before the
+	// field existed is defaulted here rather than rejected — otherwise a legacy plan would be
+	// un-editable until a migration had swept it, which makes correctness depend on boot order.
+	if resolvedType == ContentTypePlan && resolvedStatus == "" {
 		resolvedStatus = DefaultPlanStatus
 	}
 
