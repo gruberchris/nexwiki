@@ -5,6 +5,7 @@ import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark-dimmed.css';
 import type { Article } from '../types';
 import { Slugify } from '../utils';
+import { MermaidBlock } from './MermaidBlock';
 
 interface ViewerProps {
   content: string;
@@ -155,13 +156,30 @@ export const Viewer: React.FC<ViewerProps> = ({ content, onNavigate, articles })
             );
           },
 
-          // Add clean wrapper around code blocks
+          // A ```mermaid fence renders as a diagram; every other language stays on the
+          // rehype-highlight path. The <pre> wrapper is dropped for diagrams below.
           code: ({ className, children, ...props }) => {
+            if (className?.includes('language-mermaid')) {
+              return <MermaidBlock code={String(children).replace(/\n$/, '')} />;
+            }
             return (
               <code className={className} {...props}>
                 {children}
               </code>
             );
+          },
+
+          // Unwrap the <pre> around mermaid fences: MermaidBlock renders a <div> (or its own
+          // fallback <pre>), and block elements inside <pre> are invalid HTML.
+          pre: ({ children, ...props }) => {
+            const child = Array.isArray(children) ? children[0] : children;
+            if (
+              React.isValidElement<{ className?: string }>(child) &&
+              child.props.className?.includes('language-mermaid')
+            ) {
+              return <>{children}</>;
+            }
+            return <pre {...props}>{children}</pre>;
           },
 
           // Custom styles for checklist items

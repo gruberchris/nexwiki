@@ -284,6 +284,17 @@
     page-break-inside: avoid !important;
   }
 
+  /* Rendered Mermaid diagrams: on screen they scroll horizontally when wide; in print the
+     scroll container would clip, so let the SVG shrink to the page width instead. */
+  .mermaid-diagram {
+    overflow: visible !important;
+    page-break-inside: avoid !important;
+  }
+  .mermaid-diagram svg {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+
   /* Ensure no-print items and their children are fully hidden, placed at the end to win cascade */
   .no-print,
   .no-print * {
