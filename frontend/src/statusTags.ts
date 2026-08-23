@@ -1,10 +1,9 @@
 /**
- * Lifecycle status is a document field, not a tag. Plans and skills validate it against a closed
- * vocabulary; wiki articles and memories may use any value or none.
+ * Lifecycle status is a document field, not a tag, and only agent plans and agent skills have one.
+ * Wiki articles and memories describe themselves with free tags instead.
  *
- * The badge palette covers the two enforced vocabularies: eight states need colors that read at a
- * glance, not eight variations of gray. A status outside them (a wiki article's own word) falls
- * back to the neutral pill.
+ * The badge palette covers both vocabularies: eight states need colors that read at a glance, not
+ * eight variations of gray. Anything unrecognized falls back to the neutral pill.
  */
 
 export const PLAN_STATUSES = [
@@ -42,7 +41,7 @@ export function statusBadgeClass(status: string): string {
   return STATUS_BADGE_CLASSES[status.toLowerCase()] ?? NEUTRAL_BADGE;
 }
 
-/** The vocabulary a document type may choose from, or null when it is unconstrained. */
+/** The vocabulary a document type chooses from, or null when the type has no status at all. */
 export function statusOptionsFor(type: string | undefined): readonly string[] | null {
   if (type === 'AI-Agent-Plan') return PLAN_STATUSES;
   if (type === 'AI-Agent-Skill') return SKILL_STATUSES;

@@ -24,10 +24,10 @@ const statusFieldMigrationMarker = ".status-field-migration-v1"
 //     the majority of the corpus within days of shipping.
 //   - AI-Agent-Skill: the same remapping onto draft/ready/archived. A skill with no status keeps
 //     none.
-//   - Wiki articles and agent memories: a recognized status word moves from tags into the field
-//     verbatim — no vocabulary is imposed on them, and any other tag is left exactly as it is.
-//     `archived` is the deliberate exception: on those types it is not a label but a *mechanism*
-//     (it stamps archived_at and hides the document from search), so it stays a tag.
+//   - Wiki articles and agent memories have no lifecycle status, so a retired status *tag* is
+//     simply removed — there is nowhere to move it to and nothing to replace it with. Every other
+//     tag survives untouched, `archived` and `inbox` included: neither describes a document's
+//     state (one is the archival mechanism, the other marks a raw capture awaiting compilation).
 //
 // The sweep runs exactly once, gated by a marker file, and every change is logged to stderr.
 func (s *Storage) MigrateStatusToField() error {
@@ -62,9 +62,14 @@ func (s *Storage) MigrateStatusToField() error {
 		}
 
 		summary := "Status field migration: backfilled status_changed_at"
-		if tagsChanged || statusChanged {
+		switch {
+		case status != "" && (tagsChanged || statusChanged):
 			summary = fmt.Sprintf("Status field migration: status '%s' moved out of tags [%s]",
 				status, strings.Join(meta.Tags, ","))
+		case tagsChanged:
+			// A type with no lifecycle: the retired status tag is dropped, nothing replaces it.
+			summary = fmt.Sprintf("Status field migration: removed retired status tag(s) from [%s]",
+				strings.Join(meta.Tags, ","))
 		}
 
 		art, err := s.GetArticle(meta.Slug)

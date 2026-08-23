@@ -131,19 +131,16 @@ type StatisticsOutput struct {
 	BrokenLinks     []BrokenLinkRef `json:"broken_links"`
 }
 
-// StatusTagsOutput is the `get_status_tags` payload. The two agent vocabularies are enforced;
-// the general list is advisory, and status_tags remains their union for backward compatibility.
+// StatusTagsOutput is the `get_status_tags` payload. Only plans and skills have a status field;
+// status_tags remains the union of their vocabularies for backward compatibility.
 type StatusTagsOutput struct {
 	StatusTags []string `json:"status_tags"`
-	// PlanStatusTags is the closed plan lifecycle vocabulary: every AI-Agent-Plan carries
-	// exactly one of these, and no other lifecycle word.
+	// PlanStatusTags is the closed plan lifecycle vocabulary: every AI-Agent-Plan has exactly
+	// one of these, and no other lifecycle word.
 	PlanStatusTags []string `json:"plan_status_tags"`
-	// SkillStatusTags is the closed skill lifecycle vocabulary: an AI-Agent-Skill carries at
-	// most one of these, and no other lifecycle word.
+	// SkillStatusTags is the closed skill lifecycle vocabulary: an AI-Agent-Skill has at most
+	// one of these, and no other lifecycle word.
 	SkillStatusTags []string `json:"skill_status_tags"`
-	// GeneralStatusTags are conventional lifecycle words for wiki articles and memories. They
-	// are suggestions, not rules — those documents may carry any tags at all.
-	GeneralStatusTags []string `json:"general_status_tags"`
 }
 
 // ActivityOutput is the `get_recent_activity` payload, oldest event first to match the prose.
@@ -298,11 +295,10 @@ func statisticsOutputSchema() map[string]interface{} {
 
 func statusTagsOutputSchema() map[string]interface{} {
 	return schemaObject(map[string]interface{}{
-		"status_tags":         schemaStringArray("Union of all three lists, kept for backward compatibility."),
-		"plan_status_tags":    schemaStringArray("The closed plan lifecycle vocabulary. Every AI-Agent-Plan carries exactly ONE of these and no other lifecycle word."),
-		"skill_status_tags":   schemaStringArray("The closed skill lifecycle vocabulary. An AI-Agent-Skill carries at most ONE of these and no other lifecycle word."),
-		"general_status_tags": schemaStringArray("Conventional lifecycle words for wiki articles and memories. Advisory only — those documents may carry any tags."),
-	}, "status_tags", "plan_status_tags", "skill_status_tags", "general_status_tags")
+		"status_tags":       schemaStringArray("Union of both vocabularies, kept for backward compatibility."),
+		"plan_status_tags":  schemaStringArray("The closed plan lifecycle vocabulary. Every AI-Agent-Plan has exactly ONE of these and no other lifecycle word."),
+		"skill_status_tags": schemaStringArray("The closed skill lifecycle vocabulary. An AI-Agent-Skill has at most ONE of these. Wiki articles and memories have no status field at all."),
+	}, "status_tags", "plan_status_tags", "skill_status_tags")
 }
 
 func activityOutputSchema() map[string]interface{} {

@@ -2,7 +2,7 @@
 
 Every Collaborative AI Plan (`AI-Agent-Plan`) moves through a closed, validated lifecycle of eight states held in its `status` front-matter field, and a background worker automates the tail of it: finished plans archive themselves, and long-archived plans are eventually deleted. This guide covers the state machine, the enforcement rules, the timers, and the safety guards.
 
-> Status is a **field**, not a tag — see the [Tags Guide](./tags.md) for why, and for the skill vocabulary and the (absent) rules for wiki articles and memories.
+> Status is a **field**, not a tag, and only plans and skills have one — see the [Tags Guide](./tags.md) for why, for the skill vocabulary, and for what happened to the status tags wiki articles used to carry.
 
 ---
 
@@ -108,7 +108,7 @@ Status used to live in the tag list. The first boot after upgrading runs a one-t
 
 * **Plans**: legacy words are remapped onto the closed vocabulary (`wip`/`in-progress`/`active` → `implementing`, `done` → `completed`, `todo`/`ready` → `draft`); several statuses collapse to the one that is most true (terminal wins — both `superseded` and `completed` becomes `superseded`); a plan with none becomes `draft`. `status_changed_at` is backfilled to the migration date — **not** the article timestamp, which would put months-old completed plans on an immediate archive countdown.
 * **Skills**: the same remapping onto `draft`/`ready`/`archived`. A skill with no status keeps none.
-* **Wiki articles and memories**: a recognized status word moves from tags into the field verbatim — no vocabulary is imposed — and every other tag is left exactly as it was. `archived` is the deliberate exception: on those types it is a *mechanism* (it stamps `archived_at` and hides the document from search), so it stays a tag.
+* **Wiki articles and memories**: these have no status, so a retired status *tag* (`ready`, `draft`, `wip`, `done`, …) is simply **removed** — nothing replaces it. Every other tag survives untouched, including `archived` (the archival mechanism) and `inbox` (a raw capture awaiting compilation).
 
 Each change is logged to stderr with a per-document edit summary, and the sweep never re-runs.
 
@@ -116,7 +116,7 @@ Each change is logged to stderr with a per-document edit summary, and the sweep 
 
 ## Working With the Lifecycle as an Agent
 
-* `get_status_tags` returns the plan and skill vocabularies grouped by document type, plus the advisory list for everything else.
+* `get_status_tags` returns the plan and skill vocabularies. No other document type has a status.
 * Create plans with `create_agent_plan` (starts in `draft`, or pass `status`), move them with `edit_agent_plan`'s `status` argument, and log progress with `append_agent_plan` (which never touches status or tags).
 * `list_agent_plans(status: "implementing")` filters by state; `wiki_health` reports a per-state census of the whole plan corpus and exempts `parked`/`evergreen` plans from its staleness check.
 * Searching archived content: `search_wiki(tags: ["archived"])` or `include_archived: true` — an explicit `archived` tag facet implies inclusion.

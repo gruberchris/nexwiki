@@ -14,8 +14,9 @@ import (
 // denylist to catch an agent writing `wip` when it meant `implementing`. A dedicated field makes
 // the invalid states unrepresentable instead of merely detectable.
 //
-// Two classes have an enforced vocabulary — AI-Agent-Plan and AI-Agent-Skill. Wiki articles and
-// agent memories may put any string in the field, or none, and their tags are never policed.
+// Only two classes have a lifecycle at all — AI-Agent-Plan and AI-Agent-Skill — and each has a
+// closed vocabulary. Wiki articles and agent memories have no status: they describe themselves
+// with free tags, which NexWiki never validates, never reserves, and never strips.
 
 // PlanStatusTags is the closed lifecycle vocabulary for AI-Agent-Plan documents. Every plan has
 // exactly one. Timers act on completed, superseded, and archived; parked and evergreen are exempt
@@ -39,22 +40,31 @@ var SkillStatusTags = []string{
 	"archived", // retired, kept for reference
 }
 
-// GeneralStatusTags are conventional status values for wiki articles and agent memories. They are
-// **not enforced** — those documents may put any string in `status` (or none) and carry any tags.
-// This list exists to give get_status_tags something useful to suggest.
-var GeneralStatusTags = []string{
-	"draft", "wip", "in-progress", "active", "todo", "pending",
-	"review", "ready", "done", "inbox", "archived",
+// Wiki articles and agent memories have **no lifecycle status at all**. The `status` field belongs
+// to the two classes with a real lifecycle; those documents describe themselves with free tags,
+// which NexWiki never validates, never strips, and never reserves.
+
+// retiredStatusTagLabels are the words that used to be applied as *status tags* before status
+// became a field. The one-time migration removes them from wiki articles and memories — the tag
+// simply goes away, since those types have no status to move it into. Nothing enforces them
+// afterwards: a wiki article may be tagged anything at all, including these.
+//
+// `archived` and `inbox` are deliberately absent. Neither is a label describing a document's
+// state: `archived` is the mechanism that stamps archived_at and hides a document from search,
+// and `inbox` marks a raw capture still queued for compilation. Removing either would break a
+// working feature rather than clean up a convention.
+var retiredStatusTagLabels = []string{
+	"draft", "wip", "in-progress", "active", "todo", "pending", "review", "ready", "done",
 }
 
-// StatusTags is the union of all three vocabularies, used for status-badge styling and for
-// recognizing a legacy status word that belongs in the field rather than in the tag list.
+// StatusTags is the union of the two enforced vocabularies, used for status-badge styling and by
+// the /api/status-tags endpoint.
 var StatusTags = buildStatusTagUnion()
 
 func buildStatusTagUnion() []string {
 	seen := make(map[string]bool)
 	var union []string
-	for _, list := range [][]string{PlanStatusTags, SkillStatusTags, GeneralStatusTags} {
+	for _, list := range [][]string{PlanStatusTags, SkillStatusTags} {
 		for _, t := range list {
 			if !seen[t] {
 				seen[t] = true
@@ -64,6 +74,26 @@ func buildStatusTagUnion() []string {
 	}
 	sort.Strings(union)
 	return union
+}
+
+// knownStatusWords is every word that could plausibly be meant as a lifecycle status. It exists
+// for exactly one purpose: rejecting such a word in a *plan's or skill's* tag list, where it would
+// contradict the status field. It is never applied to wiki articles or memories.
+var knownStatusWords = buildKnownStatusWords()
+
+func buildKnownStatusWords() map[string]bool {
+	words := make(map[string]bool)
+	for _, list := range [][]string{PlanStatusTags, SkillStatusTags, retiredStatusTagLabels} {
+		for _, t := range list {
+			words[t] = true
+		}
+	}
+	for _, replacements := range []map[string]string{planStatusReplacements, skillStatusReplacements} {
+		for from := range replacements {
+			words[from] = true
+		}
+	}
+	return words
 }
 
 // planStatusReplacements maps a lifecycle word that is not a plan status onto the plan status
@@ -135,7 +165,9 @@ func NormalizeStatus(status string) string {
 //
 //   - AI-Agent-Plan: must be one of the eight plan statuses (creation defaults to draft).
 //   - AI-Agent-Skill: empty, or one of the three skill statuses.
-//   - Everything else: anything, including empty.
+//   - Everything else: not checked. Wiki articles and memories have no lifecycle status; nothing
+//     writes the field for them and no UI offers it, but a hand-written value is tolerated rather
+//     than policed.
 //
 // It validates the value only. Unusual *transitions* (draft straight to archived, say) are
 // deliberately log-and-allow: strict transition enforcement would fight manual corrections.
@@ -177,11 +209,9 @@ func ValidateStatusFreeTags(docType string, tags []string) error {
 	label := statusClassLabel(docType)
 	for _, t := range tags {
 		lower := NormalizeStatus(t)
-		for _, known := range StatusTags {
-			if lower == known {
-				return fmt.Errorf("'%s' describes lifecycle state, so it belongs in the %s's 'status' field, not its tags. Keep tags for project context and topics",
-					lower, label)
-			}
+		if knownStatusWords[lower] {
+			return fmt.Errorf("'%s' describes lifecycle state, so it belongs in the %s's 'status' field, not its tags. Keep tags for project context and topics",
+				lower, label)
 		}
 	}
 	return nil
@@ -202,23 +232,28 @@ var statusPrecedence = map[string][]string{
 	ContentTypeSkill: {"archived", "ready", "draft"},
 }
 
-// generalStatusPrecedence orders the unenforced vocabulary for the migration, so a wiki article
-// tagged both "draft" and "ready" lands on the further-along one.
-var generalStatusPrecedence = []string{"done", "ready", "review", "active", "in-progress", "wip", "draft", "todo", "pending", "inbox"}
-
-// ExtractLegacyStatus lifts a lifecycle status out of a tag list, returning the status and the
-// tags that remain. It is how the one-time migration moves status from tags into the field, and
-// how OKF import and version revert accept a pre-field document.
+// ExtractLegacyStatus separates lifecycle status from a tag list, returning the status and the
+// tags that remain. It is how the one-time migration gets status out of tags, and how OKF import
+// and version revert accept a document written before the field existed.
 //
-// `archived` is deliberately left in the tags of unconstrained documents: on a wiki article or a
-// memory it is not a label but a *mechanism* — it stamps archived_at, hides the document from
-// search, and drives the existing article-deletion path. Plans and skills move it into the field,
-// where the same mirroring is applied explicitly.
+// The two classes with a lifecycle keep their status: a legacy word is mapped onto their
+// vocabulary and returned as the field value. Wiki articles and memories have no status, so a
+// retired status label is simply **dropped** — every other tag, `archived` and `inbox` included,
+// is left exactly as it was.
 func ExtractLegacyStatus(docType string, tags []string) (string, []string) {
 	docType = normalizeType(docType)
 	vocabulary, replacements, required := statusVocabulary(docType)
 
-	constrained := vocabulary != nil
+	if vocabulary == nil {
+		var rest []string
+		for _, t := range tags {
+			if !isRetiredStatusLabel(NormalizeStatus(t)) {
+				rest = append(rest, t)
+			}
+		}
+		return "", rest
+	}
+
 	allowed := make(map[string]bool, len(vocabulary))
 	for _, s := range vocabulary {
 		allowed[s] = true
@@ -229,22 +264,16 @@ func ExtractLegacyStatus(docType string, tags []string) (string, []string) {
 	for _, t := range tags {
 		lower := NormalizeStatus(t)
 		switch {
-		case constrained && allowed[lower]:
+		case allowed[lower]:
 			found[lower] = true
-		case constrained && replacements[lower] != "":
+		case replacements[lower] != "":
 			found[replacements[lower]] = true
-		case !constrained && lower != StatusArchived && isKnownStatusWord(lower):
-			found[lower] = true
 		default:
 			rest = append(rest, t)
 		}
 	}
 
-	precedence := statusPrecedence[docType]
-	if !constrained {
-		precedence = generalStatusPrecedence
-	}
-	for _, s := range precedence {
+	for _, s := range statusPrecedence[docType] {
 		if found[s] {
 			return s, rest
 		}
@@ -255,8 +284,8 @@ func ExtractLegacyStatus(docType string, tags []string) (string, []string) {
 	return "", rest
 }
 
-func isKnownStatusWord(word string) bool {
-	for _, s := range StatusTags {
+func isRetiredStatusLabel(word string) bool {
+	for _, s := range retiredStatusTagLabels {
 		if word == s {
 			return true
 		}

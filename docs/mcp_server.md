@@ -317,8 +317,7 @@ Creates a new wiki article with a given title and raw Markdown content body.
   * `content` (string, **required**): The raw Markdown content of the article body.
   * `description` (string, **optional**): A one-line summary shown in list indexes and the context overview.
   * `source` (string, **optional**): Provenance — the URL, document, or reference this knowledge came from. AI-created articles SHOULD cite their source.
-  * `status` (string, **optional**): Lifecycle status. Wiki articles have **no enforced vocabulary** — any value is accepted, or none. Call `get_status_tags` for the conventional suggestions.
-  * `tags` (array of strings, **optional**): Any tags you like; wiki articles are never policed. Tool-managed `memory-<scope>` tags are reserved and will be ignored if provided.
+  * `tags` (array of strings, **optional**): Any tags you like — wiki articles are never policed and have no lifecycle status. Tool-managed `memory-<scope>` tags are reserved and will be ignored if provided.
   * `edit_summary` (string, **optional**): A summary describing the reason for creating the page.
 * **Behavior**:
   Automatically handles title slugification, checks for slug collisions, serializes the metadata block, commits the first version backup snapshot, saves the flat Markdown file on disk, and indexes the new article in Bleve for search.
@@ -559,16 +558,15 @@ Lists all Custom AI Skills (OKF type `AI-Agent-Skill`) currently saved in the kn
 ---
 
 ### 21. `get_status_tags`
-Returns the recognized values for the `status` **field**, grouped by document type.
+Returns the recognized values for the `status` **field**, which only agent plans and agent skills have.
 
 * **Arguments**: None (empty object `{}`).
 * **Behavior**:
-  Lifecycle state is a document field, not a tag. Two classes have an enforced vocabulary: an `AI-Agent-Plan` has **exactly one** plan status, and an `AI-Agent-Skill` has **at most one** skill status. Neither may use a lifecycle word from anywhere else — a plan with `status: "wip"` or a skill with `status: "implementing"` is rejected with a message naming the right value, and a lifecycle word passed as a *tag* on either is rejected too. Wiki articles and agent memories have **no status rules** and may use any value and any tags. The output also explains the completion workflow (append final notes with `append_agent_plan`, then set `status: "completed"` with `edit_agent_plan`) and the automatic tail of the lifecycle. See the [Plan Lifecycle Guide](./plan_lifecycle_guide.md).
+  Lifecycle state is a document field, not a tag. An `AI-Agent-Plan` has **exactly one** plan status; an `AI-Agent-Skill` has **at most one** skill status. Neither may use a lifecycle word from anywhere else — a plan with `status: "wip"` or a skill with `status: "implementing"` is rejected with a message naming the right value, and a lifecycle word passed as a *tag* on either is rejected too. **Wiki articles and agent memories have no status field and no tag rules at all.** The output also explains the completion workflow (append final notes with `append_agent_plan`, then set `status: "completed"` with `edit_agent_plan`) and the automatic tail of the lifecycle. See the [Plan Lifecycle Guide](./plan_lifecycle_guide.md).
 
-* **Plan statuses** (enforced): `draft`, `implementing`, `blocked`, `completed`, `superseded`, `parked`, `evergreen`, `archived`
-* **Skill statuses** (enforced): `draft`, `ready`, `archived`
-* **General values** (advisory only): `draft`, `wip`, `in-progress`, `active`, `todo`, `pending`, `review`, `ready`, `done`, `inbox`, `archived`
-* **Structured output**: `structuredContent` as `{status_tags[], plan_status_tags[], skill_status_tags[], general_status_tags[]}` — `status_tags` remains the union for backward compatibility.
+* **Plan statuses**: `draft`, `implementing`, `blocked`, `completed`, `superseded`, `parked`, `evergreen`, `archived`
+* **Skill statuses**: `draft`, `ready`, `archived`
+* **Structured output**: `structuredContent` as `{status_tags[], plan_status_tags[], skill_status_tags[]}` — `status_tags` remains the union of the two for backward compatibility.
 
 ---
 

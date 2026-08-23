@@ -54,7 +54,7 @@ edit_summary: Updated connection pool size
 
 Lifecycle state lives in a dedicated `status` front-matter field. It is deliberately **not** a tag: a status is a single value with a state machine, while tags are an unordered folksonomy, and storing one inside the other made it possible for a document to claim two contradictory states at once.
 
-Two document classes have an **enforced** vocabulary; the rest are unconstrained.
+Only two document classes have a lifecycle at all, and each has an enforced vocabulary.
 
 ### Plan Lifecycle Statuses (AI-Agent-Plan)
 
@@ -85,11 +85,11 @@ A Custom AI Skill has **at most one** of these — a skill may have no status at
 
 Skills have no timers: nothing auto-archives or auto-deletes a skill.
 
-### Wiki Articles and Agent Memories — no rules
+### Wiki Articles and Agent Memories — no status, no rules
 
-Wiki articles and agent memories may put **any value** in `status`, or none, and may carry **any tags at all**. Nothing is enforced and nothing is stripped. These conventional values are what the UI suggests and colors, but they are suggestions only:
+Wiki articles and agent memories have **no lifecycle status**. The editor offers no status control for them, no tool writes one, and their tags are **never validated, reserved, or stripped** — tag them with whatever is useful to you or your agents.
 
-`draft` · `wip` · `in-progress` · `active` · `todo` · `pending` · `review` · `ready` · `done` · `inbox` · `archived`
+The one-time migration removed the words that used to be applied as status tags under the old convention (`draft`, `wip`, `in-progress`, `active`, `todo`, `pending`, `review`, `ready`, `done`) from these documents. The tags were simply deleted; nothing replaced them. `archived` and `inbox` were deliberately kept — neither describes a document's state: `archived` is the archival *mechanism*, and `inbox` marks a raw capture still queued for compilation. Nothing stops you re-applying any of these words as ordinary tags afterwards.
 
 ### The One Rule for Plans and Skills
 
@@ -99,7 +99,7 @@ A plan or a skill may not use a **lifecycle word as a tag**. Tagging a plan `com
 
 A status value is a **semantic label** — it does not trigger automatic filtering, hiding, or routing — with two exceptions: `archived` (visibility and deletion, below) and the plan lifecycle statuses (validation and timers, above).
 
-* Marking a document archived — the `status` field on a plan or skill, the `archived` **tag** on a wiki article or memory — **hides it from search results by default** — a search only returns archived documents when the query text mentions "archived" (browser) or the caller passes `include_archived` / an `archived` tag facet (MCP `search_wiki`).
+* Marking a document archived — the `status` field on a plan or skill, the `archived` **tag** on a wiki article or memory — **hides it from search results by default**: a search only returns archived documents when the query text mentions "archived" (browser) or the caller passes `include_archived` / an `archived` tag facet (MCP `search_wiki`).
 * Archived documents are also **hidden from the home dashboard sections and the sidebar by default**; typing `archived` in a filter box brings them back. Direct URLs always work — hiding from discovery never means 404.
 * The filter help modals (accessible via the `?` icon in the filter bar) document the syntax and these defaults.
 
@@ -124,8 +124,8 @@ export NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS=30
 
 ### Setting a Status
 
-* **In the Editor**: use the **Status** control beside the Tags row. Plans and skills get a dropdown of their vocabulary; other document types get a free-text box. Statuses render as a colored badge on article cards and in the article header.
-* **Via MCP**: pass `status` to `create_agent_plan`, `edit_agent_plan`, `create_agent_skill`, `edit_agent_skill`, `create_wiki_article`, or `edit_wiki_article`. Call `get_status_tags` for the vocabularies, grouped by document type. `list_agent_plans` takes a `status` filter.
+* **In the Editor**: use the **Status** dropdown beside the Tags row. It appears only when editing a plan or a skill — the two types that have a status. Statuses render as a colored badge on article cards and in the article header.
+* **Via MCP**: pass `status` to `create_agent_plan`, `edit_agent_plan`, `create_agent_skill`, or `edit_agent_skill`. Call `get_status_tags` for the two vocabularies. `list_agent_plans` takes a `status` filter.
 * **Via REST API**: include `"status"` in the `POST /api/articles` or `PUT /api/articles/{slug}` body. Omitting it **preserves** the current status, so an editor that does not manage lifecycle state cannot silently reset a completed plan.
 
 Every write path enforces the contract: a save that leaves a plan without a valid status, gives a skill an unrecognized one, or puts a lifecycle word in either one's tags is rejected with an error naming the valid vocabulary.

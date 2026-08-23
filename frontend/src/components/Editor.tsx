@@ -132,8 +132,8 @@ export const Editor: React.FC<EditorProps> = ({
     selectSuggestion: selectTagSuggestion, removeTag,
   } = useTagEditor(initialTags || [], articles);
 
-  // Lifecycle status is a field, not a tag. Plans and skills pick from their closed vocabulary;
-  // other document types get a free-text box, since they have no enforced states.
+  // Lifecycle status is a field, not a tag, and only plans and skills have one. Wiki articles and
+  // memories are not offered the control at all — they describe themselves with free tags.
   const [status, setStatus] = useState(initialStatus || '');
   const statusOptions = statusOptionsFor(resolvedType);
 
@@ -358,30 +358,24 @@ export const Editor: React.FC<EditorProps> = ({
                     </div>
                   )}
 
-                  <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-1">
-                    Status:
-                  </span>
-                  {statusOptions ? (
-                    <select
-                      aria-label="Lifecycle status"
-                      value={status}
-                      onChange={(e) => setStatus(e.target.value)}
-                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full mr-2 border cursor-pointer ${statusBadgeClass(status)}`}
-                    >
-                      {/* A plan always has one; a skill may have none. */}
-                      {!isPlan && <option value="">(none)</option>}
-                      {statusOptions.map((opt) => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      aria-label="Lifecycle status"
-                      value={status}
-                      onChange={(e) => setStatus(e.target.value)}
-                      placeholder="none"
-                      className="text-[10px] w-28 px-2 py-0.5 rounded-full mr-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 focus:outline-hidden focus:ring-1 focus:ring-themeAccent"
-                    />
+                  {statusOptions && (
+                    <>
+                      <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-1">
+                        Status:
+                      </span>
+                      <select
+                        aria-label="Lifecycle status"
+                        value={status}
+                        onChange={(e) => setStatus(e.target.value)}
+                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full mr-2 border cursor-pointer ${statusBadgeClass(status)}`}
+                      >
+                        {/* A plan always has one; a skill may have none. */}
+                        {!isPlan && <option value="">(none)</option>}
+                        {statusOptions.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </>
                   )}
 
                   <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-1">

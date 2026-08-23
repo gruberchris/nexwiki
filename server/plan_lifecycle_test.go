@@ -70,11 +70,11 @@ func TestValidateStatus(t *testing.T) {
 		{"skill with a plan status", ContentTypeSkill, "implementing", "use 'draft' instead"},
 		{"skill with an invented status", ContentTypeSkill, "polished", "do not invent new ones"},
 
-		// Wiki articles and memories are unconstrained by design.
-		{"wiki article keeps 'ready'", ContentTypeWiki, "ready", ""},
-		{"wiki article keeps 'draft'", ContentTypeWiki, "draft", ""},
-		{"wiki article may use anything", ContentTypeWiki, "needs-diagrams", ""},
-		{"memory may use anything", ContentTypeMemory, "whatever", ""},
+		// Wiki articles and memories have no lifecycle. Nothing writes their status field and no
+		// UI offers it, but a hand-written value is tolerated rather than policed.
+		{"wiki article is never validated", ContentTypeWiki, "ready", ""},
+		{"wiki article may hold anything", ContentTypeWiki, "needs-diagrams", ""},
+		{"memory is never validated", ContentTypeMemory, "whatever", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -336,7 +336,7 @@ func TestLifecycleWorkerSkipsPlansWithoutStatusClock(t *testing.T) {
 	}
 }
 
-func TestMigrationMovesStatusOutOfTags(t *testing.T) {
+func TestMigrationTakesStatusOutOfTags(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewStorage(dir)
 	if err != nil {
@@ -358,6 +358,8 @@ func TestMigrationMovesStatusOutOfTags(t *testing.T) {
 	writeRaw(ContentTypeSkill, "Retired Skill", "retired-skill", []string{"nexwiki", "archived"})
 	writeRaw(ContentTypeWiki, "Ready Article", "ready-article", []string{"ready", "golang"})
 	writeRaw(ContentTypeWiki, "Retired Article", "retired-article", []string{"archived", "golang"})
+	writeRaw(ContentTypeWiki, "Inbox Capture", "inbox-capture", []string{"inbox", "raw"})
+	writeRaw(ContentTypeMemory, "Scoped Memory", "scoped-memory", []string{"memory-nexwiki", "wip"})
 
 	// Remove the marker NewStorage wrote for the empty directory, then run the sweep.
 	if err := os.Remove(filepath.Join(dir, statusFieldMigrationMarker)); err != nil {
@@ -400,13 +402,18 @@ func TestMigrationMovesStatusOutOfTags(t *testing.T) {
 	check("ready-skill", "ready", "second-brain")
 	check("retired-skill", StatusArchived, "nexwiki")
 
-	// Wiki articles: the status word moves into the field, but `archived` stays a tag because on
-	// an article it is a mechanism (archived_at, search hiding), not a label.
-	check("ready-article", "ready", "golang")
+	// Wiki articles have no lifecycle: the retired status tag is simply removed, and every other
+	// tag survives. `archived` stays because on an article it is the archival mechanism
+	// (archived_at, search hiding), not a label.
+	check("ready-article", "", "golang")
 	retired := check("retired-article", "", "archived", "golang")
 	if !IsArchived(retired) {
 		t.Error("an archived article must still count as archived after the migration")
 	}
+	// `inbox` marks a raw capture awaiting compilation — a workflow marker, not a status label.
+	check("inbox-capture", "", "inbox", "raw")
+	// Memories get the same treatment, and their tool-managed scope tag is never touched.
+	check("scoped-memory", "", "memory-nexwiki")
 
 	versionAfterFirstRun := plan.Version
 	again, _ := s2.GetArticle("wip-plan")
