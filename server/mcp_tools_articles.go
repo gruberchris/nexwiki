@@ -249,9 +249,23 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		text += fmt.Sprintf("\n\n---\nLinked from: %s", strings.Join(refs, ", "))
 	}
 
+	// The body ships exactly once, in the text block above. It used to ship twice — once as
+	// prose here and again as structuredContent.article.content — which doubled the wire size of
+	// every read and pushed a 63 KB article past an MCP client's tool-result ceiling at roughly
+	// half the article size that should have hit it. Clients that truncate a large result spill
+	// it to a file and leave the agent to dig the body back out, so the duplication cost real
+	// legibility, not just bytes.
+	//
+	// The text block is the copy that survives because every MCP client renders it, while
+	// structuredContent is optional and newer. Nothing else is lost: an agent reading only the
+	// structured half still gets every field an edit needs — `version` above all — and the body
+	// it would have read there is in the text it was already given.
+	structured := *art
+	structured.Content = ""
+
 	return ToolResponse{
 		Content:           []ToolContent{{Type: "text", Text: text}},
-		StructuredContent: ArticleOutput{Article: *art, Backlinks: links},
+		StructuredContent: ArticleOutput{Article: structured, Backlinks: links},
 	}, nil
 }
 

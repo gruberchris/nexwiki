@@ -54,7 +54,8 @@ type DocumentLink struct {
 
 // ArticleOutput is the `read_article` payload. The embedded Article carries `version`, which is
 // what `edit_wiki_article` requires as `loaded_version` — the single most valuable field to hand
-// over as a number rather than as prose.
+// over as a number rather than as prose. It deliberately carries no `content`: the body ships
+// once, in the text block. See (*Server).toolReadArticle.
 type ArticleOutput struct {
 	Article   Article        `json:"article"`
 	Backlinks []DocumentLink `json:"backlinks"`
@@ -234,7 +235,10 @@ func searchOutputSchema() map[string]interface{} {
 
 func articleOutputSchema() map[string]interface{} {
 	return schemaObject(map[string]interface{}{
-		"article":   articleSchema(true),
+		// articleSchema(false): no `content` property. read_article returns the body in its
+		// text block only, so advertising a structured `content` field would promise a value
+		// that is never sent.
+		"article":   articleSchema(false),
 		"backlinks": schemaArrayOf(documentLinkSchema(), "Documents whose body links here via a WikiLink."),
 	}, "article", "backlinks")
 }
