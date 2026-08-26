@@ -152,7 +152,8 @@ func TestStructuredOutputCarriesRealData(t *testing.T) {
 
 	t.Run("read_article carries the version needed to edit", func(t *testing.T) {
 		var out ArticleOutput
-		decodeStructured(t, toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"search-design"}}`), &out)
+		resp := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"search-design"}}`)
+		decodeStructured(t, resp, &out)
 		if out.Article.Slug != "search-design" {
 			t.Errorf("slug = %q, want search-design", out.Article.Slug)
 		}
@@ -161,8 +162,14 @@ func TestStructuredOutputCarriesRealData(t *testing.T) {
 		if out.Article.Version != 2 {
 			t.Errorf("version = %d, want 2", out.Article.Version)
 		}
-		if !strings.Contains(out.Article.Content, "Revised") {
-			t.Errorf("content missing from structured output: %q", out.Article.Content)
+		// The body is deliberately absent from the structured half — it would otherwise be a
+		// second copy of the text block, doubling the size of every read. It must still be
+		// present in the text, which is the one copy every client renders.
+		if out.Article.Content != "" {
+			t.Errorf("structured output must not repeat the body, got %q", out.Article.Content)
+		}
+		if !strings.Contains(resp.Content[0].Text, "Revised") {
+			t.Errorf("body missing from the text block: %q", resp.Content[0].Text)
 		}
 		if len(out.Backlinks) != 1 || out.Backlinks[0].Slug != "bleve-notes" {
 			t.Errorf("backlinks = %+v, want one entry for bleve-notes", out.Backlinks)
