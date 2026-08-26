@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-08-26
+
+### Added
+
+- **The home dashboard uses the display.** 0.12.0 gave the article reading column a responsive ladder but left the dashboard behind: it stayed pinned at `max-w-4xl` (896px) with a card grid that stopped at two columns from 768px upward. A wide monitor rendered a narrow ribbon of cards with dead space either side of it, and far more scrolling than the content needed. The dashboard is a card grid rather than prose, so it is not bound by the reading measure that caps an article at 1024px — it now runs deliberately **wider than an article**, to 1536px, with the card columns scaling on the same breakpoints: three from 1280px, four from 1536px. The full-text search bar stays centered at its original width, and the quick-action cards already filled the wider container.
+  - Also fixes a latent bug the wider grid would have exposed: each section's empty-state panel spanned a hardcoded two columns, so it would have sat short of the row at three or four. It now spans the full row at any width.
+
+### Changed
+
+- **⚠️ `read_article` no longer repeats the article body in `structuredContent`.** The tool returned the full Markdown **twice** in a single response — once as prose in `content[0].text`, and again as `structuredContent.article.content` — so every read crossed the wire at roughly twice the article's size. That halved the effective ceiling on how large an article an agent could read in one call: MCP clients cap tool-result size, and on exceeding it they truncate what the model sees and spill the full payload to a file for the agent to dig back out. A 63 KB article tripped that cap at about half the size it should have, and the cost was legibility, not just bytes.
+  - The body now ships **once, in the text block** — the copy every MCP client renders, where `structuredContent` is optional and newer. The published `outputSchema` drops its `content` property to match, since advertising a field that is never sent is the schema drift that makes a published schema worse than none.
+  - **Migration:** an agent or client reading the body from `structuredContent.article.content` must read `content[0].text` instead. Every other structured field is unchanged — `version` above all — so the documented read-then-edit loop through `loaded_version` is unaffected. No other tool changed, and the tool count stays 29.
+  - Guarded by `TestStructuredOutputCarriesRealData`, which previously asserted the body *was* in the structured payload — that assertion was the duplication. It now pins the property from both sides: absent from `structuredContent`, present in the text block.
+
 ## [0.12.3] — 2026-08-23
 
 ### Fixed
@@ -272,7 +286,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/gruberchris/nexwiki/compare/v0.12.3...v0.13.0
+[0.12.3]: https://github.com/gruberchris/nexwiki/compare/v0.12.2...v0.12.3
+[0.12.2]: https://github.com/gruberchris/nexwiki/compare/v0.12.1...v0.12.2
+[0.12.1]: https://github.com/gruberchris/nexwiki/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/gruberchris/nexwiki/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/gruberchris/nexwiki/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/gruberchris/nexwiki/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/gruberchris/nexwiki/compare/v0.9.0...v0.10.0
