@@ -89,9 +89,9 @@ export function DirectorySection({
       </div>
 
       {isExpanded && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 animate-fade-in">
           {filteredArticles.length === 0 ? (
-            <div className="col-span-2 p-12 text-center border border-dashed border-themeBorder rounded-2xl select-none">
+            <div className="col-span-full p-12 text-center border border-dashed border-themeBorder rounded-2xl select-none">
               {emptyContent}
             </div>
           ) : (

@@ -171,7 +171,10 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto h-screen bg-themeBgPrimary p-8 sm:p-12 md:p-16 selection:bg-themeAccent selection:text-white transition-colors min-w-0">
-      <div className="max-w-4xl mx-auto space-y-12 animate-slide-up">
+      {/* The dashboard is a card grid, not prose, so it is not bound by the reading measure that
+          caps the article column at max-w-5xl — it deliberately runs wider on large displays.
+          The card columns in DirectorySection scale on the same breakpoints. */}
+      <div className="max-w-4xl xl:max-w-6xl 2xl:max-w-[1536px] mx-auto space-y-12 animate-slide-up">
 
         {/* Hero Header */}
         <div className="relative text-center sm:text-left flex flex-col sm:flex-row items-center justify-between gap-6 pb-8 border-b border-themeBorder">
