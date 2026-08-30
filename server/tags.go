@@ -440,3 +440,29 @@ func normalizeType(t string) string {
 		return ContentTypeWiki
 	}
 }
+
+// pinnedMemoryKinds are the kinds get_context_overview lists first.
+//
+// `user` and `feedback` are what an agent needs regardless of the task it is about to start:
+// who it is working with, and the corrections that person has already given. Every other kind is
+// only relevant once the task is known, so ordering by these two costs nothing and saves the
+// agent from reading the whole memory index to find them.
+var pinnedMemoryKinds = map[string]bool{"user": true, "feedback": true}
+
+// isPinnedMemoryKind reports whether a kind leads the memory listing in the context overview.
+func isPinnedMemoryKind(kind string) bool {
+	return pinnedMemoryKinds[NormalizeMemoryKind(kind)]
+}
+
+// countPinnedMemories counts how many of these documents carry a pinned kind. Used to decide
+// whether the overview explains the ordering at all — a wiki with no user or feedback memories
+// should not carry a sentence about an ordering that is not visible.
+func countPinnedMemories(docs []Article) int {
+	n := 0
+	for _, d := range docs {
+		if isPinnedMemoryKind(d.MemoryKind) {
+			n++
+		}
+	}
+	return n
+}
