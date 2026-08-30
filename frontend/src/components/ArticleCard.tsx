@@ -4,6 +4,7 @@ import { formatRelativeTime } from '../utils';
 import { Clock, ArrowRight } from 'lucide-react';
 import { sortCardTags } from '../filterUtils';
 import { statusBadgeClass } from '../statusTags';
+import { memoryKindBadgeClass } from '../memoryKinds';
 
 const MAX_VISIBLE_TAGS = 3;
 
@@ -32,11 +33,16 @@ export function ArticleCard({ art, onNavigate, secondary = false, statusTags }: 
             {art.description}
           </p>
         )}
-        {(isAgentDoc(art) || art.status || (art.tags && art.tags.length > 0)) && (
+        {(isAgentDoc(art) || art.status || art.memory_kind || (art.tags && art.tags.length > 0)) && (
           <div className="flex flex-wrap gap-1">
             {art.status && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${statusBadgeClass(art.status)}`}>
                 {art.status}
+              </span>
+            )}
+            {art.memory_kind && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${memoryKindBadgeClass(art.memory_kind)}`}>
+                {art.memory_kind}
               </span>
             )}
             {isAgentDoc(art) && (

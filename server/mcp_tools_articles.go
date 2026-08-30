@@ -48,6 +48,11 @@ var searchWikiTool = toolDef{
 					"type":        "boolean",
 					"description": "Optional; set true to include archived documents, which are excluded by default.",
 				},
+				"memory_kind": map[string]interface{}{
+					"type":        "string",
+					"enum":        MemoryKinds,
+					"description": "Optional; narrow to agent memories of one kind: 'project', 'reference', 'user', or 'feedback'. Only memories carry a kind, so supplying this necessarily excludes every other document type.",
+				},
 			},
 			"required": []string{"query"},
 		},
@@ -64,6 +69,7 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		Tags            []string `json:"tags"`
 		Limit           int      `json:"limit"`
 		IncludeArchived bool     `json:"include_archived"`
+		MemoryKind      string   `json:"memory_kind"`
 	}
 	var searchArgs SearchArgs
 	if e := decodeToolArgs(args, &searchArgs); e != nil {
@@ -80,6 +86,13 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 			"Error: unknown document type(s): %s. Valid values: %s.",
 			strings.Join(unknown, ", "), strings.Join(SearchTypeNames(), ", "))}}}, nil
 	}
+	// Same reasoning as the type check above: an unrecognized kind must be reported, not answered
+	// with an empty result an agent would read as "no such knowledge".
+	memoryKind := NormalizeMemoryKind(searchArgs.MemoryKind)
+	if memoryKind != "" && !IsMemoryKind(memoryKind) {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf(
+			"Error: '%s' is not a memory kind. Valid values: %s.", memoryKind, strings.Join(MemoryKinds, ", "))}}}, nil
+	}
 
 	// No legacyQueryHeuristics: an agent searching its own second brain sees every document
 	// type unless it explicitly narrows. Memories and plans are the point, not noise.
@@ -88,6 +101,7 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		Tags:            searchArgs.Tags,
 		Limit:           searchArgs.Limit,
 		IncludeArchived: searchArgs.IncludeArchived,
+		MemoryKind:      memoryKind,
 	})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
@@ -101,6 +115,9 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 	}
 	if len(searchArgs.Tags) > 0 {
 		facets = append(facets, "tags: "+strings.Join(searchArgs.Tags, ", "))
+	}
+	if memoryKind != "" {
+		facets = append(facets, "memory kind: "+memoryKind)
 	}
 	if searchArgs.IncludeArchived {
 		facets = append(facets, "including archived")
@@ -155,6 +172,7 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 			Count:           len(hits),
 			Types:           searchArgs.Types,
 			Tags:            searchArgs.Tags,
+			MemoryKind:      memoryKind,
 			IncludeArchived: searchArgs.IncludeArchived,
 			Results:         hits,
 		},

@@ -147,6 +147,32 @@ There are exactly four types:
 
 > **Historical note:** earlier versions of NexWiki keyed these classes off `aiagent-*` tag prefixes. Those class tags were removed when NexWiki adopted OKF — the class now lives in `type`. You will not find `aiagent-plan` or `aiagent-memory-*` tags on current documents.
 
+### 🧭 A memory has two axes: kind and scope
+
+Ask two different questions about any memory, and NexWiki answers them with two different mechanisms:
+
+| | **Kind** — *what sort of fact is this?* | **Scope** — *how far does it reach?* |
+|---|---|---|
+| Vocabulary | **Closed**: `project`, `reference`, `user`, `feedback` | **Open**: any project or topic name |
+| Stored as | the `memory_kind` **field** | the tool-managed `memory-<scope>` **tag** |
+| Set with | `memory_kind` (**required** at creation) | `memory_type` (optional) |
+| Filter with | `list_agent_memories(memory_kind:)`, `search_wiki(memory_kind:)` | `list_agent_memories(memory_type:)` |
+
+The split is not arbitrary — it is the same rule NexWiki learned the hard way with lifecycle status: **closed vocabularies are fields, open vocabularies are tags.** A single value with a fixed set of options stored inside an unordered folksonomy forces "exactly one" counting and a denylist for near-misses; a dedicated field makes the invalid states unrepresentable instead of merely detectable.
+
+The two axes are **independent**, and the full cross-product is legal. A `feedback` memory may be scoped to a project or carry no scope at all.
+
+| Kind | Holds | Example |
+|---|---|---|
+| `project` | Goals and constraints **not derivable** from the repo or its git history | "Deploys from an agent session are refused by the permission classifier" |
+| `reference` | A pointer to an external resource — dashboard, ticket, host, URL | "The metrics dashboard lives at …" |
+| `user` | Who the operator is — role, expertise, standing preferences | "Prefers the standard argued from the RFC, not from current clients" |
+| `feedback` | A correction the operator gave, plus *why*, plus *how to apply it* | "Raise scope concerns in conversation, not in the PR description — because a PR describes the change" |
+
+`user` and `feedback` are the two kinds that had nowhere to live before this axis existed, and their absence is why the second brain was split in half: every stored memory was a technical fact about a system, while everything known about *the person* lived in one client's local files, invisible to every other agent on the MCP server.
+
+**Memories written before the kind axis existed carry none.** They stay valid, readable and editable — the requirement is on creation, not on saving — and `wiki_health` lists them under `unkinded_memories` as a burn-down worklist. Nothing backfills them automatically: deciding `project` versus `reference` for an existing memory is a judgment call per memory, not a mechanical rewrite.
+
 ### 🧷 Memory scope tags
 
 The one system tag that remains is the **memory-scope tag**, `memory-<scope>`. It is set from the `memory_type` argument of `create_agent_memory` and narrows a memory to a project or topic:
@@ -157,7 +183,9 @@ The one system tag that remains is the **memory-scope tag**, `memory-<scope>`. I
 | `docker`, `golang` (any topic) | `memory-docker` | Reusable knowledge across projects |
 | *(omitted)* | *(none)* | Knowledge with no clear project or topic home |
 
-Scope tags are **tool-managed**: preserved automatically by `edit_agent_memory` and `update_article_tags`, hidden from the sidebar tag cloud, and not freely assignable by users to non-memory documents. Filter memories by scope with `list_agent_memories(memory_type: "nexwiki")`.
+Scope tags are **tool-managed**: preserved automatically by `edit_agent_memory` and `update_article_tags`, hidden from the sidebar tag cloud, and not freely assignable by users to non-memory documents. Filter memories by scope with `list_agent_memories(memory_type: "nexwiki")`, and by both axes at once with `list_agent_memories(memory_type: "nexwiki", memory_kind: "reference")`.
+
+In the web UI, kind renders as a badge beside the status badge on cards and in the article header, is edited from a **Kind** dropdown in the editor (memories only), and is matched by the filter bar alongside titles, tags and status — so typing `feedback` finds the corrections, and `feedback || user` finds everything known about the operator.
 
 > **Preservation applies only to `AI-Agent-Memory` documents.** That is the only class where the tag is genuinely tool-managed — `create_agent_memory` derives it from `memory_type`, and dropping it would orphan the memory from its scope. A `memory-*` tag sitting on a `Wiki`, `AI-Agent-Plan`, or `AI-Agent-Skill` document is stray data that no tool puts there, so it is **removable** by replacing that document's tags. It was not always: until this was fixed, such a tag survived every edit and `DeleteTagGlobally` refused it too, leaving it permanently stuck. Forging a new scope tag onto a non-memory document is still refused.
 

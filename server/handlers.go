@@ -179,6 +179,9 @@ type CreateArticleReq struct {
 	LoadedVersion int      `json:"loaded_version"` // Version loaded by client for conflict validation
 	Tags          []string `json:"tags"`           // Tags list
 	Status        *string  `json:"status"`         // Optional lifecycle status; omit to preserve
+	// MemoryKind classifies an AI-Agent-Memory; omit to preserve. Only meaningful on the update
+	// path — REST creation always produces a Wiki article, which has no kind.
+	MemoryKind *string `json:"memory_kind"`
 }
 
 // validateAndCleanUserTags preserves tool-managed memory-scope tags (memory-<scope>) that already
@@ -345,6 +348,7 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		// Status, by contrast, is preserved when omitted: an editor that does not manage
 		// lifecycle state must not be able to silently reset a completed plan.
 		Status:        req.Status,
+		MemoryKind:    req.MemoryKind,
 		LoadedVersion: req.LoadedVersion,
 	})
 	switch {

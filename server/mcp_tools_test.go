@@ -367,7 +367,7 @@ func TestAgentCreateToolsAcceptTags(t *testing.T) {
 
 	t.Run("memory keeps its tool-managed scope tag", func(t *testing.T) {
 		srv := newMCPServer(t)
-		resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Tagged Memory","content":"# M","memory_type":"nexwiki","tags":["review"]}}`)
+		resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Tagged Memory","content":"# M","memory_type":"nexwiki","tags":["review"]}}`)
 		if resp.IsError {
 			t.Fatalf("create failed: %s", resp.Content[0].Text)
 		}
@@ -393,7 +393,7 @@ func TestAgentCreateToolsAcceptTags(t *testing.T) {
 		}
 
 		srv2 := newMCPServer(t)
-		toolCall(t, srv2, `{"name":"create_agent_memory","arguments":{"title":"Forging Memory","content":"# M","memory_type":"real","tags":["memory-fake"]}}`)
+		toolCall(t, srv2, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Forging Memory","content":"# M","memory_type":"real","tags":["memory-fake"]}}`)
 		art2, _ := srv2.Storage.GetArticle("forging-memory")
 		if hasTagFold(art2.Tags, MemoryScopeTagPrefix+"fake") {
 			t.Errorf("a forged memory-scope tag was accepted: %v", art2.Tags)

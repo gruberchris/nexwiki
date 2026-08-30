@@ -10,6 +10,7 @@ import { Hero } from './components/Hero';
 import { SearchResults } from './components/SearchResults';
 import { Slugify, formatRelativeTime } from './utils';
 import { statusBadgeClass } from './statusTags';
+import { memoryKindBadgeClass, MEMORY_KIND_HINTS } from './memoryKinds';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { ThemeManagerModal } from './components/ThemeManagerModal';
 import { useSSE } from './hooks/useSSE';
@@ -281,7 +282,7 @@ export const App: React.FC = () => {
   }, [currentPath]);
 
   // CRUD: Saving Article edits/creates
-  const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string, status: string) => {
+  const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string, status: string, memoryKind: string) => {
     const targetSlug = editorSlug; // empty if new
     const isNew = targetSlug === '';
     const newComputedSlug = Slugify(title);
@@ -295,7 +296,12 @@ export const App: React.FC = () => {
       edit_summary: editSummary,
       loaded_version: currentArticle ? currentArticle.version : 0,
       tags,
-      status
+      status,
+      // Sent on every save so clearing the control genuinely clears the field. The server's
+      // pointer semantics mean an omitted key preserves the existing kind, which is right for a
+      // tool call that does not manage the axis but wrong for an editor whose control the user
+      // just set to (unclassified).
+      memory_kind: memoryKind
     };
     const url = isNew ? '/api/articles' : `/api/articles/${targetSlug}`;
     const method = isNew ? 'POST' : 'PUT';
@@ -447,6 +453,7 @@ export const App: React.FC = () => {
           initialContent={editorContent}
           initialTags={editorSlug === '' ? editorTags : (currentArticle ? currentArticle.tags : [])}
           initialStatus={editorSlug !== '' && currentArticle ? currentArticle.status : ''}
+          initialMemoryKind={editorSlug !== '' && currentArticle ? currentArticle.memory_kind : ''}
           initialDescription={editorSlug !== '' && currentArticle ? currentArticle.description : ''}
           initialSource={editorSlug !== '' && currentArticle ? currentArticle.source : ''}
           initialResource={editorSlug !== '' && currentArticle ? currentArticle.resource : ''}
@@ -582,7 +589,7 @@ export const App: React.FC = () => {
                       )}
                     </div>
                     {/* Read-only type badge + status + tag badges */}
-                    {(isAgentDoc(currentArticle) || currentArticle.status || (currentArticle.tags && currentArticle.tags.length > 0)) && (
+                    {(isAgentDoc(currentArticle) || currentArticle.status || currentArticle.memory_kind || (currentArticle.tags && currentArticle.tags.length > 0)) && (
                       <div className="flex flex-wrap gap-1.5 mt-3 select-none">
                         {currentArticle.status && (
                           <span
@@ -590,6 +597,14 @@ export const App: React.FC = () => {
                             className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs ${statusBadgeClass(currentArticle.status)}`}
                           >
                             {currentArticle.status}
+                          </span>
+                        )}
+                        {currentArticle.memory_kind && (
+                          <span
+                            title={`Memory kind — ${MEMORY_KIND_HINTS[currentArticle.memory_kind] ?? 'what sort of fact this memory holds'}`}
+                            className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs ${memoryKindBadgeClass(currentArticle.memory_kind)}`}
+                          >
+                            {currentArticle.memory_kind}
                           </span>
                         )}
                         {isAgentDoc(currentArticle) && (

@@ -44,6 +44,99 @@ var SkillStatusTags = []string{
 // to the two classes with a real lifecycle; those documents describe themselves with free tags,
 // which NexWiki never validates, never strips, and never reserves.
 
+// A memory has two independent axes, and only one of them is a tag.
+//
+//   - **scope** — how far the fact reaches. Any project or topic name, so an open vocabulary, so it
+//     stays the tool-managed `memory-<scope>` tag it has always been.
+//   - **kind** — what sort of fact it is. Four values and no more, so it is a field.
+//
+// The split follows the rule this file already learned the hard way with status (see above):
+// closed vocabularies are fields, open vocabularies are tags. status_field_migration.go exists
+// because that rule was discovered late.
+//
+// The kind axis was missing entirely, and its absence split the second brain in half. Every memory
+// in the corpus was a technical fact about a system; the two categories that were absent — who the
+// operator is, and corrections the operator has given about how to work — lived only in Claude
+// Code's local memory directory, reachable by one client and invisible to every other agent on the
+// MCP server. Adding the axis is what lets the two halves merge.
+
+// MemoryKinds is the closed vocabulary for the `memory_kind` field on AI-Agent-Memory documents.
+// The two axes are independent and the full cross-product is legal: a `feedback` memory may be
+// scoped to a project or carry no scope at all.
+var MemoryKinds = []string{
+	"project",   // goals and constraints NOT derivable from the repo or its git history
+	"reference", // pointers to external resources — dashboards, tickets, hosts, URLs
+	"user",      // who the operator is: role, expertise, standing preferences
+	"feedback",  // a correction the operator gave, plus why, plus how to apply it
+}
+
+// Two shapes to avoid, recorded here so the constraint outlives the plan that set it.
+//
+// NexWiki is single-tenant today, and a future version with user accounts is planned. `kind`
+// survives that transition unchanged — what sort of fact a memory holds does not depend on how
+// many people can read it — but *ownership* is a third axis, and it is deliberately not built now
+// because it would have exactly one possible value. When accounts do land:
+//
+//  1. **Do not encode a subject into the kind value** (`user:chris`). That collapses two axes into
+//     one string, which then has to be unpicked exactly when the schema is under most pressure.
+//  2. **Do not overload `memory-<scope>` with per-person scopes** (`memory-user-chris`). Scope is
+//     reach, not ownership. Conflating them makes every scope query ambiguous and puts an
+//     access-control property into a free-form tag any agent can rewrite.
+//
+// Both are the cheap-looking move at the moment accounts arrive. The migration is otherwise
+// unusually cheap: every `user` and `feedback` memory in a single-tenant wiki has exactly one
+// subject, so the backfill is one value applied uniformly.
+
+// NormalizeMemoryKind canonicalizes a raw kind value for storage and comparison.
+func NormalizeMemoryKind(kind string) string {
+	return strings.ToLower(strings.TrimSpace(kind))
+}
+
+// IsMemoryKind reports whether a value is in the closed vocabulary.
+func IsMemoryKind(kind string) bool {
+	kind = NormalizeMemoryKind(kind)
+	for _, k := range MemoryKinds {
+		if kind == k {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateMemoryKind checks the `memory_kind` field against the closed vocabulary.
+//
+// Only AI-Agent-Memory documents carry one; every other class is unconstrained and a value on one
+// is ignored rather than policed, matching how ValidateStatus treats the classes with no lifecycle.
+//
+// `required` distinguishes the two callers. A create must supply a kind — that is the write gate,
+// and the whole point of the axis is that it is answered at intake. Everything else passes an
+// empty value through, because memories written before the field existed stay valid and are
+// reported by wiki_health's unkinded_memories finding until they are classified by hand. That
+// mirrors the unsourced_memories precedent exactly: close the intake, report the backlog, do not
+// rewrite history.
+func ValidateMemoryKind(docType string, kind string, required bool) error {
+	if normalizeType(docType) != ContentTypeMemory {
+		return nil
+	}
+	kind = NormalizeMemoryKind(kind)
+	if kind == "" {
+		if required {
+			return fmt.Errorf("a memory must have a memory_kind; valid values: %s — "+
+				"'project' for goals and constraints not derivable from the repo, "+
+				"'reference' for pointers to external resources, "+
+				"'user' for who the operator is, "+
+				"'feedback' for a correction the operator gave",
+				strings.Join(MemoryKinds, ", "))
+		}
+		return nil
+	}
+	if IsMemoryKind(kind) {
+		return nil
+	}
+	return fmt.Errorf("'%s' is not a memory kind. Valid values: %s — do not invent new ones",
+		kind, strings.Join(MemoryKinds, ", "))
+}
+
 // retiredStatusTagLabels are the words that used to be applied as *status tags* before status
 // became a field. The one-time migration removes them from wiki articles and memories — the tag
 // simply goes away, since those types have no status to move it into. Nothing enforces them

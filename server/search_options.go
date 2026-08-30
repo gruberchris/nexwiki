@@ -34,6 +34,13 @@ type SearchOptions struct {
 	// IncludeArchived returns archived documents, which are otherwise filtered out.
 	IncludeArchived bool
 
+	// MemoryKind restricts results to memories of this kind. Empty means no kind filtering.
+	//
+	// Only AI-Agent-Memory documents carry a kind, so a non-empty value necessarily excludes
+	// every other class — asking for kind "feedback" is asking for memories, and returning an
+	// unkinded wiki article alongside them would make the facet meaningless.
+	MemoryKind string
+
 	// legacyQueryHeuristics restores the pre-facet behavior used by the human-facing sidebar and
 	// REST endpoint: agent documents and archived pages are hidden unless the *query text*
 	// happens to mention them. It is deliberately unexported — it exists to keep the browser UI

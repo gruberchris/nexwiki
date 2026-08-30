@@ -277,7 +277,11 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 		if art.Status != "" {
 			importStatus = art.Status
 		}
-		if _, err := s.SaveArticleWithStatus(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, normalizeType(art.Type), &importStatus); err != nil {
+		// memory_kind rides through the bundle the same way status does. Without this an
+		// export/import round-trip would silently declassify every memory it carried, which is
+		// exactly the corpus-wide data loss a bundle is supposed to prevent.
+		importKind := art.MemoryKind
+		if _, err := s.SaveArticleWithOverrides(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, normalizeType(art.Type), ArticleOverrides{Status: &importStatus, MemoryKind: &importKind}); err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: save failed: %v", f.Name, err))
 			continue
 		}

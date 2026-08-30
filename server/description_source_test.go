@@ -231,7 +231,7 @@ func TestMCPDescriptionSourceFlow(t *testing.T) {
 	}
 
 	// create_agent_memory carries description into list_agent_memories
-	mem := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Mem With Summary","content":"# fact","memory_type":"nexwiki","description":"memory gist","source":"session 2026-06-11"}}`)
+	mem := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Mem With Summary","content":"# fact","memory_type":"nexwiki","description":"memory gist","source":"session 2026-06-11"}}`)
 	if mem.IsError {
 		t.Fatalf("create_agent_memory failed: %s", mem.Content[0].Text)
 	}

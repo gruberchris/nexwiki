@@ -304,7 +304,7 @@ func TestMCPCreateAgentMemory(t *testing.T) {
 	srv := newMCPServer(t)
 
 	// Project-scoped memory: memory_type becomes the tag suffix
-	resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"NexWiki Deploy Notes","content":"# Notes","memory_type":"nexwiki"}}`)
+	resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"NexWiki Deploy Notes","content":"# Notes","memory_type":"nexwiki"}}`)
 	if resp.IsError {
 		t.Errorf("expected success for project-scoped memory, got error: %s", resp.Content[0].Text)
 	}
@@ -327,7 +327,7 @@ func TestMCPCreateAgentMemory(t *testing.T) {
 	}
 
 	// Any free-form memory_type is accepted (e.g., topic name)
-	resp2 := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Docker Tips","content":"# Tips","memory_type":"docker"}}`)
+	resp2 := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Docker Tips","content":"# Tips","memory_type":"docker"}}`)
 	if resp2.IsError {
 		t.Errorf("expected success for topic-scoped memory, got error: %s", resp2.Content[0].Text)
 	}
@@ -347,7 +347,7 @@ func TestMCPCreateAgentMemory(t *testing.T) {
 	}
 
 	// Omitting memory_type produces a bare memory: type AI-Agent-Memory with no scope tag
-	resp3 := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"General Note","content":"# General"}}`)
+	resp3 := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"General Note","content":"# General"}}`)
 	if resp3.IsError {
 		t.Errorf("expected success for unscoped memory, got error: %s", resp3.Content[0].Text)
 	}

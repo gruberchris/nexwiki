@@ -54,8 +54,20 @@ These rules bound every other rule on this page. Orientation is a prerequisite, 
 ## 4. Memory hygiene
 - Keep memories succinct — one clear insight each, bullets over paragraphs.
 - Set a one-line ` + "`description`" + ` and a ` + "`source`" + ` on everything you create.
-- Scope with ` + "`memory_type`" + `: a project name for project-specific knowledge, a topic name
-  for cross-project knowledge, or omit for general knowledge.
+- A memory has **two independent axes**, and both are set at creation:
+  - **Kind** — ` + "`memory_kind`" + `, **required**, a closed vocabulary of four: ` + "`project`" + `
+    (goals and constraints not derivable from the repo), ` + "`reference`" + ` (a pointer to an
+    external resource), ` + "`user`" + ` (who the operator is), ` + "`feedback`" + ` (a correction
+    the operator gave — give the why and how to apply it in the body).
+  - **Scope** — ` + "`memory_type`" + `, optional, free-form: a project name for project-specific
+    knowledge, a topic name for cross-project knowledge, or omit for general knowledge.
+  Every combination is legal. Kind is *what sort of fact*; scope is *how far it reaches*.
+- Filter on either axis: ` + "`list_agent_memories`" + ` takes both, and
+  ` + "`search_wiki`" + ` takes ` + "`memory_kind`" + `. Ask for ` + "`user`" + ` and
+  ` + "`feedback`" + ` to load what is known about the operator and how they want work done.
+- A memory written before the kind axis existed carries none. It stays valid and editable;
+  ` + "`wiki_health`" + ` lists them as ` + "`unkinded_memories`" + `. Classify one with
+  ` + "`edit_agent_memory`" + ` when you touch it — do not guess in bulk.
 - Correct stale or wrong memories in place with ` + "`edit_agent_memory`" + `; retire fully
   superseded ones with ` + "`delete_agent_memory`" + ` — do not create near-duplicates.
 
