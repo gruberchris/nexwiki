@@ -27,7 +27,7 @@ func seedStructuredFixture(t *testing.T) *Server {
 	mustCall(`{"name":"create_wiki_article","arguments":{"title":"Bleve Notes","content":"# Bleve\n\nLinks to [[Search Design]] and [[Never Written]].","description":"How search is indexed","tags":["search"],"edit_summary":"Initial"}}`)
 	mustCall(`{"name":"create_wiki_article","arguments":{"title":"Search Design","content":"# Search Design\n\nThe design.","description":"Design notes","edit_summary":"Initial"}}`)
 	mustCall(`{"name":"edit_wiki_article","arguments":{"slug":"search-design","title":"Search Design","content":"# Search Design\n\nRevised.","loaded_version":1,"edit_summary":"Revised the design"}}`)
-	mustCall(`{"name":"create_agent_memory","arguments":{"title":"Chose Bleve","content":"# Decision\n\nBleve over Elasticsearch.","memory_type":"nexwiki","description":"Search engine decision","source":"design review"}}`)
+	mustCall(`{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Chose Bleve","content":"# Decision\n\nBleve over Elasticsearch.","memory_type":"nexwiki","description":"Search engine decision","source":"design review"}}`)
 	mustCall(`{"name":"create_agent_plan","arguments":{"title":"Ship Structured Output","content":"# Plan\n\nSteps.","project_context":"nexwiki","description":"Structured output rollout"}}`)
 	mustCall(`{"name":"create_agent_skill","arguments":{"title":"Wiki Style Guide","content":"# Style\n\nRules.","description":"How to write here"}}`)
 

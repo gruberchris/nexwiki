@@ -30,7 +30,16 @@ export interface Article {
   status?: string;
   /** When a plan last changed lifecycle status; drives the auto-archive/auto-delete timers. */
   status_changed_at?: string;
+  /**
+   * What sort of fact a memory holds: project, reference, user, or feedback. Only ever set on
+   * AI-Agent-Memory documents, and absent on memories written before the axis existed. Independent
+   * of the `memory-<scope>` tag, which is how far a fact reaches rather than what sort it is.
+   */
+  memory_kind?: string;
 }
+
+/** The closed memory-kind vocabulary, mirroring MemoryKinds in server/tags.go. */
+export const MemoryKinds = ['project', 'reference', 'user', 'feedback'] as const;
 
 /**
  * A timestamp that represents a real moment, rather than Go's zero value serialized as a string.

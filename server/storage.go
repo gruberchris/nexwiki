@@ -54,6 +54,12 @@ type Article struct {
 	// would restart its archive clock. Only ever set on AI-Agent-Plan documents; the lifecycle
 	// worker treats a missing value as "not yet eligible", never as "infinitely old".
 	StatusChangedAt time.Time `json:"status_changed_at,omitzero"`
+	// MemoryKind classifies what sort of fact a memory holds, against the closed four-value
+	// vocabulary in tags.go. Only ever set on AI-Agent-Memory documents; the *scope* axis (how
+	// far the fact reaches) stays on the memory-<scope> tag, because scope is free-form and kind
+	// is not. See MemoryKinds for the vocabulary and for the two shapes to avoid when ownership
+	// eventually becomes a third axis.
+	MemoryKind string `json:"memory_kind,omitempty"`
 
 	// ContentPreview holds the first content line during metadata-only parses
 	// (used as a description fallback in indexes); never serialized.
@@ -323,17 +329,35 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, desc
 	return s.SaveArticleWithStatus(oldSlug, title, content, description, source, resource, editSummary, tags, articleType, nil)
 }
 
-// SaveArticleWithStatus is SaveArticle plus an explicit lifecycle status.
+// ArticleOverrides carries the write-time fields that are classifications rather than content.
 //
-// Status is deliberately *not* a parameter of SaveArticle. A status change is a state transition,
-// not a content edit, and the two travel separately: a nil status here means "leave it alone",
-// so every ordinary save — a body edit, a rename, a tag change, a link heal — preserves the
-// document's state the same way it preserves created_at. Only callers that genuinely mean to move
-// a document through its lifecycle pass a value.
+// Every field is omitted-means-preserve: a nil pointer says "leave it alone", so an ordinary save
+// — a body edit, a rename, a tag change, a link heal — cannot silently reclassify a document.
+// Only a caller that genuinely means to change one passes a value.
+//
+// This is a struct rather than two more positional parameters because the list had already
+// reached ten, and WS5 of the memory-enforcement plan adds a third classification (`change_kind`)
+// on the same path. A struct absorbs that; an eleventh string parameter does not.
+type ArticleOverrides struct {
+	// Status moves a plan or skill through its lifecycle. A status change is a state transition,
+	// not a content edit, which is why SaveArticle takes none at all.
+	Status *string
+	// MemoryKind classifies what sort of fact a memory holds. See MemoryKinds in tags.go.
+	MemoryKind *string
+}
+
+// SaveArticleWithStatus is SaveArticle plus an explicit lifecycle status. Retained as the name
+// every existing caller uses; it is a thin wrapper over SaveArticleWithOverrides.
 func (s *Storage) SaveArticleWithStatus(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string, status *string) (*Article, error) {
+	return s.SaveArticleWithOverrides(oldSlug, title, content, description, source, resource, editSummary, tags, articleType, ArticleOverrides{Status: status})
+}
+
+// SaveArticleWithOverrides is SaveArticle plus any of the classification fields in
+// ArticleOverrides. Anything left nil is preserved from the existing document.
+func (s *Storage) SaveArticleWithOverrides(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string, overrides ArticleOverrides) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.saveArticleLocked(oldSlug, title, content, description, source, resource, editSummary, tags, articleType, status)
+	return s.saveArticleLocked(oldSlug, title, content, description, source, resource, editSummary, tags, articleType, overrides)
 }
 
 // SetStatus moves a document to a new lifecycle status, leaving its content, title, and tags
@@ -352,11 +376,11 @@ func (s *Storage) SetStatus(slug string, status string, loadedVersion int, editS
 	if editSummary == "" {
 		editSummary = fmt.Sprintf("Status changed to '%s'", NormalizeStatus(status))
 	}
-	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, art.Tags, art.Type, &status)
+	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, art.Tags, art.Type, ArticleOverrides{Status: &status})
 }
 
 // saveArticleLocked is SaveArticle's body. The caller must hold writeMu.
-func (s *Storage) saveArticleLocked(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string, statusOverride *string) (*Article, error) {
+func (s *Storage) saveArticleLocked(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string, overrides ArticleOverrides) (*Article, error) {
 	newSlug := Slugify(title)
 	if newSlug == "" {
 		return nil, fmt.Errorf("article title must contain valid characters to generate a slug")
@@ -367,6 +391,7 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	resolvedType := normalizeType(articleType) // empty/unknown → Wiki
 	renamedFromSlug := ""                      // set when a slug rename occurs, to heal inbound WikiLinks
 	prevStatus := ""                           // the status before this save, for change stamping
+	prevMemoryKind := ""                       // the memory kind before this save, preserved unless overridden
 
 	// If updating an existing article
 	if oldSlug != "" {
@@ -382,6 +407,7 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 					resolvedType = existingArt.Type
 				}
 				prevStatus = existingArt.Status
+				prevMemoryKind = existingArt.MemoryKind
 				art = &Article{
 					Type:            resolvedType,
 					Title:           title,
@@ -390,6 +416,7 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 					ArchivedAt:      existingArt.ArchivedAt,
 					Status:          existingArt.Status,
 					StatusChangedAt: existingArt.StatusChangedAt,
+					MemoryKind:      existingArt.MemoryKind,
 					Timestamp:       now,
 					Content:         content,
 					Tags:            tags,
@@ -401,8 +428,8 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	// Resolve the status this save lands on: an explicit override wins, otherwise the document
 	// keeps the state it already had, and a brand-new plan enters the lifecycle at draft.
 	resolvedStatus := prevStatus
-	if statusOverride != nil {
-		resolvedStatus = NormalizeStatus(*statusOverride)
+	if overrides.Status != nil {
+		resolvedStatus = NormalizeStatus(*overrides.Status)
 	}
 	// A plan always ends up with a status: a new one enters at draft, and one written before the
 	// field existed is defaulted here rather than rejected — otherwise a legacy plan would be
@@ -420,6 +447,23 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	}
 	if err := ValidateStatusFreeTags(resolvedType, tags); err != nil {
 		return nil, err
+	}
+
+	// The memory kind resolves the same way and is validated at the same choke point. Absent is
+	// permitted here: requiring one is the *create tool's* gate, not storage's, because a memory
+	// written before the field existed must stay editable rather than becoming un-saveable until
+	// somebody classifies it. wiki_health reports those as unkinded_memories instead.
+	resolvedMemoryKind := prevMemoryKind
+	if overrides.MemoryKind != nil {
+		resolvedMemoryKind = NormalizeMemoryKind(*overrides.MemoryKind)
+	}
+	if err := ValidateMemoryKind(resolvedType, resolvedMemoryKind, false); err != nil {
+		return nil, err
+	}
+	// A kind on anything but a memory is meaningless, and letting one persist would put a value
+	// in the corpus that no reader can interpret and no filter will ever match.
+	if resolvedType != ContentTypeMemory {
+		resolvedMemoryKind = ""
 	}
 
 	if oldSlug != "" {
@@ -522,6 +566,7 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	art.Resource = resource
 
 	art.Status = resolvedStatus
+	art.MemoryKind = resolvedMemoryKind
 
 	switch art.Type {
 	case ContentTypePlan, ContentTypeSkill:
@@ -616,7 +661,7 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 			continue
 		}
 		summary := fmt.Sprintf("Auto-healed internal link: '%s' renamed to '%s'", oldSlug, newSlug)
-		if _, err := s.saveArticleLocked(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type, nil); err != nil {
+		if _, err := s.saveArticleLocked(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type, ArticleOverrides{}); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to heal links in '%s' after rename: %v\n", linker.Slug, err)
 		}
 	}
@@ -789,6 +834,8 @@ type articleFrontMatter struct {
 	// StatusChangedAt is a NexWiki custom key carried only by AI-Agent-Plan documents; it feeds
 	// the plan lifecycle timers (see server/plan_lifecycle.go).
 	StatusChangedAt string `yaml:"status_changed_at,omitempty"`
+	// MemoryKind is a NexWiki custom key carried only by AI-Agent-Memory documents (see tags.go).
+	MemoryKind string `yaml:"memory_kind,omitempty"`
 }
 
 // parseArticleFile parses the OKF YAML front-matter block and Markdown body.
@@ -824,6 +871,7 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 		Version:      fm.Version,
 		EditSummary:  fm.EditSummary,
 		Status:       NormalizeStatus(fm.Status),
+		MemoryKind:   NormalizeMemoryKind(fm.MemoryKind),
 	}
 	// Clean and copy the tag list (drop blanks).
 	for _, t := range fm.Tags {
@@ -906,6 +954,7 @@ func serializeFrontMatter(art *Article) string {
 		Resource:    art.Resource,
 		Tags:        art.Tags,
 		Status:      art.Status,
+		MemoryKind:  art.MemoryKind,
 		Version:     art.Version,
 		EditSummary: art.EditSummary,
 		Source:      art.Source,
@@ -1149,6 +1198,11 @@ func (s *Storage) SearchArticlesWithOptions(queryStr string, opts SearchOptions)
 		if !matchesAllTags(art.Tags, tagFilter) {
 			continue
 		}
+		// Kind narrows to memories of that kind, and to nothing else: no other class carries the
+		// field, so a match on "" would silently widen the facet to the whole corpus.
+		if opts.MemoryKind != "" && art.MemoryKind != opts.MemoryKind {
+			continue
+		}
 
 		var snippets []string
 		if frags, ok := hit.Fragments["content"]; ok {
@@ -1303,7 +1357,11 @@ type ArticleEdit struct {
 	Tags *[]string
 	// Status is a pointer for the same reason: nil preserves the document's current lifecycle
 	// state, so an editor that does not manage status cannot silently reset a completed plan.
-	Status        *string
+	Status *string
+	// MemoryKind is a pointer for the same reason again: nil preserves a memory's existing
+	// classification, so editing a memory's body cannot silently blank the axis that decides
+	// how it is recalled.
+	MemoryKind    *string
 	LoadedVersion int
 }
 
@@ -1351,7 +1409,7 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 	}
 
 	return s.saveArticleLocked(slug, edit.Title, edit.Content, description, source, resource,
-		edit.EditSummary, cleanedTags, existing.Type, edit.Status)
+		edit.EditSummary, cleanedTags, existing.Type, ArticleOverrides{Status: edit.Status, MemoryKind: edit.MemoryKind})
 }
 
 // RevertArticle rolls the current active document back to the content of a historical version.
@@ -1372,7 +1430,7 @@ func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 	if histArt.Status != "" {
 		status = histArt.Status
 	}
-	return s.saveArticleLocked(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, tags, histArt.Type, &status)
+	return s.saveArticleLocked(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, tags, histArt.Type, ArticleOverrides{Status: &status})
 }
 
 // UpdateArticleTags updates only the tag array for an article without modifying the title or content.
@@ -1398,7 +1456,7 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 		editSummary = "Updated article tags"
 	}
 
-	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, tags, art.Type, nil)
+	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, tags, art.Type, ArticleOverrides{})
 }
 
 // Close releases resources held by the Storage, including the Bleve search index.
@@ -1497,7 +1555,7 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 			// Remove the tag
 			newTags := append(art.Tags[:tagIndex], art.Tags[tagIndex+1:]...)
 			// Save the updated article
-			_, err = s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type, nil)
+			_, err = s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type, ArticleOverrides{})
 			if err != nil {
 				return fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
 			}

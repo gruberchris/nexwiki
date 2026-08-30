@@ -42,6 +42,7 @@ type SearchOutput struct {
 	Count           int         `json:"count"`
 	Types           []string    `json:"type,omitempty"`
 	Tags            []string    `json:"tags,omitempty"`
+	MemoryKind      string      `json:"memory_kind,omitempty"`
 	IncludeArchived bool        `json:"include_archived"`
 	Results         []SearchHit `json:"results"`
 }
@@ -199,6 +200,7 @@ func articleSchema(withContent bool) map[string]interface{} {
 		"archived_at":       schemaOf("string", "RFC3339 archival time; absent unless the document is archived."),
 		"status":            schemaOf("string", "Lifecycle status. Plans and skills use a closed vocabulary (see get_status_tags); other documents may use any value or none."),
 		"status_changed_at": schemaOf("string", "RFC3339 time a plan last changed lifecycle status; drives the auto-archive/auto-delete timers. Only present on AI-Agent-Plan documents."),
+		"memory_kind":       schemaOf("string", "What sort of fact a memory holds: project, reference, user, or feedback. Only present on AI-Agent-Memory documents, and absent on memories written before the kind axis existed (wiki_health lists those as unkinded_memories). Independent of the memory-<scope> tag, which is reach rather than kind."),
 	}
 	if withContent {
 		props["content"] = schemaOf("string", "Full raw Markdown body.")
@@ -229,6 +231,7 @@ func searchOutputSchema() map[string]interface{} {
 		"count":            schemaOf("integer", "Number of results returned."),
 		"type":             schemaStringArray("Document types the search was restricted to; absent when unrestricted."),
 		"tags":             schemaStringArray("Tags every result was required to carry; absent when unfiltered."),
+		"memory_kind":      schemaOf("string", "Memory kind the search was narrowed to; absent when unfiltered."),
 		"include_archived": schemaOf("boolean", "Whether archived documents were included."),
 		"results":          schemaArrayOf(hit, "Matches, highest scoring first."),
 	}, "query", "count", "results")

@@ -36,6 +36,7 @@ import { MarkdownSyntaxModal } from './MarkdownSyntaxModal';
 import { MarkdownLintErrorModal } from './MarkdownLintErrorModal';
 import type { Article, ContentType } from '../types';
 import { statusBadgeClass, statusOptionsFor } from '../statusTags';
+import { memoryKindBadgeClass, memoryKindOptionsFor, MEMORY_KIND_HINTS } from '../memoryKinds';
 import { ContentTypes } from '../types';
 import { useSplitPane } from '../hooks/useSplitPane';
 import { useTagEditor } from '../hooks/useTagEditor';
@@ -46,12 +47,13 @@ interface EditorProps {
   initialContent: string;
   initialTags?: string[];
   initialStatus?: string;
+  initialMemoryKind?: string;
   initialDescription?: string;
   initialSource?: string;
   initialResource?: string;
   articleType?: ContentType;
   slug: string; // empty if new page
-  onSave: (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string, status: string) => Promise<void>;
+  onSave: (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string, status: string, memoryKind: string) => Promise<void>;
   onCancel: () => void;
   articles: Article[];
   version?: number;
@@ -62,6 +64,7 @@ export const Editor: React.FC<EditorProps> = ({
   initialContent,
   initialTags,
   initialStatus,
+  initialMemoryKind,
   initialDescription,
   initialSource,
   initialResource,
@@ -136,6 +139,11 @@ export const Editor: React.FC<EditorProps> = ({
   // memories are not offered the control at all — they describe themselves with free tags.
   const [status, setStatus] = useState(initialStatus || '');
   const statusOptions = statusOptionsFor(resolvedType);
+  // Kind is to a memory what status is to a plan: a closed vocabulary in a field, edited from a
+  // dropdown rather than typed as a tag. Only memories have one, so the control is absent
+  // everywhere else rather than disabled.
+  const [memoryKind, setMemoryKind] = useState(initialMemoryKind || '');
+  const memoryKindOptions = memoryKindOptionsFor(resolvedType);
 
   const errorCount = useMemo(() => diagnostics.filter(d => d.severity === 'error').length, [diagnostics]);
   const warningCount = useMemo(() => diagnostics.filter(d => d.severity === 'warning').length, [diagnostics]);
@@ -270,7 +278,7 @@ export const Editor: React.FC<EditorProps> = ({
     setErrorMsg('');
 
     try {
-      await onSave(title.trim(), content, editSummary, tags, description.trim(), source.trim(), resource.trim(), status);
+      await onSave(title.trim(), content, editSummary, tags, description.trim(), source.trim(), resource.trim(), status, memoryKind);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to save article.';
       setErrorMsg(msg);
@@ -373,6 +381,28 @@ export const Editor: React.FC<EditorProps> = ({
                         {!isPlan && <option value="">(none)</option>}
                         {statusOptions.map((opt) => (
                           <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </>
+                  )}
+
+                  {memoryKindOptions && (
+                    <>
+                      <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-1">
+                        Kind:
+                      </span>
+                      <select
+                        aria-label="Memory kind"
+                        title={MEMORY_KIND_HINTS[memoryKind] ?? 'What sort of fact this memory holds'}
+                        value={memoryKind}
+                        onChange={(e) => setMemoryKind(e.target.value)}
+                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full mr-2 border cursor-pointer ${memoryKindBadgeClass(memoryKind)}`}
+                      >
+                        {/* Memories written before the kind axis existed have none, and must stay
+                            saveable without being forced into a classification nobody has made. */}
+                        <option value="">(unclassified)</option>
+                        {memoryKindOptions.map((opt) => (
+                          <option key={opt} value={opt} title={MEMORY_KIND_HINTS[opt]}>{opt}</option>
                         ))}
                       </select>
                     </>

@@ -8,7 +8,7 @@ import (
 func TestMCPEditAgentMemory(t *testing.T) {
 	srv := newMCPServer(t)
 
-	create := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Build Quirk","content":"# Original fact","memory_type":"nexwiki","description":"original gist"}}`)
+	create := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Build Quirk","content":"# Original fact","memory_type":"nexwiki","description":"original gist"}}`)
 	if create.IsError {
 		t.Fatalf("create failed: %s", create.Content[0].Text)
 	}
@@ -83,7 +83,7 @@ func TestMCPEditAgentMemory(t *testing.T) {
 func TestMCPDeleteAgentMemory(t *testing.T) {
 	srv := newMCPServer(t)
 
-	_ = toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Obsolete Memory","content":"# stale"}}`)
+	_ = toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Obsolete Memory","content":"# stale"}}`)
 	_, _ = srv.Storage.SaveArticle("", "Plain Doc", "# doc", "", "", "", "", nil, "")
 
 	// Refuses plain articles
@@ -105,7 +105,7 @@ func TestMCPDeleteAgentMemory(t *testing.T) {
 func TestMCPDeleteWikiArticleRefusesMemories(t *testing.T) {
 	srv := newMCPServer(t)
 
-	_ = toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Guarded Memory","content":"# keep"}}`)
+	_ = toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Guarded Memory","content":"# keep"}}`)
 	_, _ = srv.Storage.SaveArticle("", "Deletable Doc", "# doc", "", "", "", "", nil, "")
 
 	// delete_wiki_article refuses the memory and points to delete_agent_memory

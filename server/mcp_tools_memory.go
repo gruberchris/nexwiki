@@ -14,7 +14,7 @@ import (
 var createAgentMemoryTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "create_agent_memory",
-		"description": "Create a brand new protected AI Agent Memory document. The 'memory_type' controls the tag applied and how the memory is scoped: use the project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for reusable cross-project knowledge, or omit it for general knowledge (no scope tag). Memories must be succinct and high-value — they are loaded into agent context windows, so keep them short, specific, and free of repetition. Search for an existing memory first; if one becomes stale later, use 'edit_agent_memory' to correct it or 'delete_agent_memory' to retire it rather than creating near-duplicates. The reserved AI-Agent-Memory type must NEVER be relabelled unless explicitly instructed. (IMPORTANT: If you have not already loaded the global operational guidelines skill this session, load it once with 'read_article(slug: \"nexwiki-agent-guidelines\")'. If it is already in your context, do not re-read it — call this tool.)",
+		"description": "Create a brand new protected AI Agent Memory document. A memory has two independent axes and both are set here. 'memory_kind' (REQUIRED) says what sort of fact this is — 'project', 'reference', 'user', or 'feedback' — and 'memory_type' says how far it reaches: use a project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for reusable cross-project knowledge, or omit it for general knowledge (no scope tag). The two are independent; every combination is legal. Memories must be succinct and high-value — they are loaded into agent context windows, so keep them short, specific, and free of repetition. Search for an existing memory first; if one becomes stale later, use 'edit_agent_memory' to correct it or 'delete_agent_memory' to retire it rather than creating near-duplicates. The reserved AI-Agent-Memory type must NEVER be relabelled unless explicitly instructed. (IMPORTANT: If you have not already loaded the global operational guidelines skill this session, load it once with 'read_article(slug: \"nexwiki-agent-guidelines\")'. If it is already in your context, do not re-read it — call this tool.)",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -26,9 +26,14 @@ var createAgentMemoryTool = toolDef{
 					"type":        "string",
 					"description": "The raw Markdown content of the memory document. Keep it succinct — bullet points over paragraphs, one clear insight per memory.",
 				},
+				"memory_kind": map[string]interface{}{
+					"type":        "string",
+					"enum":        MemoryKinds,
+					"description": "REQUIRED. What sort of fact this memory holds — the axis that decides how it is recalled. 'project': goals and constraints NOT derivable from the repo or its git history. 'reference': a pointer to an external resource — dashboard, ticket, host, URL. 'user': who the operator is — role, expertise, standing preferences. 'feedback': a correction the operator gave; give the why and how to apply it in the body. Independent of 'memory_type', which is scope, not kind.",
+				},
 				"memory_type": map[string]interface{}{
 					"type":        "string",
-					"description": "Scopes the memory and determines its tag. Use a project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for cross-project knowledge, or omit for general knowledge. Becomes the tool-managed scope tag 'memory-<memory_type>', or no scope tag if omitted; the document type is always AI-Agent-Memory.",
+					"description": "Scopes the memory and determines its tag — how far the fact reaches, not what sort of fact it is (that is 'memory_kind'). Use a project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for cross-project knowledge, or omit for general knowledge. Becomes the tool-managed scope tag 'memory-<memory_type>', or no scope tag if omitted; the document type is always AI-Agent-Memory.",
 				},
 				"description": map[string]interface{}{
 					"type":        "string",
@@ -48,7 +53,7 @@ var createAgentMemoryTool = toolDef{
 					"description": "Optional revision log description summarizing why this memory was created.",
 				},
 			},
-			"required": []string{"title", "content"},
+			"required": []string{"title", "content", "memory_kind"},
 		},
 	},
 	Handler:  (*Server).toolCreateAgentMemory,
@@ -59,6 +64,7 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 	type CreateMemoryArgs struct {
 		Title          string   `json:"title"`
 		Content        string   `json:"content"`
+		MemoryKind     string   `json:"memory_kind"`
 		MemoryType     string   `json:"memory_type"`
 		ProjectContext string   `json:"project_context"`
 		Description    string   `json:"description"`
@@ -75,6 +81,16 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 	}
 	if resp := rejectToolArtifactTitle(mArgs.Title, "memory"); resp != nil {
 		return *resp, nil
+	}
+
+	// The kind gate. This is the one place it is required, and it is required here because the
+	// classification is only cheap at intake: the agent writing the memory knows what sort of
+	// fact it is, and nobody reading it back later reliably does. Existing memories are
+	// deliberately untouched — wiki_health reports them as unkinded_memories instead, which is
+	// the same shape as the unsourced_memories precedent: close the intake, report the backlog.
+	memoryKind := NormalizeMemoryKind(mArgs.MemoryKind)
+	if err := ValidateMemoryKind(ContentTypeMemory, memoryKind, true); err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
 	}
 
 	mType := strings.ToLower(strings.TrimSpace(mArgs.MemoryType))
@@ -107,13 +123,13 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 		}
 	}
 
-	art, err := srv.Storage.SaveArticle("", title, mArgs.Content, mArgs.Description, mArgs.Source, "", summary, tags, ContentTypeMemory)
+	art, err := srv.Storage.SaveArticleWithOverrides("", title, mArgs.Content, mArgs.Description, mArgs.Source, "", summary, tags, ContentTypeMemory, ArticleOverrides{MemoryKind: &memoryKind})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent memory: %v", err)}}}, nil
 	}
 
-	respText := fmt.Sprintf("Success! Protected AI Agent Memory '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\nTags: %s\n",
-		art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Version, strings.Join(art.Tags, ", "))
+	respText := fmt.Sprintf("Success! Protected AI Agent Memory '%s' created successfully.\nSlug: %s\nKind: %s\nCreated At: %s\nVersion: %d\nTags: %s\n",
+		art.Title, art.Slug, art.MemoryKind, art.CreatedAt.Format(time.RFC3339), art.Version, strings.Join(art.Tags, ", "))
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
@@ -211,6 +227,11 @@ var editAgentMemoryTool = toolDef{
 					"type":        "string",
 					"description": "Optional new provenance reference (preserves existing if omitted).",
 				},
+				"memory_kind": map[string]interface{}{
+					"type":        "string",
+					"enum":        MemoryKinds,
+					"description": "Optional new kind: what sort of fact this memory holds (preserves existing if omitted). Use it to classify a memory written before the kind axis existed — wiki_health lists those as unkinded_memories.",
+				},
 				"tags": map[string]interface{}{
 					"type": "array",
 					"items": map[string]interface{}{
@@ -241,6 +262,7 @@ func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSON
 		Content       *string   `json:"content,omitempty"`
 		Description   *string   `json:"description,omitempty"`
 		Source        *string   `json:"source,omitempty"`
+		MemoryKind    *string   `json:"memory_kind,omitempty"`
 		Tags          *[]string `json:"tags,omitempty"`
 		LoadedVersion int       `json:"loaded_version"`
 		EditSummary   string    `json:"edit_summary"`
@@ -291,6 +313,19 @@ func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSON
 		newSource = *eArgs.Source
 	}
 
+	// Pointer semantics, matching description and source: omitting the field preserves the
+	// existing classification rather than blanking it, so editing a body cannot silently
+	// declassify a memory. A supplied value is validated against the closed vocabulary here so
+	// the caller gets the list back, rather than a bare save error from storage.
+	var kindOverride *string
+	if eArgs.MemoryKind != nil {
+		normalized := NormalizeMemoryKind(*eArgs.MemoryKind)
+		if err := ValidateMemoryKind(ContentTypeMemory, normalized, false); err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+		}
+		kindOverride = &normalized
+	}
+
 	newTags := existing.Tags
 	if eArgs.Tags != nil {
 		var parsedTags []string
@@ -324,13 +359,17 @@ func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSON
 	}
 
 	newResource := existing.Resource
-	art, err := srv.Storage.SaveArticle(existing.Slug, newTitle, newContent, newDescription, newSource, newResource, summary, newTags, existing.Type)
+	art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, newTitle, newContent, newDescription, newSource, newResource, summary, newTags, existing.Type, ArticleOverrides{MemoryKind: kindOverride})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent memory: %v", err)}}}, nil
 	}
 
-	respText := fmt.Sprintf("Success! AI Agent Memory '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nTags: %s\n",
-		art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339), strings.Join(art.Tags, ", "))
+	kindLine := art.MemoryKind
+	if kindLine == "" {
+		kindLine = "(unset — classify it with memory_kind)"
+	}
+	respText := fmt.Sprintf("Success! AI Agent Memory '%s' updated successfully.\nSlug: %s\nKind: %s\nNew Version: %d\nLast Edited: %s\nTags: %s\n",
+		art.Title, art.Slug, kindLine, art.Version, art.Timestamp.Format(time.RFC3339), strings.Join(art.Tags, ", "))
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
@@ -385,18 +424,23 @@ func (srv *Server) toolDeleteAgentMemory(args json.RawMessage) (interface{}, *JS
 var listAgentMemoriesTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "list_agent_memories",
-		"description": "List all protected AI Agent Memory documents currently saved inside the knowledge base.",
+		"description": "List all protected AI Agent Memory documents currently saved inside the knowledge base. The two filters are independent and compose: 'memory_type' narrows by scope (how far a fact reaches), 'memory_kind' by kind (what sort of fact it is).",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"memory_type": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional filter by memory type (project name, topic name, or other free-form value used at creation). For example, 'nexwiki' returns only nexwiki project memories.",
+					"description": "Optional filter by memory scope (project name, topic name, or other free-form value used at creation). For example, 'nexwiki' returns only nexwiki project memories.",
+				},
+				"memory_kind": map[string]interface{}{
+					"type":        "string",
+					"enum":        MemoryKinds,
+					"description": "Optional filter by kind: 'project', 'reference', 'user', or 'feedback'. Composes with memory_type. Ask for 'user' and 'feedback' to load what is known about the operator and how they want work done.",
 				},
 			},
 		},
 	},
-	Output:   documentListOutputSchema("Matching agent memories. Scope lives in the memory-<scope> tags."),
+	Output:   documentListOutputSchema("Matching agent memories. Kind is the memory_kind field; scope lives in the memory-<scope> tags."),
 	Handler:  (*Server).toolListAgentMemories,
 	Behavior: toolBehavior{Title: "List Agent Memories", ReadOnly: true},
 }
@@ -404,9 +448,19 @@ var listAgentMemoriesTool = toolDef{
 func (srv *Server) toolListAgentMemories(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type ListMemoriesArgs struct {
 		MemoryType string `json:"memory_type"`
+		MemoryKind string `json:"memory_kind"`
 	}
 	var lArgs ListMemoriesArgs
 	_ = json.Unmarshal(args, &lArgs) // ignore err, it is optional
+
+	// Report an unknown kind rather than returning an empty list. A silent empty result reads as
+	// "no such knowledge", which is exactly the wrong conclusion to hand an agent that typoed a
+	// filter — the same reasoning search_wiki applies to unknown document types.
+	filterKind := NormalizeMemoryKind(lArgs.MemoryKind)
+	if filterKind != "" && !IsMemoryKind(filterKind) {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf(
+			"Error: '%s' is not a memory kind. Valid values: %s.", filterKind, strings.Join(MemoryKinds, ", "))}}}, nil
+	}
 
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
@@ -424,7 +478,11 @@ func (srv *Server) toolListAgentMemories(args json.RawMessage) (interface{}, *JS
 		if art.Type != ContentTypeMemory {
 			continue
 		}
-		// Scope filtering is by the memory-<scope> tag facet.
+		// Kind is a field, scope is a tag facet — the two filters are applied on their own axes
+		// and compose, so asking for kind 'feedback' in scope 'nexwiki' means both.
+		if filterKind != "" && art.MemoryKind != filterKind {
+			continue
+		}
 		memoryTags := memoryScopeTags(art.Tags)
 		matchFilter := filterType == ""
 		if filterType != "" {
@@ -448,14 +506,22 @@ func (srv *Server) toolListAgentMemories(args json.RawMessage) (interface{}, *JS
 			if art.Description != "" {
 				text += fmt.Sprintf("    Summary: %s\n", art.Description)
 			}
+			if art.MemoryKind != "" {
+				text += fmt.Sprintf("    Kind: %s\n", art.MemoryKind)
+			}
 			text += fmt.Sprintf("    Tags: %s\n\n", strings.Join(memoryTags, ", "))
 		}
 	}
 
 	if count == 0 {
-		if filterType != "" {
+		switch {
+		case filterType != "" && filterKind != "":
+			text = fmt.Sprintf("No AI Agent memories found of kind '%s' in scope '%s'.\n", filterKind, filterType)
+		case filterKind != "":
+			text = fmt.Sprintf("No AI Agent memories found of kind '%s'.\n", filterKind)
+		case filterType != "":
 			text = fmt.Sprintf("No AI Agent memories found of type '%s'.\n", filterType)
-		} else {
+		default:
 			text = "No AI Agent memories found inside the knowledge base.\n"
 		}
 	}

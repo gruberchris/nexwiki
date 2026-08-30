@@ -410,3 +410,67 @@ describe('buildSuggestionsFromArticles', () => {
     expect(titles).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// memory kind as a filter facet
+// ---------------------------------------------------------------------------
+
+describe('matchesFilter — memory kind', () => {
+  // Kind is matched alongside title, status and tags, which is what makes it a facet with no new
+  // UI: it reuses the boolean grammar the filter bar already has. The two kinds below are the
+  // ones that had no home before the axis existed, and they are the reason this matters — a
+  // corpus with no way to ask "what corrections has the operator given me?" cannot answer it.
+  const feedback: Article = {
+    title: 'How Chris Reviews PRs',
+    slug: 'how-chris-reviews-prs',
+    created_at: '',
+    timestamp: '',
+    type: 'AI-Agent-Memory',
+    memory_kind: 'feedback',
+    tags: ['memory-nexwiki'],
+  };
+  const reference: Article = {
+    title: 'Grafana Dashboard',
+    slug: 'grafana-dashboard',
+    created_at: '',
+    timestamp: '',
+    type: 'AI-Agent-Memory',
+    memory_kind: 'reference',
+    tags: ['memory-nexwiki'],
+  };
+  const unclassified: Article = {
+    title: 'Legacy Fact',
+    slug: 'legacy-fact',
+    created_at: '',
+    timestamp: '',
+    type: 'AI-Agent-Memory',
+    tags: ['memory-nexwiki'],
+  };
+
+  it('matches on the kind field', () => {
+    expect(matchesFilter(feedback, 'feedback')).toBe(true);
+    expect(matchesFilter(reference, 'feedback')).toBe(false);
+  });
+
+  it('composes with the existing boolean grammar', () => {
+    expect(matchesFilter(feedback, 'feedback || user')).toBe(true);
+    expect(matchesFilter(reference, 'feedback || user')).toBe(false);
+    // And with the scope tag, since the two axes are independent. Note && rather than a bare
+    // space: in this grammar a space is OR, so 'reference memory-docker' would match on kind
+    // alone and prove nothing about the composition.
+    expect(matchesFilter(reference, 'reference && memory-nexwiki')).toBe(true);
+    expect(matchesFilter(reference, 'reference && memory-docker')).toBe(false);
+  });
+
+  it('leaves a memory with no kind matchable by everything else', () => {
+    // Memories written before the axis existed must not become invisible to the filter bar.
+    expect(matchesFilter(unclassified, 'legacy')).toBe(true);
+    expect(matchesFilter(unclassified, 'memory-nexwiki')).toBe(true);
+    expect(matchesFilter(unclassified, 'feedback')).toBe(false);
+  });
+
+  it('applies on the sidebar filter too', () => {
+    expect(matchesSidebarFilter(feedback, 'feedback')).toBe(true);
+    expect(matchesSidebarFilter(reference, 'feedback')).toBe(false);
+  });
+});

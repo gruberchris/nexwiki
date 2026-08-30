@@ -72,8 +72,16 @@ type HealthOutput struct {
 	BrokenLinks     []BrokenLinkRef `json:"broken_links"`
 	UnsourcedCount  int             `json:"unsourced_memory_count"`
 	UnsourcedMemory []HealthFinding `json:"unsourced_memories"`
-	StalePlanCount  int             `json:"stale_plan_count"`
-	StalePlans      []HealthFinding `json:"stale_plans"`
+
+	// UnkindedCount and UnkindedMemories report memories written before the kind axis existed.
+	// This is the burn-down list for classifying them, and it is deliberately the whole
+	// migration strategy: new writes require a kind, existing memories stay valid, and the
+	// backlog is reported rather than guessed at by a script. Deciding project vs reference for
+	// an existing memory is a judgment call per memory, not a mechanical rewrite.
+	UnkindedCount    int             `json:"unkinded_memory_count"`
+	UnkindedMemories []HealthFinding `json:"unkinded_memories"`
+	StalePlanCount   int             `json:"stale_plan_count"`
+	StalePlans       []HealthFinding `json:"stale_plans"`
 
 	// UnreferencedSkillCount and UnreferencedSkills report skills nothing points an agent at.
 	// Kept separate from Orphans because the remedy differs: an orphaned article wants a link
@@ -143,6 +151,8 @@ func healthOutputSchema() map[string]interface{} {
 		"broken_links":               schemaArrayOf(broken, "Broken internal links, up to the limit."),
 		"unsourced_memory_count":     schemaOf("integer", "Agent memories recorded without a source."),
 		"unsourced_memories":         schemaArrayOf(finding, "Memories missing provenance, up to the limit."),
+		"unkinded_memory_count":      schemaOf("integer", "Agent memories carrying no memory_kind — written before the kind axis existed."),
+		"unkinded_memories":          schemaArrayOf(finding, "Unclassified memories, up to the limit. This is the backfill worklist."),
 		"stale_plan_count":           schemaOf("integer", "In-flight plans untouched for longer than stale_days. Excludes plans tagged finished or parked."),
 		"stale_plans":                schemaArrayOf(finding, "Stale plans, up to the limit."),
 		"unreferenced_skill_count":   schemaOf("integer", "Skills no live document links or names in a read_article call. Excludes the nexwiki-agent-guidelines skill, which the MCP tool descriptions reference from code."),
@@ -158,7 +168,8 @@ func healthOutputSchema() map[string]interface{} {
 		"plan_status_census":         planStatusCensusSchema(),
 	}, "total_documents", "stale_days", "limit", "truncated",
 		"orphan_count", "orphans", "broken_link_count", "broken_links",
-		"unsourced_memory_count", "unsourced_memories", "stale_plan_count", "stale_plans",
+		"unsourced_memory_count", "unsourced_memories",
+		"unkinded_memory_count", "unkinded_memories", "stale_plan_count", "stale_plans",
 		"unreferenced_skill_count", "unreferenced_skills",
 		"cold_days", "cold_memory_scan_ran", "cold_memory_count", "cold_memories",
 		"duplicate_memory_count", "duplicate_memories", "parked_plan_count")
@@ -167,7 +178,7 @@ func healthOutputSchema() map[string]interface{} {
 var wikiHealthTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "wiki_health",
-		"description": "Audit the knowledge base for maintenance work: orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
+		"description": "Audit the knowledge base for maintenance work: orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source' or without a 'memory_kind', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -239,6 +250,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 	staleBefore := time.Now().AddDate(0, 0, -staleDays)
 	orphans := []HealthFinding{}
 	unsourced := []HealthFinding{}
+	unkinded := []HealthFinding{}
 	stalePlans := []HealthFinding{}
 	unreferencedSkills := []HealthFinding{}
 	memories := []Article{}
@@ -309,6 +321,12 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 					Detail: "Memory has no 'source'. A fact with no provenance cannot be re-verified later; set source with edit_agent_memory.",
 				})
 			}
+			if doc.MemoryKind == "" {
+				unkinded = append(unkinded, HealthFinding{
+					Slug: slug, Title: doc.Title, Type: doc.Type,
+					Detail: "Memory has no 'memory_kind', so kind-filtered recall cannot find it. Classify it with edit_agent_memory: 'project', 'reference', 'user', or 'feedback'.",
+				})
+			}
 		}
 
 		if doc.Type == ContentTypePlan && isParked(doc.Status) && !isFinished(doc.Status) {
@@ -343,6 +361,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		OrphanCount:            len(orphans),
 		BrokenLinkCount:        len(graph.Broken),
 		UnsourcedCount:         len(unsourced),
+		UnkindedCount:          len(unkinded),
 		StalePlanCount:         len(stalePlans),
 		ColdDays:               coldDays,
 		ColdMemoryScanRan:      cold.Ran,
@@ -360,6 +379,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 	// without returning 400 items and burying every other category.
 	out.Orphans, out.Truncated = capFindings(orphans, limit, out.Truncated)
 	out.UnsourcedMemory, out.Truncated = capFindings(unsourced, limit, out.Truncated)
+	out.UnkindedMemories, out.Truncated = capFindings(unkinded, limit, out.Truncated)
 	out.StalePlans, out.Truncated = capFindings(stalePlans, limit, out.Truncated)
 	out.UnreferencedSkills, out.Truncated = capFindings(unreferencedSkills, limit, out.Truncated)
 	out.ColdMemories, out.Truncated = capFindings(cold.Findings, limit, out.Truncated)
@@ -430,6 +450,7 @@ func renderHealthReport(out HealthOutput) string {
 	fmt.Fprintf(&b, "- Orphan pages: %d\n", out.OrphanCount)
 	fmt.Fprintf(&b, "- Broken internal links: %d\n", out.BrokenLinkCount)
 	fmt.Fprintf(&b, "- Memories with no source: %d\n", out.UnsourcedCount)
+	fmt.Fprintf(&b, "- Memories with no kind: %d\n", out.UnkindedCount)
 	fmt.Fprintf(&b, "- Stale plans (unfinished, untouched for %d+ days): %d\n", out.StaleDays, out.StalePlanCount)
 	fmt.Fprintf(&b, "- Skills nothing references: %d\n", out.UnreferencedSkillCount)
 	if out.ColdMemoryScanRan {
@@ -461,7 +482,7 @@ func renderHealthReport(out HealthOutput) string {
 		b.WriteString("\n")
 	}
 
-	needsAttention := out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount +
+	needsAttention := out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount + out.UnkindedCount +
 		out.StalePlanCount + out.ColdMemoryCount + out.DuplicateCount + out.UnreferencedSkillCount
 	if needsAttention == 0 {
 		b.WriteString("\nNothing needs attention — the wiki is healthy. 🎉\n")
@@ -498,6 +519,7 @@ func renderHealthReport(out HealthOutput) string {
 	}
 
 	writeFindings("Memories with no source", out.UnsourcedCount, out.UnsourcedMemory)
+	writeFindings("Memories with no kind", out.UnkindedCount, out.UnkindedMemories)
 	writeFindings("Stale plans", out.StalePlanCount, out.StalePlans)
 	writeFindings("Cold memories", out.ColdMemoryCount, out.ColdMemories)
 

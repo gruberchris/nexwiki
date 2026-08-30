@@ -268,6 +268,7 @@ Performs a high-speed, full-text search across the **entire** knowledge base usi
   * `tags` (array of string, *optional*): A result must carry **all** of these tags (case-insensitive), e.g. `["wip"]` or `["memory-nexwiki"]`.
   * `limit` (integer, *optional*): Maximum results. Default `40`, maximum `200`.
   * `include_archived` (boolean, *optional*): Include archived documents, which are excluded by default.
+  * `memory_kind` (string, *optional*): Narrow to agent memories of one kind — `project`, `reference`, `user`, or `feedback`. Only memories carry a kind, so supplying this necessarily excludes every other document class rather than matching them on an empty field. An unrecognized value is reported, not answered with an empty result.
 * **Behavior**:
   Executes the query against the local Bleve index and converts scored matches into a readable text block, reporting each hit's document `Type` so you can tell a memory from an article. HTML `<mark>` highlights become Markdown bold (`**`) to save context. When facets are applied they are echoed in the response header line, so an empty result set is distinguishable from an over-narrow filter. An unrecognized `type` value is reported as an error rather than silently returning nothing.
 
@@ -285,7 +286,7 @@ Performs a high-speed, full-text search across the **entire** knowledge base usi
 // In-flight plans, newest handful
 { "query": "migration", "type": ["plans"], "tags": ["wip"], "limit": 5 }
 ```
-* **Structured output**: `structuredContent` as `{query, count, type, tags, include_archived, results[]}`. Each result carries `title`, `slug`, `type`, `score`, `timestamp`, `tags`, and plain-text `snippets`.
+* **Structured output**: `structuredContent` as `{query, count, type, tags, memory_kind, include_archived, results[]}`. Each result carries `title`, `slug`, `type`, `score`, `timestamp`, `tags`, and plain-text `snippets`.
 
 ---
 
@@ -415,18 +416,29 @@ Scans the entire knowledge base to compile total page stats and **autonomously s
 ---
 
 ### 11. `create_agent_memory`
-Creates a brand new protected AI Agent Memory document. The `memory_type` scopes the memory and determines its tool-managed scope tag. Memories must be **succinct and high-value** — they are loaded into agent context windows, so keep them short, specific, and free of repetition.
+Creates a brand new protected AI Agent Memory document. Memories must be **succinct and high-value** — they are loaded into agent context windows, so keep them short, specific, and free of repetition.
+
+> **A memory has two independent axes.** `memory_kind` is **what sort of fact** it is — a closed vocabulary of four, in a field. `memory_type` is **how far the fact reaches** — free-form, and it becomes the tool-managed `memory-<scope>` tag. Every combination is legal, and each is filterable on its own. The split follows the rule NexWiki learned with lifecycle status: closed vocabularies are fields, open vocabularies are tags.
 
 * **Arguments**:
   * `title` (string, **required**): The human-readable title of the memory article (e.g. "NexWiki MCP Tag Preservation Rules").
   * `content` (string, **required**): The raw Markdown content of the memory document. Prefer bullet points over paragraphs. One clear insight per memory.
+  * `memory_kind` (string, **required**): What sort of fact this memory holds. One of:
+    | Kind | Holds |
+    |---|---|
+    | `project` | Goals and constraints **not derivable** from the repo or its git history |
+    | `reference` | A pointer to an external resource — dashboard, ticket, host, URL |
+    | `user` | Who the operator is: role, expertise, standing preferences |
+    | `feedback` | A correction the operator gave — record the *why* and *how to apply it*, not just what was said |
+
+    Anything outside the vocabulary is rejected with the list; an absent value is rejected too, because the classification is only cheap at intake. The agent writing a memory knows what sort of fact it is, and nobody reading it back later reliably does.
   * `memory_type` (string, **optional**): Scopes the memory. Use a **project name** (e.g. `nexwiki`) for project-specific knowledge, a **topic name** (e.g. `docker`) for reusable cross-project knowledge, or **omit** for general knowledge. Applies a tool-managed `memory-<memory_type>` scope tag (e.g. `memory-nexwiki`), or no scope tag if omitted. The OKF document `type` is always set to `AI-Agent-Memory` regardless.
   * `description` (string, **optional**): One-line summary shown in list indexes and the context overview.
   * `source` (string, **optional**): Provenance — where this knowledge came from (URL, document, or session context).
   * `tags` (array of string, **optional**): Status or user tags to apply, e.g. `["review"]`. Call `get_status_tags` for the recognized status values. The tool-managed `memory-<memory_type>` scope tag is added automatically and **cannot be set here** — a caller-supplied `memory-*` tag is dropped.
   * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
 * **Behavior**:
-  Checks for slug collision, sets the OKF `type` to `AI-Agent-Memory`, applies a tool-managed `memory-<memory_type>` scope tag if a `memory_type` was provided, merges any caller `tags` on top of it, saves the Markdown file, commits the first version snapshot, and indexes the document in the search engine.
+  Validates `memory_kind` against the closed vocabulary, checks for slug collision, sets the OKF `type` to `AI-Agent-Memory`, applies a tool-managed `memory-<memory_type>` scope tag if a `memory_type` was provided, merges any caller `tags` on top of it, saves the Markdown file, commits the first version snapshot, and indexes the document in the search engine.
 * **Memory hygiene**: Search for an existing memory before creating one. If a memory later becomes stale, use `edit_agent_memory` to correct it in place or `delete_agent_memory` to retire it — do not create near-duplicates.
 
 ---
@@ -447,10 +459,11 @@ Appends observations, subtask completions, or updates to the end of an existing 
 Lists all protected AI Agent Memory articles saved in your wiki.
 
 * **Arguments**:
-  * `memory_type` (string, **optional**): Optional filter by memory type (the project name, topic name, or other free-form value used at creation). For example, `nexwiki` returns only memories tagged `memory-nexwiki`.
+  * `memory_type` (string, **optional**): Filter by **scope** (the project name, topic name, or other free-form value used at creation). For example, `nexwiki` returns only memories tagged `memory-nexwiki`.
+  * `memory_kind` (string, **optional**): Filter by **kind** — `project`, `reference`, `user`, or `feedback`. An unrecognized value is reported rather than answered with an empty list, since an empty result reads as "no such knowledge". Ask for `user` and `feedback` to load what is known about the operator and how they want work done.
 * **Behavior**:
-  Scans all active articles, isolates pages with OKF type `AI-Agent-Memory`, optionally filters by the `memory-<type>` scope tag, and returns a bulleted index of matches including titles, slugs, and active tags.
-* **Structured output**: `structuredContent` as `{count, documents[]}`, the shared listing shape. Scope lives in each document's `memory-<scope>` tags.
+  Scans all active articles, isolates pages with OKF type `AI-Agent-Memory`, applies each filter on its own axis, and returns a bulleted index of matches including titles, slugs, kind, and active tags. **The two filters compose**: supplying both means both, so `memory_type: "nexwiki"` with `memory_kind: "reference"` returns the external-resource pointers for that project only.
+* **Structured output**: `structuredContent` as `{count, documents[]}`, the shared listing shape. Kind is the `memory_kind` field; scope lives in each document's `memory-<scope>` tags.
 
 ---
 
@@ -614,11 +627,13 @@ Replaces or corrects an existing protected AI Agent Memory **in place** — the 
   * `content` (string, **optional**): Full replacement of the memory's Markdown content (preserves existing if omitted; cannot be blank — use `delete_agent_memory` to retire a memory entirely). Use `append_agent_memory` to add without replacing.
   * `description` (string, **optional**): New one-line summary (preserves existing if omitted).
   * `source` (string, **optional**): New provenance reference (preserves existing if omitted).
+  * `memory_kind` (string, **optional**): New kind (preserves existing if omitted). This is how a memory written before the kind axis existed gets classified — `wiki_health` lists those as `unkinded_memories`.
   * `tags` (array of strings, **optional**): Tags to set (replaces existing user tags; tool-managed `memory-<scope>` tags are always preserved).
   * `loaded_version` (integer, **required**): The current version number loaded by the agent, for optimistic locking.
   * `edit_summary` (string, **optional**): Summary of what was corrected.
 * **Behavior**:
   Verifies the target is of OKF type `AI-Agent-Memory`, checks `loaded_version` against the disk version (conflict errors instruct the agent to re-read the memory), merges the provided fields over existing values, preserves tool-managed `memory-<scope>` tags, increments the version, snapshots history, and re-indexes.
+  > **Omitting `memory_kind` preserves it**, exactly as omitting `status` preserves a plan's lifecycle state. Editing a memory's body can never silently declassify it — which would be invisible at the call site and would only surface later as a memory that kind-filtered recall can no longer find.
 
 ---
 
@@ -688,6 +703,7 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   | **Stale plans** | An `AI-Agent-Plan` untouched for `stale_days`, never marked finished, and not parked | Work that quietly stopped |
   | **Cold memories** | An `AI-Agent-Memory` neither read nor edited within `cold_days` | Knowledge nothing consults is either settled or quietly wrong |
   | **Duplicate memories** | Two memories in the same `memory-<scope>` with closely matching titles | Two answers to one question drift apart |
+  | **Unkinded memories** | An `AI-Agent-Memory` with no `memory_kind` — written before the axis existed | Kind-filtered recall cannot find it. This is the backfill worklist; classify with `edit_agent_memory` |
   | **Unreferenced skills** | An `AI-Agent-Skill` no live document links *or* names in a `read_article` call | A skill nothing points an agent at will never be loaded |
 
   Several rules keep the report actionable rather than noisy:
@@ -706,7 +722,7 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   * **Duplicate detection is scoped, and skips pairs that already link to each other.** A "Deployment Notes" memory about `docker` and one about `nexwiki` are separate by design. And when two memories reference one another, their author already knows both exist and has decided to keep them apart. It reports similarity, not disagreement: telling the two apart needs semantics NexWiki deliberately does not have.
 
   A stale plan does **not** need an in-flight tag. Requiring `wip` sounds tidier but makes the check incapable of firing on a real wiki, where plans typically carry a project tag and nothing else — what matters is that the plan was never marked finished and nobody has touched it since. When an in-flight tag (`wip`, `in-progress`, `draft`, `active`, `todo`, `pending`, `review`, `blocked`) *is* present, the report names it.
-* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], stale_plan_count, stale_plans[], unreferenced_skill_count, unreferenced_skills[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`).
+* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], unkinded_memory_count, unkinded_memories[], stale_plan_count, stale_plans[], unreferenced_skill_count, unreferenced_skills[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`).
 
 **Examples**
 

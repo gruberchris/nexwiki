@@ -33,6 +33,7 @@ An advanced user and developer manual designed to help you organize content and 
 * **User Tag Management**: Creating, applying, and globally deleting standard user tags.
 * **Tag Editor & Badges**: Managing tags in the split-editor and viewing responsive color-coded tag badges.
 * **AI Agent Memory System**: The reserved `AI-Agent-Memory` document `type`, tool-managed `memory-<scope>` tags, and the dedicated collapsible sidebar directory.
+* **The Two Memory Axes**: `memory_kind` (what sort of fact — a closed four-value field, required at creation) versus `memory_type` scope (how far it reaches — an open vocabulary on a tag), why the split follows the field-vs-tag rule, and how to filter on either or both.
 * **Search & Index Isolation**: How NexWiki auto-excludes agent-created documents from standard browsing/searches by document `type`, keeping your workspace clean.
 
 ### 5. [NexWiki AI Agent Skills & Custom Registry Guide](./aiagent_skills.md)
