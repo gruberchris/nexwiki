@@ -325,7 +325,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.14.0...HEAD
 [0.14.0]: https://github.com/gruberchris/nexwiki/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/gruberchris/nexwiki/compare/v0.12.3...v0.13.0
 [0.12.3]: https://github.com/gruberchris/nexwiki/compare/v0.12.2...v0.12.3
