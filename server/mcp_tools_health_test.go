@@ -84,7 +84,14 @@ func seedHealthFixture(t *testing.T) *Server {
 	must(`{"name":"create_wiki_article","arguments":{"title":"Retired Page","content":"# Retired\n\nOld.","tags":["archived"],"edit_summary":"Initial"}}`)
 	// A memory with provenance, and one without.
 	must(`{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Sourced Fact","content":"# Fact","memory_type":"nexwiki","description":"has provenance","source":"design review"}}`)
-	must(`{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Floating Fact","content":"# Fact","memory_type":"nexwiki","description":"no provenance"}}`)
+	// The unsourced one is seeded through storage rather than the tool, because
+	// create_agent_memory now refuses a memory with no source. That is the point of the gate, and
+	// it makes this fixture the shape it is actually testing: a memory that predates it. The
+	// health check must keep reporting those — closing the intake does not rewrite history.
+	if _, err := srv.Storage.SaveArticle("", "Floating Fact", "# Fact", "no provenance", "", "", "seed",
+		[]string{MemoryScopeTagPrefix + "nexwiki"}, ContentTypeMemory); err != nil {
+		t.Fatalf("seeding the unsourced memory failed: %v", err)
+	}
 	// Plans: one stale, one recent, one finished-but-old, one old still in its default draft.
 	// Statuses are set the way an agent would, through edit_agent_plan's status field
 	// (creation defaults every plan to 'draft').

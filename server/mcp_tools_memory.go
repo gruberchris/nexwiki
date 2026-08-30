@@ -37,11 +37,11 @@ var createAgentMemoryTool = toolDef{
 				},
 				"description": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional one-line summary of the memory, shown in list indexes and the context overview.",
+					"description": "REQUIRED. One-line summary of the memory. This is what get_context_overview shows, so a memory without one is invisible at exactly the moment an agent orients itself.",
 				},
 				"source": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional provenance: where this knowledge came from (URL, document, or session context).",
+					"description": "REQUIRED. Provenance: where this knowledge came from (URL, document, or session context). A fact with no provenance cannot be re-verified later, and origin cannot be recovered after the fact.",
 				},
 				"tags": map[string]interface{}{
 					"type":        "array",
@@ -53,7 +53,7 @@ var createAgentMemoryTool = toolDef{
 					"description": "Optional revision log description summarizing why this memory was created.",
 				},
 			},
-			"required": []string{"title", "content", "memory_kind"},
+			"required": []string{"title", "content", "memory_kind", "description", "source"},
 		},
 	},
 	Handler:  (*Server).toolCreateAgentMemory,
@@ -91,6 +91,33 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 	memoryKind := NormalizeMemoryKind(mArgs.MemoryKind)
 	if err := ValidateMemoryKind(ContentTypeMemory, memoryKind, true); err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+	}
+
+	// The provenance gate.
+	//
+	// wiki_health already reports memories with no source, and that check exists because agents
+	// skip the field. It is the right check on the wrong side of the write: a fact whose origin
+	// was never recorded cannot have its origin *recovered* by a later report. Both fields were
+	// already documented as mandatory in the guidelines; this makes the schema agree with the
+	// guidance instead of leaving it to prose an agent may not have loaded.
+	//
+	// description is included because it powers get_context_overview, which is the first call the
+	// server's own instructions tell an agent to make. A memory with no description is invisible
+	// at exactly the moment orientation happens.
+	//
+	// Trimmed, because " " satisfies a required-field check and fails the health check that
+	// motivated this — the two must agree on what counts as present.
+	var missing []string
+	if strings.TrimSpace(mArgs.Description) == "" {
+		missing = append(missing, "'description' (a one-line summary; it is what get_context_overview shows, so a memory without one is invisible when an agent orients itself)")
+	}
+	if strings.TrimSpace(mArgs.Source) == "" {
+		missing = append(missing, "'source' (where this knowledge came from; a fact with no provenance cannot be re-verified later, and its origin cannot be recovered afterwards)")
+	}
+	if len(missing) > 0 {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf(
+			"Error: a memory must carry %s. Missing: %s.",
+			pluralizeFields(len(missing)), strings.Join(missing, "; "))}}}, nil
 	}
 
 	mType := strings.ToLower(strings.TrimSpace(mArgs.MemoryType))
@@ -530,4 +557,14 @@ func (srv *Server) toolListAgentMemories(args json.RawMessage) (interface{}, *JS
 		Content:           []ToolContent{{Type: "text", Text: text}},
 		StructuredContent: DocumentListOutput{Count: count, Documents: matched},
 	}, nil
+}
+
+// pluralizeFields keeps the provenance rejection grammatical whether one field is missing or both.
+// A message that reads "must carry both fields. Missing: 'source'" is the kind of small wrongness
+// that makes an agent re-read the schema instead of just fixing the call.
+func pluralizeFields(n int) string {
+	if n == 1 {
+		return "this field"
+	}
+	return "both fields"
 }

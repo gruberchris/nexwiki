@@ -433,13 +433,16 @@ Creates a brand new protected AI Agent Memory document. Memories must be **succi
 
     Anything outside the vocabulary is rejected with the list; an absent value is rejected too, because the classification is only cheap at intake. The agent writing a memory knows what sort of fact it is, and nobody reading it back later reliably does.
   * `memory_type` (string, **optional**): Scopes the memory. Use a **project name** (e.g. `nexwiki`) for project-specific knowledge, a **topic name** (e.g. `docker`) for reusable cross-project knowledge, or **omit** for general knowledge. Applies a tool-managed `memory-<memory_type>` scope tag (e.g. `memory-nexwiki`), or no scope tag if omitted. The OKF document `type` is always set to `AI-Agent-Memory` regardless.
-  * `description` (string, **optional**): One-line summary shown in list indexes and the context overview.
-  * `source` (string, **optional**): Provenance — where this knowledge came from (URL, document, or session context).
+  * `description` (string, **required**): One-line summary shown in list indexes and the context overview.
+  * `source` (string, **required**): Provenance — where this knowledge came from (URL, document, or session context).
+
+  > **Both are required, and both are trimmed.** They were documented as mandatory in the seeded guidelines long before the schema agreed, and `wiki_health` has always reported memories missing a source — a check on the wrong side of the write, since a fact whose origin was never recorded cannot have its origin *recovered* by a later report. `description` is included because it powers `get_context_overview`, the first call the server's own instructions tell an agent to make: a memory without one is invisible at exactly the moment orientation happens. A whitespace-only value is refused, so the gate and the health check agree on what counts as present. The rejection names both fields and says why each matters, because an agent told only "this is required" learns to pass `"x"`.
   * `tags` (array of string, **optional**): Status or user tags to apply, e.g. `["review"]`. Call `get_status_tags` for the recognized status values. The tool-managed `memory-<memory_type>` scope tag is added automatically and **cannot be set here** — a caller-supplied `memory-*` tag is dropped.
   * `edit_summary` (string, **optional**): Optional description summarizing why this memory was created.
 * **Behavior**:
   Validates `memory_kind` against the closed vocabulary, checks for slug collision, sets the OKF `type` to `AI-Agent-Memory`, applies a tool-managed `memory-<memory_type>` scope tag if a `memory_type` was provided, merges any caller `tags` on top of it, saves the Markdown file, commits the first version snapshot, and indexes the document in the search engine.
 * **Memory hygiene**: Search for an existing memory before creating one. If a memory later becomes stale, use `edit_agent_memory` to correct it in place or `delete_agent_memory` to retire it — do not create near-duplicates.
+* **Scope of the provenance requirement**: creation only. `edit_agent_memory` and `append_agent_memory` keep pointer semantics, so a caller fixing a body is never forced to restate provenance it is not changing. Existing memories are untouched — this closes the intake, it does not rewrite history, and `wiki_health` keeps reporting the ones already stored without a source. Plans and skills are deliberately out of scope: the same argument would apply, but there is no evidence of the same problem there.
 
 ---
 

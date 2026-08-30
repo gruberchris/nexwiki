@@ -53,7 +53,11 @@ These rules bound every other rule on this page. Orientation is a prerequisite, 
 
 ## 4. Memory hygiene
 - Keep memories succinct — one clear insight each, bullets over paragraphs.
-- Set a one-line ` + "`description`" + ` and a ` + "`source`" + ` on everything you create.
+- A ` + "`description`" + ` and a ` + "`source`" + ` are **required** on every memory you create —
+  the tool refuses the write without both. The description is what
+  ` + "`get_context_overview`" + ` shows, so a memory without one is invisible when an agent
+  orients itself; the source is what makes the fact re-verifiable, and origin cannot be recovered
+  after the fact. Write real values: a placeholder passes the gate and defeats it.
 - A memory has **two independent axes**, and both are set at creation:
   - **Kind** — ` + "`memory_kind`" + `, **required**, a closed vocabulary of four: ` + "`project`" + `
     (goals and constraints not derivable from the repo), ` + "`reference`" + ` (a pointer to an

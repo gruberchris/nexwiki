@@ -16,7 +16,7 @@ func TestMemoryKindIsRequiredAtCreation(t *testing.T) {
 	srv := newMCPServer(t)
 
 	t.Run("absent is rejected, and the error teaches the vocabulary", func(t *testing.T) {
-		resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Unclassified","content":"# fact"}}`)
+		resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Unclassified","content":"# fact","description":"fixture memory","source":"test fixture"}}`)
 		if !resp.IsError {
 			t.Fatal("a memory with no kind must be rejected")
 		}
@@ -29,7 +29,7 @@ func TestMemoryKindIsRequiredAtCreation(t *testing.T) {
 	})
 
 	t.Run("an invented kind is rejected rather than stored", func(t *testing.T) {
-		resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Invented Kind","content":"# fact","memory_kind":"troubleshooting"}}`)
+		resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Invented Kind","content":"# fact","memory_kind":"troubleshooting","description":"fixture memory","source":"test fixture"}}`)
 		if !resp.IsError {
 			t.Fatal("an out-of-vocabulary kind must be rejected")
 		}
@@ -44,7 +44,7 @@ func TestMemoryKindIsRequiredAtCreation(t *testing.T) {
 	t.Run("each vocabulary value is accepted and round-trips through disk", func(t *testing.T) {
 		for _, kind := range MemoryKinds {
 			title := "Kind " + kind
-			resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"`+title+`","content":"# fact","memory_kind":"`+kind+`"}}`)
+			resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"`+title+`","content":"# fact","memory_kind":"`+kind+`","description":"fixture memory","source":"test fixture"}}`)
 			if resp.IsError {
 				t.Fatalf("kind %q rejected: %s", kind, resp.Content[0].Text)
 			}
@@ -145,7 +145,7 @@ func TestMemoryKindIsIndependentOfScope(t *testing.T) {
 		if s.scope != "" {
 			args += `,"memory_type":"` + s.scope + `"`
 		}
-		args += `}`
+		args += `,"description":"fixture memory","source":"test fixture"}`
 		if resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":`+args+`}`); resp.IsError {
 			t.Fatalf("seeding %q: %s", s.title, resp.Content[0].Text)
 		}
@@ -211,8 +211,8 @@ func TestSearchNarrowsByMemoryKind(t *testing.T) {
 		}
 	}
 	must(`{"name":"create_wiki_article","arguments":{"title":"Bleve Indexing","content":"# bleve indexing notes"}}`)
-	must(`{"name":"create_agent_memory","arguments":{"title":"Bleve Decision","content":"# bleve over elasticsearch","memory_kind":"project"}}`)
-	must(`{"name":"create_agent_memory","arguments":{"title":"Bleve Dashboard","content":"# bleve metrics dashboard","memory_kind":"reference"}}`)
+	must(`{"name":"create_agent_memory","arguments":{"title":"Bleve Decision","content":"# bleve over elasticsearch","memory_kind":"project","description":"fixture memory","source":"test fixture"}}`)
+	must(`{"name":"create_agent_memory","arguments":{"title":"Bleve Dashboard","content":"# bleve metrics dashboard","memory_kind":"reference","description":"fixture memory","source":"test fixture"}}`)
 
 	search := func(t *testing.T, args string) SearchOutput {
 		t.Helper()
@@ -380,7 +380,7 @@ func TestMemoryKindSurvivesAnOKFRoundTrip(t *testing.T) {
 func TestMemoryKindReachesStructuredOutput(t *testing.T) {
 	srv := newMCPServer(t)
 
-	if resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Surfaced Fact","content":"# fact","memory_kind":"user"}}`); resp.IsError {
+	if resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Surfaced Fact","content":"# fact","memory_kind":"user","description":"fixture memory","source":"test fixture"}}`); resp.IsError {
 		t.Fatalf("setup failed: %s", resp.Content[0].Text)
 	}
 
