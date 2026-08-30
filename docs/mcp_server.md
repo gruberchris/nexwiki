@@ -630,10 +630,12 @@ Returns a **cheap progressive-disclosure index** of the entire knowledge base �
 * **Behavior**:
   Built from a single metadata-only pass over the article directory (no per-article content reads, so it stays fast at any wiki size). The summary shown per entry is the article's `description` front-matter field, falling back to the first content line when no description is set. Orient yourself with this overview, then call `read_article` on only the entries you actually need.
 
+  **`user` and `feedback` memories are listed first.** Those two kinds apply regardless of the task an agent is about to start — who it is working with, and the corrections that person has already given — while every other kind is only relevant once the task is known. This is an *ordering*, not a separate pinned block: a memory is never listed twice, so the pinned set cannot crowd out the index however large it grows, and needs no cap. Each memory's kind renders inline as `<kind>`. When a wiki has no `user` or `feedback` memories, the overview says nothing about the ordering rather than explaining one that is not visible.
+
 * **Sample output**:
 ```
 NexWiki Context Overview (42 articles total)
-Each line: Title (slug) — summary [tags] (updated). Use read_article(slug) to load full content.
+Each line: Title (slug) — summary <memory kind> [tags] (updated). Use read_article(slug) to load full content.
 
 == Wiki Articles (30) ==
 - Go (go) — Compiled, statically typed language by Google [programming language] (updated 2026-06-08)

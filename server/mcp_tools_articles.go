@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"sort"
 	"strings"
 	"time"
 )
@@ -972,14 +973,37 @@ func (srv *Server) toolGetContextOverview(args json.RawMessage) (interface{}, *J
 		grouped[dir] = append(grouped[dir], art)
 	}
 
+	// Pin `user` and `feedback` memories ahead of the rest of the memory listing.
+	//
+	// These two kinds are what an agent needs *regardless of the task it is about to do*: who it
+	// is working with, and the corrections that person has already given it. Every other memory is
+	// only relevant once the task is known. This is the orientation call the server's own
+	// instructions tell an agent to make first, so it is the right place to put them.
+	//
+	// This reorders; it does not duplicate. A separate pinned block above the index was the
+	// obvious alternative and is worse: get_context_overview exists to be cheap, and listing a
+	// memory twice spends context to say one thing. Because nothing is displaced or repeated, the
+	// pinned set cannot crowd out the index however large it grows, and needs no cap.
+	//
+	// Stable within each group: ListArticles has already sorted by recency, and sort.SliceStable
+	// keeps that order inside the pinned half and the remainder alike.
+	sort.SliceStable(grouped["aimemories"], func(i, j int) bool {
+		return isPinnedMemoryKind(grouped["aimemories"][i].MemoryKind) &&
+			!isPinnedMemoryKind(grouped["aimemories"][j].MemoryKind)
+	})
+
 	text := fmt.Sprintf("NexWiki Context Overview (%d articles total)\n", len(articles))
-	text += "Each line: Title (slug) — summary [tags] (updated). Use read_article(slug) to load full content.\n\n"
+	text += "Each line: Title (slug) — summary <memory kind> [tags] (updated). Use read_article(slug) to load full content.\n\n"
 	for _, sec := range sections {
 		if filter != "" && filter != sec.filter {
 			continue
 		}
 		entries := grouped[sec.dir]
 		text += fmt.Sprintf("== %s (%d) ==\n", sec.label, len(entries))
+		if sec.dir == "aimemories" && countPinnedMemories(entries) > 0 {
+			text += "   (user and feedback memories are listed first: they say who you are working " +
+				"with and what corrections they have already given, which applies to any task.)\n"
+		}
 		for _, art := range entries {
 			summary := art.Description
 			if summary == "" {
@@ -988,6 +1012,11 @@ func (srv *Server) toolGetContextOverview(args json.RawMessage) (interface{}, *J
 			line := fmt.Sprintf("- %s (%s)", art.Title, art.Slug)
 			if summary != "" {
 				line += " — " + summary
+			}
+			// Kind is rendered before tags because it is the axis that decides whether this
+			// memory is worth reading now, and an agent scanning the index reads left to right.
+			if art.MemoryKind != "" {
+				line += fmt.Sprintf(" <%s>", art.MemoryKind)
 			}
 			if len(art.Tags) > 0 {
 				line += fmt.Sprintf(" [%s]", strings.Join(art.Tags, ", "))
