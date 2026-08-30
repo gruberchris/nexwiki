@@ -150,6 +150,12 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 		}
 	}
 
+	// Secret scanning, at the MCP write chokepoint. See server/secrets.go.
+	if refusal := secretRefusal("memory", mArgs.Content, mArgs.Description, mArgs.Source); refusal != nil {
+		return *refusal, nil
+	}
+	secretNote := secretWarning(warnedSecrets(mArgs.Content, mArgs.Description, mArgs.Source))
+
 	art, err := srv.Storage.SaveArticleWithOverrides("", title, mArgs.Content, mArgs.Description, mArgs.Source, "", summary, tags, ContentTypeMemory, ArticleOverrides{MemoryKind: &memoryKind})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent memory: %v", err)}}}, nil
@@ -157,6 +163,7 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 
 	respText := fmt.Sprintf("Success! Protected AI Agent Memory '%s' created successfully.\nSlug: %s\nKind: %s\nCreated At: %s\nVersion: %d\nTags: %s\n",
 		art.Title, art.Slug, art.MemoryKind, art.CreatedAt.Format(time.RFC3339), art.Version, strings.Join(art.Tags, ", "))
+	respText = secretNote + respText
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
@@ -217,6 +224,12 @@ func (srv *Server) toolAppendAgentMemory(args json.RawMessage) (interface{}, *JS
 		summary = "Appended AI Agent memory details"
 	}
 
+	// Secret scanning, at the MCP write chokepoint. See server/secrets.go.
+	if refusal := secretRefusal("memory", aArgs.ContentToAppend, "", ""); refusal != nil {
+		return *refusal, nil
+	}
+	secretNote := secretWarning(warnedSecrets(aArgs.ContentToAppend, "", ""))
+
 	art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, existing.Resource, summary, existing.Tags, existing.Type)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent memory: %v", err)}}}, nil
@@ -224,6 +237,7 @@ func (srv *Server) toolAppendAgentMemory(args json.RawMessage) (interface{}, *JS
 
 	respText := fmt.Sprintf("Success! Appended memory details to '%s' (version: %d, edited: %s).\n",
 		art.Title, art.Version, art.Timestamp.Format(time.RFC3339))
+	respText = secretNote + respText
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
@@ -386,6 +400,12 @@ func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSON
 	}
 
 	newResource := existing.Resource
+	// Secret scanning, at the MCP write chokepoint. See server/secrets.go.
+	if refusal := secretRefusal("memory", newContent, newDescription, newSource); refusal != nil {
+		return *refusal, nil
+	}
+	secretNote := secretWarning(warnedSecrets(newContent, newDescription, newSource))
+
 	art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, newTitle, newContent, newDescription, newSource, newResource, summary, newTags, existing.Type, ArticleOverrides{MemoryKind: kindOverride})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent memory: %v", err)}}}, nil
@@ -397,6 +417,7 @@ func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSON
 	}
 	respText := fmt.Sprintf("Success! AI Agent Memory '%s' updated successfully.\nSlug: %s\nKind: %s\nNew Version: %d\nLast Edited: %s\nTags: %s\n",
 		art.Title, art.Slug, kindLine, art.Version, art.Timestamp.Format(time.RFC3339), strings.Join(art.Tags, ", "))
+	respText = secretNote + respText
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 

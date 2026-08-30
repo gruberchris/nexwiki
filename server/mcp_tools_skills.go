@@ -95,6 +95,12 @@ func (srv *Server) toolCreateAgentSkill(args json.RawMessage) (interface{}, *JSO
 		summary = "Created Custom AI Agent Skill"
 	}
 
+	// Secret scanning, at the MCP write chokepoint. See server/secrets.go.
+	if refusal := secretRefusal("skill", sArgs.Content, sArgs.Description, sArgs.Source); refusal != nil {
+		return *refusal, nil
+	}
+	secretNote := secretWarning(warnedSecrets(sArgs.Content, sArgs.Description, sArgs.Source))
+
 	art, err := srv.Storage.SaveArticleWithStatus("", title, sArgs.Content, sArgs.Description, sArgs.Source, "", summary, tags, ContentTypeSkill, &status)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent skill: %v", err)}}}, nil
@@ -102,6 +108,7 @@ func (srv *Server) toolCreateAgentSkill(args json.RawMessage) (interface{}, *JSO
 
 	respText := fmt.Sprintf("Success! Custom AI Skill '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\nStatus: %s\nTags: %s\n",
 		art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Version, art.Status, strings.Join(art.Tags, ", "))
+	respText = secretNote + respText
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
@@ -233,6 +240,12 @@ func (srv *Server) toolEditAgentSkill(args json.RawMessage) (interface{}, *JSONR
 		summary = "Updated Custom AI Agent Skill"
 	}
 
+	// Secret scanning, at the MCP write chokepoint. See server/secrets.go.
+	if refusal := secretRefusal("skill", newContent, newDescription, newSource); refusal != nil {
+		return *refusal, nil
+	}
+	secretNote := secretWarning(warnedSecrets(newContent, newDescription, newSource))
+
 	art, err := srv.Storage.SaveArticleWithStatus(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type, eArgs.Status)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent skill: %v", err)}}}, nil
@@ -240,6 +253,7 @@ func (srv *Server) toolEditAgentSkill(args json.RawMessage) (interface{}, *JSONR
 
 	respText := fmt.Sprintf("Success! Custom AI Skill '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nStatus: %s\nTags: %s\n",
 		art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339), art.Status, strings.Join(art.Tags, ", "))
+	respText = secretNote + respText
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 

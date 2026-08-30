@@ -270,6 +270,27 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 		}
 
 		body := TranslateBundleLinksToWikiLinks(art.Content)
+
+		// The importer is an MCP write path too, so leaving it unscanned would be a one-call
+		// bypass of the whole control: zip the credential, import the bundle, done. It is scanned
+		// at *document* granularity and skipped-with-a-warning rather than aborting the import,
+		// matching the permissive posture the rest of this function already takes toward
+		// malformed and typeless documents — one bad entry must not cost the operator the
+		// restore. Skipping is still a refusal: the offending document is not written.
+		if secretScanMode() == SecretScanRefuse {
+			if found := scanDocumentFields(body, art.Description, art.Source); len(found) > 0 {
+				classes := make([]string, 0, len(found))
+				for _, m := range found {
+					classes = append(classes, m.String())
+				}
+				report.Warnings = append(report.Warnings,
+					fmt.Sprintf("%s: refused — appears to contain %s (%s); the matched text is deliberately not quoted",
+						f.Name, pluralizeSecrets(len(found)), strings.Join(classes, "; ")))
+				report.Skipped++
+				continue
+			}
+		}
+
 		summary := "Imported from OKF bundle"
 		// A bundle written before status became a field carries it as a tag; lift it out so the
 		// permissive importer keeps accepting older bundles.

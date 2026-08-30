@@ -128,6 +128,12 @@ func (srv *Server) toolCreateAgentPlan(args json.RawMessage) (interface{}, *JSON
 		summary = "Created Collaborative AI Plan"
 	}
 
+	// Secret scanning, at the MCP write chokepoint. See server/secrets.go.
+	if refusal := secretRefusal("plan", pArgs.Content, pArgs.Description, pArgs.Source); refusal != nil {
+		return *refusal, nil
+	}
+	secretNote := secretWarning(warnedSecrets(pArgs.Content, pArgs.Description, pArgs.Source))
+
 	art, err := srv.Storage.SaveArticleWithStatus("", title, pArgs.Content, pArgs.Description, pArgs.Source, "", summary, tags, ContentTypePlan, &status)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent plan: %v", err)}}}, nil
@@ -135,6 +141,7 @@ func (srv *Server) toolCreateAgentPlan(args json.RawMessage) (interface{}, *JSON
 
 	respText := fmt.Sprintf("Success! Collaborative AI Plan '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\nStatus: %s\nTags: %s\n",
 		art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Version, art.Status, strings.Join(art.Tags, ", "))
+	respText = secretNote + respText
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
@@ -195,6 +202,12 @@ func (srv *Server) toolAppendAgentPlan(args json.RawMessage) (interface{}, *JSON
 		summary = "Appended Collaborative AI Plan details"
 	}
 
+	// Secret scanning, at the MCP write chokepoint. See server/secrets.go.
+	if refusal := secretRefusal("plan", aArgs.ContentToAppend, "", ""); refusal != nil {
+		return *refusal, nil
+	}
+	secretNote := secretWarning(warnedSecrets(aArgs.ContentToAppend, "", ""))
+
 	art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, existing.Resource, summary, existing.Tags, existing.Type)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent plan: %v", err)}}}, nil
@@ -202,6 +215,7 @@ func (srv *Server) toolAppendAgentPlan(args json.RawMessage) (interface{}, *JSON
 
 	respText := fmt.Sprintf("Success! Appended plan details to '%s' (version: %d, edited: %s).\n",
 		art.Title, art.Version, art.Timestamp.Format(time.RFC3339))
+	respText = secretNote + respText
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
@@ -344,6 +358,12 @@ func (srv *Server) toolEditAgentPlan(args json.RawMessage) (interface{}, *JSONRP
 		summary = "Updated Collaborative AI Plan"
 	}
 
+	// Secret scanning, at the MCP write chokepoint. See server/secrets.go.
+	if refusal := secretRefusal("plan", newContent, newDescription, newSource); refusal != nil {
+		return *refusal, nil
+	}
+	secretNote := secretWarning(warnedSecrets(newContent, newDescription, newSource))
+
 	art, err := srv.Storage.SaveArticleWithStatus(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type, eArgs.Status)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent plan: %v", err)}}}, nil
@@ -351,6 +371,7 @@ func (srv *Server) toolEditAgentPlan(args json.RawMessage) (interface{}, *JSONRP
 
 	respText := fmt.Sprintf("Success! Collaborative AI Plan '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nStatus: %s\nTags: %s\n",
 		art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339), art.Status, strings.Join(art.Tags, ", "))
+	respText = secretNote + respText
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
