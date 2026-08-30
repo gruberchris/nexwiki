@@ -162,14 +162,29 @@ func TestStructuredOutputCarriesRealData(t *testing.T) {
 		if out.Article.Version != 2 {
 			t.Errorf("version = %d, want 2", out.Article.Version)
 		}
-		// The body is deliberately absent from the structured half — it would otherwise be a
-		// second copy of the text block, doubling the size of every read. It must still be
-		// present in the text, which is the one copy every client renders.
-		if out.Article.Content != "" {
-			t.Errorf("structured output must not repeat the body, got %q", out.Article.Content)
+		// The body ships in the structured half, and only there. This assertion is the
+		// inverse of the one it replaces: 0.13.0 pinned the body as absent from
+		// structuredContent, which is precisely the defect — a client that reads the
+		// structured result of a tool declaring an outputSchema got no body at all, so it
+		// could neither read an article nor safely replace one via edit_wiki_article.
+		if !strings.Contains(out.Article.Content, "Revised") {
+			t.Errorf("body missing from the structured payload: %q", out.Article.Content)
 		}
-		if !strings.Contains(resp.Content[0].Text, "Revised") {
-			t.Errorf("body missing from the text block: %q", resp.Content[0].Text)
+		// And it is not duplicated back into the text block, which is what made the body
+		// cross the wire twice and pushed large articles past a client's result ceiling.
+		if strings.Contains(resp.Content[0].Text, "Revised") {
+			t.Errorf("text block must not repeat the body: %q", resp.Content[0].Text)
+		}
+		// The text block still has to answer "where is it?" and "what version am I editing?",
+		// or a text-only client is stuck with no body and no way to complete a read-then-edit.
+		if !strings.Contains(resp.Content[0].Text, "structuredContent.article.content") {
+			t.Errorf("text block must name where the body ships: %q", resp.Content[0].Text)
+		}
+		if !strings.Contains(resp.Content[0].Text, "nexwiki://article/search-design") {
+			t.Errorf("text block must name the resource fallback: %q", resp.Content[0].Text)
+		}
+		if !strings.Contains(resp.Content[0].Text, "Version: 2") {
+			t.Errorf("text block must carry the version for loaded_version: %q", resp.Content[0].Text)
 		}
 		if len(out.Backlinks) != 1 || out.Backlinks[0].Slug != "bleve-notes" {
 			t.Errorf("backlinks = %+v, want one entry for bleve-notes", out.Backlinks)
@@ -517,5 +532,51 @@ func schemaRequiredNames(schema map[string]interface{}) []string {
 		return names
 	default:
 		return nil
+	}
+}
+
+// TestReadArticleBodyReachesAStructuredOnlyClient pins the defect 0.13.0 shipped, from the one
+// vantage point that can see it: a client that reads structuredContent and never looks at the
+// text block. Claude Code is such a client, and against 0.13.0 it could not read an article body
+// at all — read_article answered with metadata and backlinks and nothing else.
+//
+// No generic assertion could have caught this. The published outputSchema and the payload agreed
+// with each other perfectly: the schema declared no `content` property and the handler sent none,
+// so TestStructuredOutputMatchesSchema validated a result that was internally consistent and
+// useless. What was missing was an assertion about what the payload is *for*.
+func TestReadArticleBodyReachesAStructuredOnlyClient(t *testing.T) {
+	srv := newMCPServer(t)
+
+	const body = "# Deep Structure\n\nThe paragraph a structured-only client must still receive."
+	if _, err := srv.Storage.SaveArticle("", "Structured Only", body, "", "", "", "", nil, ""); err != nil {
+		t.Fatalf("seeding failed: %v", err)
+	}
+
+	resp := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"structured-only"}}`)
+	if resp.IsError {
+		t.Fatalf("read failed: %s", resp.Content[0].Text)
+	}
+
+	// Discard the text block entirely — this is the whole point of the test.
+	out, ok := resp.StructuredContent.(ArticleOutput)
+	if !ok {
+		t.Fatalf("expected ArticleOutput, got %T", resp.StructuredContent)
+	}
+	if !strings.Contains(out.Article.Content, "structured-only client must still receive") {
+		t.Fatalf("a structured-only client got no body: %+v", out.Article)
+	}
+	// Everything edit_wiki_article needs must arrive by the same route, or the client can read
+	// but cannot write back.
+	if out.Article.Slug != "structured-only" || out.Article.Version < 1 {
+		t.Errorf("structured payload cannot drive an edit: slug=%q version=%d", out.Article.Slug, out.Article.Version)
+	}
+
+	// The schema must advertise the field, or a client that trusts outputSchema will not look
+	// for it. Schema drift in this direction is what made the body invisible in the first place.
+	props, _ := readArticleTool.Output["properties"].(map[string]interface{})
+	article, _ := props["article"].(map[string]interface{})
+	articleProps, _ := article["properties"].(map[string]interface{})
+	if _, declared := articleProps["content"]; !declared {
+		t.Error("read_article's outputSchema must declare article.content")
 	}
 }

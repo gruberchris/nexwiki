@@ -225,9 +225,14 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		sourceStr = fmt.Sprintf("\nSource: %s", art.Source)
 	}
 
-	// Return both front-matter configurations and full Markdown content to the agent
-	text := fmt.Sprintf("Type: %s\nTitle: %s\nSlug: %s\nCreated: %s\nUpdated: %s%s%s%s%s\n\n%s",
-		art.Type, art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Timestamp.Format(time.RFC3339), descStr, resourceStr, sourceStr, tagsStr, art.Content)
+	// The front-matter configuration, as prose. The body is deliberately not repeated here — see
+	// the comment on the structured payload below for which copy survives and why.
+	//
+	// Version is part of this header because it is the one field an agent must carry from a read
+	// into edit_wiki_article as loaded_version. It was absent until now, so a client reading only
+	// the text had no way to complete the documented read-then-edit loop.
+	text := fmt.Sprintf("Type: %s\nTitle: %s\nSlug: %s\nVersion: %d\nCreated: %s\nUpdated: %s%s%s%s%s\n\nBody: structuredContent.article.content — this tool declares an outputSchema and the Markdown body ships there. It is also readable as the MCP resource nexwiki://article/%s.",
+		art.Type, art.Title, art.Slug, art.Version, art.CreatedAt.Format(time.RFC3339), art.Timestamp.Format(time.RFC3339), descStr, resourceStr, sourceStr, tagsStr, art.Slug)
 
 	// Append inbound links for graph discoverability; never fail the read over a scan error
 	links := []DocumentLink{}
@@ -249,23 +254,35 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		text += fmt.Sprintf("\n\n---\nLinked from: %s", strings.Join(refs, ", "))
 	}
 
-	// The body ships exactly once, in the text block above. It used to ship twice — once as
-	// prose here and again as structuredContent.article.content — which doubled the wire size of
-	// every read and pushed a 63 KB article past an MCP client's tool-result ceiling at roughly
-	// half the article size that should have hit it. Clients that truncate a large result spill
-	// it to a file and leave the agent to dig the body back out, so the duplication cost real
-	// legibility, not just bytes.
+	// The body ships exactly once, and this is the copy.
 	//
-	// The text block is the copy that survives because every MCP client renders it, while
-	// structuredContent is optional and newer. Nothing else is lost: an agent reading only the
-	// structured half still gets every field an edit needs — `version` above all — and the body
-	// it would have read there is in the text it was already given.
-	structured := *art
-	structured.Content = ""
-
+	// It used to ship twice — as prose in the text block and again here — which doubled the wire
+	// size of every read and pushed a 63 KB article past an MCP client's tool-result ceiling at
+	// roughly half the article size that should have hit it. 0.13.0 removed one copy and kept the
+	// text block, on the stated premise that the text block is "the copy every MCP client
+	// renders, while structuredContent is optional and newer".
+	//
+	// That premise was wrong, and the resulting failure was total rather than partial: a client
+	// that reads structuredContent for a tool declaring an outputSchema — which Claude Code does
+	// — received metadata and backlinks and no body at all. It could not read an article, and so
+	// could not safely call edit_wiki_article, which replaces the whole body. Shipping the body
+	// once was the right goal; the choice of which copy survives was the error.
+	//
+	// So the body lives in the structured payload, which MCP treats as the tool's authoritative
+	// result, and the text block carries a metadata header naming where it is. This departs
+	// deliberately from the spec's backwards-compatibility SHOULD — "a tool that returns
+	// structured content SHOULD also return the serialized JSON in a TextContent block" —
+	// because honouring it means shipping the body twice, which is the defect above. Note what
+	// that SHOULD actually asks for: a *serialization of the structured payload*, not different
+	// prose. NexWiki's "prose in text, data in structured" split was already a departure from it,
+	// and it is the departure that created this bug.
+	//
+	// Do not move the body back into the text block without resolving the duplication that
+	// reintroduces. A client that renders only text can still reach the body through the
+	// nexwiki://article/<slug> resource, which the header names.
 	return ToolResponse{
 		Content:           []ToolContent{{Type: "text", Text: text}},
-		StructuredContent: ArticleOutput{Article: structured, Backlinks: links},
+		StructuredContent: ArticleOutput{Article: *art, Backlinks: links},
 	}, nil
 }
 

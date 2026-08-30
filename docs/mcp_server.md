@@ -116,6 +116,7 @@ Twelve read tools declare an **`outputSchema`** and return a **`structuredConten
 Three properties hold across all of them:
 
 - **The text is still there.** `structuredContent` is emitted *in addition to* `content`, and both are rendered from the same value, so they cannot disagree. A client that predates structured output sees no change.
+  - **`read_article` is the one exception, deliberately.** Its Markdown body ships in `structuredContent.article.content` and is *not* repeated in the text block, which carries the metadata header instead — including `version`, and a line naming where the body is. The body is large and duplicating it made every read cross the wire twice, which pushed a 63 KB article past a client's tool-result ceiling. A client that renders only text reaches the body through the [`nexwiki://article/<slug>` resource](#-resources--mention-a-wiki-page).
 - **Error results carry no `structuredContent`.** A payload that fails its own published schema is worse than no payload: every consumer would have to handle a shape the schema says cannot occur.
 - **Field names match the REST API.** A document read over MCP and the same document read from `GET /api/articles` have identical keys, so an agent that has seen one already knows the other.
 
@@ -294,8 +295,9 @@ Retrieves the raw Markdown content and Yaml-style front-matter configurations of
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target article (e.g. `home` or `setup-guide`).
 * **Behavior**:
-  Reads the Markdown file on disk, parses the front-matter metadata, and returns a plain text document listing the article Title, Slug, Created timestamp, Updated timestamp, Description and Source (when set), and the complete raw Markdown body. If other articles link to this page — via `[[WikiLinks]]` or absolute `/articles/<slug>` Markdown links — a `Linked from:` section is appended (capped at 15 entries) so agents can traverse the knowledge graph in reverse.
-* **Structured output**: `structuredContent` as `{article, backlinks[]}`. The article includes `version` — pass it straight to `edit_wiki_article` as `loaded_version`. Unlike the prose, `backlinks` is not capped at 15.
+  Reads the Markdown file on disk and parses the front-matter metadata. The text block is a metadata header — Type, Title, Slug, **Version**, Created, Updated, plus Description, Resource, Source and Tags when set — followed by a line naming where the body ships. If other articles link to this page — via `[[WikiLinks]]` or absolute `/articles/<slug>` Markdown links — a `Linked from:` section is appended (capped at 15 entries) so agents can traverse the knowledge graph in reverse.
+* **Structured output**: `structuredContent` as `{article, backlinks[]}`. **The raw Markdown body is `article.content`** — this is the only tool whose structured payload carries a body, and the only copy of it in the response. The article also includes `version`, to pass straight to `edit_wiki_article` as `loaded_version`. Unlike the prose, `backlinks` is not capped at 15.
+  > **Reading the body from the text block will not work.** It shipped there through 0.13.0, and for that one release it shipped in neither half: 0.13.0 removed it from `structuredContent` on the premise that every MCP client renders the text block, which is false for clients that read the structured result of a tool declaring an `outputSchema`. If a body is what you need and you cannot read `structuredContent`, use the `nexwiki://article/<slug>` resource.
 
 ---
 

@@ -250,8 +250,14 @@ func TestMCPReadArticle(t *testing.T) {
 	if resp3.IsError {
 		t.Errorf("expected success, got error: %s", resp3.Content[0].Text)
 	}
-	if !strings.Contains(resp3.Content[0].Text, "Content here") {
-		t.Errorf("expected content in response, got: %s", resp3.Content[0].Text)
+	// The body arrives in the structured payload, not the text block. A test that accepted
+	// either would have passed against the version of this tool that returned no body at all.
+	out, ok := resp3.StructuredContent.(ArticleOutput)
+	if !ok {
+		t.Fatalf("expected ArticleOutput, got %T", resp3.StructuredContent)
+	}
+	if !strings.Contains(out.Article.Content, "Content here") {
+		t.Errorf("expected the body in the structured payload, got: %q", out.Article.Content)
 	}
 }
 
