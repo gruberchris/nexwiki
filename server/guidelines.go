@@ -74,6 +74,11 @@ These rules bound every other rule on this page. Orientation is a prerequisite, 
   ` + "`edit_agent_memory`" + ` when you touch it — do not guess in bulk.
 - Correct stale or wrong memories in place with ` + "`edit_agent_memory`" + `; retire fully
   superseded ones with ` + "`delete_agent_memory`" + ` — do not create near-duplicates.
+- **The server checks for near-duplicates for you.** ` + "`create_agent_memory`" + ` compares the
+  new memory against the existing ones in its scope and reports the outcome **either way**,
+  including when it found nothing. That is a completed check — do not run further lookups to
+  confirm it. A warning still writes the memory; fold it into the named sibling afterwards if the
+  warning is right.
 - **Never write a credential into any document.** This is now enforced: a write carrying an API
   key, token, private key or password is refused, and the refusal names the pattern class and
   offset without repeating the value. Describe the secret instead ("the deploy token for X, in
