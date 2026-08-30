@@ -251,6 +251,40 @@ Exceeding the cap is **not recoverable**: the read loop ends and the stdio chann
 
 ---
 
+## 🔐 Secret scanning — every write is checked, and a hit is refused
+
+Every MCP write path scans the `content`, `description` and `source` it is about to store, and **refuses the write** if it finds credential-shaped text. This covers `create_wiki_article`, `edit_wiki_article`, and create/edit/append for memories, plans and skills — plus `import_okf_bundle`, since a bundle is a write path too and leaving it out would be a one-call bypass.
+
+**A key in a plan is no safer than a key in a memory**, so the check sits at one chokepoint rather than on the class that prompted it.
+
+**Refuse, not redact.** A scanner on a live output stream redacts because the turn has to continue. A write can safely fail: the caller gets a recoverable error and rewrites. A redacted document is worse than a refused one — it reads as complete, and the hole is invisible to every later reader.
+
+**The refusal never quotes the match.** It gives the pattern class, the byte offset and the length. A tool error is transcript content — sent to the model provider and persisted — so quoting the value to explain the refusal would reproduce the exposure the check exists to prevent.
+
+```
+Error: refusing to write this memory — it appears to contain a credential.
+
+  - GitHub token in 'source' at byte offset 31 (length 40)
+
+The matched text is deliberately not repeated here: a tool error is transcript content
+that is sent onward and persisted, so quoting it would reproduce the exposure this check
+exists to prevent.
+…
+```
+
+**What to do about it**: remove the value and describe it instead ("the deploy token for X, in 1Password"), or use a placeholder — `<your-token>`, `REDACTED`, and AWS's published example key are recognized and allowed, so documentation *about* credentials stays writable.
+
+| | |
+|---|---|
+| Detected | AWS, GitHub, Slack, Anthropic, OpenAI-style and Google key prefixes; PEM private-key headers; JWTs; assignment-shaped `key = value` |
+| Not detected | Anything whose format is not on that list. There is no entropy scoring — a wiki is full of hashes and long identifiers that carry no secret |
+| Scanned fields | `content`, `description`, `source`. `source` matters most: it is the natural home for a URL with an embedded token |
+| Append | Only the appended text is scanned, not the whole document — this closes the intake without making a legacy document unappendable |
+| Configuration | `NEXWIKI_SECRET_SCAN` = `refuse` (default), `warn`, `off`. An unrecognized value falls back to `refuse`. No per-document opt-out |
+| Not scanned | REST and web-UI writes (a human is exercising judgment), and `revert_article_version` (restoring stored content is not intake) |
+
+See [SECURITY.md](../SECURITY.md#secret-scanning-on-agent-writes) for the full limits.
+
 ## 🛠️ Exposed MCP Tools
 
 > **Native OKF storage & document `type`.** Every NexWiki `.md` file is a conformant Open Knowledge Format (OKF v0.1) concept document at rest (real YAML front matter). Each document carries a `type` — exactly one of **`Wiki`** (regular articles) or the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags remain: **status tags** (e.g. `wip`, `completed`, `inbox`) and tool-managed **memory-scope tags** (`memory-<scope>`).

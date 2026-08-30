@@ -70,6 +70,12 @@ These rules bound every other rule on this page. Orientation is a prerequisite, 
   ` + "`edit_agent_memory`" + ` when you touch it — do not guess in bulk.
 - Correct stale or wrong memories in place with ` + "`edit_agent_memory`" + `; retire fully
   superseded ones with ` + "`delete_agent_memory`" + ` — do not create near-duplicates.
+- **Never write a credential into any document.** This is now enforced: a write carrying an API
+  key, token, private key or password is refused, and the refusal names the pattern class and
+  offset without repeating the value. Describe the secret instead ("the deploy token for X, in
+  1Password") or use a placeholder like ` + "`<your-token>`" + `. A NexWiki document goes to
+  disk, to version history, to the search index, to the web UI and to every connected client —
+  there is no one place to delete it from afterwards.
 
 ## 5. Respect reserved types and tags
 - Never relabel a reserved document type (` + "`AI-Agent-Plan`, `AI-Agent-Skill`, `AI-Agent-Memory`" + `)

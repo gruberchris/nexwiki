@@ -442,6 +442,12 @@ func (srv *Server) toolCreateWikiArticle(args json.RawMessage) (interface{}, *JS
 
 	tags := validateAndCleanUserTags(cArgs.Tags, nil, ContentTypeWiki)
 	// Regular article creation always produces a Wiki document; reserved types are tool-only.
+	// Secret scanning, at the MCP write chokepoint. See server/secrets.go.
+	if refusal := secretRefusal("wiki article", cArgs.Content, cArgs.Description, cArgs.Source); refusal != nil {
+		return *refusal, nil
+	}
+	secretNote := secretWarning(warnedSecrets(cArgs.Content, cArgs.Description, cArgs.Source))
+
 	art, err := srv.Storage.SaveArticle("", cArgs.Title, cArgs.Content, cArgs.Description, cArgs.Source, cArgs.Resource, cArgs.EditSummary, tags, ContentTypeWiki)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating article: %v", err)}}}, nil
@@ -449,6 +455,7 @@ func (srv *Server) toolCreateWikiArticle(args json.RawMessage) (interface{}, *JS
 
 	respText := fmt.Sprintf("Success! Article '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\n",
 		art.Title, art.Slug, art.CreatedAt.Format(time.RFC3339), art.Version)
+	respText = secretNote + respText
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
@@ -552,6 +559,12 @@ func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSON
 	// ApplyArticleEdit performs the version check and the write under one lock. Reading the
 	// article, comparing versions, and saving as three separate steps let a concurrent writer
 	// land in the gap — the guard would pass and still clobber the other session's edit.
+	// Secret scanning, at the MCP write chokepoint. See server/secrets.go.
+	if refusal := secretRefusal("wiki article", edit.Content, derefOr(edit.Description), derefOr(edit.Source)); refusal != nil {
+		return *refusal, nil
+	}
+	secretNote := secretWarning(warnedSecrets(edit.Content, derefOr(edit.Description), derefOr(edit.Source)))
+
 	art, err := srv.Storage.ApplyArticleEdit(eArgs.Slug, edit)
 	switch {
 	case errors.Is(err, ErrVersionConflict):
@@ -570,6 +583,7 @@ func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSON
 
 	respText := fmt.Sprintf("Success! Article '%s' (slug: %s) updated successfully.\nNew Version: %d\nLast Edited: %s\n",
 		art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339))
+	respText = secretNote + respText
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 

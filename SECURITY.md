@@ -35,6 +35,28 @@ DNS names are deliberately not auto-trusted via the same-origin rule: that would
 - Search snippets are HTML-escaped before rendering.
 - The HTTP server sets read and idle timeouts.
 
+## Secret scanning on agent writes
+
+Every MCP write path — create, edit and append across wiki articles, memories, plans and skills, plus `import_okf_bundle` — scans the `content`, `description` and `source` fields for credential-shaped text and **refuses the write** when it finds one.
+
+**Why refuse rather than redact.** A scanner on a live output stream redacts because the turn has to continue. A write can safely fail: the caller gets a recoverable error and rewrites the document. A redacted document is worse than a refused one — it reads as complete, and the hole is invisible to every later reader.
+
+**Why the write path at all.** A NexWiki document is Markdown on disk, kept in compressed version history, indexed into Bleve, rendered in the web UI, and served to every connected MCP client. A credential written once is then in the index, in the history, and in every agent's context on recall — there is no single place to delete it from. The only cheap moment is before the write.
+
+**The refusal never quotes the match.** It reports the pattern class, the byte offset and the length, and nothing else. A tool error is transcript content: it is sent to the model provider and persisted, so quoting the value to explain the refusal would reproduce the exact exposure the check exists to prevent. This is asserted by a test rather than left to review.
+
+**Configuration.** `NEXWIKI_SECRET_SCAN` takes `refuse` (default), `warn` (write and annotate the response) or `off`. An unrecognized value falls back to `refuse` with a warning on stderr — a typo in the mode is exactly when failing open would matter most. There is deliberately **no per-document opt-out**: a flag an agent can set on the call being checked is not a control.
+
+### Known limits
+
+Be clear about what this does and does not do:
+
+- **It is a pattern scanner, so it catches shapes it knows.** High-signal issuer prefixes (AWS, GitHub, Slack, Anthropic, OpenAI-style, Google), PEM private-key headers, JWTs, and assignment-shaped `key = value` text. A credential in a format not on that list passes.
+- **No entropy scoring**, deliberately. A wiki is full of hashes, slugs, base64 fragments and long identifiers that carry no secret; an entropy threshold would make every one of them an argument, and a control people argue with gets turned off.
+- **A placeholder allowlist exists** so documentation *about* credentials stays writable — this wiki documents OAuth clients and token audiences, and a scanner that blocked those would be disabled within a day. Placeholders are matched against the matched text only, never the surrounding prose: an earlier version widened to a 40-byte window and that was a bypass, since a real credential near the word `example` (a hostname was enough) was let through.
+- **REST and web-UI writes are not scanned.** A human editing their own wiki is exercising judgment the scanner cannot second-guess; this control is about what agents write unattended.
+- **`revert_article_version` is not scanned.** It restores content that is already stored, so it is not intake. A credential written before this check existed stays in history until it is removed deliberately — closing the intake does not clean the past.
+
 ## Agent attribution is not authentication
 
 The activity log records an `agent` for every change, `get_article_history` reports who made each revision, and the Activity drawer lets you filter by agent. **None of this is an identity claim.**
