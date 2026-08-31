@@ -308,6 +308,11 @@ var editAgentMemoryTool = toolDef{
 					"enum":        MemoryKinds,
 					"description": "Optional new kind: what sort of fact this memory holds (preserves existing if omitted). Use it to classify a memory written before the kind axis existed — wiki_health lists those as unkinded_memories.",
 				},
+				"change_intent": map[string]interface{}{
+					"type":        "string",
+					"enum":        ChangeIntents,
+					"description": "REQUIRED when 'content' is supplied: what this edit is doing to the claim. 'refine' — clarifies or improves wording without altering the claim. 'correct' — the prior claim was wrong and the new one is right; 'edit_summary' becomes required, because a correction must say what changed. 'contradict' — new evidence conflicts and you cannot tell which is right: the existing content is NOT replaced, your conflicting claim is appended as a dated Contested block, and the memory is tagged 'contested' for a human to adjudicate. Distinct from 'memory_kind', which is what sort of fact the memory holds.",
+				},
 				"tags": map[string]interface{}{
 					"type": "array",
 					"items": map[string]interface{}{
@@ -339,6 +344,7 @@ func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSON
 		Description   *string   `json:"description,omitempty"`
 		Source        *string   `json:"source,omitempty"`
 		MemoryKind    *string   `json:"memory_kind,omitempty"`
+		ChangeIntent  string    `json:"change_intent"`
 		Tags          *[]string `json:"tags,omitempty"`
 		LoadedVersion int       `json:"loaded_version"`
 		EditSummary   string    `json:"edit_summary"`
@@ -372,12 +378,41 @@ func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSON
 		}
 	}
 
+	// What is this edit doing to the claim?
+	//
+	// Optimistic locking already protects against *concurrent* edits. It does nothing about an
+	// agent that has loaded the current version and knowingly replaces a fact with an incompatible
+	// one — that is a clean, successful, silent overwrite. Git history retains the old assertion,
+	// but history is not where anyone looks, and a contradiction nobody surfaces is a
+	// contradiction nobody resolves.
+	//
+	// Required only when content is replaced: an edit that touches a tag or a description makes no
+	// claim about the fact, so demanding an intent for it would be friction with nothing behind it.
+	intent := NormalizeChangeIntent(eArgs.ChangeIntent)
+	if err := ValidateChangeIntent(intent, eArgs.Content != nil); err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+	}
+	// A correction must say what it corrected. Without this the intent is a checkbox: an agent can
+	// declare `correct` and leave no record of what the prior claim was or why it was wrong, which
+	// is the same silent overwrite with a label on it.
+	if intent == "correct" && strings.TrimSpace(eArgs.EditSummary) == "" {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: change_intent 'correct' requires an 'edit_summary' stating what was wrong and what it now says. A correction with no record of what changed is indistinguishable from a silent overwrite."}}}, nil
+	}
+
 	newContent := existing.Content
+	contested := false
 	if eArgs.Content != nil {
 		if strings.TrimSpace(*eArgs.Content) == "" {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: content cannot be empty. Use 'delete_agent_memory' to retire a memory entirely."}}}, nil
 		}
-		newContent = *eArgs.Content
+		if intent == "contradict" {
+			// The whole point: the contested claim is preserved rather than replaced. The agent
+			// said it cannot adjudicate, so nothing here adjudicates on its behalf.
+			newContent = appendContestedBlock(existing.Content, *eArgs.Content, eArgs.EditSummary, time.Now())
+			contested = true
+		} else {
+			newContent = *eArgs.Content
+		}
 	}
 
 	newDescription := existing.Description
@@ -428,6 +463,9 @@ func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSON
 		}
 		newTags = parsedTags
 	}
+	if contested {
+		newTags = appendTagOnce(newTags, ContestedTag)
+	}
 
 	summary := eArgs.EditSummary
 	if summary == "" {
@@ -444,6 +482,19 @@ func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSON
 	art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, newTitle, newContent, newDescription, newSource, newResource, summary, newTags, existing.Type, ArticleOverrides{MemoryKind: kindOverride})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent memory: %v", err)}}}, nil
+	}
+
+	if contested {
+		respText := fmt.Sprintf("Recorded a CONTESTED claim on AI Agent Memory '%s'.\n\n"+
+			"The existing content was NOT replaced — your conflicting claim was appended as a dated "+
+			"Contested block and the memory is tagged '%s'. Both claims are now visible to whoever "+
+			"resolves this, which is the point: you said you could not adjudicate, so nothing here "+
+			"adjudicated for you.\n\n"+
+			"Slug: %s\nNew Version: %d\nLast Edited: %s\n\n"+
+			"wiki_health lists this under contested_memories until it is resolved. To resolve it, "+
+			"edit the memory with change_intent 'correct' (or 'refine') and remove the '%s' tag.\n",
+			art.Title, ContestedTag, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339), ContestedTag)
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: secretNote + respText}}}, nil
 	}
 
 	kindLine := art.MemoryKind
@@ -623,4 +674,43 @@ func pluralizeFields(n int) string {
 		return "this field"
 	}
 	return "both fields"
+}
+
+// appendContestedBlock preserves the existing claim and records the conflicting one beneath it.
+//
+// Dated, and attributed to the edit summary when one was given, so a human resolving it later can
+// see when the disagreement appeared and what the agent believed at the time.
+func appendContestedBlock(existing, conflicting, summary string, at time.Time) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(existing, "\n"))
+	b.WriteString("\n\n> [!WARNING] Contested — recorded ")
+	b.WriteString(at.Format("2006-01-02"))
+	b.WriteString("\n> An agent recorded evidence conflicting with the claim above and could not\n")
+	b.WriteString("> determine which is correct. **Both are preserved deliberately.** Resolve this\n")
+	b.WriteString("> by editing with change_intent 'correct' and removing the '")
+	b.WriteString(ContestedTag)
+	b.WriteString("' tag.\n")
+	if s := strings.TrimSpace(summary); s != "" {
+		b.WriteString(">\n> **Reported as:** ")
+		b.WriteString(s)
+		b.WriteString("\n")
+	}
+	b.WriteString(">\n")
+	for _, line := range strings.Split(strings.TrimRight(conflicting, "\n"), "\n") {
+		b.WriteString("> ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// appendTagOnce adds a tag if it is not already present, case-insensitively.
+func appendTagOnce(tags []string, tag string) []string {
+	for _, t := range tags {
+		if strings.EqualFold(t, tag) {
+			return tags
+		}
+	}
+	return append(tags, tag)
 }

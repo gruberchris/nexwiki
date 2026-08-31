@@ -79,6 +79,12 @@ These rules bound every other rule on this page. Orientation is a prerequisite, 
   including when it found nothing. That is a completed check — do not run further lookups to
   confirm it. A warning still writes the memory; fold it into the named sibling afterwards if the
   warning is right.
+- **Replacing a memory's content requires a ` + "`change_intent`" + `**: ` + "`refine`" + ` if the
+  claim is unchanged, ` + "`correct`" + ` if the old claim was wrong (this also requires an
+  ` + "`edit_summary`" + ` saying what changed), or ` + "`contradict`" + ` if new evidence
+  conflicts and you cannot tell which is right. ` + "`contradict`" + ` **preserves** the existing
+  claim, appends yours as a dated Contested block, and tags the memory for a human to adjudicate —
+  use it rather than overwriting a fact you cannot verify. Metadata-only edits need no intent.
 - **Never write a credential into any document.** This is now enforced: a write carrying an API
   key, token, private key or password is refused, and the refusal names the pattern class and
   offset without repeating the value. Describe the secret instead ("the deploy token for X, in

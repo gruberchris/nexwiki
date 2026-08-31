@@ -74,7 +74,7 @@ func TestMemoryKindSurvivesAnOrdinaryEdit(t *testing.T) {
 	}
 
 	t.Run("editing the body preserves the kind", func(t *testing.T) {
-		resp := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"slug":"deploy-constraint","content":"# corrected","loaded_version":1}}`)
+		resp := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"change_intent":"refine","slug":"deploy-constraint","content":"# corrected","loaded_version":1}}`)
 		if resp.IsError {
 			t.Fatalf("edit failed: %s", resp.Content[0].Text)
 		}
@@ -275,7 +275,7 @@ func TestUnkindedMemoriesAreReportedNotRewritten(t *testing.T) {
 		}
 		// The gate lives on create, not on save. A legacy memory that could not be edited until
 		// somebody classified it would make correctness depend on migration order.
-		resp := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"slug":"legacy-fact","content":"# corrected","loaded_version":1}}`)
+		resp := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"change_intent":"refine","slug":"legacy-fact","content":"# corrected","loaded_version":1}}`)
 		if resp.IsError {
 			t.Fatalf("an unclassified memory must remain editable: %s", resp.Content[0].Text)
 		}

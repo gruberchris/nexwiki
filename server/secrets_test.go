@@ -156,9 +156,15 @@ func TestSecretScanCoversEditAndAppend(t *testing.T) {
 	}
 
 	t.Run("edit is refused", func(t *testing.T) {
-		resp := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"slug":"clean-memory","content":`+leak+`,"loaded_version":1}}`)
+		resp := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"change_intent":"refine","slug":"clean-memory","content":`+leak+`,"loaded_version":1}}`)
 		if !resp.IsError {
 			t.Fatal("an edit that introduces a credential must be refused")
+		}
+		// Assert *which* refusal. edit_agent_memory has gained other gates in front of this one,
+		// and "IsError" alone would pass for the wrong reason — the same trap the create-side
+		// assertion fell into once already.
+		if !strings.Contains(resp.Content[0].Text, "GitHub token") {
+			t.Errorf("refused, but not by the secret scanner: %s", resp.Content[0].Text)
 		}
 		art, _ := srv.Storage.GetArticle("clean-memory")
 		if strings.Contains(art.Content, githubToken) || art.Version != 1 {

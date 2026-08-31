@@ -14,7 +14,7 @@ func TestMCPEditAgentMemory(t *testing.T) {
 	}
 
 	// Full replacement of content + description, version bump, scoped tag preserved
-	edit := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"slug":"build-quirk","content":"# Corrected fact","description":"corrected gist","loaded_version":1,"edit_summary":"Corrected stale fact"}}`)
+	edit := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"change_intent":"refine","slug":"build-quirk","content":"# Corrected fact","description":"corrected gist","loaded_version":1,"edit_summary":"Corrected stale fact"}}`)
 	if edit.IsError {
 		t.Fatalf("edit failed: %s", edit.Content[0].Text)
 	}
@@ -50,7 +50,7 @@ func TestMCPEditAgentMemory(t *testing.T) {
 
 	// A stale loaded_version yields a conflict that names the value to retry with, rather than
 	// sending the agent off to re-read and possibly mis-thread the version again.
-	conflict := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"slug":"build-quirk","content":"# Should fail","loaded_version":1}}`)
+	conflict := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"change_intent":"refine","slug":"build-quirk","content":"# Should fail","loaded_version":1}}`)
 	if !conflict.IsError {
 		t.Fatalf("expected a version conflict, got: %v", conflict)
 	}
@@ -62,7 +62,7 @@ func TestMCPEditAgentMemory(t *testing.T) {
 
 	// Non-memory target is rejected
 	_, _ = srv.Storage.SaveArticle("", "Plain Article", "# plain", "", "", "", "", nil, "")
-	notMem := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"slug":"plain-article","content":"# nope","loaded_version":1}}`)
+	notMem := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"change_intent":"refine","slug":"plain-article","content":"# nope","loaded_version":1}}`)
 	if !notMem.IsError || !strings.Contains(notMem.Content[0].Text, "not a protected AI Agent Memory") {
 		t.Errorf("expected memory validation error, got: %v", notMem)
 	}
@@ -74,7 +74,7 @@ func TestMCPEditAgentMemory(t *testing.T) {
 	}
 
 	// Empty content replacement is rejected
-	emptyContent := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"slug":"build-quirk","content":"  ","loaded_version":3}}`)
+	emptyContent := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"change_intent":"refine","slug":"build-quirk","content":"  ","loaded_version":3}}`)
 	if !emptyContent.IsError {
 		t.Error("expected error for empty content replacement")
 	}
