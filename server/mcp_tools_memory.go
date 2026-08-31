@@ -156,6 +156,20 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 	}
 	secretNote := secretWarning(warnedSecrets(mArgs.Content, mArgs.Description, mArgs.Source))
 
+	// Server-side near-duplicate check, run before the write and reported either way.
+	//
+	// wiki_health has always found these — but only after both memories exist. Running the same
+	// comparison here catches it while there is still one document, and it moves the work off the
+	// agent: the guideline used to be a retrieval chain the agent performed before creating, and
+	// that chain is livelock-shaped. The server already owns the comparison, so the agent should
+	// not be running lookups at all.
+	//
+	// **Advisory, never blocking.** This is a *title* heuristic, and parallel-by-design documents
+	// legitimately share titles — crossLinked exists precisely because the live corpus has such a
+	// pair. A false positive that refuses a write breaks real work; one that adds a sentence costs
+	// nothing.
+	dupScan := srv.scanForNearDuplicates(title, slug, mType, mArgs.Content)
+
 	art, err := srv.Storage.SaveArticleWithOverrides("", title, mArgs.Content, mArgs.Description, mArgs.Source, "", summary, tags, ContentTypeMemory, ArticleOverrides{MemoryKind: &memoryKind})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent memory: %v", err)}}}, nil
@@ -163,8 +177,29 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 
 	respText := fmt.Sprintf("Success! Protected AI Agent Memory '%s' created successfully.\nSlug: %s\nKind: %s\nCreated At: %s\nVersion: %d\nTags: %s\n",
 		art.Title, art.Slug, art.MemoryKind, art.CreatedAt.Format(time.RFC3339), art.Version, strings.Join(art.Tags, ", "))
-	respText = secretNote + respText
+	respText = secretNote + respText + dupScan.report()
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+}
+
+// scanForNearDuplicates compares a memory about to be created against the ones already in its
+// scope. Errors are swallowed to a skipped scan: a listing failure must not fail a write over an
+// advisory check.
+func (srv *Server) scanForNearDuplicates(title, slug, memoryType, content string) nearDuplicateScan {
+	articles, err := srv.Storage.ListArticles()
+	if err != nil {
+		return nearDuplicateScan{Skipped: true}
+	}
+	memories := make([]Article, 0, len(articles))
+	for _, art := range articles {
+		if art.Type == ContentTypeMemory {
+			memories = append(memories, art)
+		}
+	}
+	scope := ""
+	if memoryType != "" {
+		scope = Slugify(memoryType)
+	}
+	return nearDuplicatesOf(title, slug, scope, memories, ExtractLinkRefs(content))
 }
 
 var appendAgentMemoryTool = toolDef{

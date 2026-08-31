@@ -146,10 +146,7 @@ func findDuplicateMemories(memories []Article, outbound map[string][]LinkRef) []
 
 		for i := 0; i < len(group); i++ {
 			for j := i + 1; j < len(group); j++ {
-				if titleOverlap(tokens[i], tokens[j]) < duplicateTitleOverlap {
-					continue
-				}
-				if crossLinked(outbound, group[i].Slug, group[j].Slug) {
+				if _, dup := isNearDuplicate(tokens[i], tokens[j], outbound, group[i].Slug, group[j].Slug); !dup {
 					continue
 				}
 				pairs = append(pairs, DuplicateMemoryPair{
@@ -164,6 +161,95 @@ func findDuplicateMemories(memories []Article, outbound map[string][]LinkRef) []
 		}
 	}
 	return pairs
+}
+
+// isNearDuplicate is the single place the duplicate rule lives, shared by the wiki_health report
+// and the create-time check. Two callers with two copies of a threshold is how a report and a
+// gate come to disagree about what counts as a duplicate; one function is how they cannot.
+//
+// Returns the measured overlap either way, because the create-time check reports its outcome even
+// when nothing matched — see nearDuplicatesOf.
+func isNearDuplicate(a, b map[string]bool, outbound map[string][]LinkRef, slugA, slugB string) (float64, bool) {
+	overlap := titleOverlap(a, b)
+	if overlap < duplicateTitleOverlap {
+		return overlap, false
+	}
+	if crossLinked(outbound, slugA, slugB) {
+		return overlap, false
+	}
+	return overlap, true
+}
+
+// NearDuplicate is an existing memory that a memory about to be created closely resembles.
+type NearDuplicate struct {
+	Slug    string
+	Title   string
+	Overlap float64
+}
+
+// nearDuplicateScan is the outcome of the create-time check, including whether it ran at all.
+//
+// "Ran" is load-bearing and is the reason this is a struct rather than a slice. The agent-facing
+// rule is that one lookup before creating is enough; an agent told "the server compared this
+// against 6 memories in scope 'nexwiki' and found no near-duplicate" has a *completed check*,
+// which is what makes the single-lookup rule enforceable. A bare empty slice is indistinguishable
+// from a check that was skipped, and an agent that cannot tell will search again.
+type nearDuplicateScan struct {
+	Matches []NearDuplicate
+	// Compared is how many existing memories in scope were examined.
+	Compared int
+	// Scope is the memory-<scope> the comparison was restricted to, or "" for unscoped.
+	Scope string
+	// Skipped is set when the scope was too large to compare pairwise.
+	Skipped bool
+}
+
+// nearDuplicatesOf finds existing memories a candidate title closely resembles, within the
+// candidate's own scope.
+//
+// Scoped for the same reason the report is: a "Deployment Notes" memory about `docker` and one
+// about `nexwiki` are supposed to be separate documents, and comparing across scopes would report
+// the scoping system working as intended.
+//
+// candidateLinks are the WikiLinks in the candidate's own body. Only the candidate→existing
+// direction of the cross-link suppression is checked, and deliberately so: the candidate's slug
+// does not exist yet, so an existing document linking *to* it would be a broken link — which the
+// wiki's own linking rule now forbids. Checking that direction would mean a full link-graph scan
+// on every memory write to catch a case that should not exist.
+func nearDuplicatesOf(candidateTitle, candidateSlug string, scope string, memories []Article, candidateLinks []LinkRef) nearDuplicateScan {
+	inScope := make([]Article, 0, len(memories))
+	for _, m := range memories {
+		if memoryScope(m.Tags) == scope {
+			inScope = append(inScope, m)
+		}
+	}
+
+	scan := nearDuplicateScan{Compared: len(inScope), Scope: scope, Matches: []NearDuplicate{}}
+	// The same O(n²) ceiling the report honours. Here the cost is linear per write rather than
+	// quadratic, but a scope past this size is one the report has already given up on, and a gate
+	// that fires where the report is silent would be confusing.
+	if len(inScope) > maxDuplicateScopeSize {
+		scan.Skipped = true
+		scan.Compared = 0
+		return scan
+	}
+
+	outbound := map[string][]LinkRef{candidateSlug: candidateLinks}
+	candidateTokens := significantTitleTokens(candidateTitle)
+	for _, m := range inScope {
+		overlap, dup := isNearDuplicate(candidateTokens, significantTitleTokens(m.Title), outbound, candidateSlug, m.Slug)
+		if !dup {
+			continue
+		}
+		scan.Matches = append(scan.Matches, NearDuplicate{Slug: m.Slug, Title: m.Title, Overlap: overlap})
+	}
+	sort.Slice(scan.Matches, func(i, j int) bool {
+		if scan.Matches[i].Overlap != scan.Matches[j].Overlap {
+			return scan.Matches[i].Overlap > scan.Matches[j].Overlap
+		}
+		return scan.Matches[i].Slug < scan.Matches[j].Slug
+	})
+	return scan
 }
 
 // crossLinked reports whether either document WikiLinks the other.
@@ -258,4 +344,46 @@ func scanColdMemories(logPath string, memories []Article, coldDays int) coldMemo
 		})
 	}
 	return coldMemoryScan{Findings: findings, Ran: true}
+}
+
+// report renders the create-time duplicate check for the tool response.
+//
+// It always says something, including when nothing matched. That is the point: the agent-facing
+// rule is that one lookup before creating is enough, and an agent told the server already compared
+// this against everything in scope has a completed check rather than an unanswered question. A
+// silent negative reads as "the check did not run", and an agent that cannot tell will search
+// again — which is the loop this whole design exists to stop.
+func (s nearDuplicateScan) report() string {
+	scope := s.Scope
+	if scope == "" {
+		scope = "(unscoped)"
+	}
+	if s.Skipped {
+		return fmt.Sprintf("\nDuplicate check: skipped — scope %s holds more than %d memories, which is past the "+
+			"pairwise comparison ceiling. wiki_health skips this scope too.\n", scope, maxDuplicateScopeSize)
+	}
+	if len(s.Matches) == 0 {
+		return fmt.Sprintf("\nDuplicate check: compared against %d existing memor%s in scope %s — no near-duplicate. "+
+			"That check is complete; do not search again for one.\n", s.Compared, plural(s.Compared, "y", "ies"), scope)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n⚠️  Duplicate check: this closely resembles %d existing memor%s in scope %s:\n",
+		len(s.Matches), plural(len(s.Matches), "y", "ies"), scope)
+	for _, m := range s.Matches {
+		fmt.Fprintf(&b, "  - %s (%s) — %.0f%% title overlap\n", m.Title, m.Slug, m.Overlap*100)
+	}
+	b.WriteString("\nThe memory was still created — this is a title heuristic, and parallel documents " +
+		"legitimately share titles. If it duplicates one of the above, fold it in with " +
+		"append_agent_memory or edit_agent_memory and retire this one with delete_agent_memory. " +
+		"If they are genuinely separate, link them to each other and this check will stop pairing them.\n")
+	return b.String()
+}
+
+// plural picks a suffix for a count, so the check reads as English at 1 and at 6.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
