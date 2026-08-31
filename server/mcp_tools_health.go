@@ -80,8 +80,15 @@ type HealthOutput struct {
 	// an existing memory is a judgment call per memory, not a mechanical rewrite.
 	UnkindedCount    int             `json:"unkinded_memory_count"`
 	UnkindedMemories []HealthFinding `json:"unkinded_memories"`
-	StalePlanCount   int             `json:"stale_plan_count"`
-	StalePlans       []HealthFinding `json:"stale_plans"`
+
+	// ContestedCount and ContestedMemories report memories holding an unresolved conflict — an
+	// agent recorded evidence against the stored claim and could not adjudicate. They surface
+	// here because this is where an agent already looks for what needs attention, and a
+	// contradiction nobody surfaces is a contradiction nobody resolves.
+	ContestedCount    int             `json:"contested_memory_count"`
+	ContestedMemories []HealthFinding `json:"contested_memories"`
+	StalePlanCount    int             `json:"stale_plan_count"`
+	StalePlans        []HealthFinding `json:"stale_plans"`
 
 	// UnreferencedSkillCount and UnreferencedSkills report skills nothing points an agent at.
 	// Kept separate from Orphans because the remedy differs: an orphaned article wants a link
@@ -153,6 +160,8 @@ func healthOutputSchema() map[string]interface{} {
 		"unsourced_memories":         schemaArrayOf(finding, "Memories missing provenance, up to the limit."),
 		"unkinded_memory_count":      schemaOf("integer", "Agent memories carrying no memory_kind — written before the kind axis existed."),
 		"unkinded_memories":          schemaArrayOf(finding, "Unclassified memories, up to the limit. This is the backfill worklist."),
+		"contested_memory_count":     schemaOf("integer", "Agent memories holding an unresolved conflict, recorded via edit_agent_memory with change_intent 'contradict'."),
+		"contested_memories":         schemaArrayOf(finding, "Contested memories awaiting adjudication, up to the limit."),
 		"stale_plan_count":           schemaOf("integer", "In-flight plans untouched for longer than stale_days. Excludes plans tagged finished or parked."),
 		"stale_plans":                schemaArrayOf(finding, "Stale plans, up to the limit."),
 		"unreferenced_skill_count":   schemaOf("integer", "Skills no live document links or names in a read_article call. Excludes the nexwiki-agent-guidelines skill, which the MCP tool descriptions reference from code."),
@@ -169,7 +178,8 @@ func healthOutputSchema() map[string]interface{} {
 	}, "total_documents", "stale_days", "limit", "truncated",
 		"orphan_count", "orphans", "broken_link_count", "broken_links",
 		"unsourced_memory_count", "unsourced_memories",
-		"unkinded_memory_count", "unkinded_memories", "stale_plan_count", "stale_plans",
+		"unkinded_memory_count", "unkinded_memories",
+		"contested_memory_count", "contested_memories", "stale_plan_count", "stale_plans",
 		"unreferenced_skill_count", "unreferenced_skills",
 		"cold_days", "cold_memory_scan_ran", "cold_memory_count", "cold_memories",
 		"duplicate_memory_count", "duplicate_memories", "parked_plan_count")
@@ -251,6 +261,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 	orphans := []HealthFinding{}
 	unsourced := []HealthFinding{}
 	unkinded := []HealthFinding{}
+	contested := []HealthFinding{}
 	stalePlans := []HealthFinding{}
 	unreferencedSkills := []HealthFinding{}
 	memories := []Article{}
@@ -327,6 +338,12 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 					Detail: "Memory has no 'memory_kind', so kind-filtered recall cannot find it. Classify it with edit_agent_memory: 'project', 'reference', 'user', or 'feedback'.",
 				})
 			}
+			if hasTag(doc.Tags, ContestedTag) {
+				contested = append(contested, HealthFinding{
+					Slug: slug, Title: doc.Title, Type: doc.Type,
+					Detail: "Memory holds an unresolved conflict: an agent recorded evidence against the stored claim and could not adjudicate. Both claims are preserved in the body. Decide which is right, edit with change_intent 'correct', and remove the 'contested' tag.",
+				})
+			}
 		}
 
 		if doc.Type == ContentTypePlan && isParked(doc.Status) && !isFinished(doc.Status) {
@@ -362,6 +379,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		BrokenLinkCount:        len(graph.Broken),
 		UnsourcedCount:         len(unsourced),
 		UnkindedCount:          len(unkinded),
+		ContestedCount:         len(contested),
 		StalePlanCount:         len(stalePlans),
 		ColdDays:               coldDays,
 		ColdMemoryScanRan:      cold.Ran,
@@ -380,6 +398,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 	out.Orphans, out.Truncated = capFindings(orphans, limit, out.Truncated)
 	out.UnsourcedMemory, out.Truncated = capFindings(unsourced, limit, out.Truncated)
 	out.UnkindedMemories, out.Truncated = capFindings(unkinded, limit, out.Truncated)
+	out.ContestedMemories, out.Truncated = capFindings(contested, limit, out.Truncated)
 	out.StalePlans, out.Truncated = capFindings(stalePlans, limit, out.Truncated)
 	out.UnreferencedSkills, out.Truncated = capFindings(unreferencedSkills, limit, out.Truncated)
 	out.ColdMemories, out.Truncated = capFindings(cold.Findings, limit, out.Truncated)
@@ -451,6 +470,7 @@ func renderHealthReport(out HealthOutput) string {
 	fmt.Fprintf(&b, "- Broken internal links: %d\n", out.BrokenLinkCount)
 	fmt.Fprintf(&b, "- Memories with no source: %d\n", out.UnsourcedCount)
 	fmt.Fprintf(&b, "- Memories with no kind: %d\n", out.UnkindedCount)
+	fmt.Fprintf(&b, "- Contested memories: %d\n", out.ContestedCount)
 	fmt.Fprintf(&b, "- Stale plans (unfinished, untouched for %d+ days): %d\n", out.StaleDays, out.StalePlanCount)
 	fmt.Fprintf(&b, "- Skills nothing references: %d\n", out.UnreferencedSkillCount)
 	if out.ColdMemoryScanRan {
@@ -482,7 +502,7 @@ func renderHealthReport(out HealthOutput) string {
 		b.WriteString("\n")
 	}
 
-	needsAttention := out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount + out.UnkindedCount +
+	needsAttention := out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount + out.UnkindedCount + out.ContestedCount +
 		out.StalePlanCount + out.ColdMemoryCount + out.DuplicateCount + out.UnreferencedSkillCount
 	if needsAttention == 0 {
 		b.WriteString("\nNothing needs attention — the wiki is healthy. 🎉\n")
@@ -520,6 +540,7 @@ func renderHealthReport(out HealthOutput) string {
 
 	writeFindings("Memories with no source", out.UnsourcedCount, out.UnsourcedMemory)
 	writeFindings("Memories with no kind", out.UnkindedCount, out.UnkindedMemories)
+	writeFindings("Contested memories", out.ContestedCount, out.ContestedMemories)
 	writeFindings("Stale plans", out.StalePlanCount, out.StalePlans)
 	writeFindings("Cold memories", out.ColdMemoryCount, out.ColdMemories)
 

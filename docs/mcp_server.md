@@ -690,6 +690,22 @@ Replaces or corrects an existing protected AI Agent Memory **in place** — the 
   * `description` (string, **optional**): New one-line summary (preserves existing if omitted).
   * `source` (string, **optional**): New provenance reference (preserves existing if omitted).
   * `memory_kind` (string, **optional**): New kind (preserves existing if omitted). This is how a memory written before the kind axis existed gets classified — `wiki_health` lists those as `unkinded_memories`.
+  * `change_intent` (string, **required when `content` is supplied**): what this edit does to the *claim*.
+    | Intent | Meaning | Behaviour |
+    |---|---|---|
+    | `refine` | Clarifies or improves wording without altering the claim | Normal replacement |
+    | `correct` | The prior claim was wrong and the new one is right | Proceeds; **`edit_summary` becomes required** |
+    | `contradict` | New evidence conflicts and you cannot adjudicate | **Content is not replaced.** The conflicting claim is appended as a dated `Contested` block and the memory is tagged `contested` |
+
+    Not required for a metadata-only edit — changing a tag or a description makes no claim about the fact.
+
+    > **Why this exists.** Optimistic locking protects against *concurrent* edits. It does nothing about an agent that has loaded the current version and knowingly replaces a fact with an incompatible one — that is a clean, successful, **silent** overwrite. Git history retains the old assertion, but history is not where anyone looks, and a contradiction nobody surfaces is a contradiction nobody resolves.
+    >
+    > **`correct` requires a summary** so the intent is not a checkbox: an agent that can declare `correct` and leave no record of what the prior claim was has performed the same silent overwrite with a label on it.
+    >
+    > **Named `change_intent`, not `change_kind`.** `memory_kind` already exists on this tool, and two arguments ending in `_kind` with unrelated closed vocabularies on the same call is a mistake worth making hard to express.
+
+    Two honest limits: `contested` is an **ordinary user tag**, not a tool-managed one, so an agent could strip it — if that is observed, promote it to a field. And **nothing detects an *undeclared* contradiction**; `change_intent` is self-reported, and real detection needs semantic comparison. This makes the honest path cheap and available; it does not make the dishonest one impossible.
   * `tags` (array of strings, **optional**): Tags to set (replaces existing user tags; tool-managed `memory-<scope>` tags are always preserved).
   * `loaded_version` (integer, **required**): The current version number loaded by the agent, for optimistic locking.
   * `edit_summary` (string, **optional**): Summary of what was corrected.
@@ -766,6 +782,7 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   | **Cold memories** | An `AI-Agent-Memory` neither read nor edited within `cold_days` | Knowledge nothing consults is either settled or quietly wrong |
   | **Duplicate memories** | Two memories in the same `memory-<scope>` with closely matching titles | Two answers to one question drift apart |
   | **Unkinded memories** | An `AI-Agent-Memory` with no `memory_kind` — written before the axis existed | Kind-filtered recall cannot find it. This is the backfill worklist; classify with `edit_agent_memory` |
+  | **Contested memories** | A memory tagged `contested` by an `edit_agent_memory` call with `change_intent: "contradict"` | Two claims are stored side by side awaiting a human decision |
   | **Unreferenced skills** | An `AI-Agent-Skill` no live document links *or* names in a `read_article` call | A skill nothing points an agent at will never be loaded |
 
   Several rules keep the report actionable rather than noisy:
@@ -784,7 +801,7 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   * **Duplicate detection is scoped, and skips pairs that already link to each other.** A "Deployment Notes" memory about `docker` and one about `nexwiki` are separate by design. And when two memories reference one another, their author already knows both exist and has decided to keep them apart. It reports similarity, not disagreement: telling the two apart needs semantics NexWiki deliberately does not have.
 
   A stale plan does **not** need an in-flight tag. Requiring `wip` sounds tidier but makes the check incapable of firing on a real wiki, where plans typically carry a project tag and nothing else — what matters is that the plan was never marked finished and nobody has touched it since. When an in-flight tag (`wip`, `in-progress`, `draft`, `active`, `todo`, `pending`, `review`, `blocked`) *is* present, the report names it.
-* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], unkinded_memory_count, unkinded_memories[], stale_plan_count, stale_plans[], unreferenced_skill_count, unreferenced_skills[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`).
+* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], unkinded_memory_count, unkinded_memories[], contested_memory_count, contested_memories[], stale_plan_count, stale_plans[], unreferenced_skill_count, unreferenced_skills[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`).
 
 **Examples**
 

@@ -466,3 +466,66 @@ func countPinnedMemories(docs []Article) int {
 	}
 	return n
 }
+
+// --- Contradiction handling (WS5) ---------------------------------------------------------
+
+// ChangeIntents is the closed vocabulary for what an edit to a memory's *content* is doing.
+//
+// Naming note. The plan called this argument `change_kind`, and it is `change_intent` here
+// deliberately: `memory_kind` shipped first, so `edit_agent_memory` would otherwise take two
+// arguments ending in `_kind` with unrelated closed vocabularies, on the same call. An agent
+// passing `memory_kind: "correct"` or `change_kind: "feedback"` is a mistake the schema should
+// make hard to express, and a name is the cheapest way to do that.
+var ChangeIntents = []string{
+	"refine",     // clarifies or improves wording without altering the claim
+	"correct",    // the prior claim was wrong and the new one is right
+	"contradict", // new evidence conflicts and the agent cannot adjudicate
+}
+
+// ContestedTag marks a memory holding an unresolved conflict.
+//
+// An ordinary user tag, not a tool-managed one, and that is a recorded compromise rather than an
+// oversight: docs/tags.md is explicit that `memory-<scope>` is the one genuinely tool-managed tag,
+// and forging that machinery for a second case is not warranted yet. An agent could strip this.
+// If one is observed doing so, promote it to a field — the memory_kind precedent is right there.
+const ContestedTag = "contested"
+
+// NormalizeChangeIntent canonicalizes a raw intent for comparison.
+func NormalizeChangeIntent(intent string) string {
+	return strings.ToLower(strings.TrimSpace(intent))
+}
+
+// ValidateChangeIntent checks the intent against the closed vocabulary.
+//
+// `required` is set when the edit replaces content. An edit that only touches metadata — a tag, a
+// description, a kind — makes no claim about the fact itself, so demanding an intent for it would
+// be friction with nothing behind it.
+func ValidateChangeIntent(intent string, required bool) error {
+	intent = NormalizeChangeIntent(intent)
+	if intent == "" {
+		if required {
+			return fmt.Errorf("replacing a memory's content requires a change_intent; valid values: %s — "+
+				"'refine' if the claim is unchanged, 'correct' if the old claim was wrong, "+
+				"'contradict' if new evidence conflicts and you cannot tell which is right",
+				strings.Join(ChangeIntents, ", "))
+		}
+		return nil
+	}
+	for _, c := range ChangeIntents {
+		if intent == c {
+			return nil
+		}
+	}
+	return fmt.Errorf("'%s' is not a change_intent. Valid values: %s — do not invent new ones",
+		intent, strings.Join(ChangeIntents, ", "))
+}
+
+// hasTag reports whether a tag list carries a tag, case-insensitively.
+func hasTag(tags []string, want string) bool {
+	for _, t := range tags {
+		if strings.EqualFold(t, want) {
+			return true
+		}
+	}
+	return false
+}

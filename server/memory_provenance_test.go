@@ -104,7 +104,7 @@ func TestProvenanceGateIsScopedToMemoryCreation(t *testing.T) {
 		if create.IsError {
 			t.Fatalf("setup failed: %s", create.Content[0].Text)
 		}
-		resp := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"slug":"editable-memory","content":"# corrected","loaded_version":1}}`)
+		resp := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"change_intent":"refine","slug":"editable-memory","content":"# corrected","loaded_version":1}}`)
 		if resp.IsError {
 			t.Fatalf("an edit that omits provenance must be accepted: %s", resp.Content[0].Text)
 		}
