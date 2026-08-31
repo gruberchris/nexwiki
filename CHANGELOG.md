@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-08-31
+
+Two fixes to the article write path, both found while auditing the git-backed storage design against the code it will replace. Neither is new in 0.15.0; both are long-standing.
+
+### Fixed
+
+- **Renaming an article no longer breaks every image on it.** A slug rename moves `data/assets/<slug>/`, but nothing rewrote the `/api/assets/<slug>/<file>` URLs that point into it, so the rename succeeded, the page rendered, and every embedded picture 404'd.
+  - `RewriteAssetPathLinks` heals the URL in all three forms it can be written in — `![alt](…)`, `[text](…)`, and an inline-HTML `src="…"` — rewriting only the slug segment and never the filename. Unlike article links, the image form is *included*: an article link had to distinguish navigation from an embedded picture, but an asset URL always names a file the rename moved.
+  - The renamed document's **own** body is healed during the save itself, because that is the common case and it is the one place link healing could never reach — `healRenamedLinks` visits other documents.
+  - Other documents are found by two scans, not one. `GetBacklinks` reports what *links* to the renamed page; an embedded image is not a link and earns no backlink, so a page that merely displays another page's diagram was invisible to it. `findAssetReferrers` finds those separately, and the healer works the union.
+
+- **A document's version no longer resets when its history directory does.** The version counter was derived by counting snapshots in `data/history/<slug>/`, which made it a property of a local cache rather than of the document. Pruning the history directory, restoring from a partial backup, or importing a document without its snapshots silently restarted a long-lived article at version 1.
+  - Optimistic locking went with it: a reset counter compares equal to a stale `loaded_version`, so a genuinely conflicting write was accepted as a clean one.
+  - Front matter is now the source, which is what every consumer already treated as authoritative — `loaded_version`, the REST API, and the MCP output schemas all speak this integer. The directory scan survives as a fallback for documents written before the version field existed, and the state a save supersedes is re-archived when no snapshot of it is on disk, so the timeline the numbers promise can still be walked back.
+
 ## [0.15.0] — 2026-08-30
 
 Completes the memory-enforcement work begun in 0.14.0. That release moved three memory-quality rules out of documentation and into the write path; this one finishes the remaining four workstreams, all of which move work an agent was asked to do onto the server that already had the answer.

@@ -2,6 +2,7 @@ package server
 
 import (
 	"io/fs"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -437,6 +438,95 @@ func RewriteArticlePathLinks(content, oldSlug, newSlug string) (string, bool) {
 	})
 
 	return rewritten, changed
+}
+
+// assetPathRef matches the slug segment of an asset URL — /api/assets/<slug>/<filename> — in three
+// parts: the fixed prefix, the slug, and the separator that proves a filename follows.
+//
+// Unlike articlePathLink there is no (^|[^!]) guard, and that difference is the point: an article
+// link had to distinguish navigation from an embedded image, but every asset URL is a reference to
+// a file that moved. The Markdown image form ![alt](/api/assets/…) is the *most* common way one
+// appears and must be rewritten, as must the inline-HTML <img src="…"> form and a bare URL. Matching
+// the path itself rather than the syntax around it covers all three with one rule.
+var assetPathRef = regexp.MustCompile(`(/api/assets/)([^/)\s"'<>]+)(/)`)
+
+// RewriteAssetPathLinks rewrites every asset URL owned by oldSlug — /api/assets/<oldSlug>/<file> —
+// so it points at newSlug instead. It returns the rewritten content and whether anything changed.
+//
+// Assets live in a directory named for the article that owns them (SaveAsset), and a slug rename
+// moves that directory. Without this, every embedded image in a renamed article points at a
+// directory that no longer exists: the rename succeeds, the page renders, and every picture on it
+// is broken. The filename is never touched — only the slug segment moved.
+func RewriteAssetPathLinks(content, oldSlug, newSlug string) (string, bool) {
+	cleanedOld := Slugify(oldSlug)
+	cleanedNew := Slugify(newSlug)
+	if cleanedOld == "" || cleanedNew == "" || cleanedOld == cleanedNew {
+		return content, false
+	}
+
+	changed := false
+	rewritten := assetPathRef.ReplaceAllStringFunc(content, func(m string) string {
+		groups := assetPathRef.FindStringSubmatch(m)
+		if len(groups) != 4 {
+			return m
+		}
+		if Slugify(groups[2]) != cleanedOld {
+			return m
+		}
+		changed = true
+		return groups[1] + cleanedNew + groups[3]
+	})
+
+	return rewritten, changed
+}
+
+// AssetReferencePrefix is the URL prefix every reference to slug's assets begins with. Callers use
+// it to find the documents that embed another document's media, which the link graph deliberately
+// does not track — an image is not a navigational link, so it earns no backlink.
+func AssetReferencePrefix(slug string) string {
+	cleaned := Slugify(slug)
+	if cleaned == "" {
+		return ""
+	}
+	return "/api/assets/" + cleaned + "/"
+}
+
+// findAssetReferrers returns the slugs of every document whose body embeds an asset owned by
+// oldSlug, including oldSlug's own successor if it is already on disk.
+//
+// This exists because GetBacklinks cannot answer the question: it reports documents that *link* to
+// a slug, and an embedded image is not a link. A page that only shows another page's diagram has no
+// backlink to it and would be missed entirely.
+//
+// It reads every article body rather than using the mtime cache, which caches parsed link refs and
+// not raw content. That is acceptable precisely here: a rename is rare, and healRenamedLinks is
+// already about to re-save every affected document.
+func (s *Storage) findAssetReferrers(oldSlug string) []string {
+	prefix := AssetReferencePrefix(oldSlug)
+	if prefix == "" {
+		return nil
+	}
+
+	var slugs []string
+	_ = filepath.WalkDir(s.ArticleDir, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() || filepath.Ext(p) != ".md" {
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil // unreadable file: skip rather than fail the whole scan
+		}
+		if !strings.Contains(string(data), prefix) {
+			return nil
+		}
+		slugs = append(slugs, strings.TrimSuffix(filepath.Base(p), ".md"))
+		return nil
+	})
+	sort.Strings(slugs)
+	return slugs
 }
 
 // TranslateWikiLinksToBundlePaths rewrites [[Target]] / [[Target|alias]] WikiLinks into

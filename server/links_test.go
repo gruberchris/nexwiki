@@ -393,3 +393,132 @@ func TestHandleGetBacklinks(t *testing.T) {
 		t.Errorf("expected empty array, got %d: %s", w3.Code, w3.Body.String())
 	}
 }
+
+// TestRewriteAssetPathLinks pins asset healing. Every syntactic form that can carry an asset URL
+// has to be rewritten — unlike an article link, where the image form is deliberately excluded,
+// because an asset URL always names a file that the rename moved.
+func TestRewriteAssetPathLinks(t *testing.T) {
+	cases := []struct {
+		name        string
+		content     string
+		want        string
+		wantChanged bool
+	}{
+		{
+			name:        "markdown image",
+			content:     "![chart](/api/assets/diagrams/chart.png)",
+			want:        "![chart](/api/assets/architecture-diagrams/chart.png)",
+			wantChanged: true,
+		},
+		{
+			name:        "markdown link to an attachment",
+			content:     "[the spec](/api/assets/diagrams/spec.pdf)",
+			want:        "[the spec](/api/assets/architecture-diagrams/spec.pdf)",
+			wantChanged: true,
+		},
+		{
+			name:        "inline html",
+			content:     `<img src="/api/assets/diagrams/chart.png" alt="chart">`,
+			want:        `<img src="/api/assets/architecture-diagrams/chart.png" alt="chart">`,
+			wantChanged: true,
+		},
+		{
+			name:        "filename is never touched",
+			content:     "![x](/api/assets/diagrams/Chart.Final_v2.PNG)",
+			want:        "![x](/api/assets/architecture-diagrams/Chart.Final_v2.PNG)",
+			wantChanged: true,
+		},
+		{
+			name:        "another article's assets are untouched",
+			content:     "![a](/api/assets/other/a.png) ![b](/api/assets/diagrams/b.png)",
+			want:        "![a](/api/assets/other/a.png) ![b](/api/assets/architecture-diagrams/b.png)",
+			wantChanged: true,
+		},
+		{
+			name:        "article links are not asset links",
+			content:     "[Diagrams](/articles/diagrams)",
+			want:        "[Diagrams](/articles/diagrams)",
+			wantChanged: false,
+		},
+		{
+			name:        "no match reports no change",
+			content:     "![a](/api/assets/other/a.png)",
+			want:        "![a](/api/assets/other/a.png)",
+			wantChanged: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, changed := RewriteAssetPathLinks(tc.content, "diagrams", "architecture-diagrams")
+			if got != tc.want {
+				t.Errorf("content = %q, want %q", got, tc.want)
+			}
+			if changed != tc.wantChanged {
+				t.Errorf("changed = %v, want %v", changed, tc.wantChanged)
+			}
+		})
+	}
+
+	// A rename that resolves to the same slug is not a rename.
+	if _, changed := RewriteAssetPathLinks("![a](/api/assets/go/a.png)", "go", "Go"); changed {
+		t.Error("rewriting a slug to itself should report no change")
+	}
+}
+
+// TestRenameHealsAssetLinks drives the whole rename path for embedded media. A slug rename moves
+// data/assets/<slug>, and before this healing every embedded image in the renamed article pointed
+// at a directory that no longer existed: the page rendered and every picture on it was broken.
+//
+// Both referrer shapes are covered, and they are found by different mechanisms. The renamed
+// article embeds its own asset — the common case, and one healRenamedLinks cannot see, because it
+// visits other documents. The second article embeds the image without linking to the page at all,
+// so it has no backlink and is reachable only through the asset scan.
+func TestRenameHealsAssetLinks(t *testing.T) {
+	storage, err := NewStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+
+	if _, err := storage.SaveArticle("", "Diagrams", "# Diagrams\n\n![chart](/api/assets/diagrams/chart.png)", "", "", "", "", nil, ""); err != nil {
+		t.Fatalf("seed owner failed: %v", err)
+	}
+	if _, err := storage.SaveAsset("diagrams", "chart.png", []byte("PNG")); err != nil {
+		t.Fatalf("SaveAsset failed: %v", err)
+	}
+	// Deliberately no link to the Diagrams page: an embedded image is not a link, so this document
+	// has no backlink and the link graph cannot find it.
+	if _, err := storage.SaveArticle("", "Overview", "Here it is: ![chart](/api/assets/diagrams/chart.png)", "", "", "", "", nil, ""); err != nil {
+		t.Fatalf("seed embedder failed: %v", err)
+	}
+
+	if _, err := storage.SaveArticle("diagrams", "Architecture Diagrams", "# Diagrams\n\n![chart](/api/assets/diagrams/chart.png)", "", "", "", "rename", nil, ""); err != nil {
+		t.Fatalf("rename failed: %v", err)
+	}
+
+	owner, err := storage.GetArticle("architecture-diagrams")
+	if err != nil {
+		t.Fatalf("GetArticle failed: %v", err)
+	}
+	if !strings.Contains(owner.Content, "/api/assets/architecture-diagrams/chart.png") {
+		t.Errorf("the renamed article's own asset URL was not healed; content is:\n%s", owner.Content)
+	}
+	if strings.Contains(owner.Content, "/api/assets/diagrams/chart.png") {
+		t.Errorf("a stale asset URL survived the rename; content is:\n%s", owner.Content)
+	}
+
+	embedder, err := storage.GetArticle("overview")
+	if err != nil {
+		t.Fatalf("GetArticle failed: %v", err)
+	}
+	if !strings.Contains(embedder.Content, "/api/assets/architecture-diagrams/chart.png") {
+		t.Errorf("an embedder with no backlink was not healed; content is:\n%s", embedder.Content)
+	}
+
+	// The healed URL must resolve to the file the rename moved, which is the property the user
+	// actually experiences.
+	if _, err := storage.GetAssetPath("architecture-diagrams", "chart.png"); err != nil {
+		t.Errorf("healed asset URL does not resolve: %v", err)
+	}
+}
