@@ -285,6 +285,27 @@ exists to prevent.
 
 See [SECURITY.md](../SECURITY.md#secret-scanning-on-agent-writes) for the full limits.
 
+## 🔁 The repeat-lookup damper
+
+`search_wiki` and `list_agent_memories` notice when the **same agent asks the same question twice** inside two minutes, and prepend an escalating note to the result. It **never blocks** — a false positive that refused a lookup would break real work, while one that adds a sentence costs nothing.
+
+| Occurrence | Response |
+|---|---|
+| 1st | normal |
+| 2nd | one line: this repeats a lookup you ran *N* seconds ago |
+| 3rd+ | explicit: names §0 of the guidelines, states the check is complete, points at `create_*` |
+
+**Rewordings are the point.** The fingerprint lowercases, strips punctuation, drops stop words, applies a crude stem, sorts the tokens and hashes — so *"docker build error"* and *"error building docker"* are the same question. An agent asking an identical question twice is easy to catch and is **not** the failure mode this exists for: the 31-minute livelock on this wiki was rewordings.
+
+**A successful write clears that agent's history**, because a write is progress and the loop being damped is read-only by nature.
+
+Two deliberate limits:
+
+- **The query text is never persisted.** A fingerprint lives in memory for 120 seconds and is dropped. Recording queries in the activity log was considered and rejected — that log is durable, append-only, rendered in the UI, and governed by `SECURITY.md`, while query strings are free text that may carry anything a user typed.
+- **`structuredContent` is never touched.** It is a machine contract; a client parsing it should not have to handle a field that is sometimes an essay. The notice goes in the text block only.
+
+State is per resolved agent, bounded (8 lookups each, 64 agents, least-recently-used eviction), and entirely in memory — nothing survives a restart, and losing it costs only a missed notice.
+
 ## 🛠️ Exposed MCP Tools
 
 > **Native OKF storage & document `type`.** Every NexWiki `.md` file is a conformant Open Knowledge Format (OKF v0.1) concept document at rest (real YAML front matter). Each document carries a `type` — exactly one of **`Wiki`** (regular articles) or the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags remain: **status tags** (e.g. `wip`, `completed`, `inbox`) and tool-managed **memory-scope tags** (`memory-<scope>`).

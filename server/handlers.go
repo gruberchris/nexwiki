@@ -38,6 +38,11 @@ type Server struct {
 	// the only transport where a handshake can be attributed for the life of a connection.
 	stdioClient agentIdentity
 
+	// damper notices an agent repeating the same lookup and says so in the result. Advisory only;
+	// see lookup_damper.go. Nil is safe — every method tolerates a nil receiver — so a Server
+	// built without one simply never dampens.
+	damper *lookupDamper
+
 	// shuttingDown is closed when the process begins a graceful shutdown. Every long-lived
 	// response stream selects on it and returns.
 	//
@@ -61,6 +66,7 @@ func NewServer(storage *Storage, wikiName string, defaultTheme string, themeSche
 		EventBus:               eventBus,
 		Version:                version,
 		Port:                   port,
+		damper:                 newLookupDamper(),
 	}
 }
 
