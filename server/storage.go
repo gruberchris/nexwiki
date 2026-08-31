@@ -506,33 +506,56 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 		}
 	}
 
-	// Determine the next version number by scanning current history files in newSlug folder
 	histFolder := filepath.Join(s.HistoryDir, newSlug)
 	_ = os.MkdirAll(histFolder, 0755)
 
-	nextVersion := 1
-	files, err := os.ReadDir(histFolder)
-	if err == nil {
-		for _, f := range files {
-			if !f.IsDir() && strings.HasSuffix(f.Name(), ".md.gz") {
-				name := strings.TrimSuffix(f.Name(), ".md.gz")
-				if v, err := strconv.Atoi(name); err == nil {
-					if v >= nextVersion {
-						nextVersion = v + 1
-					}
-				}
-			}
+	// The version this save supersedes, read from the document's own front matter. After the rename
+	// block above, newSlug is where the previous state lives whichever slug it arrived under —
+	// including the case where a create collides with an existing title and oldSlug was never set.
+	activePath := filepath.Join(s.ArticleDir, newSlug+".md")
+	prevVersion := 0
+	prevData, prevErr := os.ReadFile(activePath)
+	if prevErr == nil {
+		if prevArt, err := parseArticleFile(prevData, false); err == nil {
+			prevVersion = prevArt.Version
 		}
 	}
 
-	// If history is empty but the article already exists on disk, archive the current state as version 1 first
-	if oldSlug != "" && nextVersion == 1 {
-		activePath := filepath.Join(s.ArticleDir, newSlug+".md")
-		if existingData, err := os.ReadFile(activePath); err == nil {
-			histFilePath := filepath.Join(histFolder, "1.md.gz")
-			if err := writeGzippedFile(histFilePath, existingData); err == nil {
-				nextVersion = 2
+	// Front matter is the authoritative version counter: `loaded_version` optimistic locking, the
+	// REST API, and the MCP output schemas all speak this integer, and it travels with the document.
+	// Deriving it from the history directory instead made the counter a property of a local cache,
+	// so pruning data/history, restoring from a partial backup, or importing a document without its
+	// snapshots silently restarted a long-lived article at version 1 — taking optimistic locking
+	// with it, since a reset counter compares equal to a stale loaded_version.
+	nextVersion := 1
+	if prevVersion > 0 {
+		nextVersion = prevVersion + 1
+	} else if prevErr == nil {
+		// The document exists but predates the version field. Continue its history's numbering
+		// rather than restarting, which is what the directory scan was always really for.
+		if files, err := os.ReadDir(histFolder); err == nil {
+			for _, f := range files {
+				if f.IsDir() || !strings.HasSuffix(f.Name(), ".md.gz") {
+					continue
+				}
+				if v, err := strconv.Atoi(strings.TrimSuffix(f.Name(), ".md.gz")); err == nil && v >= nextVersion {
+					nextVersion = v + 1
+				}
 			}
+		}
+		if nextVersion == 1 {
+			// Unversioned and unsnapshotted: the state on disk is version 1, and this save is 2.
+			nextVersion = 2
+		}
+	}
+
+	// Archive the state being superseded if no snapshot of it exists, so the timeline the version
+	// numbers promise has an entry to revert to. This covers a document whose history was pruned as
+	// well as the original case it was written for: an article on disk with no history at all.
+	if prevErr == nil && nextVersion > 1 {
+		histFilePath := filepath.Join(histFolder, fmt.Sprintf("%d.md.gz", nextVersion-1))
+		if _, err := os.Stat(histFilePath); os.IsNotExist(err) {
+			_ = writeGzippedFile(histFilePath, prevData)
 		}
 	}
 
@@ -607,6 +630,17 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 		}
 	}
 
+	// A rename moved this document's asset directory (above), so its own body is the first thing
+	// that has to follow the media. This is the common case by far — assets are uploaded under the
+	// slug of the page that embeds them — and it is not reachable from healRenamedLinks, which
+	// visits other documents. Done here, before serialization, so the move and the references to it
+	// land in the same saved state.
+	if renamedFromSlug != "" {
+		if rewritten, changed := RewriteAssetPathLinks(art.Content, renamedFromSlug, newSlug); changed {
+			art.Content = rewritten
+		}
+	}
+
 	// Set version and edit summary
 	art.Version = nextVersion
 	art.EditSummary = editSummary
@@ -640,24 +674,49 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	return art, nil
 }
 
-// healRenamedLinks (caller must hold writeMu) rewrites every article that links to oldSlug so it
-// points at the renamed article. Both internal link forms are healed: a [[WikiLink]] is retargeted
-// to the new title, and an absolute [text](/articles/<slug>) destination is retargeted to the new
-// slug with its link text untouched. Best-effort: any per-article failure is logged and skipped.
+// healRenamedLinks (caller must hold writeMu) rewrites every article that references oldSlug so it
+// points at the renamed article. Three reference forms are healed: a [[WikiLink]] is retargeted to
+// the new title, an absolute [text](/articles/<slug>) destination is retargeted to the new slug with
+// its link text untouched, and an /api/assets/<slug>/<file> URL is retargeted to follow the asset
+// directory the rename moved. Best-effort: any per-article failure is logged and skipped.
+//
+// The candidate set is the union of two scans because the link graph answers only half the
+// question. GetBacklinks reports documents that *link* to oldSlug; a document that merely embeds
+// one of its images has no link and no backlink, so findAssetReferrers finds it separately. The
+// renamed document's own body is handled in saveArticleLocked, not here.
 func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
+	candidates := map[string]bool{}
 	backlinks, err := s.GetBacklinks(oldSlug)
 	if err != nil {
+		// A failed backlink scan is not a reason to skip asset healing too: the two scans are
+		// independent, and half the healing beats none.
 		_, _ = fmt.Fprintf(os.Stderr, "Warning: link-heal scan failed after renaming '%s'→'%s': %v\n", oldSlug, newSlug, err)
-		return
 	}
 	for _, bl := range backlinks {
-		linker, err := s.GetArticle(bl.Slug)
+		candidates[bl.Slug] = true
+	}
+	for _, slug := range s.findAssetReferrers(oldSlug) {
+		// The renamed document is its own asset referrer and was already healed in place.
+		if slug != newSlug {
+			candidates[slug] = true
+		}
+	}
+
+	slugs := make([]string, 0, len(candidates))
+	for slug := range candidates {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs) // stable order, so a rename's healing commits/logs are reproducible
+
+	for _, slug := range slugs {
+		linker, err := s.GetArticle(slug)
 		if err != nil {
 			continue
 		}
 		rewritten, wikiChanged := RewriteWikiLinks(linker.Content, oldSlug, newTitle)
 		rewritten, pathChanged := RewriteArticlePathLinks(rewritten, oldSlug, newSlug)
-		if !wikiChanged && !pathChanged {
+		rewritten, assetChanged := RewriteAssetPathLinks(rewritten, oldSlug, newSlug)
+		if !wikiChanged && !pathChanged && !assetChanged {
 			continue
 		}
 		summary := fmt.Sprintf("Auto-healed internal link: '%s' renamed to '%s'", oldSlug, newSlug)

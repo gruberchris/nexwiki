@@ -362,3 +362,65 @@ func TestConcurrentSavesDoNotLoseRevisions(t *testing.T) {
 		}
 	}
 }
+
+// TestVersionCounterComesFromFrontMatter pins where the version counter lives. It used to be
+// derived by counting snapshots in data/history/<slug>/, which made a document's version a property
+// of a local cache rather than of the document: prune the history directory, restore from a partial
+// backup, or import a document without its snapshots, and a long-lived article silently restarted at
+// version 1. Optimistic locking went with it — a reset counter compares equal to a stale
+// loaded_version, so a conflicting write is accepted as a clean one.
+func TestVersionCounterComesFromFrontMatter(t *testing.T) {
+	storage, err := NewStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+
+	for i := 0; i < 4; i++ {
+		if _, err := storage.SaveArticle(slugOrEmpty(i, "counted"), "Counted", fmt.Sprintf("# v%d", i+1), "", "", "", "", nil, ""); err != nil {
+			t.Fatalf("save %d failed: %v", i+1, err)
+		}
+	}
+	art, err := storage.GetArticle("counted")
+	if err != nil {
+		t.Fatalf("GetArticle failed: %v", err)
+	}
+	if art.Version != 4 {
+		t.Fatalf("expected version 4 before history loss, got %d", art.Version)
+	}
+
+	// Lose the history directory, exactly as a pruned volume or a partial restore would.
+	if err := os.RemoveAll(filepath.Join(storage.HistoryDir, "counted")); err != nil {
+		t.Fatalf("failed to remove history: %v", err)
+	}
+
+	next, err := storage.SaveArticle("counted", "Counted", "# v5", "", "", "", "", nil, "")
+	if err != nil {
+		t.Fatalf("save after history loss failed: %v", err)
+	}
+	if next.Version != 5 {
+		t.Errorf("expected the counter to continue at 5 after history loss, got %d", next.Version)
+	}
+
+	// The superseded state is re-archived so the timeline the numbers promise can be walked back to.
+	if _, err := os.Stat(filepath.Join(storage.HistoryDir, "counted", "4.md.gz")); err != nil {
+		t.Errorf("expected version 4 to be re-archived after history loss: %v", err)
+	}
+
+	// Optimistic locking still sees the conflict it exists to catch.
+	if _, err := storage.ApplyArticleEdit("counted", ArticleEdit{
+		Title:         "Counted",
+		Content:       "# stale",
+		LoadedVersion: 4,
+	}); err == nil {
+		t.Error("a write against the pre-loss version must still be rejected as a conflict")
+	}
+}
+
+// slugOrEmpty returns "" for the first save (a create) and the slug thereafter (an update).
+func slugOrEmpty(i int, slug string) string {
+	if i == 0 {
+		return ""
+	}
+	return slug
+}
