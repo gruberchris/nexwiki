@@ -71,7 +71,7 @@ var queryStopWords = map[string]bool{
 // identical question twice is easy to catch, and is not the failure mode that happened.
 func fingerprintQuery(tool, query string) uint64 {
 	fields := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
-		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
 	})
 	kept := make([]string, 0, len(fields))
 	for _, f := range fields {
