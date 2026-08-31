@@ -401,8 +401,52 @@ func (srv *Server) executeToolCall(params json.RawMessage, agent string) (interf
 	result, rpcErr := srv.executeToolCallInternal(params)
 	if rpcErr == nil && !isToolError(result) {
 		srv.logMCPToolCall(params, agent)
+		result = srv.applyLookupDamper(params, agent, result)
 	}
 	return result, rpcErr
+}
+
+// applyLookupDamper is the damper's only wiring point. It sits here rather than in the handlers
+// because this is the one place that has both the resolved agent and the tool call — putting it
+// in each handler would mean threading an identity through twelve signatures to do one thing.
+//
+// Two behaviours, both keyed on the same agent:
+//
+//   - a watched lookup is fingerprinted, and a repeat prepends an escalating notice;
+//   - any successful write clears that agent's ring, because a write is progress and the loop
+//     being damped is read-only by nature.
+//
+// Text content only. structuredContent is a machine contract and must not grow advisory prose —
+// a client parsing the structured half would have to handle a field that is sometimes an essay.
+func (srv *Server) applyLookupDamper(params json.RawMessage, agent string, result interface{}) interface{} {
+	var call struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(params, &call); err != nil {
+		return result
+	}
+
+	query, watched := damperedLookupQuery(call.Name, call.Arguments)
+	if !watched {
+		if tool, ok := toolsByName[call.Name]; ok && !tool.Behavior.ReadOnly {
+			srv.damper.clear(agent)
+		}
+		return result
+	}
+
+	occurrence, sinceFirst := srv.damper.observe(agent, call.Name, query)
+	notice := damperNotice(occurrence, sinceFirst)
+	if notice == "" {
+		return result
+	}
+
+	resp, ok := result.(ToolResponse)
+	if !ok || len(resp.Content) == 0 {
+		return result
+	}
+	resp.Content[0].Text = notice + resp.Content[0].Text
+	return resp
 }
 
 // isToolError reports whether a tool reported failure *inside* a successful JSON-RPC response.
