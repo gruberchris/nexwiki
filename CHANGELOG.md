@@ -6,6 +6,47 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-08-30
+
+Completes the memory-enforcement work begun in 0.14.0. That release moved three memory-quality rules out of documentation and into the write path; this one finishes the remaining four workstreams, all of which move work an agent was asked to do onto the server that already had the answer.
+
+### Added
+
+- **`get_context_overview` lists `user` and `feedback` memories first.** These two kinds apply *regardless of the task an agent is about to start* — who it is working with, and the corrections that person has already given — while every other kind is only relevant once the task is known. This is the first call the server's own instructions tell an agent to make, so it is the right place for them.
+  - It is an **ordering, not a separate pinned block**. A block above the index was the obvious shape and is worse: this tool exists to be cheap, and listing a memory twice spends context to say one thing. Because nothing is displaced or repeated, the pinned set cannot crowd out the index however large it grows, and needs no cap.
+  - Each memory's kind renders inline as `<kind>`, before the tags — it is the field that decides whether a memory is worth reading for the task at hand, and an agent scanning the index reads left to right.
+  - A wiki with no `user` or `feedback` memories says nothing about the ordering rather than explaining one that is not visible.
+
+- **`create_agent_memory` checks for near-duplicates, and reports the outcome either way.** The same comparison `wiki_health` has always run, moved to write time — where it catches a duplicate while there is still only one document.
+  - The larger point is *where the work happens*. The agent-facing rule was a retrieval chain performed before every write; an earlier plan specified four sequential lookups, and the memory rules later had to cap it at one because **the chain is livelock-shaped**. The server already owned the comparison.
+  - **The negative outcome is reported too**, and that is what makes the one-lookup rule enforceable: an agent told *"compared against 6 memories in scope `nexwiki` — no near-duplicate; that check is complete"* has a completed check. A silent negative is indistinguishable from a check that never ran, and an agent that cannot tell will search again.
+  - **Advisory, never blocking.** It is a *title* heuristic, and parallel-by-design documents legitimately share titles, so a false positive that refused a write would break real work while one that adds a sentence costs nothing. A warning names the sibling's slug and the measured overlap; a pair that already links to each other is suppressed.
+  - The threshold and the suppression now live in one function shared with `wiki_health`, so the report and the gate cannot come to disagree about what counts as a duplicate.
+
+- **`search_wiki` and `list_agent_memories` notice a repeated lookup.** When the same agent asks the same question twice inside two minutes, the result carries an escalating note: one line on the second, and on the third an explicit one naming §0 of the guidelines, stating the check is complete, and pointing at `create_*`.
+  - **Rewordings are the point.** The fingerprint lowercases, strips punctuation, drops stop words, applies a crude stem, sorts the tokens and hashes — so *"docker build error"* and *"error building docker"* are the same question. An agent asking an identical question twice is easy to catch and is not the failure mode that happened: the 31-minute livelock on this wiki was rewordings.
+  - **A successful write clears that agent's history**, because a write is progress and the loop being damped is read-only by nature.
+  - Two deliberate limits. **The query text is never persisted** — a fingerprint lives in memory for 120 seconds and is dropped, because the activity log is durable, rendered and `SECURITY.md`-governed while query strings are free text. And **`structuredContent` is never touched**: it is a machine contract, and a client parsing it should not have to handle a field that is sometimes an essay.
+  - State is per resolved agent and bounded (8 lookups each, 64 agents, least-recently-used eviction), entirely in memory. Nothing survives a restart, and losing it costs only a missed notice.
+
+- **`wiki_health` reports `contested_memories`** — memories holding an unresolved conflict, so they surface where an agent already looks for what needs attention.
+
+### Changed
+
+- **⚠️ `edit_agent_memory` requires `change_intent` when it replaces `content`.** Optimistic locking protects against *concurrent* edits. It does nothing about an agent that has loaded the current version and knowingly replaces a fact with an incompatible one — that is a clean, successful, **silent** overwrite. Git history retains the old assertion, but history is not where anyone looks, and a contradiction nobody surfaces is a contradiction nobody resolves.
+  | Intent | Meaning | Behaviour |
+  |---|---|---|
+  | `refine` | Clarifies without altering the claim | Normal replacement |
+  | `correct` | The prior claim was wrong | Proceeds; **`edit_summary` becomes required** |
+  | `contradict` | New evidence conflicts and you cannot adjudicate | **Content is not replaced** — the conflicting claim is appended as a dated `Contested` block and the memory is tagged `contested` |
+  - **`correct` requires a summary** so the intent is not a checkbox: an agent that can declare `correct` and leave no record of what the prior claim was has performed the same silent overwrite with a label on it.
+  - **`contradict` says plainly in the response that nothing was replaced.** Without that an agent assumes its edit landed and continues believing the memory says something it does not.
+  - **Migration:** pass `change_intent` whenever you pass `content`. A **metadata-only edit needs none** — changing a tag, a description or a kind makes no claim about the fact. `append_agent_memory` is unaffected.
+  - Named `change_intent` rather than `change_kind` deliberately: `memory_kind` already exists on this tool, and two arguments ending in `_kind` with unrelated closed vocabularies on the same call is a mistake worth making hard to express.
+  - Two honest limits: `contested` is an **ordinary user tag**, not tool-managed, so an agent could strip it — if that is observed, promote it to a field. And **nothing detects an *undeclared* contradiction**; `change_intent` is self-reported, and real detection needs semantic comparison. This makes the honest path cheap and available; it does not make the dishonest one impossible.
+
+- The MCP tool count is unchanged at **twenty-nine**. No tool was added or removed in this release.
+
 ## [0.14.0] — 2026-08-30
 
 ### Added
@@ -325,7 +366,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/gruberchris/nexwiki/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/gruberchris/nexwiki/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/gruberchris/nexwiki/compare/v0.12.3...v0.13.0
 [0.12.3]: https://github.com/gruberchris/nexwiki/compare/v0.12.2...v0.12.3
