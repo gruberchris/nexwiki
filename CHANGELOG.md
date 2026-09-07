@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- **Asset upload allowlist expanded to accept text and data files alongside images.** Articles often summarize data files (test round outputs, logs, CSV tables, metrics series); tools like `kimmydb-testkit` and human authors can now attach raw data directly to an article rather than leaving records stranded on remote hosts.
+  - Newly supported MIME types and extensions:
+    - `text/csv` (`.csv`)
+    - `application/x-ndjson`, `application/jsonl`, `application/x-jsonlines` (`.jsonl`, `.ndjson`)
+    - `application/json` (`.json`)
+    - `text/plain` (`.txt`, `.log`)
+    - `text/markdown`, `text/x-markdown` (`.md`)
+  - The filename extension must match the declared MIME type, preserving strict pairing validation.
+  - Web executables (`text/html`, `application/javascript`, `application/xhtml+xml`) remain strictly rejected.
+  - Non-image assets (`.csv`, `.jsonl`, `.ndjson`, `.json`, `.txt`, `.log`, `.md`) are served with `Content-Disposition: attachment; filename="..."` alongside `X-Content-Type-Options: nosniff` to prevent active interpretation and avoid dumping megabytes of raw text inline. Active SVG documents retain their dedicated `Content-Security-Policy: default-src 'none'; sandbox`.
+
 ## [0.15.1] — 2026-08-31
 
 Two fixes to the article write path, both found while auditing the git-backed storage design against the code it will replace. Neither is new in 0.15.0; both are long-standing.
