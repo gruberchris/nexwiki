@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -543,18 +544,30 @@ func (srv *Server) HandleUploadAsset(w http.ResponseWriter, r *http.Request) {
 	// its own, so the filename extension must agree with it: http.ServeFile derives the response
 	// Content-Type from the extension, and that (plus nosniff) is what actually governs how a
 	// browser interprets the file later.
-	mimeType := header.Header.Get("Content-Type")
+	rawMimeType := header.Header.Get("Content-Type")
+	mimeType, _, err := mime.ParseMediaType(rawMimeType)
+	if err != nil {
+		mimeType = strings.ToLower(strings.TrimSpace(strings.Split(rawMimeType, ";")[0]))
+	}
 	allowedExtsForMime := map[string][]string{
-		"image/jpeg":    {".jpg", ".jpeg"},
-		"image/png":     {".png"},
-		"image/gif":     {".gif"},
-		"image/webp":    {".webp"},
-		"image/svg+xml": {".svg"},
+		"image/jpeg":              {".jpg", ".jpeg"},
+		"image/png":               {".png"},
+		"image/gif":               {".gif"},
+		"image/webp":              {".webp"},
+		"image/svg+xml":           {".svg"},
+		"text/csv":                {".csv"},
+		"application/x-ndjson":    {".jsonl", ".ndjson"},
+		"application/jsonl":       {".jsonl", ".ndjson"},
+		"application/x-jsonlines": {".jsonl", ".ndjson"},
+		"application/json":        {".json"},
+		"text/plain":              {".txt", ".log"},
+		"text/markdown":           {".md"},
+		"text/x-markdown":         {".md"},
 	}
 
 	allowedExts, mimeOK := allowedExtsForMime[mimeType]
 	if !mimeOK {
-		writeError(w, http.StatusBadRequest, "unsupported asset type: only standard images are allowed")
+		writeError(w, http.StatusBadRequest, "unsupported asset type: only standard images and data/text files are allowed")
 		return
 	}
 
@@ -593,10 +606,17 @@ func (srv *Server) HandleGetAsset(w http.ResponseWriter, r *http.Request) {
 	// SVG is an active document format: served inline from this origin, any <script> inside it
 	// runs as same-origin JavaScript against an unauthenticated API. Force a download instead,
 	// and stop content sniffing from re-interpreting any other asset as markup.
+	//
+	// Data files (CSV, JSON, JSONL, logs, markdown) are also served with Content-Disposition:
+	// attachment to force download rather than displaying megabytes of raw text inline.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if strings.EqualFold(filepath.Ext(filePath), ".svg") {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".svg":
 		w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(filePath)+"\"")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	case ".csv", ".jsonl", ".ndjson", ".json", ".txt", ".log", ".md":
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(filePath)+"\"")
 	}
 
 	// Serves file directly using net/http.ServeFile

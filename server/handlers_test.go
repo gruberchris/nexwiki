@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"strings"
 	"testing"
 	"time"
@@ -866,23 +868,101 @@ func TestHandleUploadAsset(t *testing.T) {
 	// Create article to upload asset for
 	_, _ = srv.Storage.SaveArticle("", "Asset Article", "# content", "", "", "", "", nil, "")
 
-	// Build a valid multipart form with an image
-	var body bytes.Buffer
-	mw := multipart.NewWriter(&body)
-	fw, _ := mw.CreateFormFile("file", "test.png")
-	_, _ = fw.Write([]byte("fake-png-data"))
-	_ = mw.Close()
+	// Helper to perform multipart upload with a given filename and part Content-Type
+	uploadAsset := func(slug, filename, partContentType, content string) *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		h := make(textproto.MIMEHeader)
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
+		if partContentType != "" {
+			h.Set("Content-Type", partContentType)
+		}
+		fw, err := mw.CreatePart(h)
+		if err != nil {
+			t.Fatalf("CreatePart failed: %v", err)
+		}
+		_, _ = fw.Write([]byte(content))
+		_ = mw.Close()
 
-	req2 := httptest.NewRequest("POST", "/api/articles/asset-article/assets", &body)
-	req2.SetPathValue("slug", "asset-article")
-	req2.Header.Set("Content-Type", mw.FormDataContentType())
-	// Inject the file Content-Type header for the file part
-	w2 := httptest.NewRecorder()
-	srv.HandleUploadAsset(w2, req2)
-	// Should fail with unsupported type (fake PNG data doesn't have the right MIME),
-	// but the form parsing itself should succeed (400 for bad mime, not 500)
-	if w2.Code == http.StatusInternalServerError {
-		t.Errorf("multipart upload: expected 400 or 200, got 500: %s", w2.Body.String())
+		req := httptest.NewRequest("POST", "/api/articles/"+slug+"/assets", &body)
+		req.SetPathValue("slug", slug)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		rec := httptest.NewRecorder()
+		srv.HandleUploadAsset(rec, req)
+		return rec
+	}
+
+	// 1. Success cases for newly allowed data/text formats
+	allowedCases := []struct {
+		filename    string
+		contentType string
+		content     string
+	}{
+		{"data.csv", "text/csv", "col1,col2\nval1,val2\n"},
+		{"records.jsonl", "application/x-ndjson", "{\"id\":1}\n{\"id\":2}\n"},
+		{"records.jsonl", "application/jsonl", "{\"id\":1}\n"},
+		{"records.ndjson", "application/x-jsonlines", "{\"id\":1}\n"},
+		{"config.json", "application/json", "{\"key\":\"val\"}"},
+		{"notes.txt", "text/plain", "plain text log"},
+		{"server.log", "text/plain", "2026-09-06 info: ok"},
+		{"readme.md", "text/markdown", "# Markdown Doc"},
+		{"notes.md", "text/x-markdown", "## Heading"},
+		// MIME type with parameters (e.g. charset)
+		{"report.csv", "text/csv; charset=utf-8", "a,b\n1,2\n"},
+		// Standard image formats remain supported
+		{"image.png", "image/png", "\x89PNG\r\n\x1a\nfake-png"},
+		{"photo.jpg", "image/jpeg", "\xff\xd8\xfffake-jpg"},
+		{"diagram.svg", "image/svg+xml", "<svg></svg>"},
+	}
+
+	for _, tc := range allowedCases {
+		t.Run("allowed_"+tc.filename+"_"+tc.contentType, func(t *testing.T) {
+			rec := uploadAsset("asset-article", tc.filename, tc.contentType, tc.content)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("upload %s with %s failed: expected 200, got %d: %s", tc.filename, tc.contentType, rec.Code, rec.Body.String())
+			}
+			var resp map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+			if !strings.Contains(resp["url"], "/api/assets/asset-article/") {
+				t.Errorf("expected asset URL in response, got %q", resp["url"])
+			}
+		})
+	}
+
+	// 2. Failure: mismatched extension and declared MIME
+	mismatchRec := uploadAsset("asset-article", "data.csv", "image/png", "col1,col2")
+	if mismatchRec.Code != http.StatusBadRequest {
+		t.Errorf("mismatched type: expected 400, got %d", mismatchRec.Code)
+	}
+	if !strings.Contains(mismatchRec.Body.String(), "does not match the declared type") {
+		t.Errorf("expected mismatch error message, got: %s", mismatchRec.Body.String())
+	}
+
+	// 3. Failure: disallowed executable types (HTML, JS)
+	forbiddenCases := []struct {
+		filename    string
+		contentType string
+	}{
+		{"index.html", "text/html"},
+		{"app.js", "application/javascript"},
+		{"script.js", "text/javascript"},
+		{"doc.xhtml", "application/xhtml+xml"},
+		{"run.sh", "application/x-sh"},
+		{"binary.exe", "application/octet-stream"},
+	}
+
+	for _, tc := range forbiddenCases {
+		t.Run("forbidden_"+tc.filename, func(t *testing.T) {
+			rec := uploadAsset("asset-article", tc.filename, tc.contentType, "content")
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("forbidden upload %s: expected 400, got %d: %s", tc.filename, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "unsupported asset type") {
+				t.Errorf("expected unsupported asset type error, got: %s", rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -906,6 +986,93 @@ func TestHandleGetAsset(t *testing.T) {
 	srv.HandleGetAsset(w2, req2)
 	if w2.Code != http.StatusForbidden && w2.Code != http.StatusNotFound {
 		t.Errorf("non-existent: expected 403 or 404, got %d", w2.Code)
+	}
+
+	// Save test assets directly to storage
+	slug := "test-article"
+	_, _ = srv.Storage.SaveArticle("", "Test Article", "# Content", "", "", "", "", nil, "")
+	_, err := srv.Storage.SaveAsset(slug, "table.csv", []byte("a,b\n1,2\n"))
+	if err != nil {
+		t.Fatalf("SaveAsset table.csv failed: %v", err)
+	}
+	_, err = srv.Storage.SaveAsset(slug, "lines.jsonl", []byte("{\"id\":1}\n"))
+	if err != nil {
+		t.Fatalf("SaveAsset lines.jsonl failed: %v", err)
+	}
+	_, err = srv.Storage.SaveAsset(slug, "picture.png", []byte("PNGDATA"))
+	if err != nil {
+		t.Fatalf("SaveAsset picture.png failed: %v", err)
+	}
+	_, err = srv.Storage.SaveAsset(slug, "vector.svg", []byte("<svg></svg>"))
+	if err != nil {
+		t.Fatalf("SaveAsset vector.svg failed: %v", err)
+	}
+
+	// GET CSV: nosniff + attachment disposition, NO svg CSP
+	reqCSV := httptest.NewRequest("GET", "/api/assets/"+slug+"/table.csv", nil)
+	reqCSV.SetPathValue("slug", slug)
+	reqCSV.SetPathValue("filename", "table.csv")
+	wCSV := httptest.NewRecorder()
+	srv.HandleGetAsset(wCSV, reqCSV)
+	if wCSV.Code != http.StatusOK {
+		t.Errorf("GET table.csv: expected 200, got %d", wCSV.Code)
+	}
+	if wCSV.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("expected nosniff header, got %q", wCSV.Header().Get("X-Content-Type-Options"))
+	}
+	if disp := wCSV.Header().Get("Content-Disposition"); !strings.Contains(disp, "attachment") || !strings.Contains(disp, "table.csv") {
+		t.Errorf("expected attachment disposition with table.csv, got %q", disp)
+	}
+	if csp := wCSV.Header().Get("Content-Security-Policy"); csp != "" {
+		t.Errorf("CSV should not carry SVG Content-Security-Policy, got %q", csp)
+	}
+
+	// GET JSONL: nosniff + attachment disposition
+	reqJSONL := httptest.NewRequest("GET", "/api/assets/"+slug+"/lines.jsonl", nil)
+	reqJSONL.SetPathValue("slug", slug)
+	reqJSONL.SetPathValue("filename", "lines.jsonl")
+	wJSONL := httptest.NewRecorder()
+	srv.HandleGetAsset(wJSONL, reqJSONL)
+	if wJSONL.Code != http.StatusOK {
+		t.Errorf("GET lines.jsonl: expected 200, got %d", wJSONL.Code)
+	}
+	if disp := wJSONL.Header().Get("Content-Disposition"); !strings.Contains(disp, "attachment") || !strings.Contains(disp, "lines.jsonl") {
+		t.Errorf("expected attachment disposition with lines.jsonl, got %q", disp)
+	}
+
+	// GET PNG: nosniff, served inline (NO attachment disposition)
+	reqPNG := httptest.NewRequest("GET", "/api/assets/"+slug+"/picture.png", nil)
+	reqPNG.SetPathValue("slug", slug)
+	reqPNG.SetPathValue("filename", "picture.png")
+	wPNG := httptest.NewRecorder()
+	srv.HandleGetAsset(wPNG, reqPNG)
+	if wPNG.Code != http.StatusOK {
+		t.Errorf("GET picture.png: expected 200, got %d", wPNG.Code)
+	}
+	if wPNG.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("expected nosniff on image, got %q", wPNG.Header().Get("X-Content-Type-Options"))
+	}
+	if disp := wPNG.Header().Get("Content-Disposition"); disp != "" {
+		t.Errorf("standard image should render inline (no Content-Disposition), got %q", disp)
+	}
+
+	// GET SVG: nosniff + attachment disposition + sandbox CSP
+	reqSVG := httptest.NewRequest("GET", "/api/assets/"+slug+"/vector.svg", nil)
+	reqSVG.SetPathValue("slug", slug)
+	reqSVG.SetPathValue("filename", "vector.svg")
+	wSVG := httptest.NewRecorder()
+	srv.HandleGetAsset(wSVG, reqSVG)
+	if wSVG.Code != http.StatusOK {
+		t.Errorf("GET vector.svg: expected 200, got %d", wSVG.Code)
+	}
+	if wSVG.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("expected nosniff on svg, got %q", wSVG.Header().Get("X-Content-Type-Options"))
+	}
+	if disp := wSVG.Header().Get("Content-Disposition"); !strings.Contains(disp, "attachment") || !strings.Contains(disp, "vector.svg") {
+		t.Errorf("expected attachment disposition for svg, got %q", disp)
+	}
+	if csp := wSVG.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "sandbox") {
+		t.Errorf("expected sandbox CSP for svg, got %q", csp)
 	}
 }
 
