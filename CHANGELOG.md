@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-09-07
+
 ### Added
 
 - **Asset upload allowlist expanded to accept text and data files alongside images.** Articles often summarize data files (test round outputs, logs, CSV tables, metrics series); tools like `kimmydb-testkit` and human authors can now attach raw data directly to an article rather than leaving records stranded on remote hosts.
@@ -18,6 +20,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   - The filename extension must match the declared MIME type, preserving strict pairing validation.
   - Web executables (`text/html`, `application/javascript`, `application/xhtml+xml`) remain strictly rejected.
   - Non-image assets (`.csv`, `.jsonl`, `.ndjson`, `.json`, `.txt`, `.log`, `.md`) are served with `Content-Disposition: attachment; filename="..."` alongside `X-Content-Type-Options: nosniff` to prevent active interpretation and avoid dumping megabytes of raw text inline. Active SVG documents retain their dedicated `Content-Security-Policy: default-src 'none'; sandbox`.
+
+### Changed
+
+- **The home page leads with search, and the browser tab carries an NX monogram.** The hero's search field is larger and no longer separated from the content below it by a rule, so the first thing the page offers is the thing most visits are for. The generic Vite mark in `frontend/public/favicon.svg` is replaced by a typographic NX favicon, which is also what the README now shows beside the project name.
 
 ## [0.15.1] — 2026-08-31
 
