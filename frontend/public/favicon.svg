@@ -1,69 +1,49 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%">
   <defs>
-    <!-- Deep space squircle background -->
-    <linearGradient id="nxBg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0b0f19" />
-      <stop offset="50%" stop-color="#111827" />
-      <stop offset="100%" stop-color="#1e1b4b" />
-    </linearGradient>
-
-    <!-- NexWiki Signature Theme Accent Gradient (#4f46e5 to #7c3aed to #a855f7) -->
-    <linearGradient id="primaryStemGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#818cf8" />
-      <stop offset="50%" stop-color="#4f46e5" />
-      <stop offset="100%" stop-color="#4338ca" />
-    </linearGradient>
-
-    <linearGradient id="nxDiagonalGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+    <!-- Authentic NexWiki "Welcome to NexWiki" theme colors (#4f46e5 to #7c3aed) -->
+    <linearGradient id="gN" x1="0%" y1="0%" x2="0%" y2="100%">
       <stop offset="0%" stop-color="#6366f1" />
-      <stop offset="45%" stop-color="#4f46e5" />
-      <stop offset="80%" stop-color="#7c3aed" />
-      <stop offset="100%" stop-color="#9333ea" />
+      <stop offset="100%" stop-color="#4f46e5" />
     </linearGradient>
 
-    <!-- Electric Cyan & Purple cross-beam for the intersecting X -->
-    <linearGradient id="xSlashGrad" x1="0%" y1="100%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#38bdf8" />
-      <stop offset="55%" stop-color="#818cf8" />
-      <stop offset="100%" stop-color="#c084fc" />
+    <linearGradient id="gX" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7c3aed" />
+      <stop offset="100%" stop-color="#a855f7" />
     </linearGradient>
 
-    <!-- Ambient glow filter -->
-    <filter id="ambientGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="3" result="blur" />
-      <feMerge>
-        <feMergeNode in="blur" />
-        <feMergeNode in="SourceGraphic" />
-      </feMerge>
-    </filter>
+    <linearGradient id="gDiagonal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
 
-    <filter id="tileShadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#4f46e5" flood-opacity="0.35" />
-    </filter>
+    <radialGradient id="gBg" cx="50%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#181825" />
+      <stop offset="100%" stop-color="#08080d" />
+    </radialGradient>
   </defs>
 
-  <!-- Squircle Base Tile -->
-  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#nxBg)" stroke="rgba(124, 58, 237, 0.4)" stroke-width="1.8" filter="url(#tileShadow)" />
+  <!-- Clean dark minimal squircle tile -->
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#gBg)" stroke="#27273a" stroke-width="1.5" />
 
-  <!-- Subtle inner ambient halo -->
-  <circle cx="64" cy="64" r="42" fill="none" stroke="url(#nxDiagonalGrad)" stroke-width="1" opacity="0.25" stroke-dasharray="2 3" />
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <!-- Capital "N" -->
+    <!-- Left vertical stem -->
+    <rect x="25" y="32" width="13" height="64" rx="6.5" fill="url(#gN)" />
 
-  <!-- Monogram Elements -->
-  <g transform="translate(1, 0)">
-    <!-- Left vertical stem of N -->
-    <rect x="25" y="30" width="13" height="68" rx="6.5" fill="url(#primaryStemGrad)" />
+    <!-- Right vertical stem -->
+    <rect x="56" y="32" width="13" height="64" rx="6.5" fill="url(#gN)" />
 
-    <!-- Right vertical stem of N -->
-    <rect x="89" y="30" width="13" height="68" rx="6.5" fill="url(#primaryStemGrad)" />
+    <!-- Connecting dynamic diagonal of N -->
+    <path d="M 26 34 C 26 30 31 28 34 31 L 64 72 C 65 74 65 76 63 78 L 59 78 C 57 78 55 76 54 74 L 25 36 Z" fill="url(#gDiagonal)" />
 
-    <!-- Primary Diagonal (N backbone & X primary slash) -->
-    <path d="M 27 33 C 27 30 31 28 34 30 L 99 94 C 102 97 100 101 96 101 L 93 101 C 90 101 87 99 85 97 L 26 38 Z" fill="url(#nxDiagonalGrad)" />
+    <!-- Lowercase geometric 'x' on the right: distinct, clean typography -->
+    <!-- Slash 1: Top-Left to Bottom-Right -->
+    <path d="M 77 54 C 75 51 77 48 81 48 L 83 48 C 85 48 88 50 89 52 L 105 76 C 107 79 105 82 101 82 L 99 82 C 97 82 94 80 93 78 L 77 54 Z" fill="url(#gX)" />
 
-    <!-- Counter-cutting diagonal completing the smart "X" across the "N" -->
-    <path d="M 44 97 C 41 100 37 99 36 96 L 35 94 C 34 91 36 88 38 86 L 90 34 C 93 31 97 32 98 35 L 99 37 C 100 40 98 43 96 45 L 44 97 Z" fill="url(#xSlashGrad)" filter="url(#ambientGlow)" opacity="0.95" />
+    <!-- Slash 2: Bottom-Left to Top-Right -->
+    <path d="M 77 76 C 75 79 77 82 81 82 L 83 82 C 85 82 88 80 89 78 L 105 54 C 107 51 105 48 101 48 L 99 48 C 97 48 94 50 93 52 L 77 76 Z" fill="url(#gX)" />
 
-    <!-- Central Neural Intelligence Node at the nexus intersection -->
-    <circle cx="63.5" cy="65.5" r="5" fill="#ffffff" filter="url(#ambientGlow)" />
-    <circle cx="63.5" cy="65.5" r="2.5" fill="#4f46e5" />
+    <!-- Intellectual spark marker above the x -->
+    <circle cx="91" cy="34" r="4" fill="#ffffff" />
   </g>
 </svg>
