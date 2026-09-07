@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%">
+  <defs>
+    <!-- Authentic NexWiki "Welcome to NexWiki" gradient (#4f46e5 to #7c3aed) -->
+    <linearGradient id="nxGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="45%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
+
+    <!-- Dark rounded squircle background tile -->
+    <linearGradient id="nxBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+
+    <filter id="nxShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#4f46e5" flood-opacity="0.35" />
+    </filter>
+  </defs>
+
+  <!-- Clean dark squircle base -->
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#nxBg)" stroke="#312e81" stroke-width="1.6" />
+
+  <g fill="url(#nxGrad)" filter="url(#nxShadow)">
+    <!-- Standard forward-facing N (diagonal goes down from top-left to bottom-right) -->
+    <path d="M 22 92 L 22 36 L 36 36 L 58 76 L 58 36 L 72 36 L 72 92 L 58 92 L 36 52 L 36 92 Z" />
+
+    <!-- Standard forward-facing X -->
+    <path d="M 76 36 L 87 36 L 91 54 L 95 36 L 106 36 L 98 64 L 106 92 L 95 92 L 91 74 L 87 92 L 76 92 L 84 64 Z" />
+  </g>
+</svg>
