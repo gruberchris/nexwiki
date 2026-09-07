@@ -1,49 +1,39 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%">
   <defs>
-    <!-- Authentic NexWiki "Welcome to NexWiki" theme colors (#4f46e5 to #7c3aed) -->
-    <linearGradient id="gN" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#6366f1" />
-      <stop offset="100%" stop-color="#4f46e5" />
-    </linearGradient>
-
-    <linearGradient id="gX" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#7c3aed" />
-      <stop offset="100%" stop-color="#a855f7" />
-    </linearGradient>
-
-    <linearGradient id="gDiagonal" x1="0%" y1="0%" x2="100%" y2="100%">
+    <!-- Welcome to NexWiki gradient (#4f46e5 to #7c3aed) -->
+    <linearGradient id="nxGrad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="45%" stop-color="#6366f1" />
       <stop offset="100%" stop-color="#7c3aed" />
     </linearGradient>
 
-    <radialGradient id="gBg" cx="50%" cy="30%" r="80%">
-      <stop offset="0%" stop-color="#181825" />
-      <stop offset="100%" stop-color="#08080d" />
+    <!-- Deep slate squircle card -->
+    <radialGradient id="nxBg" cx="50%" cy="30%" r="85%">
+      <stop offset="0%" stop-color="#18182b" />
+      <stop offset="100%" stop-color="#08080f" />
     </radialGradient>
+
+    <filter id="nxShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#4f46e5" flood-opacity="0.35" />
+    </filter>
   </defs>
 
-  <!-- Clean dark minimal squircle tile -->
-  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#gBg)" stroke="#27273a" stroke-width="1.5" />
+  <!-- Clean dark squircle base -->
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#nxBg)" stroke="#312e81" stroke-width="1.8" />
 
-  <g stroke-linecap="round" stroke-linejoin="round">
-    <!-- Capital "N" -->
-    <!-- Left vertical stem -->
-    <rect x="25" y="32" width="13" height="64" rx="6.5" fill="url(#gN)" />
+  <g fill="url(#nxGrad)" filter="url(#nxShadow)">
+    <!-- 
+      BOLD, UNMISTAKABLE N:
+      Full-height vertical left pillar (x=22..36), steep diagonal spanning 
+      corner-to-corner (36,30 to 70,98), and full-height right pillar (x=56..70).
+      Pure, classic N anatomy with crisp cuts.
+    -->
+    <path d="M 22 30 L 36 30 L 36 68 L 56 30 L 70 30 L 70 98 L 56 98 L 56 60 L 36 98 L 22 98 Z" />
 
-    <!-- Right vertical stem -->
-    <rect x="56" y="32" width="13" height="64" rx="6.5" fill="url(#gN)" />
-
-    <!-- Connecting dynamic diagonal of N -->
-    <path d="M 26 34 C 26 30 31 28 34 31 L 64 72 C 65 74 65 76 63 78 L 59 78 C 57 78 55 76 54 74 L 25 36 Z" fill="url(#gDiagonal)" />
-
-    <!-- Lowercase geometric 'x' on the right: distinct, clean typography -->
-    <!-- Slash 1: Top-Left to Bottom-Right -->
-    <path d="M 77 54 C 75 51 77 48 81 48 L 83 48 C 85 48 88 50 89 52 L 105 76 C 107 79 105 82 101 82 L 99 82 C 97 82 94 80 93 78 L 77 54 Z" fill="url(#gX)" />
-
-    <!-- Slash 2: Bottom-Left to Top-Right -->
-    <path d="M 77 76 C 75 79 77 82 81 82 L 83 82 C 85 82 88 80 89 78 L 105 54 C 107 51 105 48 101 48 L 99 48 C 97 48 94 50 93 52 L 77 76 Z" fill="url(#gX)" />
-
-    <!-- Intellectual spark marker above the x -->
-    <circle cx="91" cy="34" r="4" fill="#ffffff" />
+    <!-- 
+      BOLD, MATCHING X:
+      Clean cross matching the N's stroke weight and height, perfectly proportioned on the right.
+    -->
+    <path d="M 78 40 L 88 40 L 95 55 L 102 40 L 112 40 L 101 64 L 112 88 L 102 88 L 95 73 L 88 88 L 78 88 L 89 64 Z" />
   </g>
 </svg>
