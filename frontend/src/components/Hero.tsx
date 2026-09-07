@@ -177,7 +177,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
       <div className="max-w-4xl xl:max-w-6xl 2xl:max-w-[1536px] mx-auto space-y-12 animate-slide-up">
 
         {/* Hero Header */}
-        <div className="relative text-center sm:text-left flex flex-col sm:flex-row items-center justify-between gap-6 pb-8 border-b border-themeBorder">
+        <div className="relative text-center sm:text-left flex flex-col sm:flex-row items-center justify-between gap-6 pb-4">
           <div className="space-y-3">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-themeAccentBg text-themeAccent font-bold text-xs select-none">
               <Terminal size={12} className="animate-pulse" />
@@ -205,22 +205,22 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
             <div className="relative group">
               <div className="absolute -inset-0.5 bg-gradient-to-r from-themeAccent to-themeAccentSecondary rounded-2xl blur opacity-15 group-hover:opacity-25 transition duration-300" />
               <div className="relative">
-                <Search size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-themeTextMuted group-focus-within:text-themeAccent transition-colors" />
+                <Search size={22} className="absolute left-5 top-1/2 -translate-y-1/2 text-themeTextMuted group-focus-within:text-themeAccent transition-colors" />
                 <input
                   type="text"
                   placeholder={`Search ${wikiName} for articles, keywords, or topics...`}
                   value={ftsQuery}
                   onChange={(e) => setFtsQuery(e.target.value)}
-                  className="w-full pl-12 pr-11 py-4 rounded-2xl bg-themeBgSecondary border border-themeBorder focus:outline-hidden focus:ring-2 focus:ring-themeAccent text-sm shadow-md text-themeTextSecondary placeholder:text-themeTextMuted transition-all font-medium"
+                  className="w-full pl-14 pr-12 py-5 rounded-2xl bg-themeBgSecondary border border-themeBorder focus:outline-hidden focus:ring-2 focus:ring-themeAccent text-base shadow-lg text-themeTextSecondary placeholder:text-themeTextMuted transition-all font-medium"
                 />
                 {ftsQuery && (
                   <button
                     aria-label="Clear search"
                     type="button"
                     onClick={() => setFtsQuery('')}
-                    className="absolute inset-y-0 right-4 flex items-center text-themeTextMuted hover:text-rose-500 transition-colors animate-fade-in"
+                    className="absolute inset-y-0 right-5 flex items-center text-themeTextMuted hover:text-rose-500 transition-colors animate-fade-in"
                   >
-                    <X size={15} />
+                    <X size={18} />
                   </button>
                 )}
               </div>
@@ -374,7 +374,7 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
         </div>
 
         {/* Footer */}
-        <div className="pt-8 border-t border-themeBorder flex items-center justify-center gap-1.5 text-center text-xs text-themeTextMuted select-none font-medium">
+        <div className="pt-6 flex items-center justify-center gap-1.5 text-center text-xs text-themeTextMuted select-none font-medium">
           <span>Made with</span>
           <Heart size={11} className="text-rose-500 fill-rose-500 animate-pulse" />
           <span>for serious and fun brainstorming.</span>
