@@ -1,4 +1,4 @@
-# NexWiki <img src="images/favicon.svg" alt="NexWiki" width="32" height="32" align="center" />
+# <img src="images/favicon.svg" alt="NexWiki" width="36" height="36" align="absmiddle" /> NexWiki
 
 **A wiki that is a first-class MCP citizen — your notes and your AI agent's memory in the same human-editable Markdown files, with an in-wiki page that governs how every connected agent behaves.**
 
