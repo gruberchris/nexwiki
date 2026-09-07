@@ -13,6 +13,7 @@ First off, thank you for considering contributing to NexWiki! It's people like y
 - [Coding Standards](#coding-standards)
 - [Documentation Rules](#documentation-rules)
 - [Commit Messages](#commit-messages)
+- [Developer Certificate of Origin (DCO)](#developer-certificate-of-origin-dco)
 - [Running Tests](#running-tests)
 
 ## Code of Conduct
@@ -159,6 +160,32 @@ Use clear, descriptive commit messages:
   - `docs: update MCP server connection guide`
   - `refactor: extract tag cloud into separate component`
   - `test: add unit tests for slugify utility`
+
+## Developer Certificate of Origin (DCO)
+
+NexWiki uses the [Developer Certificate of Origin 1.1](https://developercertificate.org/) (DCO) to verify that contributors have the right to submit code under the project's MIT license.
+
+To sign off your work, simply pass the `-s` / `--signoff` flag when committing:
+
+```bash
+git commit -s -m "feat: add my new feature"
+```
+
+This appends a `Signed-off-by:` line to your commit message using your configured Git name and email address:
+
+```text
+Signed-off-by: Jane Contributor <jane@example.com>
+```
+
+Repository pull requests require all commits to include this sign-off before they can be merged. If you forgot to sign off an earlier commit, you can amend it:
+
+```bash
+# Amend the most recent commit
+git commit --amend --no-edit -s
+
+# Or sign off multiple commits in an interactive rebase
+git rebase --signoff origin/main
+```
 
 ## Running Tests
 
