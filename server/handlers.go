@@ -550,19 +550,19 @@ func (srv *Server) HandleUploadAsset(w http.ResponseWriter, r *http.Request) {
 		mimeType = strings.ToLower(strings.TrimSpace(strings.Split(rawMimeType, ";")[0]))
 	}
 	allowedExtsForMime := map[string][]string{
-		"image/jpeg":             {".jpg", ".jpeg"},
-		"image/png":              {".png"},
-		"image/gif":              {".gif"},
-		"image/webp":             {".webp"},
-		"image/svg+xml":          {".svg"},
-		"text/csv":               {".csv"},
-		"application/x-ndjson":   {".jsonl", ".ndjson"},
-		"application/jsonl":      {".jsonl", ".ndjson"},
+		"image/jpeg":              {".jpg", ".jpeg"},
+		"image/png":               {".png"},
+		"image/gif":               {".gif"},
+		"image/webp":              {".webp"},
+		"image/svg+xml":           {".svg"},
+		"text/csv":                {".csv"},
+		"application/x-ndjson":    {".jsonl", ".ndjson"},
+		"application/jsonl":       {".jsonl", ".ndjson"},
 		"application/x-jsonlines": {".jsonl", ".ndjson"},
-		"application/json":       {".json"},
-		"text/plain":             {".txt", ".log"},
-		"text/markdown":          {".md"},
-		"text/x-markdown":        {".md"},
+		"application/json":        {".json"},
+		"text/plain":              {".txt", ".log"},
+		"text/markdown":           {".md"},
+		"text/x-markdown":         {".md"},
 	}
 
 	allowedExts, mimeOK := allowedExtsForMime[mimeType]
