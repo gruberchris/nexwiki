@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.17.1] — 2026-09-11
+
+### Fixed
+- **OKF Bundle Import and Export Path Resolution in MCP Tools**:
+  - `export_okf_bundle` now always returns an absolute path via `filepath.Abs`, preventing relative path resolution errors across different working directories.
+  - `import_okf_bundle` now accepts relative paths that already point within the wiki data directory without erroneously prefixing `DataDir` again.
+  - Fixes `no such file or directory` errors during MCP bundle round-trips when running with relative data directories.
+
+### Testing
+- **Comprehensive MCP Tool Suite Coverage**:
+  - Added full end-to-end test suite in `server/mcp_suite_test.go` exercising all 29 MCP server tools and explicit regression tests for relative data directory OKF export and import round-trips.
+
 ## [0.17.0] — 2026-09-11
 
 ### Added
@@ -447,7 +459,8 @@ Completes the memory-enforcement work begun in 0.14.0. That release moved three 
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.17.1...HEAD
+[0.17.1]: https://github.com/gruberchris/nexwiki/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/gruberchris/nexwiki/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/gruberchris/nexwiki/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/gruberchris/nexwiki/compare/v0.15.0...v0.15.1
