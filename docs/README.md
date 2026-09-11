@@ -93,7 +93,8 @@ A technical and user guide to the enforced plan status lifecycle:
 * **Safety Guards**: Dry-run mode, the activity-log audit trail, and the backlink guard that refuses to delete referenced plans.
 * **The One-Time Migration**: How existing status tags are moved into the `status` field on first boot.
 
-### 13. [NexWiki Open Knowledge Format (OKF v0.2) Guide](./okf_v02_guide.md)A comprehensive guide to the Open Knowledge Format (OKF v0.2) specification implementation in NexWiki:
+### 13. [NexWiki Open Knowledge Format (OKF v0.2) Guide](./okf_v02_guide.md)
+A comprehensive guide to the Open Knowledge Format (OKF v0.2) specification implementation in NexWiki:
 * **The 5 Trust Signals**: Provenance (`sources`), Trust (`generated`, `verified`), Freshness (`stale_after`), Lifecycle (`status`), and Attested Computations.
 * **Trust Tiers & Human Verification**: How `human-reviewed`, `machine-confirmed`, and `unverified` tiers are derived, displayed with responsive badges, and confirmed via the one-click Verify button.
 * **Freshness & Stale Concepts**: Setting expiration timestamps, prominent reader alerts, and `wiki_health` automated diagnostics.
@@ -106,8 +107,48 @@ How to install the latest release without building from source:
 * **Docker Runner**: `scripts/docker-run.sh` (macOS/Linux) / `scripts/docker-run.ps1` (Windows) pulls `ghcr.io/gruberchris/nexwiki:latest` and mounts the OS-correct data directory.
 * **Browser Launch**: The `-launch-in-browser` flag that opens the wiki once the server answers.
 
+### 15. [NexWiki Configuration Guide](./configuration.md)
+A complete reference manual for command-line flags and environment variables:
+* **Precedence Hierarchy**: How `NEXWIKI_*` environment variables override CLI flags and defaults.
+* **CLI Flags & Environment Variables**: Port configuration, wiki naming, active themes, seasonal scheduling, headless MCP mode, browser launching, plan lifecycle timers, secret scanning, and activity log rotation caps.
+* **OS-Aware Default Storage**: Directory resolution across Linux, macOS (`~/.config`), Windows (`%AppData%`), and Docker (`/app/data`).
+* **Trust Model & Security Governance**: Single-user unauthenticated architecture, loopback interface binding, and browser origin validation (`NEXWIKI_ALLOWED_ORIGINS`).
+
+### 16. [NexWiki Docker Deployment Guide](./docker_deployment.md)
+A guide to running NexWiki in containers using official multi-platform images:
+* **Multi-Platform GHCR Images**: Pulling and running `ghcr.io/gruberchris/nexwiki:latest` on `linux/amd64` and `linux/arm64`.
+* **Container Run Commands**: Minimal and advanced `docker run` invocations with port mapping and environment variables.
+* **Production Docker Compose**: Production-ready `docker-compose.yml` configuration with persistent volumes.
+* **Volume Persistence**: Understanding `/app/data` structure (`articles/`, `assets/`, `search.bleve/`, `activity.jsonl`) and graceful shutdown handling.
+* **Stdio MCP Subprocesses**: Spawning stdio MCP workers via `docker exec` with the `-mcp-only` flag.
+
+### 17. [NexWiki Production Deployment & Reverse Proxy Guide](./production_deployment.md)
+A production deployment manual covering security boundaries, persistent storage, and reverse proxy configurations:
+* **Single-User Trust Model**: Authentication requirements and strategies using private VPNs (Tailscale, WireGuard) or authenticating reverse proxies.
+* **Browser Origin Validation**: Permitting remote domain origins via `NEXWIKI_ALLOWED_ORIGINS`.
+* **Caddy Reverse Proxy**: Automatic TLS certificate management and HTTP Basic Authentication with `basic_auth`.
+* **Nginx Reverse Proxy**: Complete Nginx configuration with essential unbuffered proxy directives for Streamable HTTP MCP (`/api/mcp`) and live SSE activity feeds (`/api/activity/stream`).
+* **Production Compose & Systemd**: Turnkey Docker Compose stacks and Linux systemd service configurations.
+
+### 18. [NexWiki Developer Setup & Build Automation Guide](./developer_guide.md)
+A technical manual for developers contributing to the Go backend and React frontend:
+* **Prerequisites & Toolchain**: Requirements for Go 1.26+ and Node.js 20.x+.
+* **Frictionless Dev Mode**: Running Vite hot-reloading dev server on `:5173` with backend CORS proxying on `:5808`.
+* **Makefile Automation**: Overview of build, clean, and Docker automation targets.
+* **Multi-Platform Cross-Compilation**: Compiling standalone binaries for Windows AMD64, Linux AMD64, Linux ARM64, and macOS ARM64 with embedded assets (`go:embed`).
+* **Testing & Quality Gates**: Executing Go race detector tests (`go test -race`), static analysis (`go vet`), and frontend Vitest suites.
+
+### 19. [NexWiki Release Engineering Guide](./release_guide.md)
+A guide detailing the automated release process, versioning rules, and CI/CD pipelines:
+* **Pre-1.0 Semantic Versioning**: Patch, minor, and major release conventions.
+* **CI Quality Gates**: Test suites, Docker build and smoke tests, vulnerability scanning (`govulncheck`), and linting.
+* **Changelog Stamping Workflow**: Promoting `[Unreleased]` changes in `CHANGELOG.md` via pull requests.
+* **Automated Tag-Driven Pipeline**: Triggering `.github/workflows/release.yml` with `v*` Git tags to publish multi-arch binaries, SHA256 checksums, and GHCR container images.
+* **Verification & Roll-Forward**: Post-release verification steps and roll-forward practices for defect remediation.
+
 ---
 
 ## 🏗️ Architecture Overview
 
 NexWiki integrates documentation directly with active AI pipelines. If you are an AI developer or are connecting an AI agent (like Claude Desktop or Cursor) to NexWiki, refer to the root [AGENTS.md](../AGENTS.md) for specifications on the exposed Model Context Protocol (MCP) server endpoints.
+
