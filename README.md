@@ -15,34 +15,6 @@ Connect your AI agent harness apps—including **Claude Code**, **GitHub Copilot
 1. **Accelerate Building**: Leverage your accumulated knowledge and personal context to help you design and build new solutions faster.
 2. **Ground Truth Verification**: Empower your agents to use that personal context to verify that what they are building is actually correct and compliant with your standards.
 
-```mermaid
-flowchart LR
-    subgraph Scattered[Scattered Context]
-        direction TB
-        N[Scratch Notes]
-        F[Loose Files]
-        C[Teams / Slack]
-        E[Email Threads]
-    end
-
-    subgraph NexWiki[NexWiki Second Brain]
-        KB[(Local Markdown Files\nOKF v0.2 + Bleve Index)]
-    end
-
-    subgraph Harnesses[Agent Harness Apps]
-        direction TB
-        CC[Claude Code]
-        GH[Copilot CLI]
-        AG[Google Antigravity]
-        CR[Cursor]
-        OX[Codex / OpenCode]
-    end
-
-    Scattered -->|Ingest & Unify| KB
-    KB <-->|29 MCP Tools| Harnesses
-    Harnesses -->|1. Build Faster\n2. Verify Correctness| Output[Verified Output]
-```
-
 ### 🖥️ Interactive Web UI
 Experience creating, formatting, and organizing articles in NexWiki's responsive web interface.
 
