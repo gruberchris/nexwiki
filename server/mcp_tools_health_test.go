@@ -43,12 +43,16 @@ func ageDocument(t *testing.T, srv *Server, slug string, days int) {
 func replaceFrontMatterTimestamp(doc, stamp string) string {
 	lines := strings.Split(doc, "\n")
 	for i, line := range lines {
-		if strings.HasPrefix(line, "timestamp:") {
-			lines[i] = "timestamp: " + stamp
-			return strings.Join(lines, "\n")
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "timestamp:") {
+			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+			lines[i] = indent + "timestamp: " + stamp
+		} else if strings.HasPrefix(trimmed, "at:") {
+			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+			lines[i] = indent + "at: " + stamp
 		}
 	}
-	return doc
+	return strings.Join(lines, "\n")
 }
 
 func firstLines(s string, n int) string {

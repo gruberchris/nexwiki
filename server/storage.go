@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -20,20 +22,526 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Article represents a wiki article page. On disk, it is a conformant OKF v0.1 concept
-// document: a real YAML front-matter block plus a Markdown content body. The OKF canonical
-// keys are type/title/description/resource/tags/timestamp; NexWiki's proprietary metadata
-// (slug, created_at, version, edit_summary, source, archived_at) rides as OKF custom keys.
+// OKFGenerated records who or what produced the content and when (§5.2).
+type OKFGenerated struct {
+	By string    `json:"by" yaml:"by"`
+	At time.Time `json:"at" yaml:"at"`
+}
+
+func (g *OKFGenerated) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.AliasNode {
+		value = value.Alias
+	}
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("generated must be a mapping")
+	}
+	for i := 0; i < len(value.Content); i += 2 {
+		key := value.Content[i].Value
+		valNode := value.Content[i+1]
+		if valNode.Kind == yaml.AliasNode {
+			valNode = valNode.Alias
+		}
+		switch key {
+		case "by":
+			g.By = strings.TrimSpace(valNode.Value)
+		case "at":
+			t, err := parseISO8601(valNode.Value)
+			if err != nil {
+				return fmt.Errorf("invalid generated 'at' timestamp: %w", err)
+			}
+			g.At = t
+		}
+	}
+	return nil
+}
+
+func (g OKFGenerated) MarshalYAML() (interface{}, error) {
+	type raw struct {
+		By string `yaml:"by"`
+		At string `yaml:"at,omitempty"`
+	}
+	r := raw{By: g.By}
+	if !g.At.IsZero() {
+		r.At = g.At.UTC().Format(time.RFC3339)
+	}
+	return r, nil
+}
+
+func (g *OKFGenerated) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		By string `json:"by"`
+		At string `json:"at"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	g.By = aux.By
+	if aux.At != "" {
+		t, err := parseISO8601(aux.At)
+		if err != nil {
+			return err
+		}
+		g.At = t
+	}
+	return nil
+}
+
+func (g OKFGenerated) MarshalJSON() ([]byte, error) {
+	type raw struct {
+		By string `json:"by"`
+		At string `json:"at,omitempty"`
+	}
+	r := raw{By: g.By}
+	if !g.At.IsZero() {
+		r.At = g.At.UTC().Format(time.RFC3339)
+	}
+	return json.Marshal(r)
+}
+
+// OKFVerification records who or what confirmed the content against its sources or resource (§5.2).
+type OKFVerification struct {
+	By string    `json:"by" yaml:"by"`
+	At time.Time `json:"at" yaml:"at"`
+}
+
+func (v *OKFVerification) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.AliasNode {
+		value = value.Alias
+	}
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("verification must be a mapping")
+	}
+	for i := 0; i < len(value.Content); i += 2 {
+		key := value.Content[i].Value
+		valNode := value.Content[i+1]
+		if valNode.Kind == yaml.AliasNode {
+			valNode = valNode.Alias
+		}
+		switch key {
+		case "by":
+			v.By = strings.TrimSpace(valNode.Value)
+		case "at":
+			t, err := parseISO8601(valNode.Value)
+			if err != nil {
+				return fmt.Errorf("invalid verification 'at' timestamp: %w", err)
+			}
+			v.At = t
+		}
+	}
+	return nil
+}
+
+func (v OKFVerification) MarshalYAML() (interface{}, error) {
+	type raw struct {
+		By string `yaml:"by"`
+		At string `yaml:"at,omitempty"`
+	}
+	r := raw{By: v.By}
+	if !v.At.IsZero() {
+		r.At = v.At.UTC().Format(time.RFC3339)
+	}
+	return r, nil
+}
+
+func (v *OKFVerification) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		By string `json:"by"`
+		At string `json:"at"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	v.By = aux.By
+	if aux.At != "" {
+		t, err := parseISO8601(aux.At)
+		if err != nil {
+			return err
+		}
+		v.At = t
+	}
+	return nil
+}
+
+func (v OKFVerification) MarshalJSON() ([]byte, error) {
+	type raw struct {
+		By string `json:"by"`
+		At string `json:"at,omitempty"`
+	}
+	r := raw{By: v.By}
+	if !v.At.IsZero() {
+		r.At = v.At.UTC().Format(time.RFC3339)
+	}
+	return json.Marshal(r)
+}
+
+// OKFVerificationList supports unmarshaling both a single bare mapping `{ by, at }`
+// and a sequence of mappings `[{ by, at }]` per OKF spec §5.2 and §11.
+type OKFVerificationList []OKFVerification
+
+func (vl *OKFVerificationList) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.AliasNode {
+		value = value.Alias
+	}
+	if value.Kind == yaml.MappingNode {
+		var single OKFVerification
+		if err := single.UnmarshalYAML(value); err != nil {
+			return err
+		}
+		*vl = []OKFVerification{single}
+		return nil
+	}
+	if value.Kind == yaml.SequenceNode {
+		var list []OKFVerification
+		for _, item := range value.Content {
+			var v OKFVerification
+			if err := v.UnmarshalYAML(item); err != nil {
+				return err
+			}
+			list = append(list, v)
+		}
+		*vl = list
+		return nil
+	}
+	return nil
+}
+
+func (vl OKFVerificationList) MarshalYAML() (interface{}, error) {
+	if len(vl) == 0 {
+		return nil, nil
+	}
+	type raw struct {
+		By string `yaml:"by"`
+		At string `yaml:"at,omitempty"`
+	}
+	list := make([]raw, len(vl))
+	for i, v := range vl {
+		list[i] = raw{By: v.By}
+		if !v.At.IsZero() {
+			list[i].At = v.At.UTC().Format(time.RFC3339)
+		}
+	}
+	return list, nil
+}
+
+func (vl *OKFVerificationList) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || string(data) == "null" {
+		*vl = nil
+		return nil
+	}
+	if data[0] == '{' {
+		var single OKFVerification
+		if err := json.Unmarshal(data, &single); err != nil {
+			return err
+		}
+		*vl = []OKFVerification{single}
+		return nil
+	}
+	var list []OKFVerification
+	if err := json.Unmarshal(data, &list); err != nil {
+		return err
+	}
+	*vl = list
+	return nil
+}
+
+// OKFUsageWindow specifies a datetime range framing usage count signals (§5.1).
+type OKFUsageWindow struct {
+	From time.Time `json:"from,omitzero" yaml:"from,omitempty"`
+	To   time.Time `json:"to,omitzero" yaml:"to,omitempty"`
+}
+
+func (w *OKFUsageWindow) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.AliasNode {
+		value = value.Alias
+	}
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("usage_window must be a mapping")
+	}
+	for i := 0; i < len(value.Content); i += 2 {
+		key := value.Content[i].Value
+		valNode := value.Content[i+1]
+		if valNode.Kind == yaml.AliasNode {
+			valNode = valNode.Alias
+		}
+		switch key {
+		case "from":
+			t, err := parseISO8601(valNode.Value)
+			if err != nil {
+				return fmt.Errorf("invalid usage_window 'from' timestamp: %w", err)
+			}
+			w.From = t
+		case "to":
+			t, err := parseISO8601(valNode.Value)
+			if err != nil {
+				return fmt.Errorf("invalid usage_window 'to' timestamp: %w", err)
+			}
+			w.To = t
+		}
+	}
+	return nil
+}
+
+func (w OKFUsageWindow) MarshalYAML() (interface{}, error) {
+	type raw struct {
+		From string `yaml:"from,omitempty"`
+		To   string `yaml:"to,omitempty"`
+	}
+	var r raw
+	if !w.From.IsZero() {
+		r.From = w.From.UTC().Format(time.RFC3339)
+	}
+	if !w.To.IsZero() {
+		r.To = w.To.UTC().Format(time.RFC3339)
+	}
+	return r, nil
+}
+
+func (w *OKFUsageWindow) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.From != "" {
+		t, err := parseISO8601(aux.From)
+		if err != nil {
+			return err
+		}
+		w.From = t
+	}
+	if aux.To != "" {
+		t, err := parseISO8601(aux.To)
+		if err != nil {
+			return err
+		}
+		w.To = t
+	}
+	return nil
+}
+
+func (w OKFUsageWindow) MarshalJSON() ([]byte, error) {
+	type raw struct {
+		From string `json:"from,omitempty"`
+		To   string `json:"to,omitempty"`
+	}
+	var r raw
+	if !w.From.IsZero() {
+		r.From = w.From.UTC().Format(time.RFC3339)
+	}
+	if !w.To.IsZero() {
+		r.To = w.To.UTC().Format(time.RFC3339)
+	}
+	return json.Marshal(r)
+}
+
+// OKFSource represents a material a concept derives from, carrying optional credibility signals (§5.1).
+type OKFSource struct {
+	ID           string          `json:"id,omitempty" yaml:"id,omitempty"`
+	Resource     string          `json:"resource" yaml:"resource"`
+	Title        string          `json:"title,omitempty" yaml:"title,omitempty"`
+	Author       string          `json:"author,omitempty" yaml:"author,omitempty"`
+	UsageCount   *int            `json:"usage_count,omitempty" yaml:"usage_count,omitempty"`
+	LastModified *time.Time      `json:"last_modified,omitzero" yaml:"last_modified,omitempty"`
+	UsageWindow  *OKFUsageWindow `json:"usage_window,omitempty" yaml:"usage_window,omitempty"`
+}
+
+func (s *OKFSource) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.AliasNode {
+		value = value.Alias
+	}
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("source must be a mapping")
+	}
+	for i := 0; i < len(value.Content); i += 2 {
+		key := value.Content[i].Value
+		valNode := value.Content[i+1]
+		if valNode.Kind == yaml.AliasNode {
+			valNode = valNode.Alias
+		}
+		switch key {
+		case "id":
+			s.ID = strings.TrimSpace(valNode.Value)
+		case "resource":
+			s.Resource = strings.TrimSpace(valNode.Value)
+		case "title":
+			s.Title = strings.TrimSpace(valNode.Value)
+		case "author":
+			s.Author = strings.TrimSpace(valNode.Value)
+		case "usage_count":
+			if valNode.Value != "" {
+				count, err := strconv.Atoi(strings.TrimSpace(valNode.Value))
+				if err != nil {
+					return fmt.Errorf("invalid usage_count: %w", err)
+				}
+				s.UsageCount = &count
+			}
+		case "last_modified":
+			if valNode.Value != "" {
+				t, err := parseISO8601(valNode.Value)
+				if err != nil {
+					return fmt.Errorf("invalid last_modified: %w", err)
+				}
+				s.LastModified = &t
+			}
+		case "usage_window":
+			var uw OKFUsageWindow
+			if err := uw.UnmarshalYAML(valNode); err != nil {
+				return err
+			}
+			s.UsageWindow = &uw
+		}
+	}
+	return nil
+}
+
+func (s OKFSource) MarshalYAML() (interface{}, error) {
+	type raw struct {
+		ID           string          `yaml:"id,omitempty"`
+		Resource     string          `yaml:"resource"`
+		Title        string          `yaml:"title,omitempty"`
+		Author       string          `yaml:"author,omitempty"`
+		UsageCount   *int            `yaml:"usage_count,omitempty"`
+		LastModified string          `yaml:"last_modified,omitempty"`
+		UsageWindow  *OKFUsageWindow `yaml:"usage_window,omitempty"`
+	}
+	r := raw{
+		ID:          s.ID,
+		Resource:    s.Resource,
+		Title:       s.Title,
+		Author:      s.Author,
+		UsageCount:  s.UsageCount,
+		UsageWindow: s.UsageWindow,
+	}
+	if s.LastModified != nil && !s.LastModified.IsZero() {
+		r.LastModified = s.LastModified.UTC().Format(time.RFC3339)
+	}
+	return r, nil
+}
+
+func (s *OKFSource) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		ID           string          `json:"id,omitempty"`
+		Resource     string          `json:"resource"`
+		Title        string          `json:"title,omitempty"`
+		Author       string          `json:"author,omitempty"`
+		UsageCount   *int            `json:"usage_count,omitempty"`
+		LastModified string          `json:"last_modified,omitempty"`
+		UsageWindow  *OKFUsageWindow `json:"usage_window,omitempty"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	s.ID = aux.ID
+	s.Resource = aux.Resource
+	s.Title = aux.Title
+	s.Author = aux.Author
+	s.UsageCount = aux.UsageCount
+	s.UsageWindow = aux.UsageWindow
+	if aux.LastModified != "" {
+		t, err := parseISO8601(aux.LastModified)
+		if err != nil {
+			return err
+		}
+		s.LastModified = &t
+	}
+	return nil
+}
+
+func (s OKFSource) MarshalJSON() ([]byte, error) {
+	type raw struct {
+		ID           string          `json:"id,omitempty"`
+		Resource     string          `json:"resource"`
+		Title        string          `json:"title,omitempty"`
+		Author       string          `json:"author,omitempty"`
+		UsageCount   *int            `json:"usage_count,omitempty"`
+		LastModified string          `json:"last_modified,omitempty"`
+		UsageWindow  *OKFUsageWindow `json:"usage_window,omitempty"`
+	}
+	r := raw{
+		ID:          s.ID,
+		Resource:    s.Resource,
+		Title:       s.Title,
+		Author:      s.Author,
+		UsageCount:  s.UsageCount,
+		UsageWindow: s.UsageWindow,
+	}
+	if s.LastModified != nil && !s.LastModified.IsZero() {
+		r.LastModified = s.LastModified.UTC().Format(time.RFC3339)
+	}
+	return json.Marshal(r)
+}
+
+// OKFParameter represents a typed, named parameter for an Attested Computation (§10.2).
+type OKFParameter struct {
+	Name     string `json:"name" yaml:"name"`
+	Type     string `json:"type" yaml:"type"`
+	Required bool   `json:"required,omitempty" yaml:"required,omitempty"`
+}
+
+// OKFExecutor specifies how an Attested Computation is executed and its receipt contract (§10.2).
+type OKFExecutor struct {
+	Resource string   `json:"resource" yaml:"resource"`
+	Receipt  []string `json:"receipt,omitempty" yaml:"receipt,omitempty"`
+}
+
+// OKFAttester specifies the deterministic attestation code for an Attested Computation (§10.2).
+type OKFAttester struct {
+	Resource string `json:"resource" yaml:"resource"`
+}
+
+// parseISO8601 parses standard ISO 8601 and RFC 3339 timestamp representations.
+func parseISO8601(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, nil
+	}
+	formats := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05-0700",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid ISO 8601 timestamp: %s", s)
+}
+
+// IsStale reports whether an article has exceeded its stale_after timestamp at the current time (§5.5).
+func IsStale(art *Article) bool {
+	return IsStaleAt(art, time.Now())
+}
+
+// IsStaleAt reports whether an article is stale at a specific instant (§5.5).
+// A concept is stale when now >= stale_after.
+func IsStaleAt(art *Article, now time.Time) bool {
+	if art == nil || art.StaleAfter.IsZero() {
+		return false
+	}
+	return !now.Before(art.StaleAfter)
+}
+
+// Article represents a wiki article page. On disk, it is a conformant OKF concept document
+// with real YAML front-matter and a Markdown content body. In OKF v0.2, it supports provenance
+// (sources), trust (generated, verified, trust_tier), freshness (stale_after, is_stale), and
+// attested computations.
 type Article struct {
-	Type        string    `json:"type"` // OKF doc-class: Wiki, AI-Agent-Memory, AI-Agent-Plan, or AI-Agent-Skill
+	Type        string    `json:"type"` // OKF doc-class: Wiki, AI-Agent-Memory, AI-Agent-Plan, AI-Agent-Skill, Attested Computation
 	Title       string    `json:"title"`
 	Slug        string    `json:"slug"`
 	CreatedAt   time.Time `json:"created_at"`
-	Timestamp   time.Time `json:"timestamp"` // Canonical modified-time (OKF), replaces updated_at
+	Timestamp   time.Time `json:"timestamp"` // Canonical modified-time (OKF), synchronized with generated.at
 	Content     string    `json:"content,omitempty"`
 	Description string    `json:"description,omitempty"` // OKF one-line summary shown in indexes
 	Resource    string    `json:"resource,omitempty"`    // OKF canonical URI of what the concept *is*
-	Source      string    `json:"source,omitempty"`      // Provenance: where the knowledge *came from* (OKF citation)
+	Source      string    `json:"source,omitempty"`      // Provenance: legacy source, synchronized with sources[0].resource
 	// Version is always reported, including 0. It used to carry `omitempty`, which dropped the
 	// field entirely for articles written to disk before versioning existed — so read_article's
 	// structured output had no `version` at all, and the documented loop of feeding it straight
@@ -61,6 +569,22 @@ type Article struct {
 	// eventually becomes a third axis.
 	MemoryKind string `json:"memory_kind,omitempty"`
 
+	// OKF v0.2 core models: provenance, trust, and lifecycle (§5)
+	Generated   *OKFGenerated     `json:"generated,omitempty"`
+	Verified    []OKFVerification `json:"verified,omitempty"`
+	TrustTier   string            `json:"trust_tier,omitempty"`
+	Sources     []OKFSource       `json:"sources,omitempty"`
+	UsageWindow *OKFUsageWindow   `json:"usage_window,omitempty"`
+	StaleAfter  time.Time         `json:"stale_after,omitzero"`
+	IsStale     bool              `json:"is_stale,omitempty"`
+
+	// Attested Computation (§10)
+	Runtime     string         `json:"runtime,omitempty"`
+	Parameters  []OKFParameter `json:"parameters,omitempty"`
+	Computation string         `json:"computation,omitempty"`
+	Executor    *OKFExecutor   `json:"executor,omitempty"`
+	Attester    *OKFAttester   `json:"attester,omitempty"`
+
 	// ContentPreview holds the first content line during metadata-only parses
 	// (used as a description fallback in indexes); never serialized.
 	ContentPreview string `json:"-"`
@@ -71,6 +595,16 @@ type Article struct {
 	// distinction the OKF import report has to make when it flags a coerced document. Never
 	// serialized; empty for documents built in memory rather than parsed.
 	DeclaredType string `json:"-"`
+}
+
+// UpdateFreshness recomputes IsStale against the provided instant.
+func (a *Article) UpdateFreshness(now time.Time) {
+	a.IsStale = IsStaleAt(a, now)
+}
+
+// DeriveTrustTier returns the trust tier for the article's current verifications.
+func (a *Article) DeriveTrustTier() string {
+	return DeriveTrustTier(a.Verified)
 }
 
 // Storage manages persistent article files and uploaded assets on disk.
@@ -344,6 +878,11 @@ type ArticleOverrides struct {
 	Status *string
 	// MemoryKind classifies what sort of fact a memory holds. See MemoryKinds in tags.go.
 	MemoryKind *string
+	// OKF v0.2 overrides
+	Sources    *[]OKFSource
+	StaleAfter *time.Time
+	Generated  *OKFGenerated
+	Verified   *[]OKFVerification
 }
 
 // SaveArticleWithStatus is SaveArticle plus an explicit lifecycle status. Retained as the name
@@ -420,6 +959,16 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 					Timestamp:       now,
 					Content:         content,
 					Tags:            tags,
+					Generated:       existingArt.Generated,
+					Verified:        existingArt.Verified,
+					Sources:         existingArt.Sources,
+					UsageWindow:     existingArt.UsageWindow,
+					StaleAfter:      existingArt.StaleAfter,
+					Runtime:         existingArt.Runtime,
+					Parameters:      existingArt.Parameters,
+					Computation:     existingArt.Computation,
+					Executor:        existingArt.Executor,
+					Attester:        existingArt.Attester,
 				}
 			}
 		}
@@ -590,6 +1139,39 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 
 	art.Status = resolvedStatus
 	art.MemoryKind = resolvedMemoryKind
+
+	if overrides.Sources != nil {
+		art.Sources = *overrides.Sources
+		if len(art.Sources) > 0 && art.Source == "" {
+			art.Source = art.Sources[0].Resource
+		}
+	} else if source != "" {
+		if len(art.Sources) == 0 {
+			art.Sources = []OKFSource{{Resource: source}}
+		} else {
+			art.Sources[0].Resource = source
+		}
+	} else if source == "" && overrides.Sources == nil {
+		art.Sources = nil
+	}
+	if overrides.StaleAfter != nil {
+		art.StaleAfter = *overrides.StaleAfter
+	}
+	if overrides.Verified != nil {
+		art.Verified = *overrides.Verified
+	}
+	if overrides.Generated != nil {
+		art.Generated = overrides.Generated
+	}
+
+	if art.Generated == nil {
+		art.Generated = &OKFGenerated{By: "nexwiki", At: now}
+	} else {
+		art.Generated.At = now
+	}
+	art.Timestamp = now
+	art.TrustTier = DeriveTrustTier(art.Verified)
+	art.IsStale = IsStale(art)
 
 	switch art.Type {
 	case ContentTypePlan, ContentTypeSkill:
@@ -879,22 +1461,64 @@ This wiki is built using **Go** for the backend server and **React + TypeScript 
 type articleFrontMatter struct {
 	Type        string   `yaml:"type"`
 	Title       string   `yaml:"title"`
-	Slug        string   `yaml:"slug"`
+	Slug        string   `yaml:"slug,omitempty"`
 	Description string   `yaml:"description,omitempty"`
 	Resource    string   `yaml:"resource,omitempty"`
 	Tags        []string `yaml:"tags,omitempty"`
 	Status      string   `yaml:"status,omitempty"`
-	Timestamp   string   `yaml:"timestamp,omitempty"`
-	CreatedAt   string   `yaml:"created_at,omitempty"`
-	Version     int      `yaml:"version,omitempty"`
-	EditSummary string   `yaml:"edit_summary,omitempty"`
-	Source      string   `yaml:"source,omitempty"`
-	ArchivedAt  string   `yaml:"archived_at,omitempty"`
+
+	// OKF v0.2 provenance, trust, and lifecycle families
+	Generated   *OKFGenerated       `yaml:"generated,omitempty"`
+	Verified    OKFVerificationList `yaml:"verified,omitempty"`
+	StaleAfter  string              `yaml:"stale_after,omitempty"`
+	Sources     []OKFSource         `yaml:"sources,omitempty"`
+	UsageWindow *OKFUsageWindow     `yaml:"usage_window,omitempty"`
+
+	// Attested Computation keys (§10)
+	Runtime     string         `yaml:"runtime,omitempty"`
+	Parameters  []OKFParameter `yaml:"parameters,omitempty"`
+	Computation string         `yaml:"computation,omitempty"`
+	Executor    *OKFExecutor   `yaml:"executor,omitempty"`
+	Attester    *OKFAttester   `yaml:"attester,omitempty"`
+
+	// Legacy & NexWiki custom keys
+	Timestamp   string `yaml:"timestamp,omitempty"`
+	CreatedAt   string `yaml:"created_at,omitempty"`
+	Version     int    `yaml:"version,omitempty"`
+	EditSummary string `yaml:"edit_summary,omitempty"`
+	Source      string `yaml:"source,omitempty"`
+	ArchivedAt  string `yaml:"archived_at,omitempty"`
 	// StatusChangedAt is a NexWiki custom key carried only by AI-Agent-Plan documents; it feeds
 	// the plan lifecycle timers (see server/plan_lifecycle.go).
 	StatusChangedAt string `yaml:"status_changed_at,omitempty"`
 	// MemoryKind is a NexWiki custom key carried only by AI-Agent-Memory documents (see tags.go).
 	MemoryKind string `yaml:"memory_kind,omitempty"`
+}
+
+// extractCitationsFromBody parses a legacy v0.1 Markdown '# Citations' section (§13.1).
+func extractCitationsFromBody(body string) []OKFSource {
+	lines := strings.Split(body, "\n")
+	inCitations := false
+	var sources []OKFSource
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "# Citations") {
+			inCitations = true
+			continue
+		}
+		if inCitations {
+			if strings.HasPrefix(trimmed, "#") {
+				break
+			}
+			if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
+				urlOrResource := strings.TrimSpace(trimmed[2:])
+				if urlOrResource != "" {
+					sources = append(sources, OKFSource{Resource: urlOrResource})
+				}
+			}
+		}
+	}
+	return sources
 }
 
 // parseArticleFile parses the OKF YAML front-matter block and Markdown body.
@@ -931,6 +1555,12 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 		EditSummary:  fm.EditSummary,
 		Status:       NormalizeStatus(fm.Status),
 		MemoryKind:   NormalizeMemoryKind(fm.MemoryKind),
+		Runtime:      fm.Runtime,
+		Parameters:   fm.Parameters,
+		Computation:  fm.Computation,
+		Executor:     fm.Executor,
+		Attester:     fm.Attester,
+		UsageWindow:  fm.UsageWindow,
 	}
 	// Clean and copy the tag list (drop blanks).
 	for _, t := range fm.Tags {
@@ -939,38 +1569,87 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 			art.Tags = append(art.Tags, t)
 		}
 	}
-	if t, err := time.Parse(time.RFC3339, fm.CreatedAt); err == nil {
+	if t, err := parseISO8601(fm.CreatedAt); err == nil {
 		art.CreatedAt = t
 	}
-	if t, err := time.Parse(time.RFC3339, fm.Timestamp); err == nil {
-		art.Timestamp = t
+
+	// OKF v0.2 Rule 1: timestamp is superseded by generated: { by, at }.
+	// On parse, if generated is absent, fall back to legacy timestamp.
+	// Keep art.Timestamp synchronized with generated.at.
+	if fm.Generated != nil && (!fm.Generated.At.IsZero() || fm.Generated.By != "") {
+		art.Generated = fm.Generated
+		if !art.Generated.At.IsZero() {
+			art.Timestamp = art.Generated.At
+		}
+	} else if fm.Timestamp != "" {
+		if t, err := parseISO8601(fm.Timestamp); err == nil {
+			art.Timestamp = t
+			art.Generated = &OKFGenerated{At: t}
+		}
 	}
+	if art.Timestamp.IsZero() && fm.Timestamp != "" {
+		if t, err := parseISO8601(fm.Timestamp); err == nil {
+			art.Timestamp = t
+			if art.Generated != nil && art.Generated.At.IsZero() {
+				art.Generated.At = t
+			}
+		}
+	}
+	if art.Generated != nil && art.Generated.At.IsZero() && !art.Timestamp.IsZero() {
+		art.Generated.At = art.Timestamp
+	}
+
+	// OKF v0.2 Rule 3 & 4: verified list & trust tier derivation
+	if len(fm.Verified) > 0 {
+		art.Verified = make([]OKFVerification, len(fm.Verified))
+		copy(art.Verified, fm.Verified)
+	}
+	art.TrustTier = DeriveTrustTier(art.Verified)
+
+	// OKF v0.2 Rule 5: stale_after & freshness check
+	if fm.StaleAfter != "" {
+		if t, err := parseISO8601(fm.StaleAfter); err == nil {
+			art.StaleAfter = t
+			art.IsStale = IsStale(art)
+		}
+	}
+
+	// OKF v0.2 Rule 2: source is superseded by sources array in frontmatter.
+	// On parse, if sources is absent and legacy source is present, populate art.Sources with a single entry { Resource: legacySource }.
+	// Fallback to body # Citations if both are absent (§13.1).
+	if len(fm.Sources) > 0 {
+		art.Sources = fm.Sources
+		if art.Source == "" {
+			art.Source = art.Sources[0].Resource
+		}
+	} else if fm.Source != "" {
+		art.Source = fm.Source
+		art.Sources = []OKFSource{{Resource: fm.Source}}
+	} else {
+		extracted := extractCitationsFromBody(bodySection)
+		if len(extracted) > 0 {
+			art.Sources = extracted
+			art.Source = extracted[0].Resource
+		}
+	}
+
 	if fm.ArchivedAt != "" {
-		if t, err := time.Parse(time.RFC3339, fm.ArchivedAt); err == nil {
+		if t, err := parseISO8601(fm.ArchivedAt); err == nil {
 			art.ArchivedAt = t
 		}
 	}
 	if fm.StatusChangedAt != "" {
-		if t, err := time.Parse(time.RFC3339, fm.StatusChangedAt); err == nil {
+		if t, err := parseISO8601(fm.StatusChangedAt); err == nil {
 			art.StatusChangedAt = t
 		}
 	}
 
-	// `slug` is a NexWiki *custom* front-matter key, not an OKF canonical one, so a conformant
-	// bundle produced by any other tool will not carry it. Requiring it here meant
-	// import_okf_bundle rejected every document in a third-party bundle — the interoperability
-	// feature only worked against NexWiki's own exports.
-	//
-	// Deriving it is exact rather than a guess: saveArticleLocked writes every article as
-	// Slugify(title).md and stores that same value in the front matter, so on disk the two can
-	// never disagree. A document that omits it therefore gets precisely the slug it would have
-	// been written with.
+	// `slug` derivation
 	if art.Slug == "" {
 		art.Slug = Slugify(art.Title)
 	}
 
-	// Basic check. `title` stays required — it is an OKF canonical key, and without it there is
-	// nothing to derive a slug from either.
+	// Basic check. `title` stays required
 	if art.Title == "" || art.Slug == "" {
 		return nil, fmt.Errorf("invalid format: front matter must carry a title (and a slug, or a title that yields one)")
 	}
@@ -1016,19 +1695,61 @@ func serializeFrontMatter(art *Article) string {
 		MemoryKind:  art.MemoryKind,
 		Version:     art.Version,
 		EditSummary: art.EditSummary,
-		Source:      art.Source,
+		Runtime:     art.Runtime,
+		Parameters:  art.Parameters,
+		Computation: art.Computation,
+		Executor:    art.Executor,
+		Attester:    art.Attester,
+		UsageWindow: art.UsageWindow,
 	}
-	if !art.Timestamp.IsZero() {
-		fm.Timestamp = art.Timestamp.Format(time.RFC3339)
+
+	// OKF v0.2 Rule 1: timestamp superseded by generated: { by, at }.
+	// Keep art.Timestamp synchronized with generated.at.
+	if art.Generated != nil {
+		gen := *art.Generated
+		if gen.By == "" {
+			gen.By = "nexwiki"
+		}
+		if gen.At.IsZero() && !art.Timestamp.IsZero() {
+			gen.At = art.Timestamp
+		}
+		fm.Generated = &gen
+		if !gen.At.IsZero() {
+			fm.Timestamp = gen.At.UTC().Format(time.RFC3339)
+		}
+	} else if !art.Timestamp.IsZero() {
+		fm.Generated = &OKFGenerated{
+			By: "nexwiki",
+			At: art.Timestamp,
+		}
+		fm.Timestamp = art.Timestamp.UTC().Format(time.RFC3339)
 	}
+
+	// Verified
+	if len(art.Verified) > 0 {
+		fm.Verified = OKFVerificationList(art.Verified)
+	}
+
+	// StaleAfter
+	if !art.StaleAfter.IsZero() {
+		fm.StaleAfter = art.StaleAfter.UTC().Format(time.RFC3339)
+	}
+
+	// OKF v0.2 Rule 2: sources array in frontmatter.
+	if len(art.Sources) > 0 {
+		fm.Sources = art.Sources
+	} else if art.Source != "" {
+		fm.Sources = []OKFSource{{Resource: art.Source}}
+	}
+
 	if !art.CreatedAt.IsZero() {
-		fm.CreatedAt = art.CreatedAt.Format(time.RFC3339)
+		fm.CreatedAt = art.CreatedAt.UTC().Format(time.RFC3339)
 	}
 	if !art.ArchivedAt.IsZero() {
-		fm.ArchivedAt = art.ArchivedAt.Format(time.RFC3339)
+		fm.ArchivedAt = art.ArchivedAt.UTC().Format(time.RFC3339)
 	}
 	if !art.StatusChangedAt.IsZero() {
-		fm.StatusChangedAt = art.StatusChangedAt.Format(time.RFC3339)
+		fm.StatusChangedAt = art.StatusChangedAt.UTC().Format(time.RFC3339)
 	}
 
 	out, err := yaml.Marshal(&fm)
@@ -1422,6 +2143,12 @@ type ArticleEdit struct {
 	// how it is recalled.
 	MemoryKind    *string
 	LoadedVersion int
+
+	// OKF v0.2 optional edit fields
+	Sources    *[]OKFSource
+	StaleAfter *time.Time
+	Generated  *OKFGenerated
+	Verified   *[]OKFVerification
 }
 
 // ApplyArticleEdit loads the article, verifies LoadedVersion, merges the optional fields, and
@@ -1468,7 +2195,14 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 	}
 
 	return s.saveArticleLocked(slug, edit.Title, edit.Content, description, source, resource,
-		edit.EditSummary, cleanedTags, existing.Type, ArticleOverrides{Status: edit.Status, MemoryKind: edit.MemoryKind})
+		edit.EditSummary, cleanedTags, existing.Type, ArticleOverrides{
+			Status:     edit.Status,
+			MemoryKind: edit.MemoryKind,
+			Sources:    edit.Sources,
+			StaleAfter: edit.StaleAfter,
+			Generated:  edit.Generated,
+			Verified:   edit.Verified,
+		})
 }
 
 // RevertArticle rolls the current active document back to the content of a historical version.
@@ -1489,7 +2223,12 @@ func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 	if histArt.Status != "" {
 		status = histArt.Status
 	}
-	return s.saveArticleLocked(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, tags, histArt.Type, ArticleOverrides{Status: &status})
+	return s.saveArticleLocked(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, tags, histArt.Type, ArticleOverrides{
+		Status:     &status,
+		Sources:    &histArt.Sources,
+		StaleAfter: &histArt.StaleAfter,
+		Verified:   &histArt.Verified,
+	})
 }
 
 // UpdateArticleTags updates only the tag array for an article without modifying the title or content.
@@ -1515,7 +2254,12 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 		editSummary = "Updated article tags"
 	}
 
-	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, tags, art.Type, ArticleOverrides{})
+	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, tags, art.Type, ArticleOverrides{
+		Sources:    &art.Sources,
+		StaleAfter: &art.StaleAfter,
+		Verified:   &art.Verified,
+		Generated:  art.Generated,
+	})
 }
 
 // Close releases resources held by the Storage, including the Bleve search index.
