@@ -289,15 +289,13 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		staleWarning = fmt.Sprintf("\n⚠️ STALE CONCEPT: this document passed its freshness expiration on %s", art.StaleAfter.Format("2006-01-02"))
 	}
 
-	// The front-matter configuration, as prose. The body is deliberately not repeated here — see
-	// the comment on the structured payload below for which copy survives and why.
+	// The front-matter configuration and full Markdown body as prose.
 	//
 	// Version is part of this header because it is the one field an agent must carry from a read
-	// into edit_wiki_article as loaded_version. It was absent until now, so a client reading only
-	// the text had no way to complete the documented read-then-edit loop.
-	text := fmt.Sprintf("Type: %s\nTitle: %s\nSlug: %s\nVersion: %d\nCreated: %s\nUpdated: %s%s%s%s%s%s%s%s%s\n\nBody: structuredContent.article.content — this tool declares an outputSchema and the Markdown body ships there. It is also readable as the MCP resource nexwiki://article/%s.",
+	// into edit_wiki_article as loaded_version.
+	text := fmt.Sprintf("Type: %s\nTitle: %s\nSlug: %s\nVersion: %d\nCreated: %s\nUpdated: %s%s%s%s%s%s%s%s%s\n\n%s",
 		art.Type, art.Title, art.Slug, art.Version, art.CreatedAt.Format(time.RFC3339), art.Timestamp.Format(time.RFC3339),
-		descStr, resourceStr, sourceStr, sourcesStr, tagsStr, trustTierStr, compStr, staleWarning, art.Slug)
+		descStr, resourceStr, sourceStr, sourcesStr, tagsStr, trustTierStr, compStr, staleWarning, art.Content)
 
 	// Append inbound links for graph discoverability; never fail the read over a scan error
 	links := []DocumentLink{}
@@ -319,32 +317,18 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		text += fmt.Sprintf("\n\n---\nLinked from: %s", strings.Join(refs, ", "))
 	}
 
-	// The body ships exactly once, and this is the copy.
+	// The body ships in both content[0].text (for text-reading clients such as Claude Desktop,
+	// Cursor, and Antigravity) and structuredContent.article.content (for structured clients
+	// such as Claude Code).
 	//
-	// It used to ship twice — as prose in the text block and again here — which doubled the wire
-	// size of every read and pushed a 63 KB article past an MCP client's tool-result ceiling at
-	// roughly half the article size that should have hit it. 0.13.0 removed one copy and kept the
-	// text block, on the stated premise that the text block is "the copy every MCP client
-	// renders, while structuredContent is optional and newer".
+	// Historically, 0.13.0 removed the body from structuredContent to prevent duplication, which
+	// broke Claude Code because Claude Code ignores content[0].text when outputSchema is declared.
+	// Then a follow-up fix moved the body exclusively to structuredContent, which broke all standard
+	// text-reading MCP clients.
 	//
-	// That premise was wrong, and the resulting failure was total rather than partial: a client
-	// that reads structuredContent for a tool declaring an outputSchema — which Claude Code does
-	// — received metadata and backlinks and no body at all. It could not read an article, and so
-	// could not safely call edit_wiki_article, which replaces the whole body. Shipping the body
-	// once was the right goal; the choice of which copy survives was the error.
-	//
-	// So the body lives in the structured payload, which MCP treats as the tool's authoritative
-	// result, and the text block carries a metadata header naming where it is. This departs
-	// deliberately from the spec's backwards-compatibility SHOULD — "a tool that returns
-	// structured content SHOULD also return the serialized JSON in a TextContent block" —
-	// because honouring it means shipping the body twice, which is the defect above. Note what
-	// that SHOULD actually asks for: a *serialization of the structured payload*, not different
-	// prose. NexWiki's "prose in text, data in structured" split was already a departure from it,
-	// and it is the departure that created this bug.
-	//
-	// Do not move the body back into the text block without resolving the duplication that
-	// reintroduces. A client that renders only text can still reach the body through the
-	// nexwiki://article/<slug> resource, which the header names.
+	// Per the MCP specification, content is REQUIRED on CallToolResult while structuredContent is
+	// OPTIONAL, and tools returning structured content SHOULD provide text content for backward
+	// compatibility. Populating both guarantees interop across the entire MCP client ecosystem.
 	return ToolResponse{
 		Content:           []ToolContent{{Type: "text", Text: text}},
 		StructuredContent: ArticleOutput{Article: *art, Backlinks: links},

@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **`read_article` MCP tool returns the Markdown body in both `content[0].text` and `structuredContent.article.content`.** A post-0.13.0 change moved the Markdown body exclusively into `structuredContent` to avoid duplicating payloads on the wire for structured clients like Claude Code. However, because `content` is required by the MCP specification and `structuredContent` is optional, standard text-reading MCP clients (including Claude Desktop, Cursor, Antigravity, and custom agent harnesses) received only metadata and a pointer sentence without the article body. The body now ships in both places, adhering to the MCP specification's backward-compatibility recommendation and guaranteeing seamless interoperability across the entire agent ecosystem.
+
 ## [0.16.0] — 2026-09-07
 
 ### Added

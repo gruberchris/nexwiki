@@ -162,26 +162,13 @@ func TestStructuredOutputCarriesRealData(t *testing.T) {
 		if out.Article.Version != 2 {
 			t.Errorf("version = %d, want 2", out.Article.Version)
 		}
-		// The body ships in the structured half, and only there. This assertion is the
-		// inverse of the one it replaces: 0.13.0 pinned the body as absent from
-		// structuredContent, which is precisely the defect — a client that reads the
-		// structured result of a tool declaring an outputSchema got no body at all, so it
-		// could neither read an article nor safely replace one via edit_wiki_article.
+		// The body ships in both the structured half and the text block.
 		if !strings.Contains(out.Article.Content, "Revised") {
 			t.Errorf("body missing from the structured payload: %q", out.Article.Content)
 		}
-		// And it is not duplicated back into the text block, which is what made the body
-		// cross the wire twice and pushed large articles past a client's result ceiling.
-		if strings.Contains(resp.Content[0].Text, "Revised") {
-			t.Errorf("text block must not repeat the body: %q", resp.Content[0].Text)
-		}
-		// The text block still has to answer "where is it?" and "what version am I editing?",
-		// or a text-only client is stuck with no body and no way to complete a read-then-edit.
-		if !strings.Contains(resp.Content[0].Text, "structuredContent.article.content") {
-			t.Errorf("text block must name where the body ships: %q", resp.Content[0].Text)
-		}
-		if !strings.Contains(resp.Content[0].Text, "nexwiki://article/search-design") {
-			t.Errorf("text block must name the resource fallback: %q", resp.Content[0].Text)
+		// The text block must also contain the body so standard text-reading clients (Claude Desktop, Cursor, Antigravity) receive it.
+		if !strings.Contains(resp.Content[0].Text, "Revised") {
+			t.Errorf("text block missing the body: %q", resp.Content[0].Text)
 		}
 		if !strings.Contains(resp.Content[0].Text, "Version: 2") {
 			t.Errorf("text block must carry the version for loaded_version: %q", resp.Content[0].Text)
@@ -578,5 +565,36 @@ func TestReadArticleBodyReachesAStructuredOnlyClient(t *testing.T) {
 	articleProps, _ := article["properties"].(map[string]interface{})
 	if _, declared := articleProps["content"]; !declared {
 		t.Error("read_article's outputSchema must declare article.content")
+	}
+}
+
+// TestReadArticleBodyReachesATextOnlyClient pins the requirement that standard MCP clients
+// reading only content[0].text receive both the metadata header and the full article body.
+func TestReadArticleBodyReachesATextOnlyClient(t *testing.T) {
+	srv := newMCPServer(t)
+
+	const body = "# Text Only\n\nThe paragraph a text-only client must receive."
+	if _, err := srv.Storage.SaveArticle("", "Text Only", body, "", "", "", "", nil, ""); err != nil {
+		t.Fatalf("seeding failed: %v", err)
+	}
+
+	resp := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"text-only"}}`)
+	if resp.IsError {
+		t.Fatalf("read failed: %s", resp.Content[0].Text)
+	}
+
+	if len(resp.Content) == 0 {
+		t.Fatalf("expected non-empty content blocks")
+	}
+
+	text := resp.Content[0].Text
+	if !strings.Contains(text, "text-only client must receive") {
+		t.Errorf("text block missing article body: %q", text)
+	}
+	if !strings.Contains(text, "Version: 1") {
+		t.Errorf("text block missing Version header: %q", text)
+	}
+	if !strings.Contains(text, "Slug: text-only") {
+		t.Errorf("text block missing Slug header: %q", text)
 	}
 }
