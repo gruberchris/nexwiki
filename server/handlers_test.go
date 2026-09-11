@@ -1260,3 +1260,96 @@ func TestOriginAllowed(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleVerifyArticle(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Missing slug
+	req := httptest.NewRequest("POST", "/api/articles//verify", nil)
+	w := httptest.NewRecorder()
+	srv.HandleVerifyArticle(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("empty slug: expected 400, got %d", w.Code)
+	}
+
+	// Not found
+	req2 := httptest.NewRequest("POST", "/api/articles/nonexistent/verify", nil)
+	req2.SetPathValue("slug", "nonexistent")
+	w2 := httptest.NewRecorder()
+	srv.HandleVerifyArticle(w2, req2)
+	if w2.Code != http.StatusNotFound {
+		t.Errorf("not found: expected 404, got %d", w2.Code)
+	}
+
+	// Create an unverified article
+	_, err := srv.Storage.SaveArticle("", "Verify Me", "# Test Content", "", "", "", "Initial commit", nil, "")
+	if err != nil {
+		t.Fatalf("SaveArticle failed: %v", err)
+	}
+
+	// Verify the article
+	req3 := httptest.NewRequest("POST", "/api/articles/verify-me/verify", nil)
+	req3.SetPathValue("slug", "verify-me")
+	w3 := httptest.NewRecorder()
+	srv.HandleVerifyArticle(w3, req3)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("verify: expected 200, got %d: %s", w3.Code, w3.Body.String())
+	}
+
+	var verifiedArt Article
+	if err := json.Unmarshal(w3.Body.Bytes(), &verifiedArt); err != nil {
+		t.Fatalf("failed to parse JSON response: %v", err)
+	}
+	if verifiedArt.TrustTier != TrustTierHumanReviewed {
+		t.Errorf("expected trust tier %q, got %q", TrustTierHumanReviewed, verifiedArt.TrustTier)
+	}
+	if len(verifiedArt.Verified) != 1 {
+		t.Fatalf("expected 1 verification entry, got %d", len(verifiedArt.Verified))
+	}
+	if verifiedArt.Verified[0].By != "human:local" {
+		t.Errorf("expected verification by 'human:local', got %q", verifiedArt.Verified[0].By)
+	}
+
+	// Also verify disk state via GetArticle
+	loaded, err := srv.Storage.GetArticle("verify-me")
+	if err != nil {
+		t.Fatalf("GetArticle failed: %v", err)
+	}
+	if loaded.TrustTier != TrustTierHumanReviewed {
+		t.Errorf("expected loaded trust tier %q, got %q", TrustTierHumanReviewed, loaded.TrustTier)
+	}
+	if len(loaded.Verified) != 1 || loaded.Verified[0].By != "human:local" {
+		t.Errorf("expected loaded verification by human:local, got %+v", loaded.Verified)
+	}
+}
+
+func TestHandleSaveArticleWithOKFMetadata(t *testing.T) {
+	srv := newTestServer(t)
+
+	body := `{
+		"title": "OKF Article",
+		"content": "# Body",
+		"sources": [{"resource": "https://example.com/spec", "title": "Spec"}],
+		"stale_after": "2026-12-31"
+	}`
+	req := httptest.NewRequest("POST", "/api/articles", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.HandleSaveArticle(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var created Article
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if created.Generated == nil || created.Generated.By != "human:local" {
+		t.Errorf("expected generated.by = 'human:local', got %+v", created.Generated)
+	}
+	if len(created.Sources) != 1 || created.Sources[0].Resource != "https://example.com/spec" {
+		t.Errorf("expected 1 source with resource, got %+v", created.Sources)
+	}
+	if created.StaleAfter.IsZero() {
+		t.Error("expected stale_after to be set, got zero time")
+	}
+}

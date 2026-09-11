@@ -201,6 +201,47 @@ func articleSchema(withContent bool) map[string]interface{} {
 		"status":            schemaOf("string", "Lifecycle status. Plans and skills use a closed vocabulary (see get_status_tags); other documents may use any value or none."),
 		"status_changed_at": schemaOf("string", "RFC3339 time a plan last changed lifecycle status; drives the auto-archive/auto-delete timers. Only present on AI-Agent-Plan documents."),
 		"memory_kind":       schemaOf("string", "What sort of fact a memory holds: project, reference, user, or feedback. Only present on AI-Agent-Memory documents, and absent on memories written before the kind axis existed (wiki_health lists those as unkinded_memories). Independent of the memory-<scope> tag, which is reach rather than kind."),
+		"generated": schemaObject(map[string]interface{}{
+			"by": schemaOf("string", "Agent or entity that generated the document."),
+			"at": schemaOf("string", "RFC3339 timestamp when the document was generated."),
+		}),
+		"verified": schemaArrayOf(schemaObject(map[string]interface{}{
+			"by": schemaOf("string", "Agent, user, or process that verified the document."),
+			"at": schemaOf("string", "RFC3339 timestamp when verification occurred."),
+		}), "List of verifications performed on this document."),
+		"trust_tier": schemaOf("string", "Trust tier: unverified, machine-confirmed, or human-reviewed."),
+		"sources": schemaArrayOf(schemaObject(map[string]interface{}{
+			"id":            schemaOf("string", "Identifier for the source."),
+			"resource":      schemaOf("string", "Canonical URI or URL of the source."),
+			"title":         schemaOf("string", "Title of the source material."),
+			"author":        schemaOf("string", "Author or creator of the source."),
+			"usage_count":   schemaOf("integer", "Number of times this source has been referenced."),
+			"last_modified": schemaOf("string", "RFC3339 timestamp of source last modification."),
+			"usage_window": schemaObject(map[string]interface{}{
+				"from": schemaOf("string", "RFC3339 start of usage window."),
+				"to":   schemaOf("string", "RFC3339 end of usage window."),
+			}),
+		}), "Provenance sources this document derives from."),
+		"usage_window": schemaObject(map[string]interface{}{
+			"from": schemaOf("string", "RFC3339 start of usage window."),
+			"to":   schemaOf("string", "RFC3339 end of usage window."),
+		}),
+		"stale_after": schemaOf("string", "RFC3339 timestamp after which the document is considered stale."),
+		"is_stale":    schemaOf("boolean", "Whether the document has exceeded its stale_after timestamp."),
+		"runtime":     schemaOf("string", "Execution environment or runtime specification for attested computation."),
+		"parameters": schemaArrayOf(schemaObject(map[string]interface{}{
+			"name":     schemaOf("string", "Parameter name."),
+			"type":     schemaOf("string", "Parameter data type."),
+			"required": schemaOf("boolean", "Whether the parameter is required."),
+		}), "Declared parameters for attested computation."),
+		"computation": schemaOf("string", "Deterministic logic, script, or calculation specification."),
+		"executor": schemaObject(map[string]interface{}{
+			"resource": schemaOf("string", "Canonical URI of the executor."),
+			"receipt":  schemaStringArray("Receipt contract or expected receipt format."),
+		}),
+		"attester": schemaObject(map[string]interface{}{
+			"resource": schemaOf("string", "Canonical URI of the attester."),
+		}),
 	}
 	if withContent {
 		props["content"] = schemaOf("string", "Full raw Markdown body.")

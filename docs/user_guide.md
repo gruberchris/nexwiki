@@ -40,7 +40,22 @@ Click **Save Page** in the top right to commit your changes to disk, or **Cancel
 
 ---
 
-### 3. Deleting Articles
+### 3. Trust Signals, Human Verification & Freshness (OKF v0.2)
+
+NexWiki implements native **OKF v0.2** trust signals directly in the reader and editor:
+
+* **Trust Tier Badges**: Displayed underneath the title alongside tags and status badges:
+  * 🟢 **Human-Reviewed**: At least one human operator verified the article against its sources.
+  * 🔵 **Machine-Confirmed**: An AI agent, test suite, or linter verified the content, but no human has signed off yet.
+  * ⚪ **Unverified**: Default for newly created notes with no recorded verifications.
+* **One-Click Human Verification**: In the page header action bar beside "Edit Page", click the **Verify** button (emerald checkmark) to verify the article as a human operator (`human:local`). This immediately promotes the article to **🟢 Human-Reviewed** and records an activity event.
+* **Stale Concept Warnings**: When an article specifies an expiration date (`stale_after`) that has passed, an amber warning banner appears at the top of the body:
+  > ⚠️ **Stale Concept**: this document passed its freshness expiration date and may need review.
+* **Sources & Provenance Panel**: Any sources cited in the article's `sources` list render in a dedicated card at the bottom of the page, listing source title, author, canonical URL link, usage count, and last-modified date.
+
+---
+
+### 4. Deleting Articles
 If an article is no longer needed:
 1. Open the article you wish to delete.
 2. Click the compact **Delete** (rose-tinted trash bin icon) button in the page header.
@@ -49,7 +64,7 @@ If an article is no longer needed:
 
 ---
 
-### 4. Exporting, Sharing, and Copying Articles
+### 5. Exporting, Sharing, and Copying Articles
 To easily distribute and work with your wiki articles, NexWiki provides an elegant, glassmorphic **"Share & Export"** dropdown in the article header. This combines clipboard operations and multi-format document exporting into a single, compact workspace tool:
 
 #### 📋 Clipboard Utilities
@@ -70,26 +85,32 @@ To give you complete control over your filesystem:
 
 ---
 
-### 5. Backup & Restore
+### 6. Backup & Restore (OKF v0.2 Bundle)
 
-NexWiki can package your entire knowledge base — wiki articles, AI memories, plans, and skills — into a single portable **OKF v0.1 bundle** (`.zip`). This bundle is the authoritative backup format: it round-trips perfectly and can be used to migrate your content to a new NexWiki instance.
+NexWiki packages your entire knowledge base — wiki articles, AI memories, plans, skills, and attested computations — into a single portable **OKF v0.2 bundle** (`.zip`), with seamless dual-era backward compatibility for legacy OKF v0.1 bundles. This bundle is the authoritative backup format: it round-trips perfectly and can be used to migrate your content across NexWiki instances.
 
 Both controls live at the bottom of the sidebar.
 
 #### Backup
-Click **Backup Content (.zip)**. The bundle downloads immediately to your browser's Downloads folder. Store it wherever you keep important files (local disk, cloud storage, etc.).
+Click **Backup Content (.zip)**. The bundle downloads immediately to your browser's Downloads folder.
 
-The bundle is a standard ZIP archive containing one `.md` file per article with full OKF YAML frontmatter (title, type, tags, timestamps, wikilinks, and all metadata). It is human-readable and usable by external tools.
+The bundle is a standard ZIP archive containing:
+- Categorized directories (`wiki/`, `aimemories/`, `aiplans/`, `aiskills/`, `computations/`)
+- Individual `.md` files per concept with full OKF v0.2 YAML frontmatter (title, type, tags, timestamps, sources, trust signals, freshness, wikilinks, and all metadata)
+- Synthesized directory indices (`index.md`) and a root `index.md` declaring `okf_version: "0.2"`
+- A date-grouped `log.md` rendering full activity history
 
 #### Restore
-On any NexWiki instance — including a brand-new one with no existing content — click **Restore from Backup (.zip)** and select your bundle. NexWiki will:
+On any NexWiki instance — including a brand-new one with no existing content — click **Restore from Backup (.zip)** and select your bundle (accepts both OKF v0.2 and v0.1 archives). NexWiki will:
 
-1. Parse all articles in the bundle
-2. Create any articles that don't yet exist (matched by slug)
-3. Update any articles that do exist with the bundle's content
-4. Refresh the article list automatically
+1. Parse all concept documents in the bundle
+2. Extract legacy status tags into the dedicated `status` field if restoring an older bundle
+3. Preserve all OKF v0.2 trust metadata, sources, verification events, and freshness timestamps
+4. Create any articles that don't yet exist (matched by slug)
+5. Update any articles that do exist with the bundle's content
+6. Refresh the article list automatically
 
-A confirmation toast reports how many articles were restored. If there are any conformance warnings (e.g., articles with unrecognized type fields), they are logged to the browser console.
+A confirmation toast reports how many articles were restored. If there are any conformance warnings (e.g., articles with unrecognized type fields, which are defaulted to `Wiki`), they are logged to the browser console.
 
 Re-importing the same bundle twice is safe — existing articles are updated in place and no duplicates are created.
 

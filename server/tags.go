@@ -150,14 +150,32 @@ var retiredStatusTagLabels = []string{
 	"draft", "wip", "in-progress", "active", "todo", "pending", "review", "ready", "done",
 }
 
-// StatusTags is the union of the two enforced vocabularies, used for status-badge styling and by
+// OKFStandardStatuses is the standardized lifecycle vocabulary for OKF v0.2 concepts (§5.4).
+var OKFStandardStatuses = []string{
+	"draft",
+	"stable",
+	"deprecated",
+}
+
+// IsOKFStandardStatus reports whether a status is in the OKF v0.2 standard status vocabulary.
+func IsOKFStandardStatus(status string) bool {
+	status = NormalizeStatus(status)
+	for _, s := range OKFStandardStatuses {
+		if status == s {
+			return true
+		}
+	}
+	return false
+}
+
+// StatusTags is the union of the enforced and standard vocabularies, used for status-badge styling and by
 // the /api/status-tags endpoint.
 var StatusTags = buildStatusTagUnion()
 
 func buildStatusTagUnion() []string {
 	seen := make(map[string]bool)
 	var union []string
-	for _, list := range [][]string{PlanStatusTags, SkillStatusTags} {
+	for _, list := range [][]string{PlanStatusTags, SkillStatusTags, OKFStandardStatuses} {
 		for _, t := range list {
 			if !seen[t] {
 				seen[t] = true
@@ -244,6 +262,8 @@ func statusVocabulary(docType string) (vocabulary []string, replacements map[str
 		return PlanStatusTags, planStatusReplacements, true
 	case ContentTypeSkill:
 		return SkillStatusTags, skillStatusReplacements, false
+	case ContentTypeComputation:
+		return OKFStandardStatuses, nil, false
 	default:
 		return nil, nil, false
 	}
@@ -258,6 +278,7 @@ func NormalizeStatus(status string) string {
 //
 //   - AI-Agent-Plan: must be one of the eight plan statuses (creation defaults to draft).
 //   - AI-Agent-Skill: empty, or one of the three skill statuses.
+//   - Attested Computation: empty, or one of the three OKF standard statuses (draft, stable, deprecated).
 //   - Everything else: not checked. Wiki articles and memories have no lifecycle status; nothing
 //     writes the field for them and no UI offers it, but a hand-written value is tolerated rather
 //     than policed.
@@ -296,7 +317,8 @@ func ValidateStatus(docType string, status string) error {
 // second, contradictory source of truth — exactly what moving status out of tags removes. Free
 // tags (project context, topics) always pass, and other document types are never policed.
 func ValidateStatusFreeTags(docType string, tags []string) error {
-	if vocabulary, _, _ := statusVocabulary(docType); vocabulary == nil {
+	norm := normalizeType(docType)
+	if norm != ContentTypePlan && norm != ContentTypeSkill {
 		return nil
 	}
 	label := statusClassLabel(docType)
@@ -311,18 +333,23 @@ func ValidateStatusFreeTags(docType string, tags []string) error {
 }
 
 func statusClassLabel(docType string) string {
-	if normalizeType(docType) == ContentTypeSkill {
+	switch normalizeType(docType) {
+	case ContentTypeSkill:
 		return "skill"
+	case ContentTypeComputation:
+		return "computation"
+	default:
+		return "plan"
 	}
-	return "plan"
 }
 
 // statusPrecedence resolves a document carrying several legacy status words to the single one that
 // is most true: a terminal or deliberate state always beats an in-flight one. A plan tagged both
 // "superseded" and "completed" is superseded — only the first is still true of it.
 var statusPrecedence = map[string][]string{
-	ContentTypePlan:  {"superseded", "archived", "parked", "evergreen", "completed", "blocked", "implementing", "draft"},
-	ContentTypeSkill: {"archived", "ready", "draft"},
+	ContentTypePlan:        {"superseded", "archived", "parked", "evergreen", "completed", "blocked", "implementing", "draft"},
+	ContentTypeSkill:       {"archived", "ready", "draft"},
+	ContentTypeComputation: {"deprecated", "stable", "draft"},
 }
 
 // ExtractLegacyStatus separates lifecycle status from a tag list, returning the status and the
@@ -417,14 +444,16 @@ func isLegalPlanTransition(from, to string) bool {
 // in its OKF `type` front-matter key. `Wiki` is the only value users/regular tooling
 // may set; the three reserved AI-Agent-* values are assigned solely by the agent tools
 // (create_agent_memory/_plan/_skill) and may never be reassigned to a non-reserved type.
+// Attested Computation is the OKF v0.2 sanctioned computation document class (§10).
 const (
-	ContentTypeWiki   = "Wiki"
-	ContentTypeMemory = "AI-Agent-Memory"
-	ContentTypePlan   = "AI-Agent-Plan"
-	ContentTypeSkill  = "AI-Agent-Skill"
+	ContentTypeWiki        = "Wiki"
+	ContentTypeMemory      = "AI-Agent-Memory"
+	ContentTypePlan        = "AI-Agent-Plan"
+	ContentTypeSkill       = "AI-Agent-Skill"
+	ContentTypeComputation = "Attested Computation"
 )
 
-// normalizeType canonicalizes a free-form type string to one of the four content type constants,
+// normalizeType canonicalizes a free-form type string to one of the canonical content type constants,
 // defaulting to ContentTypeWiki when empty or unrecognized.
 func normalizeType(t string) string {
 	switch strings.ToLower(strings.TrimSpace(t)) {
@@ -434,11 +463,38 @@ func normalizeType(t string) string {
 		return ContentTypePlan
 	case "ai-agent-skill":
 		return ContentTypeSkill
+	case "attested computation", "attested-computation", "computation":
+		return ContentTypeComputation
 	case "wiki", "":
 		return ContentTypeWiki
 	default:
 		return ContentTypeWiki
 	}
+}
+
+// Trust tier constants (§5.3).
+const (
+	TrustTierUnverified       = "unverified"
+	TrustTierMachineConfirmed = "machine-confirmed"
+	TrustTierHumanReviewed    = "human-reviewed"
+)
+
+// DeriveTrustTier computes the OKF v0.2 trust tier from a list of verification events (§5.3).
+//
+// - No verified entries -> unverified
+// - Only non-human verifiers -> machine-confirmed
+// - At least one verifier with 'human:' actor prefix -> human-reviewed
+func DeriveTrustTier(verifications []OKFVerification) string {
+	if len(verifications) == 0 {
+		return TrustTierUnverified
+	}
+	for _, v := range verifications {
+		actor := strings.TrimSpace(v.By)
+		if strings.HasPrefix(strings.ToLower(actor), "human:") {
+			return TrustTierHumanReviewed
+		}
+	}
+	return TrustTierMachineConfirmed
 }
 
 // pinnedMemoryKinds are the kinds get_context_overview lists first.

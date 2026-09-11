@@ -570,12 +570,13 @@ func TranslateWikiLinksToBundlePaths(content string, pathForSlug map[string]stri
 }
 
 // bundleMarkdownLink matches a Markdown link whose destination is a (possibly bundle-relative)
-// path ending in .md — e.g. [text](/wiki/foo.md) or [text](../aiplans/bar.md).
+// path ending in .md — e.g. [text](/wiki/foo.md), [text](../aiplans/bar.md), or [text](/computations/bar.md).
 var bundleMarkdownLink = regexp.MustCompile(`\[([^]]*)]\(([^)]+\.md)\)`)
 
 // TranslateBundleLinksToWikiLinks rewrites bundle-relative Markdown links back into [[slug]]
 // WikiLinks for OKF import. The slug is derived from the link's filename (Slugify of the basename
 // without .md). The alias is preserved as [[slug|text]] when it differs from the slug.
+// Markdown footnote references ([^id]) are preserved untouched.
 func TranslateBundleLinksToWikiLinks(content string) string {
 	return bundleMarkdownLink.ReplaceAllStringFunc(content, func(m string) string {
 		groups := bundleMarkdownLink.FindStringSubmatch(m)
@@ -583,6 +584,10 @@ func TranslateBundleLinksToWikiLinks(content string) string {
 			return m
 		}
 		text := strings.TrimSpace(groups[1])
+		// Preserve markdown footnote references [^id]
+		if strings.HasPrefix(text, "^") {
+			return m
+		}
 		dest := groups[2]
 		base := strings.TrimSuffix(path.Base(dest), ".md")
 		slug := Slugify(base)

@@ -92,7 +92,7 @@ curl -X POST http://localhost:8080/api/mcp \
 ```
 
 ### Document types and system tags
-Every NexWiki `.md` file is a conformant **Open Knowledge Format (OKF v0.1)** concept document at rest (real YAML front matter). Each carries a `type` — exactly one of **`Wiki`** or the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags that remain: **status tags** (`get_status_tags`) and tool-managed **memory-scope tags** (`memory-<scope>`).
+Every NexWiki `.md` file is a conformant **Open Knowledge Format (OKF v0.2)** concept document at rest (real YAML front matter). Each carries a `type` — exactly one of **`Wiki`** or the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags that remain: **status tags** (`get_status_tags`) and tool-managed **memory-scope tags** (`memory-<scope>`).
 
 ---
 

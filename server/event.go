@@ -40,6 +40,8 @@ func getArticleDirectory(articleType string) string {
 		return "aiplans"
 	case ContentTypeSkill:
 		return "aiskills"
+	case ContentTypeComputation:
+		return "computations"
 	default:
 		return "wiki"
 	}

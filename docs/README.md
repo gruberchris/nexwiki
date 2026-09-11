@@ -11,6 +11,7 @@ Select a guide below to explore specific features:
 ### 1. [NexWiki User & Content Creation Guide](./user_guide.md)
 A comprehensive manual designed to help you create, format, link, share, upload, and export wiki content:
 * **Managing Articles**: Creating, editing in different view layouts, and deleting wiki articles.
+* **Trust Signals & Backups**: Human verification tiers, one-click Verify button, freshness expiration warnings, provenance sources panel, and OKF v0.2 bundle (`.zip`) backup and restore.
 * **WikiLinks & Linking**: Creating internal links in either form — double-bracket WikiLinks (`[[WikiLink]]`) or absolute Markdown links (`[text](/articles/slug)`) — plus custom display tags and secure external links.
 * **Media & Uploads**: Backed by a drag-and-drop file uploader and embedded image assets.
 * **Exporting & Sharing**: Sharing page URLs, copying Markdown body text, and exporting articles directly to PDF, Microsoft Word (`.docx`), and Markdown (`.md`) files using the native File System Access API.
@@ -25,7 +26,7 @@ An advanced technical and user guide covering the flat-file gzipped backup and c
 ### 3. [NexWiki Model Context Protocol (MCP) Server Guide](./mcp_server.md)
 A comprehensive technical manual describing the always-on Go MCP engine:
 * **Transport Layers**: Connecting AI clients over standard input/output (Stdio) or Streamable HTTP network streams.
-* **Exposed Tools**: In-depth explanations of all twenty-nine exposed tools including read, search, context overview, backlinks, memory lifecycle, optimistic locked writes, reverts, tag management, status tags, activity history, OKF bundle import/export, and dead internal-link scanners.
+* **Exposed Tools**: In-depth explanations of all twenty-nine exposed tools including read, search, context overview, backlinks, memory lifecycle, optimistic locked writes, reverts, tag management, status tags, activity history, [OKF v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format) bundle import/export, and dead internal-link scanners.
 * **Client Configurations**: Step-by-step setup guides for Claude Desktop and Cursor IDE.
 
 ### 4. [NexWiki Tags & AI Agent Memories Guide](./tags.md)
@@ -91,6 +92,14 @@ A technical and user guide to the enforced plan status lifecycle:
 * **The Background Worker**: Auto-archiving finished plans, auto-deleting long-archived ones, and the configuration environment variables.
 * **Safety Guards**: Dry-run mode, the activity-log audit trail, and the backlink guard that refuses to delete referenced plans.
 * **The One-Time Migration**: How existing status tags are moved into the `status` field on first boot.
+
+### 13. [NexWiki Open Knowledge Format (OKF v0.2) Guide](./okf_v02_guide.md)
+A comprehensive guide to the Open Knowledge Format (OKF v0.2) specification implementation in NexWiki:
+* **The 5 Trust Signals**: Provenance (`sources`), Trust (`generated`, `verified`), Freshness (`stale_after`), Lifecycle (`status`), and Attested Computations.
+* **Trust Tiers & Human Verification**: How `human-reviewed`, `machine-confirmed`, and `unverified` tiers are derived, displayed with responsive badges, and confirmed via the one-click Verify button.
+* **Freshness & Stale Concepts**: Setting expiration timestamps, prominent reader alerts, and `wiki_health` automated diagnostics.
+* **Attested Computations**: Defining reproducible algorithms, runtimes, typed parameters, executors, and attester verification receipts.
+* **Dual-Era Interoperability**: Transparent coexistence, automatic migration of legacy fields, and bundle import/export round-tripping for OKF v0.1 and v0.2.
 
 ---
 

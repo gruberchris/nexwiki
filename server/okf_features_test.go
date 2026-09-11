@@ -3,6 +3,7 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -122,10 +123,60 @@ func TestOKFRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = src.Close() })
 
-	_, _ = src.SaveArticle("", "Concept A", "# A\n\nLinks to [[Concept B]].", "summary a", "", "https://example.com/a", "init", []string{"topic"}, ContentTypeWiki)
+	_, _ = src.SaveArticle("", "Concept A", "# A\n\nLinks to [[Concept B]] and [[Revenue Computation]][^1].\n\n[^1]: Verified computation.", "summary a", "", "https://example.com/a", "init", []string{"topic"}, ContentTypeWiki)
 	_, _ = src.SaveArticle("", "Concept B", "# B", "", "", "", "init", nil, ContentTypeWiki)
 	_, _ = src.SaveArticle("", "A Plan", "# plan", "", "", "", "init", []string{"proj"}, ContentTypePlan)
 	_, _ = src.SaveArticle("", "A Memory", "# mem", "", "", "", "init", []string{"memory-proj"}, ContentTypeMemory)
+
+	compSources := []OKFSource{
+		{ID: "src-policy", Resource: "https://example.com/policy", Title: "Revenue Policy"},
+	}
+	compGenerated := &OKFGenerated{
+		By: "gemini-2.5-pro",
+		At: time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC),
+	}
+	compVerified := []OKFVerification{
+		{By: "human:auditor", At: time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)},
+	}
+	compStaleAfter := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	compRuntime := "bigquery"
+	compParams := []OKFParameter{
+		{Name: "fiscal_year", Type: "integer", Required: true},
+	}
+	compPath := "references/computations/revenue.sql"
+	compExec := &OKFExecutor{
+		Resource: "references/skills/run-query.md",
+		Receipt:  []string{"job_id", "status"},
+	}
+	compAttest := &OKFAttester{
+		Resource: "references/attesters/verify_rev.py",
+	}
+
+	_, err = src.SaveArticleWithOverrides(
+		"",
+		"Revenue Computation",
+		"# Computation\n\nSELECT revenue FROM table;\n",
+		"Recognized revenue computation",
+		"",
+		"",
+		"init computation",
+		[]string{"finance"},
+		ContentTypeComputation,
+		ArticleOverrides{
+			Sources:     &compSources,
+			Generated:   compGenerated,
+			Verified:    &compVerified,
+			StaleAfter:  &compStaleAfter,
+			Runtime:     &compRuntime,
+			Parameters:  &compParams,
+			Computation: &compPath,
+			Executor:    compExec,
+			Attester:    compAttest,
+		},
+	)
+	if err != nil {
+		t.Fatalf("SaveArticleWithOverrides computation failed: %v", err)
+	}
 
 	bundle, err := src.ExportOKFBundle()
 	if err != nil {
@@ -133,6 +184,60 @@ func TestOKFRoundTrip(t *testing.T) {
 	}
 	if len(bundle) == 0 {
 		t.Fatal("expected non-empty bundle")
+	}
+
+	// Verify root index.md and bundle structure in exported zip
+	zr, err := zip.NewReader(bytes.NewReader(bundle), int64(len(bundle)))
+	if err != nil {
+		t.Fatalf("zip.NewReader failed: %v", err)
+	}
+
+	rootIndexFound := false
+	compIndexFound := false
+	compDocFound := false
+	for _, f := range zr.File {
+		if f.Name == "index.md" {
+			rootIndexFound = true
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("failed to open root index.md: %v", err)
+			}
+			content, _ := io.ReadAll(rc)
+			_ = rc.Close()
+			if !strings.Contains(string(content), "okf_version: \"0.2\"") {
+				t.Errorf("expected root index.md to have okf_version: \"0.2\", got:\n%s", string(content))
+			}
+			if !strings.Contains(string(content), "[Attested Computations](/computations/index.md)") {
+				t.Errorf("expected root index.md to link to computations index, got:\n%s", string(content))
+			}
+		}
+		if f.Name == "computations/index.md" {
+			compIndexFound = true
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("failed to open computations/index.md: %v", err)
+			}
+			content, _ := io.ReadAll(rc)
+			_ = rc.Close()
+			if !strings.Contains(string(content), "# Attested Computations") {
+				t.Errorf("expected heading # Attested Computations, got:\n%s", string(content))
+			}
+			if !strings.Contains(string(content), "* [Revenue Computation](/computations/revenue-computation.md)") {
+				t.Errorf("expected link to revenue computation, got:\n%s", string(content))
+			}
+		}
+		if f.Name == "computations/revenue-computation.md" {
+			compDocFound = true
+		}
+	}
+	if !rootIndexFound {
+		t.Error("root index.md not found in bundle")
+	}
+	if !compIndexFound {
+		t.Error("computations/index.md not found in bundle")
+	}
+	if !compDocFound {
+		t.Error("computations/revenue-computation.md not found in bundle")
 	}
 
 	dst, err := NewStorage(t.TempDir())
@@ -145,8 +250,8 @@ func TestOKFRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import failed: %v", err)
 	}
-	if report.Imported < 4 {
-		t.Errorf("expected >=4 imported, got %d (warnings: %v)", report.Imported, report.Warnings)
+	if report.Imported < 5 {
+		t.Errorf("expected >=5 imported, got %d (warnings: %v)", report.Imported, report.Warnings)
 	}
 
 	// Types preserved
@@ -159,13 +264,58 @@ func TestOKFRoundTrip(t *testing.T) {
 		t.Errorf("memory type not preserved: %+v err=%v", mem, err)
 	}
 
-	// Links re-translated back to WikiLinks
+	// Attested Computation preserved with v0.2 fields
+	comp, err := dst.GetArticle("revenue-computation")
+	if err != nil {
+		t.Fatalf("GetArticle revenue-computation failed: %v", err)
+	}
+	if comp.Type != ContentTypeComputation {
+		t.Errorf("computation type not preserved, got %q", comp.Type)
+	}
+	if comp.Runtime != "bigquery" {
+		t.Errorf("computation runtime not preserved, got %q", comp.Runtime)
+	}
+	if comp.Computation != "references/computations/revenue.sql" {
+		t.Errorf("computation path not preserved, got %q", comp.Computation)
+	}
+	if len(comp.Parameters) != 1 || comp.Parameters[0].Name != "fiscal_year" {
+		t.Errorf("computation parameters not preserved: %+v", comp.Parameters)
+	}
+	if comp.Executor == nil || comp.Executor.Resource != "references/skills/run-query.md" {
+		t.Errorf("computation executor not preserved: %+v", comp.Executor)
+	}
+	if comp.Attester == nil || comp.Attester.Resource != "references/attesters/verify_rev.py" {
+		t.Errorf("computation attester not preserved: %+v", comp.Attester)
+	}
+	if len(comp.Sources) != 1 || comp.Sources[0].ID != "src-policy" {
+		t.Errorf("computation sources not preserved: %+v", comp.Sources)
+	}
+	if comp.Generated == nil || comp.Generated.By != "gemini-2.5-pro" || !comp.Generated.At.Equal(compGenerated.At) {
+		t.Errorf("computation generated not preserved: %+v", comp.Generated)
+	}
+	if len(comp.Verified) != 1 || comp.Verified[0].By != "human:auditor" {
+		t.Errorf("computation verified not preserved: %+v", comp.Verified)
+	}
+	if comp.TrustTier != TrustTierHumanReviewed {
+		t.Errorf("expected trust tier %q, got %q", TrustTierHumanReviewed, comp.TrustTier)
+	}
+	if !comp.StaleAfter.Equal(compStaleAfter) {
+		t.Errorf("computation stale_after not preserved: %v", comp.StaleAfter)
+	}
+
+	// Links re-translated back to WikiLinks, including computation link and footnote reference
 	a, err := dst.GetArticle("concept-a")
 	if err != nil {
 		t.Fatalf("GetArticle concept-a failed: %v", err)
 	}
 	if !strings.Contains(a.Content, "[[concept-b") {
 		t.Errorf("expected re-translated WikiLink to concept-b, got: %s", a.Content)
+	}
+	if !strings.Contains(a.Content, "[[revenue-computation") {
+		t.Errorf("expected re-translated WikiLink to revenue-computation, got: %s", a.Content)
+	}
+	if !strings.Contains(a.Content, "[^1]") {
+		t.Errorf("expected footnote reference [^1] preserved, got: %s", a.Content)
 	}
 	if a.Resource != "https://example.com/a" {
 		t.Errorf("expected resource preserved, got %q", a.Resource)
@@ -210,8 +360,24 @@ func buildForeignBundle(t *testing.T) []byte {
 	add("concepts/windows-authored.md",
 		"---\r\ntitle: Windows Authored\r\ntype: Wiki\r\n---\r\n# Windows Authored\r\n\r\nBody.\r\n")
 
+	// OKF v0.2 foreign documents with generated, sources, stale_after, and Attested Computation.
+	add("concepts/modern-spec.md",
+		"---\ntitle: Modern Spec\ntype: Wiki\ndescription: Modern spec with OKF v0.2 metadata\n"+
+			"generated:\n  by: external-agent/claude\n  at: 2026-07-15T08:30:00Z\n"+
+			"stale_after: 2027-01-01T00:00:00Z\n"+
+			"sources:\n  - id: rfc-100\n    resource: https://tools.ietf.org/html/rfc100\n    title: RFC 100\n"+
+			"---\n# Modern Spec\n\nBody with reference[^1].\n\n[^1]: Footnote details.\n")
+
+	add("computations/foreign-calc.md",
+		"---\ntitle: Foreign Calc\ntype: Attested Computation\ndescription: External computation\n"+
+			"runtime: python\ncomputation: scripts/calc.py\n"+
+			"generated:\n  by: computation-runner\n  at: 2026-08-01T14:00:00Z\n"+
+			"stale_after: 2026-11-01T00:00:00Z\n"+
+			"sources:\n  - id: input-data\n    resource: https://data.example.com/dataset\n    title: Input Dataset\n"+
+			"---\n# Foreign Calc\n\nCalculation instructions.\n")
+
 	// Reserved names the importer must consume rather than import as documents.
-	add("index.md", "---\ntitle: Index\nokf_version: \"0.1\"\n---\n# Index\n")
+	add("index.md", "---\ntitle: Index\nokf_version: \"0.2\"\n---\n# Index\n")
 	add("concepts/index.md", "---\ntitle: Concepts\n---\n# Concepts\n")
 	add("log.md", "---\ntitle: Log\n---\n# Log\n")
 
@@ -247,7 +413,7 @@ func TestImportForeignOKFBundle(t *testing.T) {
 
 	t.Run("documents import despite foreign layout and missing custom keys", func(t *testing.T) {
 		// Directory names are the other tool's, and no entry carries a `slug` key.
-		for _, slug := range []string{"architecture-overview", "data-model", "field-notes", "windows-authored"} {
+		for _, slug := range []string{"architecture-overview", "data-model", "field-notes", "windows-authored", "modern-spec", "foreign-calc"} {
 			art, err := storage.GetArticle(slug)
 			if err != nil {
 				t.Errorf("%q did not import: %v (warnings: %v)", slug, err, report.Warnings)
@@ -257,8 +423,8 @@ func TestImportForeignOKFBundle(t *testing.T) {
 				t.Errorf("%q imported with no title", slug)
 			}
 		}
-		if report.Imported != 4 {
-			t.Errorf("expected 4 imported documents, got %d (warnings: %v)", report.Imported, report.Warnings)
+		if report.Imported != 6 {
+			t.Errorf("expected 6 imported documents, got %d (warnings: %v)", report.Imported, report.Warnings)
 		}
 	})
 
@@ -281,6 +447,64 @@ func TestImportForeignOKFBundle(t *testing.T) {
 			if !flagged[slug] {
 				t.Errorf("%q defaulted to Wiki but was not reported in MissingType: %v", slug, report.MissingType)
 			}
+		}
+		// Attested computation and explicit Wiki must not be flagged
+		for _, slug := range []string{"foreign-calc", "modern-spec", "architecture-overview", "windows-authored"} {
+			if flagged[slug] {
+				t.Errorf("%q should not be reported in MissingType: %v", slug, report.MissingType)
+			}
+		}
+	})
+
+	t.Run("OKF v0.2 metadata and computation types are preserved", func(t *testing.T) {
+		spec, err := storage.GetArticle("modern-spec")
+		if err != nil {
+			t.Fatalf("modern-spec missing: %v", err)
+		}
+		if spec.Type != ContentTypeWiki {
+			t.Errorf("expected modern-spec type Wiki, got %q", spec.Type)
+		}
+		if spec.Generated == nil || spec.Generated.By != "external-agent/claude" {
+			t.Errorf("modern-spec generated.by not preserved: %+v", spec.Generated)
+		}
+		wantSpecAt := time.Date(2026, 7, 15, 8, 30, 0, 0, time.UTC)
+		if !spec.Generated.At.Equal(wantSpecAt) {
+			t.Errorf("modern-spec generated.at not preserved: want %v, got %v", wantSpecAt, spec.Generated.At)
+		}
+		if len(spec.Sources) != 1 || spec.Sources[0].ID != "rfc-100" {
+			t.Errorf("modern-spec sources not preserved: %+v", spec.Sources)
+		}
+		wantSpecStale := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+		if !spec.StaleAfter.Equal(wantSpecStale) {
+			t.Errorf("modern-spec stale_after not preserved: want %v, got %v", wantSpecStale, spec.StaleAfter)
+		}
+		if !strings.Contains(spec.Content, "[^1]") {
+			t.Errorf("expected footnote reference [^1] preserved: %s", spec.Content)
+		}
+
+		calc, err := storage.GetArticle("foreign-calc")
+		if err != nil {
+			t.Fatalf("foreign-calc missing: %v", err)
+		}
+		if calc.Type != ContentTypeComputation {
+			t.Errorf("foreign-calc coerced to %q, expected ContentTypeComputation (Attested Computation)", calc.Type)
+		}
+		if calc.Runtime != "python" || calc.Computation != "scripts/calc.py" {
+			t.Errorf("foreign-calc computation contract not preserved: runtime=%q computation=%q", calc.Runtime, calc.Computation)
+		}
+		if calc.Generated == nil || calc.Generated.By != "computation-runner" {
+			t.Errorf("foreign-calc generated not preserved: %+v", calc.Generated)
+		}
+		wantCalcAt := time.Date(2026, 8, 1, 14, 0, 0, 0, time.UTC)
+		if !calc.Generated.At.Equal(wantCalcAt) {
+			t.Errorf("foreign-calc generated.at not preserved: want %v, got %v", wantCalcAt, calc.Generated.At)
+		}
+		if len(calc.Sources) != 1 || calc.Sources[0].ID != "input-data" {
+			t.Errorf("foreign-calc sources not preserved: %+v", calc.Sources)
+		}
+		wantCalcStale := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+		if !calc.StaleAfter.Equal(wantCalcStale) {
+			t.Errorf("foreign-calc stale_after not preserved: want %v, got %v", wantCalcStale, calc.StaleAfter)
 		}
 	})
 

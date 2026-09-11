@@ -243,6 +243,51 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 	if art.Source != "" {
 		sourceStr = fmt.Sprintf("\nSource: %s", art.Source)
 	}
+	sourcesStr := ""
+	if len(art.Sources) > 0 {
+		var srcEntries []string
+		for _, s := range art.Sources {
+			entry := s.Resource
+			if s.ID != "" && s.Title != "" {
+				entry = fmt.Sprintf("[%s] %s (%s)", s.ID, s.Title, s.Resource)
+			} else if s.ID != "" {
+				entry = fmt.Sprintf("[%s] %s", s.ID, s.Resource)
+			} else if s.Title != "" {
+				entry = fmt.Sprintf("%s (%s)", s.Title, s.Resource)
+			}
+			srcEntries = append(srcEntries, entry)
+		}
+		sourcesStr = fmt.Sprintf("\nSources: %s", strings.Join(srcEntries, ", "))
+	}
+
+	tier := art.TrustTier
+	if tier == "" {
+		tier = art.DeriveTrustTier()
+	}
+	trustTierStr := fmt.Sprintf("\nTrust Tier: %s", formatTrustTier(tier))
+
+	compStr := ""
+	if art.Type == ContentTypeComputation {
+		if art.Runtime != "" {
+			compStr += fmt.Sprintf("\nRuntime: %s", art.Runtime)
+		}
+		if len(art.Parameters) > 0 {
+			var pList []string
+			for _, p := range art.Parameters {
+				reqStr := "optional"
+				if p.Required {
+					reqStr = "required"
+				}
+				pList = append(pList, fmt.Sprintf("%s (%s, %s)", p.Name, p.Type, reqStr))
+			}
+			compStr += fmt.Sprintf("\nParameters: %s", strings.Join(pList, ", "))
+		}
+	}
+
+	staleWarning := ""
+	if art.IsStale || IsStale(art) {
+		staleWarning = fmt.Sprintf("\n⚠️ STALE CONCEPT: this document passed its freshness expiration on %s", art.StaleAfter.Format("2006-01-02"))
+	}
 
 	// The front-matter configuration, as prose. The body is deliberately not repeated here — see
 	// the comment on the structured payload below for which copy survives and why.
@@ -250,8 +295,9 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 	// Version is part of this header because it is the one field an agent must carry from a read
 	// into edit_wiki_article as loaded_version. It was absent until now, so a client reading only
 	// the text had no way to complete the documented read-then-edit loop.
-	text := fmt.Sprintf("Type: %s\nTitle: %s\nSlug: %s\nVersion: %d\nCreated: %s\nUpdated: %s%s%s%s%s\n\nBody: structuredContent.article.content — this tool declares an outputSchema and the Markdown body ships there. It is also readable as the MCP resource nexwiki://article/%s.",
-		art.Type, art.Title, art.Slug, art.Version, art.CreatedAt.Format(time.RFC3339), art.Timestamp.Format(time.RFC3339), descStr, resourceStr, sourceStr, tagsStr, art.Slug)
+	text := fmt.Sprintf("Type: %s\nTitle: %s\nSlug: %s\nVersion: %d\nCreated: %s\nUpdated: %s%s%s%s%s%s%s%s%s\n\nBody: structuredContent.article.content — this tool declares an outputSchema and the Markdown body ships there. It is also readable as the MCP resource nexwiki://article/%s.",
+		art.Type, art.Title, art.Slug, art.Version, art.CreatedAt.Format(time.RFC3339), art.Timestamp.Format(time.RFC3339),
+		descStr, resourceStr, sourceStr, sourcesStr, tagsStr, trustTierStr, compStr, staleWarning, art.Slug)
 
 	// Append inbound links for graph discoverability; never fail the read over a scan error
 	links := []DocumentLink{}
@@ -407,6 +453,44 @@ var createWikiArticleTool = toolDef{
 					"type":        "string",
 					"description": "Optional description summarizing the purpose of the creation (e.g. 'Initial seed guide').",
 				},
+				"sources": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"id": map[string]interface{}{
+								"type":        "string",
+								"description": "Identifier matching inline footnote citations (e.g. 'fn1').",
+							},
+							"resource": map[string]interface{}{
+								"type":        "string",
+								"description": "Canonical URI, URL, or filepath of the source.",
+							},
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional human-readable title of the source.",
+							},
+							"author": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional author or creator of the source.",
+							},
+							"usage_count": map[string]interface{}{
+								"type":        "integer",
+								"description": "Optional count of times this source has been referenced.",
+							},
+							"last_modified": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional ISO 8601 timestamp of source last modification.",
+							},
+						},
+						"required": []string{"resource"},
+					},
+					"description": "Optional array of source objects with credibility signals (OKF v0.2 provenance).",
+				},
+				"stale_after": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional ISO 8601 timestamp (e.g. '2026-12-31') after which the article's freshness expires.",
+				},
 			},
 			"required": []string{"title", "content"},
 		},
@@ -417,13 +501,15 @@ var createWikiArticleTool = toolDef{
 
 func (srv *Server) toolCreateWikiArticle(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type CreateArgs struct {
-		Title       string   `json:"title"`
-		Content     string   `json:"content"`
-		Description string   `json:"description"`
-		Source      string   `json:"source"`
-		Resource    string   `json:"resource"`
-		Tags        []string `json:"tags"`
-		EditSummary string   `json:"edit_summary"`
+		Title       string       `json:"title"`
+		Content     string       `json:"content"`
+		Description string       `json:"description"`
+		Source      string       `json:"source"`
+		Resource    string       `json:"resource"`
+		Tags        []string     `json:"tags"`
+		EditSummary string       `json:"edit_summary"`
+		Sources     *[]OKFSource `json:"sources"`
+		StaleAfter  string       `json:"stale_after"`
 	}
 	var cArgs CreateArgs
 	if e := decodeToolArgs(args, &cArgs); e != nil {
@@ -449,7 +535,25 @@ func (srv *Server) toolCreateWikiArticle(args json.RawMessage) (interface{}, *JS
 	}
 	secretNote := secretWarning(warnedSecrets(cArgs.Content, cArgs.Description, cArgs.Source))
 
-	art, err := srv.Storage.SaveArticle("", cArgs.Title, cArgs.Content, cArgs.Description, cArgs.Source, cArgs.Resource, cArgs.EditSummary, tags, ContentTypeWiki)
+	now := time.Now()
+	overrides := ArticleOverrides{
+		Generated: &OKFGenerated{
+			By: "nexwiki/mcp",
+			At: now,
+		},
+	}
+	if cArgs.Sources != nil {
+		overrides.Sources = cArgs.Sources
+	}
+	if strings.TrimSpace(cArgs.StaleAfter) != "" {
+		t, err := parseISO8601(cArgs.StaleAfter)
+		if err != nil {
+			return nil, &JSONRPCError{Code: -32602, Message: fmt.Sprintf("Invalid 'stale_after' timestamp: %v", err)}
+		}
+		overrides.StaleAfter = &t
+	}
+
+	art, err := srv.Storage.SaveArticleWithOverrides("", cArgs.Title, cArgs.Content, cArgs.Description, cArgs.Source, cArgs.Resource, cArgs.EditSummary, tags, ContentTypeWiki, overrides)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating article: %v", err)}}}, nil
 	}
@@ -506,6 +610,44 @@ var editWikiArticleTool = toolDef{
 					"type":        "string",
 					"description": "Optional summary outlining what changed (e.g., 'Corrected spelling error').",
 				},
+				"sources": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"id": map[string]interface{}{
+								"type":        "string",
+								"description": "Identifier matching inline footnote citations (e.g. 'fn1').",
+							},
+							"resource": map[string]interface{}{
+								"type":        "string",
+								"description": "Canonical URI, URL, or filepath of the source.",
+							},
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional human-readable title of the source.",
+							},
+							"author": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional author or creator of the source.",
+							},
+							"usage_count": map[string]interface{}{
+								"type":        "integer",
+								"description": "Optional count of times this source has been referenced.",
+							},
+							"last_modified": map[string]interface{}{
+								"type":        "string",
+								"description": "Optional ISO 8601 timestamp of source last modification.",
+							},
+						},
+						"required": []string{"resource"},
+					},
+					"description": "Optional array of source objects. Omit to preserve existing sources, pass empty array [] to clear.",
+				},
+				"stale_after": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional ISO 8601 timestamp after which the article is considered stale. Omit to preserve, pass empty string \"\" to clear.",
+				},
 			},
 			"required": []string{"slug", "title", "content", "loaded_version"},
 		},
@@ -516,15 +658,17 @@ var editWikiArticleTool = toolDef{
 
 func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type EditArgs struct {
-		Slug          string   `json:"slug"`
-		Title         string   `json:"title"`
-		Content       string   `json:"content"`
-		Description   string   `json:"description"`
-		Source        string   `json:"source"`
-		Resource      *string  `json:"resource"`
-		Tags          []string `json:"tags"`
-		LoadedVersion int      `json:"loaded_version"`
-		EditSummary   string   `json:"edit_summary"`
+		Slug          string       `json:"slug"`
+		Title         string       `json:"title"`
+		Content       string       `json:"content"`
+		Description   string       `json:"description"`
+		Source        string       `json:"source"`
+		Resource      *string      `json:"resource"`
+		Tags          []string     `json:"tags"`
+		LoadedVersion int          `json:"loaded_version"`
+		EditSummary   string       `json:"edit_summary"`
+		Sources       *[]OKFSource `json:"sources"`
+		StaleAfter    *string      `json:"stale_after"`
 	}
 	var eArgs EditArgs
 	if e := decodeToolArgs(args, &eArgs); e != nil {
@@ -546,6 +690,10 @@ func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSON
 		Resource:      eArgs.Resource,
 		EditSummary:   eArgs.EditSummary,
 		LoadedVersion: eArgs.LoadedVersion,
+		Generated: &OKFGenerated{
+			By: "nexwiki/mcp",
+			At: time.Now(),
+		},
 	}
 	if eArgs.Description != "" {
 		edit.Description = &eArgs.Description
@@ -555,6 +703,25 @@ func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSON
 	}
 	if eArgs.Tags != nil {
 		edit.Tags = &eArgs.Tags
+	}
+	if eArgs.Sources != nil {
+		edit.Sources = eArgs.Sources
+		if len(*eArgs.Sources) == 0 && edit.Source == nil {
+			empty := ""
+			edit.Source = &empty
+		}
+	}
+	if eArgs.StaleAfter != nil {
+		val := strings.TrimSpace(*eArgs.StaleAfter)
+		if val == "" {
+			edit.StaleAfter = &time.Time{}
+		} else {
+			t, err := parseISO8601(val)
+			if err != nil {
+				return nil, &JSONRPCError{Code: -32602, Message: fmt.Sprintf("Invalid 'stale_after' timestamp: %v", err)}
+			}
+			edit.StaleAfter = &t
+		}
 	}
 
 	// ApplyArticleEdit performs the version check and the write under one lock. Reading the
@@ -1028,4 +1195,20 @@ func (srv *Server) toolGetContextOverview(args json.RawMessage) (interface{}, *J
 	}
 
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: text}}}, nil
+}
+
+func formatTrustTier(tier string) string {
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case TrustTierHumanReviewed:
+		return "Human-Reviewed"
+	case TrustTierMachineConfirmed:
+		return "Machine-Confirmed"
+	case TrustTierUnverified:
+		return "Unverified"
+	default:
+		if tier == "" {
+			return "Unverified"
+		}
+		return tier
+	}
 }

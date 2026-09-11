@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -226,6 +227,161 @@ func TestMCPCreateWikiArticle(t *testing.T) {
 	resp3 := toolCall(t, srv, `{"name":"create_wiki_article","arguments":{"title":"Go Basics","content":"# Dupe"}}`)
 	if !resp3.IsError {
 		t.Error("expected error for duplicate article")
+	}
+}
+
+func TestMCPCreateAndEditWikiArticleOKFv02(t *testing.T) {
+	srv := newMCPServer(t)
+
+	// Create article with sources and stale_after
+	createArgs := `{
+		"name": "create_wiki_article",
+		"arguments": {
+			"title": "OKF v0.2 Article",
+			"content": "# OKF v0.2 Guide\n\nContent citing [^src1].",
+			"description": "Demonstrating OKF v0.2 features",
+			"sources": [
+				{
+					"id": "src1",
+					"resource": "https://okf.example/spec",
+					"title": "OKF Specification",
+					"author": "OKF Working Group",
+					"usage_count": 3
+				}
+			],
+			"stale_after": "2020-01-01"
+		}
+	}`
+	resp := toolCall(t, srv, createArgs)
+	if resp.IsError {
+		t.Fatalf("create_wiki_article failed: %s", resp.Content[0].Text)
+	}
+
+	// Read article and verify text header and structured content
+	readResp := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"okf-v02-article"}}`)
+	if readResp.IsError {
+		t.Fatalf("read_article failed: %s", readResp.Content[0].Text)
+	}
+	readText := readResp.Content[0].Text
+	if !strings.Contains(readText, "Trust Tier: Unverified") {
+		t.Errorf("read text missing Trust Tier, got: %s", readText)
+	}
+	if !strings.Contains(readText, "Sources: [src1] OKF Specification (https://okf.example/spec)") {
+		t.Errorf("read text missing formatted sources, got: %s", readText)
+	}
+	if !strings.Contains(readText, "⚠️ STALE CONCEPT: this document passed its freshness expiration on 2020-01-01") {
+		t.Errorf("read text missing stale concept warning, got: %s", readText)
+	}
+
+	out, ok := readResp.StructuredContent.(ArticleOutput)
+	if !ok {
+		t.Fatalf("expected ArticleOutput, got %T", readResp.StructuredContent)
+	}
+	if len(out.Article.Sources) != 1 || out.Article.Sources[0].ID != "src1" || out.Article.Sources[0].Resource != "https://okf.example/spec" {
+		t.Errorf("unexpected sources in structured output: %+v", out.Article.Sources)
+	}
+	if out.Article.Generated == nil || out.Article.Generated.By != "nexwiki/mcp" {
+		t.Errorf("expected generated.by 'nexwiki/mcp', got %+v", out.Article.Generated)
+	}
+	if !out.Article.IsStale {
+		t.Errorf("expected is_stale true for 2020-01-01 expiration")
+	}
+
+	// Edit article: update sources and stale_after
+	editArgs := fmt.Sprintf(`{
+		"name": "edit_wiki_article",
+		"arguments": {
+			"slug": "okf-v02-article",
+			"title": "OKF v0.2 Article",
+			"content": "# OKF v0.2 Guide\n\nUpdated content citing [^src2].",
+			"loaded_version": %d,
+			"sources": [
+				{
+					"id": "src2",
+					"resource": "https://okf.example/spec-v2",
+					"title": "OKF Spec v2"
+				}
+			],
+			"stale_after": "2035-01-01"
+		}
+	}`, out.Article.Version)
+	editResp := toolCall(t, srv, editArgs)
+	if editResp.IsError {
+		t.Fatalf("edit_wiki_article failed: %s", editResp.Content[0].Text)
+	}
+
+	// Verify updated
+	readResp2 := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"okf-v02-article"}}`)
+	out2 := readResp2.StructuredContent.(ArticleOutput)
+	if len(out2.Article.Sources) != 1 || out2.Article.Sources[0].ID != "src2" {
+		t.Errorf("expected updated source src2, got %+v", out2.Article.Sources)
+	}
+	if out2.Article.IsStale {
+		t.Errorf("expected is_stale false for 2035-01-01 expiration")
+	}
+	if out2.Article.Generated == nil || out2.Article.Generated.By != "nexwiki/mcp" {
+		t.Errorf("expected generated.by 'nexwiki/mcp', got %+v", out2.Article.Generated)
+	}
+	if strings.Contains(readResp2.Content[0].Text, "⚠️ STALE CONCEPT") {
+		t.Errorf("read text should not contain stale warning for 2035 date")
+	}
+
+	// Clear sources and stale_after
+	clearArgs := fmt.Sprintf(`{
+		"name": "edit_wiki_article",
+		"arguments": {
+			"slug": "okf-v02-article",
+			"title": "OKF v0.2 Article",
+			"content": "# OKF v0.2 Guide\n\nContent without sources.",
+			"loaded_version": %d,
+			"sources": [],
+			"stale_after": ""
+		}
+	}`, out2.Article.Version)
+	clearResp := toolCall(t, srv, clearArgs)
+	if clearResp.IsError {
+		t.Fatalf("clear edit_wiki_article failed: %s", clearResp.Content[0].Text)
+	}
+
+	readResp3 := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"okf-v02-article"}}`)
+	out3 := readResp3.StructuredContent.(ArticleOutput)
+	if len(out3.Article.Sources) != 0 {
+		t.Errorf("expected 0 sources after clearing, got %+v", out3.Article.Sources)
+	}
+	if !out3.Article.StaleAfter.IsZero() {
+		t.Errorf("expected zero StaleAfter after clearing, got %v", out3.Article.StaleAfter)
+	}
+	if out3.Article.IsStale {
+		t.Errorf("expected is_stale false after clearing")
+	}
+}
+
+func TestMCPReadArticleComputation(t *testing.T) {
+	srv := newMCPServer(t)
+
+	runtime := "python:3.11"
+	params := []OKFParameter{
+		{Name: "amount", Type: "number", Required: true},
+		{Name: "currency", Type: "string", Required: false},
+	}
+	_, err := srv.Storage.SaveArticleWithOverrides("", "Tax Calculation", "# Calc", "Calculates tax", "", "", "Initial", nil, ContentTypeComputation, ArticleOverrides{
+		Runtime:    &runtime,
+		Parameters: &params,
+	})
+	if err != nil {
+		t.Fatalf("SaveArticleWithOverrides failed: %v", err)
+	}
+
+	resp := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"tax-calculation"}}`)
+	if resp.IsError {
+		t.Fatalf("read_article failed: %s", resp.Content[0].Text)
+	}
+	text := resp.Content[0].Text
+	if !strings.Contains(text, "Runtime: python:3.11") {
+		t.Errorf("expected Runtime: python:3.11 in text, got: %s", text)
+	}
+	if !strings.Contains(text, "Parameters: amount (number, required), currency (string, optional)") {
+		t.Errorf("expected formatted parameters in text, got: %s", text)
 	}
 }
 

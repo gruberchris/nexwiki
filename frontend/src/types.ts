@@ -3,14 +3,49 @@ export type ContentType =
   | 'Wiki'
   | 'AI-Agent-Memory'
   | 'AI-Agent-Plan'
-  | 'AI-Agent-Skill';
+  | 'AI-Agent-Skill'
+  | 'Attested Computation';
 
 export const ContentTypes = {
   Wiki: 'Wiki',
   Memory: 'AI-Agent-Memory',
   Plan: 'AI-Agent-Plan',
   Skill: 'AI-Agent-Skill',
+  Computation: 'Attested Computation',
 } as const;
+
+export type TrustTier = 'unverified' | 'machine-confirmed' | 'human-reviewed';
+
+export interface OKFGenerated {
+  by: string;
+  at?: string;
+}
+
+export interface OKFVerification {
+  by: string;
+  at?: string;
+}
+
+export interface OKFUsageWindow {
+  from?: string;
+  to?: string;
+}
+
+export interface OKFSource {
+  id?: string;
+  resource: string;
+  title?: string;
+  author?: string;
+  usage_count?: number;
+  last_modified?: string;
+  usage_window?: OKFUsageWindow;
+}
+
+export interface OKFParameter {
+  name: string;
+  type: string;
+  required?: boolean;
+}
 
 export interface Article {
   type?: ContentType;
@@ -36,6 +71,15 @@ export interface Article {
    * of the `memory-<scope>` tag, which is how far a fact reaches rather than what sort it is.
    */
   memory_kind?: string;
+  generated?: OKFGenerated;
+  verified?: OKFVerification[];
+  trust_tier?: TrustTier;
+  sources?: OKFSource[];
+  stale_after?: string;
+  is_stale?: boolean;
+  runtime?: string;
+  parameters?: OKFParameter[];
+  computation?: string;
 }
 
 /** The closed memory-kind vocabulary, mirroring MemoryKinds in server/tags.go. */
@@ -78,6 +122,10 @@ export function isSkill(art: Pick<Article, 'type'>): boolean {
   return art.type === ContentTypes.Skill;
 }
 
+export function isComputation(art: Pick<Article, 'type'>): boolean {
+  return art.type === ContentTypes.Computation;
+}
+
 // Short, human-friendly label for a document type (used in read-only badges).
 export function typeLabel(type?: ContentType): string {
   switch (type) {
@@ -87,6 +135,8 @@ export function typeLabel(type?: ContentType): string {
       return 'Agent Plan';
     case ContentTypes.Skill:
       return 'Agent Skill';
+    case ContentTypes.Computation:
+      return 'Attested Computation';
     default:
       return 'Wiki';
   }

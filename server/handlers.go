@@ -173,10 +173,10 @@ func (srv *Server) HandleGetArticle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, art)
 }
 
-// CreateArticleReq represents the payload body for creating a new article.
+// ArticleRequest represents the payload body for creating or updating an article.
 // Description and Source are pointers, so clients that omit them preserve existing values on update,
 // while sending an explicit empty string clears them.
-type CreateArticleReq struct {
+type ArticleRequest struct {
 	Title         string   `json:"title"`
 	Content       string   `json:"content"`
 	Description   *string  `json:"description"`    // Optional one-line summary
@@ -188,8 +188,13 @@ type CreateArticleReq struct {
 	Status        *string  `json:"status"`         // Optional lifecycle status; omit to preserve
 	// MemoryKind classifies an AI-Agent-Memory; omit to preserve. Only meaningful on the update
 	// path — REST creation always produces a Wiki article, which has no kind.
-	MemoryKind *string `json:"memory_kind"`
+	MemoryKind *string           `json:"memory_kind"`
+	Sources    []OKFSource       `json:"sources,omitempty"`
+	StaleAfter string            `json:"stale_after,omitempty"`
+	Verified   []OKFVerification `json:"verified,omitempty"`
 }
+
+type CreateArticleReq = ArticleRequest
 
 // validateAndCleanUserTags preserves tool-managed memory-scope tags (memory-<scope>) that already
 // exist on a document and strips any the user tries to forge onto one. The document *class* is carried
@@ -287,8 +292,27 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 		resource = *req.Resource
 	}
 
+	overrides := ArticleOverrides{
+		Status:    req.Status,
+		Generated: &OKFGenerated{By: "human:local", At: time.Now()},
+	}
+	if len(req.Sources) > 0 {
+		overrides.Sources = &req.Sources
+	}
+	if req.StaleAfter != "" {
+		t, err := parseISO8601(req.StaleAfter)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid stale_after timestamp: %v", err))
+			return
+		}
+		overrides.StaleAfter = &t
+	}
+	if len(req.Verified) > 0 {
+		overrides.Verified = &req.Verified
+	}
+
 	// Regular article creation always produces a Wiki document; reserved types are tool-only.
-	art, err := srv.Storage.SaveArticleWithStatus("", req.Title, req.Content, description, source, resource, req.EditSummary, cleanedTags, ContentTypeWiki, req.Status)
+	art, err := srv.Storage.SaveArticleWithOverrides("", req.Title, req.Content, description, source, resource, req.EditSummary, cleanedTags, ContentTypeWiki, overrides)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -320,6 +344,16 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, art)
 }
 
+// HandleSaveArticle saves an article, delegating to HandleUpdateArticle if a slug is given or HandleCreateArticle.
+func (srv *Server) HandleSaveArticle(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if slug != "" || r.Method == http.MethodPut {
+		srv.HandleUpdateArticle(w, r)
+		return
+	}
+	srv.HandleCreateArticle(w, r)
+}
+
 // HandleUpdateArticle updates an existing article, handling potential slug changes.
 func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
@@ -328,7 +362,7 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req CreateArticleReq
+	var req ArticleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeDecodeError(w, err)
 		return
@@ -337,6 +371,24 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 	if req.Title == "" {
 		writeError(w, http.StatusBadRequest, "title is required")
 		return
+	}
+
+	var overridesSources *[]OKFSource
+	if req.Sources != nil {
+		overridesSources = &req.Sources
+	}
+	var overridesStaleAfter *time.Time
+	if req.StaleAfter != "" {
+		t, err := parseISO8601(req.StaleAfter)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid stale_after timestamp: %v", err))
+			return
+		}
+		overridesStaleAfter = &t
+	}
+	var overridesVerified *[]OKFVerification
+	if req.Verified != nil {
+		overridesVerified = &req.Verified
 	}
 
 	// Existence check, optimistic-locking guard, field merge, and write happen atomically inside
@@ -357,6 +409,10 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		Status:        req.Status,
 		MemoryKind:    req.MemoryKind,
 		LoadedVersion: req.LoadedVersion,
+		Sources:       overridesSources,
+		StaleAfter:    overridesStaleAfter,
+		Generated:     &OKFGenerated{By: "human:local", At: time.Now()},
+		Verified:      overridesVerified,
 	})
 	switch {
 	case errors.Is(err, ErrVersionConflict):
@@ -393,6 +449,61 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	writeJSON(w, http.StatusOK, art)
+}
+
+// HandleVerifyArticle appends a human verification record to an article, re-derives its trust tier,
+// and saves the updated article.
+func (srv *Server) HandleVerifyArticle(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeError(w, http.StatusBadRequest, "article slug is required")
+		return
+	}
+
+	art, err := srv.Storage.GetArticle(slug)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "article not found")
+		return
+	}
+
+	v := OKFVerification{
+		By: "human:local",
+		At: time.Now(),
+	}
+	updatedVerified := append(slices.Clone(art.Verified), v)
+
+	overrides := ArticleOverrides{
+		Verified: &updatedVerified,
+	}
+
+	saved, err := srv.Storage.SaveArticleWithOverrides(
+		slug,
+		art.Title,
+		art.Content,
+		art.Description,
+		art.Source,
+		art.Resource,
+		"Article verified by human",
+		art.Tags,
+		art.Type,
+		overrides,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if srv.EventBus != nil {
+		srv.EventBus.PublishActivity("api", "verify", "", saved.Slug, saved.Title, "User")
+	}
+
+	writeJSON(w, http.StatusOK, saved)
+}
+
+// RegisterRoutes registers all API routes on the provided ServeMux.
+func (srv *Server) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/articles/{slug}/verify", srv.HandleVerifyArticle)
 }
 
 // HandleUpdateArticleTags updates only the tags of an existing article.

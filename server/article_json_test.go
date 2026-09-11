@@ -28,7 +28,7 @@ func TestZeroTimestampsAreOmittedFromJSON(t *testing.T) {
 	}
 	payload := string(encoded)
 
-	for _, key := range []string{"archived_at", "status_changed_at"} {
+	for _, key := range []string{"archived_at", "status_changed_at", "stale_after"} {
 		if strings.Contains(payload, key) {
 			t.Errorf("an unarchived document serialized %q; a zero time.Time must be omitted, or "+
 				"every client reads the zero string as a real value: %s", key, payload)
@@ -53,6 +53,71 @@ func TestRealTimestampsSurviveSerialization(t *testing.T) {
 	}
 	payload := string(encoded)
 	for _, want := range []string{`"archived_at":"2026-08-23T12:00:00Z"`, `"status_changed_at":"2026-08-23T12:00:00Z"`} {
+		if !strings.Contains(payload, want) {
+			t.Errorf("expected %s in %s", want, payload)
+		}
+	}
+}
+
+// TestOKFv02FieldsJSONSerialization verifies OKF v0.2 fields serialize accurately to JSON.
+func TestOKFv02FieldsJSONSerialization(t *testing.T) {
+	staleInstant := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
+	genTime := time.Date(2026, 6, 20, 22, 53, 5, 0, time.UTC)
+	verTime := time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC)
+
+	art := Article{
+		Type:        ContentTypeComputation,
+		Title:       "Revenue",
+		Slug:        "revenue",
+		StaleAfter:  staleInstant,
+		IsStale:     true,
+		TrustTier:   TrustTierHumanReviewed,
+		Runtime:     "bigquery",
+		Computation: "references/lib.sql",
+		Generated: &OKFGenerated{
+			By: "reference_agent/gemini-2.5-pro",
+			At: genTime,
+		},
+		Verified: []OKFVerification{
+			{By: "human:ahormati", At: verTime},
+		},
+		Sources: []OKFSource{
+			{
+				ID:       "rev-policy",
+				Resource: "https://wiki.acme/finance/policy",
+				Title:    "Revenue Policy",
+			},
+		},
+		Executor: &OKFExecutor{
+			Resource: "references/skills/run.md",
+			Receipt:  []string{"job_id", "result"},
+		},
+		Attester: &OKFAttester{
+			Resource: "references/attesters/rev.py",
+		},
+	}
+
+	encoded, err := json.Marshal(art)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	payload := string(encoded)
+
+	for _, want := range []string{
+		`"stale_after":"2026-09-23T00:00:00Z"`,
+		`"is_stale":true`,
+		`"trust_tier":"human-reviewed"`,
+		`"runtime":"bigquery"`,
+		`"computation":"references/lib.sql"`,
+		`"by":"reference_agent/gemini-2.5-pro"`,
+		`"at":"2026-06-20T22:53:05Z"`,
+		`"by":"human:ahormati"`,
+		`"at":"2026-06-25T09:00:00Z"`,
+		`"resource":"https://wiki.acme/finance/policy"`,
+		`"resource":"references/skills/run.md"`,
+		`"receipt":["job_id","result"]`,
+		`"resource":"references/attesters/rev.py"`,
+	} {
 		if !strings.Contains(payload, want) {
 			t.Errorf("expected %s in %s", want, payload)
 		}
