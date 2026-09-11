@@ -272,7 +272,9 @@ Description: Runbook for diagnosing read replica divergence.
 Sources: [pg-docs] PostgreSQL 16 Warm Standby Documentation (https://www.postgresql.org/docs/16/warm-standby.html)
 Trust Tier: ⚪ Unverified
 
-Body: structuredContent.article.content — this tool declares an outputSchema...
+# PostgreSQL Replica Lag Diagnostics
+
+Runbook for diagnosing read replica divergence...
 ```
 
 ### 4. `wiki_health`
