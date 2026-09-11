@@ -51,9 +51,10 @@ interface EditorProps {
   initialDescription?: string;
   initialSource?: string;
   initialResource?: string;
+  initialStaleAfter?: string;
   articleType?: ContentType;
   slug: string; // empty if new page
-  onSave: (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string, status: string, memoryKind: string) => Promise<void>;
+  onSave: (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string, status: string, memoryKind: string, staleAfter?: string) => Promise<void>;
   onCancel: () => void;
   articles: Article[];
   version?: number;
@@ -68,6 +69,7 @@ export const Editor: React.FC<EditorProps> = ({
   initialDescription,
   initialSource,
   initialResource,
+  initialStaleAfter,
   articleType,
   slug,
   onSave,
@@ -80,6 +82,7 @@ export const Editor: React.FC<EditorProps> = ({
   const [description, setDescription] = useState(initialDescription || '');
   const [source, setSource] = useState(initialSource || '');
   const [resource, setResource] = useState(initialResource || '');
+  const [staleAfter, setStaleAfter] = useState(initialStaleAfter || '');
   const [viewMode, setViewMode] = useState<'split' | 'edit' | 'preview'>('split');
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -278,7 +281,7 @@ export const Editor: React.FC<EditorProps> = ({
     setErrorMsg('');
 
     try {
-      await onSave(title.trim(), content, editSummary, tags, description.trim(), source.trim(), resource.trim(), status, memoryKind);
+      await onSave(title.trim(), content, editSummary, tags, description.trim(), source.trim(), resource.trim(), status, memoryKind, staleAfter.trim());
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to save article.';
       setErrorMsg(msg);
@@ -328,6 +331,15 @@ export const Editor: React.FC<EditorProps> = ({
                 onChange={(e) => setResource(e.target.value)}
                 className="flex-1 text-xs bg-transparent border-none outline-hidden text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
                 disabled={isSaving}
+              />
+              <input
+                type="text"
+                placeholder="Stale after (YYYY-MM-DD)..."
+                value={staleAfter}
+                onChange={(e) => setStaleAfter(e.target.value)}
+                className="w-44 text-xs bg-transparent border-none outline-hidden text-slate-600 dark:text-slate-300 placeholder:text-slate-400/70"
+                disabled={isSaving}
+                title="Freshness expiration date (YYYY-MM-DD)"
               />
             </div>
             {title.trim() && (

@@ -202,6 +202,7 @@ func main() {
 	mux.HandleFunc("GET /api/articles/{slug}/history", srv.HandleGetArticleHistory)
 	mux.HandleFunc("GET /api/articles/{slug}/history/{version}", srv.HandleGetArticleVersion)
 	mux.HandleFunc("POST /api/articles/{slug}/revert", srv.HandleRevertArticle)
+	mux.HandleFunc("POST /api/articles/{slug}/verify", srv.HandleVerifyArticle)
 	mux.HandleFunc("DELETE /api/tags/{tag}", srv.HandleDeleteTagGlobally)
 	mux.HandleFunc("GET /api/activity/stream", srv.HandleActivityStream)
 	mux.HandleFunc("GET /api/activity/log", srv.HandleGetActivityLog)

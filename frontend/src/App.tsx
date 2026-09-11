@@ -36,7 +36,9 @@ import {
   Wrench,
   ClipboardList,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  CheckCircle,
+  AlertTriangle
 } from 'lucide-react';
 
 // Simple check to identify new page creation urls
@@ -282,7 +284,18 @@ export const App: React.FC = () => {
   }, [currentPath]);
 
   // CRUD: Saving Article edits/creates
-  const handleSaveArticle = async (title: string, content: string, editSummary: string, tags: string[], description: string, source: string, resource: string, status: string, memoryKind: string) => {
+  const handleSaveArticle = async (
+    title: string,
+    content: string,
+    editSummary: string,
+    tags: string[],
+    description: string,
+    source: string,
+    resource: string,
+    status: string,
+    memoryKind: string,
+    staleAfter?: string,
+  ) => {
     const targetSlug = editorSlug; // empty if new
     const isNew = targetSlug === '';
     const newComputedSlug = Slugify(title);
@@ -301,7 +314,8 @@ export const App: React.FC = () => {
       // pointer semantics mean an omitted key preserves the existing kind, which is right for a
       // tool call that does not manage the axis but wrong for an editor whose control the user
       // just set to (unclassified).
-      memory_kind: memoryKind
+      memory_kind: memoryKind,
+      stale_after: staleAfter || '',
     };
     const url = isNew ? '/api/articles' : `/api/articles/${targetSlug}`;
     const method = isNew ? 'POST' : 'PUT';
@@ -323,6 +337,32 @@ export const App: React.FC = () => {
     // Refresh index list and automatically redirect to the saved article
     await fetchArticles(newComputedSlug);
     await fetchArticleContent(newComputedSlug);
+  };
+
+  // Verification: Mark article as verified by human operator
+  const [isVerifying, setIsVerifying] = useState(false);
+  const handleVerifyArticle = async () => {
+    if (!currentArticle) return;
+    setIsVerifying(true);
+    try {
+      const response = await fetch(`/api/articles/${currentArticle.slug}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to verify article');
+      }
+      const updated: Article = await response.json();
+      setCurrentArticle(updated);
+      triggerAlert('success', `Article "${currentArticle.title}" verified!`);
+      await fetchArticles();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Verification failed';
+      triggerAlert('error', msg);
+    } finally {
+      setIsVerifying(false);
+    }
   };
 
   // CRUD: Delete active article
@@ -457,6 +497,7 @@ export const App: React.FC = () => {
           initialDescription={editorSlug !== '' && currentArticle ? currentArticle.description : ''}
           initialSource={editorSlug !== '' && currentArticle ? currentArticle.source : ''}
           initialResource={editorSlug !== '' && currentArticle ? currentArticle.resource : ''}
+          initialStaleAfter={editorSlug !== '' && currentArticle ? (currentArticle.stale_after ? currentArticle.stale_after.split('T')[0] : '') : ''}
           articleType={editorSlug !== '' && currentArticle ? currentArticle.type : undefined}
           slug={editorSlug}
           onSave={handleSaveArticle}
@@ -588,9 +629,37 @@ export const App: React.FC = () => {
                         </span>
                       )}
                     </div>
-                    {/* Read-only type badge + status + tag badges */}
-                    {(isAgentDoc(currentArticle) || currentArticle.status || currentArticle.memory_kind || (currentArticle.tags && currentArticle.tags.length > 0)) && (
+                    {/* Read-only type badge + trust tier + status + tag badges */}
+                    {(isAgentDoc(currentArticle) || currentArticle.status || currentArticle.memory_kind || currentArticle.trust_tier || (currentArticle.tags && currentArticle.tags.length > 0)) && (
                       <div className="flex flex-wrap gap-1.5 mt-3 select-none">
+                        {/* Trust Tier badge */}
+                        {currentArticle.trust_tier === 'human-reviewed' && (
+                          <span
+                            title="Trust Tier: Human-Reviewed"
+                            className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/10 dark:bg-emerald-400/10 border border-emerald-500/30 dark:border-emerald-400/30 text-emerald-700 dark:text-emerald-300 shadow-xs"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400"></span>
+                            🟢 Human-Reviewed
+                          </span>
+                        )}
+                        {currentArticle.trust_tier === 'machine-confirmed' && (
+                          <span
+                            title="Trust Tier: Machine-Confirmed"
+                            className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-blue-500/10 dark:bg-blue-400/10 border border-blue-500/30 dark:border-blue-400/30 text-blue-700 dark:text-blue-300 shadow-xs"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500 dark:bg-blue-400"></span>
+                            🔵 Machine-Confirmed
+                          </span>
+                        )}
+                        {currentArticle.trust_tier === 'unverified' && (
+                          <span
+                            title="Trust Tier: Unverified"
+                            className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-slate-500/10 dark:bg-slate-400/10 border border-slate-500/30 dark:border-slate-400/30 text-slate-600 dark:text-slate-400 shadow-xs"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500"></span>
+                            ⚪ Unverified
+                          </span>
+                        )}
                         {currentArticle.status && (
                           <span
                             title="Lifecycle status"
@@ -644,6 +713,15 @@ export const App: React.FC = () => {
                   </div>
                   {/* Actions buttons */}
                   <div className="flex items-center justify-end gap-2 self-stretch no-print mt-1">
+                    <button
+                      onClick={handleVerifyArticle}
+                      disabled={isVerifying}
+                      title="Verify Article as Human Operator"
+                      className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-semibold text-xs shadow-xs hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer disabled:opacity-50"
+                    >
+                      <CheckCircle size={12} className="text-emerald-500" />
+                      <span>{isVerifying ? 'Verifying...' : 'Verify'}</span>
+                    </button>
                     <button
                       onClick={handleTriggerEdit}
                       className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-semibold text-xs shadow-xs hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer"
@@ -731,6 +809,23 @@ export const App: React.FC = () => {
 
                 {/* Rendered Markdown Body Content */}
                 <div className="pb-16 animate-fade-in space-y-6">
+                  {currentArticle.is_stale && (
+                    <div
+                      data-testid="stale-concept-warning"
+                      className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 shadow-xs flex items-center gap-3 no-print select-none backdrop-blur-sm animate-fade-in"
+                    >
+                      <AlertTriangle size={18} className="text-amber-500 shrink-0" />
+                      <div className="text-xs leading-relaxed">
+                        ⚠️ Stale Concept: this document passed its freshness expiration date and may need review.
+                        {currentArticle.stale_after && (
+                          <span className="text-[11px] opacity-80 ml-1.5">
+                            (Expired: {currentArticle.stale_after.split('T')[0]})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {isSkill(currentArticle) && (
                     <div className="p-5 rounded-2xl bg-gradient-to-tr from-indigo-500/5 to-purple-500/5 border border-indigo-500/25 dark:border-indigo-500/15 text-slate-700 dark:text-slate-300 shadow-xs flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between no-print select-none backdrop-blur-sm">
                       <div className="flex items-center gap-3">
@@ -790,6 +885,55 @@ export const App: React.FC = () => {
                     onNavigate={handleNavigate}
                     articles={articles}
                   />
+
+                  {currentArticle.sources && currentArticle.sources.length > 0 && (
+                    <div
+                      data-testid="sources-section"
+                      className="p-5 rounded-2xl bg-slate-50/80 dark:bg-slate-900/40 border border-slate-200/80 dark:border-slate-800/80 space-y-3"
+                    >
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                        <BookOpen size={13} className="text-indigo-500" />
+                        Sources ({currentArticle.sources.length})
+                      </h4>
+                      <div className="space-y-2">
+                        {currentArticle.sources.map((src, idx) => (
+                          <div
+                            key={src.id || idx}
+                            className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/60 text-xs space-y-1"
+                          >
+                            <div className="flex flex-wrap items-baseline gap-2">
+                              {src.title && <span className="font-semibold text-slate-900 dark:text-white">{src.title}</span>}
+                              {src.author && <span className="text-slate-500 dark:text-slate-400">by {src.author}</span>}
+                              {src.resource && (
+                                /^https?:\/\//i.test(src.resource) ? (
+                                  <a
+                                    href={src.resource}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-indigo-500 dark:text-indigo-400 hover:underline break-all"
+                                  >
+                                    {src.resource}
+                                  </a>
+                                ) : (
+                                  <span className="font-mono text-[11px] text-slate-600 dark:text-slate-300 break-all">{src.resource}</span>
+                                )
+                              )}
+                            </div>
+                            {(src.usage_count !== undefined || src.last_modified) && (
+                              <div className="flex flex-wrap gap-3 text-[10px] text-slate-400 dark:text-slate-500">
+                                {src.usage_count !== undefined && (
+                                  <span>Usage count: {src.usage_count}</span>
+                                )}
+                                {src.last_modified && (
+                                  <span>Last modified: {formatDate(src.last_modified)}</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <BacklinksPanel slug={currentArticle.slug} onNavigate={handleNavigate} />
                 </div>
