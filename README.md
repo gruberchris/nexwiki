@@ -43,7 +43,15 @@ flowchart LR
     Harnesses -->|1. Build Faster\n2. Verify Correctness| Output[Verified Output]
 ```
 
-![NexWiki Demo: Creating an Article](images/create_article_demo.gif)
+### 🖥️ Interactive Web UI
+Experience creating, formatting, and organizing articles in NexWiki's responsive web interface.
+
+![NexWiki Web UI: Creating an Article](images/create_article_demo.gif)
+
+### 🤖 AI Agent MCP Ingestion
+Watch an AI agent harness ingest an unformatted Slack decision snippet into NexWiki over MCP and instantly query the newly grounded context.
+
+![NexWiki MCP Demo: Agent Ingesting Context](images/agent_mcp_demo.gif)
 
 ---
 
