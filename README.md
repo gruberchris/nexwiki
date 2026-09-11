@@ -90,7 +90,7 @@ chmod +x nexwiki-*-linux-amd64    # Linux x86_64
 .\nexwiki-1.0.0-windows-amd64.exe
 ```
 
-Open your browser to `http://localhost:8080`. NexWiki will create a `./data` directory in the current folder to store your articles and search index.
+Open your browser to `http://localhost:8080`. On first launch NexWiki creates its data directory automatically (`articles/`, `assets/`, `history/`, search index): `~/.config/nexwiki/nexwiki-data/` on macOS/Linux (`$XDG_CONFIG_HOME/nexwiki/nexwiki-data/` when that env var is set to an absolute path), `%AppData%\nexwiki\nexwiki-data` on Windows, or `./data` as a fallback when no home/config directory is available. Pass `-data <path>` to override. Docker still uses `/app/data` via the image `ENTRYPOINT`. Upgrading from an older binary that used `./data`? Pass `-data ./data` once or copy that folder to the new default to keep your existing wiki.
 
 #### 4. Configuration
 
@@ -99,7 +99,7 @@ All settings can be set via CLI flags. The `NEXWIKI_NAME`, `NEXWIKI_THEME`, and 
 | Option | CLI Flag | Env Variable | Default | Description |
 |---|---|---|---|---|
 | HTTP port | `-port` | — | `8080` | Port the web server listens on |
-| Data directory | `-data` | — | `./data` | Directory for articles, assets, and the search index |
+| Data directory | `-data` | — | `~/.config/nexwiki/nexwiki-data` (macOS/Linux), `%AppData%\nexwiki\nexwiki-data` (Windows), `./data` fallback | Directory for articles, assets, and the search index (`/app/data` in Docker via `ENTRYPOINT`) |
 | Wiki name | `-name` | `NEXWIKI_NAME` | `NexWiki` | Title displayed in the UI and HTML headers |
 | Default theme | `-theme` | `NEXWIKI_THEME` | `default` | Initial active color theme |
 | Seasonal themes | `-theme-scheduling` | `NEXWIKI_THEME_SCHEDULING` | `false` | Enable automatic annual seasonal theme switching |
