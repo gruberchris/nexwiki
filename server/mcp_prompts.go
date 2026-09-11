@@ -14,7 +14,7 @@ func promptDefinitions() []map[string]interface{} {
 	return []map[string]interface{}{
 		{
 			"name":        "article_creation_workflow",
-			"description": "Guides the agent on how to correctly search for styling/formatting guidelines and custom memories before writing a new Wiki article, to avoid inconsistencies.",
+			"description": "Guides the agent on how to search for styling guidelines, custom memories, and declare OKF v0.2 sources with credibility signals and footnote links [^id]: ... before writing a new Wiki article.",
 			"arguments": []map[string]interface{}{
 				{
 					"name":        "title",
@@ -65,20 +65,28 @@ func (srv *Server) getPrompt(params json.RawMessage) (interface{}, *JSONRPCError
 
 		promptText := fmt.Sprintf(`You are an AI assistant tasked with creating a new article titled "%s" in the user's NexWiki knowledge base.
 
-Before you begin writing the article, you MUST follow these steps to ensure format consistency and align with the user's rules:
+Before you begin writing the article, you MUST follow these steps to ensure format consistency, provenance, and alignment with user rules:
 1. Call 'list_agent_memories' or search for memory articles using 'search_wiki' specifically looking for "rules", "formatting", or "style guide" memories regarding this type of article (e.g., programming language guides, system architecture templates, etc.).
 2. If any formatting guidelines or style memories are found, read their contents using 'read_article'.
 3. Incorporate those styles, sections, structure, and constraints strictly into the new article's content.
-4. Write the article content in clean, semantic Markdown.
-5. Save the article using 'create_wiki_article'. Include a helpful edit summary detailing the style guidelines you incorporated.
-6. Let the user know you successfully incorporated the specific style rules you found.`, title)
+4. Write the article content in clean, semantic Markdown. When citing external documentation, specifications, or reference materials, use OKF v0.2 footnote links matching source identifiers (e.g. '[^id]: https://...' or inline citations '[^id]').
+5. Save the article using 'create_wiki_article'. When sources are known, provide the structured 'sources' array with credibility signals:
+   - id: identifier matching inline footnotes (e.g., 'src1')
+   - resource: canonical URL, URI, or reference
+   - title: document or page title
+   - author: optional creator or publisher
+   - usage_count: optional reference count
+   - last_modified: optional ISO 8601 timestamp
+   Set 'stale_after' if the concept has a known freshness expiration date.
+   Include a helpful edit summary detailing the style guidelines and sources you incorporated.
+6. Let the user know you successfully incorporated the specific style rules and provenance sources you recorded.`, title)
 
 		if desc != "" {
 			promptText += fmt.Sprintf("\n\nArticle Outline/Description: %s", desc)
 		}
 
 		return map[string]interface{}{
-			"description": "Guides the agent on how to correctly search for styling/formatting guidelines and custom memories before writing a new Wiki article.",
+			"description": "Guides the agent on how to correctly search for styling/formatting guidelines, custom memories, and OKF v0.2 sources before writing a new Wiki article.",
 			"messages": []map[string]interface{}{
 				{
 					"role": "user",

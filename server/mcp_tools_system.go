@@ -240,7 +240,7 @@ func (srv *Server) toolGetRecentActivity(args json.RawMessage) (interface{}, *JS
 var exportOkfBundleTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "export_okf_bundle",
-		"description": "Export the entire knowledge base as a conformant Open Knowledge Format (OKF v0.1) bundle (a .zip). The bundle hierarchy is synthesized from each document's type, with reserved index.md / log.md files and bundle-relative links. Writes the archive into the data directory and returns its path.",
+		"description": "Export the entire knowledge base as a conformant Open Knowledge Format (OKF v0.2) bundle (a .zip, with dual-era OKF v0.1 support). The bundle hierarchy is synthesized from each document's type, with reserved index.md / log.md files and bundle-relative links. Writes the archive into the data directory and returns its path.",
 		"inputSchema": map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -267,7 +267,7 @@ func (srv *Server) toolExportOkfBundle(args json.RawMessage) (interface{}, *JSON
 var importOkfBundleTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "import_okf_bundle",
-		"description": "Import an Open Knowledge Format (OKF v0.1) bundle (.zip) from a filesystem path into the knowledge base. Each concept document is created or updated (dedup by slug), bundle-relative links are translated back to WikiLinks, and a permissive conformance report is returned (documents missing a type default to Wiki and are flagged rather than rejected).",
+		"description": "Import an Open Knowledge Format (OKF v0.2) bundle (.zip, with dual-era OKF v0.1 support) from a filesystem path into the knowledge base. Each concept document is created or updated (dedup by slug), bundle-relative links are translated back to WikiLinks, and a permissive conformance report is returned (documents missing a type default to Wiki and are flagged rather than rejected).",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -592,5 +593,41 @@ func TestWikiHealthUnreferencedSkillsIgnoresNonSkills(t *testing.T) {
 	_, _ = srv.Storage.SaveArticle("", "Retired Skill", "# s", "", "", "", "", []string{"archived"}, ContentTypeSkill)
 	if c := healthReport(t, srv, `{}`).UnreferencedSkillCount; c != 0 {
 		t.Errorf("archived skills must not be flagged, got %d", c)
+	}
+}
+
+// TestWikiHealthFlagsStaleConcepts verifies that wiki_health flags an article with a past stale_after in stale_concepts.
+func TestWikiHealthFlagsStaleConcepts(t *testing.T) {
+	srv := newMCPServer(t)
+
+	// Past stale_after -> should be flagged in stale_concepts
+	pastDate := "2020-01-01"
+	resp1 := toolCall(t, srv, fmt.Sprintf(`{"name":"create_wiki_article","arguments":{"title":"Expired Concept","content":"# Expired\n\nOld content.","stale_after":"%s"}}`, pastDate))
+	if resp1.IsError {
+		t.Fatalf("failed to create expired article: %s", resp1.Content[0].Text)
+	}
+
+	// Future stale_after -> should NOT be flagged
+	resp2 := toolCall(t, srv, `{"name":"create_wiki_article","arguments":{"title":"Fresh Concept","content":"# Fresh\n\nNew content.","stale_after":"2035-01-01"}}`)
+	if resp2.IsError {
+		t.Fatalf("failed to create fresh article: %s", resp2.Content[0].Text)
+	}
+
+	out := healthReport(t, srv, `{}`)
+	if out.StaleConceptCount != 1 {
+		t.Errorf("expected 1 stale concept, got %d", out.StaleConceptCount)
+	}
+	got := findingSlugs(out.StaleConcepts)
+	if !got["expired-concept"] {
+		t.Errorf("expected 'expired-concept' in stale_concepts, got: %+v", out.StaleConcepts)
+	}
+	if got["fresh-concept"] {
+		t.Errorf("'fresh-concept' must not be reported in stale_concepts")
+	}
+	if len(out.StaleConcepts) > 0 {
+		expectedDetail := "Expired on 2020-01-01 (trust tier: unverified)"
+		if out.StaleConcepts[0].Detail != expectedDetail {
+			t.Errorf("expected detail %q, got %q", expectedDetail, out.StaleConcepts[0].Detail)
+		}
 	}
 }

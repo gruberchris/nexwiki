@@ -1152,6 +1152,8 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 		art.Sources = *overrides.Sources
 		if len(art.Sources) > 0 && art.Source == "" {
 			art.Source = art.Sources[0].Resource
+		} else if len(art.Sources) == 0 {
+			art.Source = ""
 		}
 	} else if source != "" {
 		if len(art.Sources) == 0 {
