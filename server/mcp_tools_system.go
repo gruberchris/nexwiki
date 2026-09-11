@@ -291,10 +291,41 @@ func (srv *Server) toolImportOkfBundle(args json.RawMessage) (interface{}, *JSON
 	if e := decodeToolArgs(args, &iArgs); e != nil {
 		return nil, e
 	}
-	if strings.TrimSpace(iArgs.Path) == "" {
+	trimmedPath := strings.TrimSpace(iArgs.Path)
+	if trimmedPath == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'path' argument"}
 	}
-	data, err := os.ReadFile(iArgs.Path)
+
+	cleanedDataDir := filepath.Clean(srv.Storage.DataDir)
+	if abs, err := filepath.Abs(cleanedDataDir); err == nil {
+		cleanedDataDir = abs
+	}
+
+	targetPath := trimmedPath
+	if !filepath.IsAbs(targetPath) {
+		targetPath = filepath.Join(srv.Storage.DataDir, targetPath)
+	}
+	resolvedPath := filepath.Clean(targetPath)
+	if abs, err := filepath.Abs(resolvedPath); err == nil {
+		resolvedPath = abs
+	}
+
+	dataDirPrefix := cleanedDataDir
+	if !strings.HasSuffix(dataDirPrefix, string(filepath.Separator)) {
+		dataDirPrefix += string(filepath.Separator)
+	}
+
+	if resolvedPath != cleanedDataDir && !strings.HasPrefix(resolvedPath, dataDirPrefix) {
+		return ToolResponse{
+			IsError: true,
+			Content: []ToolContent{{
+				Type: "text",
+				Text: fmt.Sprintf("Error: path %q is outside the allowed data directory. For security, OKF bundles can only be imported from within the data directory.", iArgs.Path),
+			}},
+		}, nil
+	}
+
+	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error reading bundle at '%s': %v", iArgs.Path, err)}}}, nil
 	}

@@ -1493,3 +1493,103 @@ func TestVersionConflictMessage(t *testing.T) {
 		t.Errorf("re-reading should be conditional, got: %s", msg)
 	}
 }
+
+func TestMCPImportOKFBundlePathValidation(t *testing.T) {
+	srv := newMCPServer(t)
+
+	// Create a valid bundle by exporting the current wiki
+	bundleBytes, err := srv.Storage.ExportOKFBundle()
+	if err != nil {
+		t.Fatalf("ExportOKFBundle failed: %v", err)
+	}
+
+	// 1. Write valid bundle files inside DataDir
+	validBundleFilename := "test-bundle.zip"
+	validBundlePath := filepath.Join(srv.Storage.DataDir, validBundleFilename)
+	if err := os.WriteFile(validBundlePath, bundleBytes, 0644); err != nil {
+		t.Fatalf("failed to write test bundle inside DataDir: %v", err)
+	}
+
+	// 2. Reject paths outside DataDir
+	outsidePaths := []string{
+		"../outside.zip",
+		"../../outside.zip",
+		"/etc/passwd",
+		"/tmp/some.zip",
+		filepath.Join(t.TempDir(), "some.zip"),
+		srv.Storage.DataDir + "-evil/bundle.zip",
+	}
+
+	for _, path := range outsidePaths {
+		callJSON, err := json.Marshal(map[string]interface{}{
+			"name": "import_okf_bundle",
+			"arguments": map[string]interface{}{
+				"path": path,
+			},
+		})
+		if err != nil {
+			t.Fatalf("json.Marshal failed: %v", err)
+		}
+		resp := toolCall(t, srv, string(callJSON))
+		if !resp.IsError {
+			t.Errorf("expected error for path outside DataDir %q, but got success: %v", path, resp.Content)
+			continue
+		}
+		expectedMsg := fmt.Sprintf("Error: path %q is outside the allowed data directory. For security, OKF bundles can only be imported from within the data directory.", path)
+		if len(resp.Content) == 0 || resp.Content[0].Text != expectedMsg {
+			t.Errorf("path %q: expected error message %q, got %q", path, expectedMsg, resp.Content[0].Text)
+		}
+	}
+
+	// 3. Accept valid bundle files inside DataDir - relative path
+	relCallJSON, err := json.Marshal(map[string]interface{}{
+		"name": "import_okf_bundle",
+		"arguments": map[string]interface{}{
+			"path": validBundleFilename,
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	respRel := toolCall(t, srv, string(relCallJSON))
+	if respRel.IsError {
+		t.Fatalf("expected success for relative path inside DataDir, got error: %s", respRel.Content[0].Text)
+	}
+	if !strings.Contains(respRel.Content[0].Text, "OKF import complete") {
+		t.Errorf("expected import confirmation in response, got: %s", respRel.Content[0].Text)
+	}
+
+	// 4. Accept valid bundle files inside DataDir - absolute path
+	absCallJSON, err := json.Marshal(map[string]interface{}{
+		"name": "import_okf_bundle",
+		"arguments": map[string]interface{}{
+			"path": validBundlePath,
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	respAbs := toolCall(t, srv, string(absCallJSON))
+	if respAbs.IsError {
+		t.Fatalf("expected success for absolute path inside DataDir, got error: %s", respAbs.Content[0].Text)
+	}
+	if !strings.Contains(respAbs.Content[0].Text, "OKF import complete") {
+		t.Errorf("expected import confirmation in response, got: %s", respAbs.Content[0].Text)
+	}
+
+	// 5. Test empty or whitespace path returns RPC error -32602
+	for _, emptyPath := range []string{"", "   ", "\t\n"} {
+		emptyCallJSON, _ := json.Marshal(map[string]interface{}{
+			"name": "import_okf_bundle",
+			"arguments": map[string]interface{}{
+				"path": emptyPath,
+			},
+		})
+		_, rpcErr := srv.executeToolCallInternal(emptyCallJSON)
+		if rpcErr == nil {
+			t.Errorf("expected RPC error for empty path %q, got nil", emptyPath)
+		} else if rpcErr.Code != -32602 {
+			t.Errorf("expected RPC error code -32602, got %d (%s)", rpcErr.Code, rpcErr.Message)
+		}
+	}
+}
