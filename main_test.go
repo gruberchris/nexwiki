@@ -16,6 +16,85 @@ func TestMainFunctionality(t *testing.T) {
 	t.Log("Server package imported successfully")
 }
 
+func TestResolveBindHost(t *testing.T) {
+	tests := []struct {
+		name        string
+		flagBind    string
+		envBind     string
+		inContainer bool
+		want        string
+	}{
+		{
+			name:        "native default",
+			flagBind:    "",
+			envBind:     "",
+			inContainer: false,
+			want:        "127.0.0.1",
+		},
+		{
+			name:        "container default",
+			flagBind:    "",
+			envBind:     "",
+			inContainer: true,
+			want:        "",
+		},
+		{
+			name:        "flag overrides all",
+			flagBind:    "0.0.0.0",
+			envBind:     "",
+			inContainer: false,
+			want:        "0.0.0.0",
+		},
+		{
+			name:        "flag overrides env",
+			flagBind:    "192.168.1.10",
+			envBind:     "127.0.0.1",
+			inContainer: false,
+			want:        "192.168.1.10",
+		},
+		{
+			name:        "env overrides default",
+			flagBind:    "",
+			envBind:     "0.0.0.0",
+			inContainer: false,
+			want:        "0.0.0.0",
+		},
+		{
+			name:        "env overrides container default",
+			flagBind:    "",
+			envBind:     "127.0.0.1",
+			inContainer: true,
+			want:        "127.0.0.1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveBindHost(tt.flagBind, tt.envBind, tt.inContainer)
+			if got != tt.want {
+				t.Errorf("resolveBindHost(%q, %q, %v) = %q, want %q",
+					tt.flagBind, tt.envBind, tt.inContainer, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsRunningInContainer(t *testing.T) {
+	t.Run("kubernetes env detection", func(t *testing.T) {
+		t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+		if !isRunningInContainer() {
+			t.Errorf("expected isRunningInContainer to return true when KUBERNETES_SERVICE_HOST is set")
+		}
+	})
+
+	t.Run("container env detection", func(t *testing.T) {
+		t.Setenv("CONTAINER", "docker")
+		if !isRunningInContainer() {
+			t.Errorf("expected isRunningInContainer to return true when CONTAINER is set")
+		}
+	})
+}
+
 func TestResolveDefaultDataDir_Unix(t *testing.T) {
 	cases := []struct {
 		name string
