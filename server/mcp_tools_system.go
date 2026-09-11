@@ -257,6 +257,9 @@ func (srv *Server) toolExportOkfBundle(args json.RawMessage) (interface{}, *JSON
 	}
 	fileName := fmt.Sprintf("okf-export-%s.zip", time.Now().UTC().Format("2006-01-02T15-04-05Z"))
 	outPath := filepath.Join(srv.Storage.DataDir, fileName)
+	if abs, err := filepath.Abs(outPath); err == nil {
+		outPath = abs
+	}
 	if err := os.WriteFile(outPath, data, 0644); err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error writing OKF bundle to disk: %v", err)}}}, nil
 	}
@@ -301,18 +304,22 @@ func (srv *Server) toolImportOkfBundle(args json.RawMessage) (interface{}, *JSON
 		cleanedDataDir = abs
 	}
 
+	dataDirPrefix := cleanedDataDir
+	if !strings.HasSuffix(dataDirPrefix, string(filepath.Separator)) {
+		dataDirPrefix += string(filepath.Separator)
+	}
+
 	targetPath := trimmedPath
 	if !filepath.IsAbs(targetPath) {
-		targetPath = filepath.Join(srv.Storage.DataDir, targetPath)
+		if absCwd, err := filepath.Abs(targetPath); err == nil && (absCwd == cleanedDataDir || strings.HasPrefix(absCwd, dataDirPrefix)) {
+			targetPath = absCwd
+		} else {
+			targetPath = filepath.Join(srv.Storage.DataDir, targetPath)
+		}
 	}
 	resolvedPath := filepath.Clean(targetPath)
 	if abs, err := filepath.Abs(resolvedPath); err == nil {
 		resolvedPath = abs
-	}
-
-	dataDirPrefix := cleanedDataDir
-	if !strings.HasSuffix(dataDirPrefix, string(filepath.Separator)) {
-		dataDirPrefix += string(filepath.Separator)
 	}
 
 	if resolvedPath != cleanedDataDir && !strings.HasPrefix(resolvedPath, dataDirPrefix) {
