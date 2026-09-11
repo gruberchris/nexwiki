@@ -6,9 +6,52 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-### Fixed
+## [0.17.0] — 2026-09-11
 
-- **`read_article` MCP tool returns the Markdown body in both `content[0].text` and `structuredContent.article.content`.** A post-0.13.0 change moved the Markdown body exclusively into `structuredContent` to avoid duplicating payloads on the wire for structured clients like Claude Code. However, because `content` is required by the MCP specification and `structuredContent` is optional, standard text-reading MCP clients (including Claude Desktop, Cursor, Antigravity, and custom agent harnesses) received only metadata and a pointer sentence without the article body. The body now ships in both places, adhering to the MCP specification's backward-compatibility recommendation and guaranteeing seamless interoperability across the entire agent ecosystem.
+### Added
+- **Open Knowledge Format (OKF v0.2) Specification Support**:
+  - Full native support for conformant OKF v0.2 concept documents with YAML front matter metadata, retaining transparent dual-era backward compatibility with OKF v0.1 documents.
+  - Implemented the 5 OKF trust signals: provenance (`sources`), trust verification (`verified`), freshness (`stale_after`), lifecycle (`status`), and attested computations.
+  - Added human verification tiers (`human-reviewed`, `machine-confirmed`, `unverified`) with prominent responsive reader badges and a one-click verification action (`POST /api/articles/{slug}/verify`).
+  - Upgraded bidirectional OKF bundle import and export (`export_okf_bundle`, `import_okf_bundle`, `/api/okf/*`) to OKF v0.2.
+  - Added `docs/okf_v02_guide.md` documentation manual.
+- **Cross-Platform Release Install & Runner Scripts**:
+  - Added `scripts/install.sh` (macOS/Linux) and `scripts/install.ps1` (Windows) to download and install the latest released binary with automatic SHA256 checksum verification.
+  - Added `scripts/docker-run.sh` (macOS/Linux) and `scripts/docker-run.ps1` (Windows) to pull the latest multi-arch GHCR image and mount the OS-correct data directory.
+  - Added companion uninstallers `scripts/uninstall.sh` and `scripts/uninstall.ps1` that remove the binary while leaving all user wiki data untouched.
+  - Added `docs/install_scripts_guide.md`.
+- **Browser Auto-Launch**:
+  - Added `-launch-in-browser` CLI flag and `NEXWIKI_LAUNCH_BROWSER` environment variable to automatically open the wiki URL in the system default browser once the server is ready.
+- **Documentation Hub Reorganization & 5 Dedicated Guides**:
+  - Expanded `docs/README.md` and added 5 focused technical guides:
+    - `docs/configuration.md`: Complete CLI flag, environment variable, precedence, and OS storage path reference.
+    - `docs/docker_deployment.md`: Container runtime, persistent volumes (`/app/data`), and Docker Compose setup.
+    - `docs/production_deployment.md`: Caddy and Nginx reverse proxy configs with mandatory unbuffered SSE/MCP stream directives.
+    - `docs/developer_guide.md`: Developer workflow, local build commands, frontend HMR dev mode, and Makefile cross-compilation.
+    - `docs/release_guide.md`: Pre-1.0 SemVer rules, CI release gating, changelog stamping, and release pipeline.
+- **Visual Demonstrations**:
+  - Embedded animated Web UI demo (`images/create_article_demo.gif`) and VHS terminal demo (`images/agent_mcp_demo.gif` with reproducible tape `assets/vhs/agent_mcp_demo.tape`) in `README.md`.
+
+### Changed
+- **Default HTTP Port Changed to 5808**:
+  - Switched default server listening port from `8080` to `5808` across binary defaults, Docker entrypoints, and documentation.
+- **OS-Aware Default Storage Directory for Native Executables**:
+  - Native binary executions now resolve standard OS data directories: `~/.config/nexwiki/nexwiki-data` on macOS/Linux and `%AppData%\nexwiki\nexwiki-data` on Windows (with `./data` fallback), preserving existing setups without data loss.
+- **Default Loopback Binding for Native Executables**:
+  - Native executions default to binding `127.0.0.1` for local machine security, while containerized executions auto-detect containers and default to `0.0.0.0`.
+- **README Redesign**:
+  - Redesigned `README.md` into a concise, focused overview (~150 lines) centering NexWiki as the personal context consolidation repository and AI verification foundation.
+  - Added copy-pasteable remote one-liners (`curl ... | bash` and `irm ... | iex`) for binary and Docker installations.
+
+### Security
+- **Filesystem Jailing for OKF Bundle Imports**:
+  - Confined `import_okf_bundle` MCP tool path access strictly to the server's data directory (`srv.Storage.DataDir`), mitigating arbitrary filesystem reads and path traversal escapes.
+- **Baseline Content Security Policy & Framing Restrictions**:
+  - Enforced baseline `Content-Security-Policy` header (`default-src 'self'`, `frame-ancestors 'none'`) and updated `X-Frame-Options` to `DENY` across web application and API endpoints.
+
+### Fixed
+- **`read_article` MCP tool text body restoration**:
+  - Restored Markdown body in `content[0].text` alongside `structuredContent.article.content` for standard text-reading MCP clients.
 
 ## [0.16.0] — 2026-09-07
 
@@ -404,7 +447,10 @@ Completes the memory-enforcement work begun in 0.14.0. That release moved three 
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/gruberchris/nexwiki/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/gruberchris/nexwiki/compare/v0.15.1...v0.16.0
+[0.15.1]: https://github.com/gruberchris/nexwiki/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/gruberchris/nexwiki/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/gruberchris/nexwiki/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/gruberchris/nexwiki/compare/v0.12.3...v0.13.0
