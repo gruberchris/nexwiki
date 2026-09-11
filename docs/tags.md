@@ -17,7 +17,7 @@ When editing any wiki article inside the split-pane **Editor**:
 3. Press **Enter** or type a **comma (`,`)** to commit the tag.
 4. Click **Save Page** to write the tags to the article's front-matter.
 
-Tags are saved directly inside the flat-file Markdown front-matter, which is real YAML conforming to the **Open Knowledge Format (OKF v0.1)**:
+Tags are saved directly inside the flat-file Markdown front-matter, which is real YAML conforming to the **Open Knowledge Format (OKF v0.2)**:
 ```yaml
 ---
 type: Wiki
@@ -32,10 +32,21 @@ timestamp: "2026-05-31T15:30:00Z"
 created_at: "2026-05-31T15:00:00Z"
 version: 3
 edit_summary: Updated connection pool size
+sources:
+    - id: pg-pool
+      resource: https://www.postgresql.org/docs/16/runtime-config-connection.html
+      title: PostgreSQL Connection Settings
+stale_after: "2027-01-01T00:00:00Z"
+generated:
+    by: nexwiki/mcp
+    at: "2026-05-31T15:30:00Z"
+verified:
+    - by: human:local
+      at: "2026-06-01T10:00:00Z"
 ---
 ```
 
-> The `type` key is the document's **class discriminator** and is managed by NexWiki — see [Protected AI Documents](#-protected-ai-agent-memories-plans--skills) below. `timestamp` is the last-modified time; there is no `updated_at` key.
+> The `type` key is the document's **class discriminator** and is managed by NexWiki — see [Protected AI Documents](#-protected-ai-agent-memories-plans--skills) below. `timestamp` is the canonical modified time (OKF), synchronized with `generated.at`. In OKF v0.2, frontmatter also natively carries provenance (`sources`), trust lineage (`generated`, `verified`), freshness (`stale_after`), and lifecycle (`status`), keeping open folksonomy tags clean. See the [OKF v0.2 Guide](./okf_v02_guide.md) for full specifications.
 
 ### 2. Removing and Deleting Tags
 * **Remove a tag from an article**: Click the tiny `×` on the tag badge in the Editor, then save the page.
@@ -136,14 +147,15 @@ Every write path enforces the contract: a save that leaves a plan without a vali
 
 AI-driven documents are **not** distinguished by tags. Every NexWiki document carries an OKF **`type`** front-matter key — its class discriminator — and that is what separates regular articles from AI-managed ones.
 
-There are exactly four types:
+There are five recognized document types:
 
 | `type` | Created by | Description |
 |---|---|---|
-| `Wiki` | `create_wiki_article` / the web UI | The default for all regular articles. The only non-reserved type. |
+| `Wiki` | `create_wiki_article` / the web UI | The default for all regular articles. The primary non-reserved type. |
 | `AI-Agent-Memory` | `create_agent_memory` | Durable agent knowledge (troubleshooting logs, decisions, conventions, rules). Protected from bulk deletion. |
 | `AI-Agent-Plan` | `create_agent_plan` | Roadmaps that **either** you or the agent can create, edit, and complete. |
 | `AI-Agent-Skill` | `create_agent_skill` / the UI Skill button | Reusable procedural agent instructions (`SKILL.md` format). Exposed as a custom Skills Registry. |
+| `Attested Computation` | Import / API | OKF v0.2 executable scripts, runtimes, typed parameters, and attestation specifications. |
 
 > **Historical note:** earlier versions of NexWiki keyed these classes off `aiagent-*` tag prefixes. Those class tags were removed when NexWiki adopted OKF — the class now lives in `type`. You will not find `aiagent-plan` or `aiagent-memory-*` tags on current documents.
 

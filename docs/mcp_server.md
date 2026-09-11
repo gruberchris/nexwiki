@@ -308,7 +308,7 @@ State is per resolved agent, bounded (8 lookups each, 64 agents, least-recently-
 
 ## 🛠️ Exposed MCP Tools
 
-> **Native OKF storage & document `type`.** Every NexWiki `.md` file is a conformant Open Knowledge Format (OKF v0.1) concept document at rest (real YAML front matter). Each document carries a `type` — exactly one of **`Wiki`** (regular articles) or the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags remain: **status tags** (e.g. `wip`, `completed`, `inbox`) and tool-managed **memory-scope tags** (`memory-<scope>`).
+> **Native OKF storage & document `type`.** Every NexWiki `.md` file is a conformant Open Knowledge Format (OKF v0.2) concept document at rest (real YAML front matter, with dual-era OKF v0.1 backward compatibility). Each document carries a `type` — `Wiki`, `Attested Computation`, or one of the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags remain: **status tags** (e.g. `wip`, `completed`, `inbox`) and tool-managed **memory-scope tags** (`memory-<scope>`).
 
 > **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port (and is the primary that persists the activity log); if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server, it forwards its activity events to it; with no NexWiki web server, it persists the log itself. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
 
@@ -351,8 +351,8 @@ Retrieves the raw Markdown content and Yaml-style front-matter configurations of
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target article (e.g. `home` or `setup-guide`).
 * **Behavior**:
-  Reads the Markdown file on disk and parses the front-matter metadata. The text block is a metadata header — Type, Title, Slug, **Version**, Created, Updated, plus Description, Resource, Source and Tags when set — followed by a line naming where the body ships. If other articles link to this page — via `[[WikiLinks]]` or absolute `/articles/<slug>` Markdown links — a `Linked from:` section is appended (capped at 15 entries) so agents can traverse the knowledge graph in reverse.
-* **Structured output**: `structuredContent` as `{article, backlinks[]}`. **The raw Markdown body is `article.content`** — this is the only tool whose structured payload carries a body, and the only copy of it in the response. The article also includes `version`, to pass straight to `edit_wiki_article` as `loaded_version`. Unlike the prose, `backlinks` is not capped at 15.
+  Reads the Markdown file on disk and parses the front-matter metadata conforming to OKF v0.2. The text block is a metadata header — Type, Title, Slug, **Version**, Created, Updated, plus Description, Resource, Source, Sources (`[id] Title (resource)`), Tags, **Trust Tier** (`🟢 Human-Reviewed`, `🔵 Machine-Confirmed`, `⚪ Unverified`), and Attested Computation details (`Runtime`, `Parameters`) when present. If the concept has exceeded its freshness date (`stale_after`), a prominent warning is included: `⚠️ STALE CONCEPT: this document passed its freshness expiration on YYYY-MM-DD`. Followed by a line naming where the body ships. If other articles link to this page — via `[[WikiLinks]]` or absolute `/articles/<slug>` Markdown links — a `Linked from:` section is appended (capped at 15 entries) so agents can traverse the knowledge graph in reverse.
+* **Structured output**: `structuredContent` as `{article, backlinks[]}`. **The raw Markdown body is `article.content`** — this is the only tool whose structured payload carries a body, and the only copy of it in the response. The article also includes `version` (to pass straight to `edit_wiki_article` as `loaded_version`), plus OKF v0.2 metadata: `sources`, `trust_tier`, `generated`, `verified`, `stale_after`, `is_stale`, and computation fields when applicable. Unlike the prose, `backlinks` is not capped at 15.
   > **Reading the body from the text block will not work.** It shipped there through 0.13.0, and for that one release it shipped in neither half: 0.13.0 removed it from `structuredContent` on the premise that every MCP client renders the text block, which is false for clients that read the structured result of a tool declaring an `outputSchema`. If a body is what you need and you cannot read `structuredContent`, use the `nexwiki://article/<slug>` resource.
 
 ---
@@ -374,28 +374,34 @@ Creates a new wiki article with a given title and raw Markdown content body.
   * `title` (string, **required**): The human-readable title of the new article (e.g. "React Hooks Guide"). Use the subject's own name — never a tool name, an action verb, or a placeholder, since the slug is derived from it and a wrong title strands the article at a meaningless URL.
   * `content` (string, **required**): The raw Markdown content of the article body.
   * `description` (string, **optional**): A one-line summary shown in list indexes and the context overview.
-  * `source` (string, **optional**): Provenance — the URL, document, or reference this knowledge came from. AI-created articles SHOULD cite their source.
+  * `source` (string, **optional**): Legacy provenance — the URL, document, or reference this knowledge came from. AI-created articles SHOULD cite their source.
+  * `resource` (string, **optional**): Canonical OKF URI identifying what the concept *is* (e.g. an official spec or homepage URL). Distinct from `source`.
   * `tags` (array of strings, **optional**): Any tags you like — wiki articles are never policed and have no lifecycle status. Tool-managed `memory-<scope>` tags are reserved and will be ignored if provided.
   * `edit_summary` (string, **optional**): A summary describing the reason for creating the page.
+  * `sources` (array of objects, **optional**): Array of source objects with credibility signals (OKF v0.2 provenance). Each source carries `resource` (string, **required**), and optional `id`, `title`, `author`, `usage_count`, `last_modified`.
+  * `stale_after` (string, **optional**): Optional ISO 8601 timestamp (e.g. `2026-12-31`) after which the article's freshness expires.
 * **Behavior**:
-  Automatically handles title slugification, checks for slug collisions, serializes the metadata block, commits the first version backup snapshot, saves the flat Markdown file on disk, and indexes the new article in Bleve for search.
+  Automatically handles title slugification, checks for slug collisions, stamps `generated: { by: "nexwiki/mcp", at: <now> }`, calculates initial trust tier (`unverified`), serializes the OKF v0.2 metadata block, commits the first version backup snapshot, saves the flat Markdown file on disk, and indexes the new article in Bleve for search.
 
 ---
 
 ### 5. `edit_wiki_article`
-Modifies the title, Markdown content, tags, or edit the summary of an existing wiki article.
+Modifies the title, Markdown content, tags, or edit summary of an existing wiki article.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL slug of the article to edit.
   * `title` (string, **required**): The updated title of the article.
   * `content` (string, **required**): The updated raw Markdown content of the article body.
   * `description` (string, **optional**): New one-line summary. Omit or pass empty to preserve the existing description.
-  * `source` (string, **optional**): New provenance reference. Omit or pass empty to preserve the existing source.
+  * `source` (string, **optional**): New legacy provenance reference. Omit or pass empty to preserve the existing source.
+  * `resource` (string, **optional**): New canonical OKF URI. Omit to preserve, pass empty string `""` to clear.
   * `tags` (array of strings, **optional**): Tags to set on the article (replaces existing user tags; tool-managed `memory-<scope>` tags are always preserved). Call `get_status_tags` to see the recognized status values (e.g. `completed`, `review`). Omit to leave existing tags unchanged.
   * `loaded_version` (integer, **required**): The current version number loaded by the AI agent.
   * `edit_summary` (string, **optional**): A summary detailing the modifications.
+  * `sources` (array of objects, **optional**): Optional array of source objects. Omit to preserve existing sources, pass empty array `[]` to clear.
+  * `stale_after` (string, **optional**): Optional ISO 8601 timestamp after which the article is considered stale. Omit to preserve, pass empty string `""` to clear.
 * **Behavior**:
-  Employs **optimistic locking** to prevent write collision conflicts. If the `loaded_version` does not match the active version on disk, the write aborts with a conflict message. On success, it creates a new gzipped history backup snapshot (`.md.gz`), writes the updated flat Markdown file, and refreshes the search index.
+  Employs **optimistic locking** to prevent write collision conflicts. If the `loaded_version` does not match the active version on disk, the write aborts with a conflict message. On success, stamps updated `generated` metadata, creates a new gzipped history backup snapshot (`.md.gz`), writes the updated flat Markdown file, and refreshes the search index.
 
 > **A conflict names the value to retry with.** Every optimistic-locking failure — on `edit_wiki_article`, `edit_agent_memory`, `edit_agent_plan`, `edit_agent_skill`, and `update_article_tags` — reports the version on disk *and* the exact `loaded_version` to send next:
 >
@@ -747,19 +753,19 @@ Recent wiki activity (3 events, oldest first):
 ```
 
 ### 27. `export_okf_bundle`
-Exports the entire knowledge base as a conformant **Open Knowledge Format (OKF v0.1) bundle** (a `.zip`).
+Exports the entire knowledge base as a conformant **Open Knowledge Format (OKF v0.2) bundle** (a `.zip`, with dual-era OKF v0.1 support).
 
 * **Arguments**: none.
 * **Behavior**:
-  Native files are already OKF YAML, so export synthesizes the **bundle hierarchy** from each document's `type` (`wiki/`, `aimemories/`, `aiplans/`, `aiskills/`), the reserved per-directory and root `index.md` files (the root carries `okf_version: "0.1"`), a date-grouped `log.md` built from the durable activity log, and translates `[[WikiLinks]]` into bundle-relative concept paths (`/wiki/<slug>.md`, OKF §5.1). The archive is written into the data directory and its path is returned. REST equivalent: `GET /api/okf/export` (streams the `.zip` as a download).
+  Native files are already OKF YAML, so export synthesizes the **bundle hierarchy** from each document's `type` (`wiki/`, `aimemories/`, `aiplans/`, `aiskills/`, and `computations/` for Attested Computations), the reserved per-directory and root `index.md` files (the root carries `okf_version: "0.2"`), a date-grouped `log.md` built from the durable activity log, and translates `[[WikiLinks]]` into bundle-relative concept paths (`/wiki/<slug>.md`, OKF §5.1). Full OKF v0.2 trust metadata (`sources`, `generated`, `verified`, `stale_after`, computation specifications) are preserved. The archive is written into the data directory and its path is returned. REST equivalent: `GET /api/okf/export` (streams the `.zip` as a download).
 
 ### 28. `import_okf_bundle`
-Imports an **OKF v0.1 bundle** (`.zip`) from a filesystem path into the knowledge base.
+Imports an **Open Knowledge Format (OKF v0.2) bundle** (`.zip`, with dual-era OKF v0.1 support) from a filesystem path into the knowledge base.
 
 * **Arguments**:
   * `path` (string, **required**): Filesystem path to the `.zip` bundle.
 * **Behavior**:
-  Walks the bundle, parses each non-reserved `.md` as an OKF concept document, maps its `type` (reserved value → agent class; otherwise `Wiki`), translates bundle-relative Markdown links back to `[[WikiLinks]]`, and creates/updates each article via the storage layer (dedup by slug; reserved `index.md`/`log.md` are consumed). The importer is **permissive** (OKF §9): a document with a missing/unknown type defaults to `Wiki` and is flagged in the returned conformance report rather than rejected. REST equivalent: `POST /api/okf/import` (multipart `file` upload).
+  Walks the bundle, parses each non-reserved `.md` as an OKF concept document, maps its `type` (reserved values → agent classes / Attested Computation; otherwise `Wiki`), translates bundle-relative Markdown links back to `[[WikiLinks]]`, and creates/updates each article via the storage layer (dedup by slug; reserved `index.md`/`log.md` are consumed). Legacy status tags on older bundles are automatically extracted into the `status` field, and all OKF v0.2 trust signals (`sources`, `verified`, `generated`, `stale_after`, computation runtime/params/executor/attester) are preserved. The importer is **permissive** (OKF §9): a document with a missing/unknown type defaults to `Wiki` and is flagged in the returned conformance report rather than rejected. REST equivalent: `POST /api/okf/import` (multipart `file` upload).
 
 ---
 
@@ -771,7 +777,7 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   * `cold_days` (integer, *optional*): How many days a memory may go unread and unedited before counting as cold. Default `90`.
   * `limit` (integer, *optional*): Maximum items reported **per category**. Default `50`, maximum `500`. Counts are always complete even when the lists are capped.
 * **Behavior**:
-  Runs seven checks over a single cached pass of the article directory — the same `LinkGraph` scan `get_wiki_statistics` uses, so the two tools can never disagree about the same wiki:
+  Runs ten checks over a single cached pass of the article directory — the same `LinkGraph` scan `get_wiki_statistics` uses, so the two tools can never disagree about the same wiki:
 
   | Check | Finds | Why it matters |
   |---|---|---|
@@ -779,6 +785,7 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   | **Broken internal links** | The target does not exist | Names the `target_slug` a fix has to create, and the `form` the link was written in |
   | **Memories with no `source`** | An `AI-Agent-Memory` with empty provenance | A fact that cannot be re-verified later |
   | **Stale plans** | An `AI-Agent-Plan` untouched for `stale_days`, never marked finished, and not parked | Work that quietly stopped |
+  | **Stale concepts** | Any document that has passed its `stale_after` expiration date | Outdated assumptions or deprecated guidance go unreviewed |
   | **Cold memories** | An `AI-Agent-Memory` neither read nor edited within `cold_days` | Knowledge nothing consults is either settled or quietly wrong |
   | **Duplicate memories** | Two memories in the same `memory-<scope>` with closely matching titles | Two answers to one question drift apart |
   | **Unkinded memories** | An `AI-Agent-Memory` with no `memory_kind` — written before the axis existed | Kind-filtered recall cannot find it. This is the backfill worklist; classify with `edit_agent_memory` |
@@ -796,12 +803,13 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   * **`home` is never an orphan.** Nothing links to a front page.
   * **A plan tagged `completed`, `done`, or `superseded` is never stale**, however old, even if it still also carries `wip`. The terminal tag wins.
   * **A plan tagged `parked`, `deferred`, `tabled`, `on-hold`, or `someday` is not stale either.** Parked is not finished — the work may still happen — but it *is* a decision, and re-reporting a decision teaches you to skip the report. Parked plans are reported as a count, so the number is not mistaken for plans that fell off the list by accident.
+  * **Stale concepts report expiration date and trust tier.** When `stale_after` is exceeded, the finding detail indicates when the document expired and whether it was human-reviewed, machine-confirmed, or unverified.
   * **The cold-memory check refuses to run when it cannot be trusted.** Recency comes from the activity log, so on a fresh install — or after `NEXWIKI_ACTIVITY_MAX_ARCHIVES` pruning — the log may be younger than `cold_days`, and then *every* memory looks untouched. Rather than report all of them, the check is skipped and `cold_memory_scan_ran` is `false` with `cold_memory_skipped_reason` saying why.
   * **Reads keep a memory warm.** A memory the agent keeps consulting is alive even if nobody has edited it in a year — that is what a good memory looks like.
   * **Duplicate detection is scoped, and skips pairs that already link to each other.** A "Deployment Notes" memory about `docker` and one about `nexwiki` are separate by design. And when two memories reference one another, their author already knows both exist and has decided to keep them apart. It reports similarity, not disagreement: telling the two apart needs semantics NexWiki deliberately does not have.
 
   A stale plan does **not** need an in-flight tag. Requiring `wip` sounds tidier but makes the check incapable of firing on a real wiki, where plans typically carry a project tag and nothing else — what matters is that the plan was never marked finished and nobody has touched it since. When an in-flight tag (`wip`, `in-progress`, `draft`, `active`, `todo`, `pending`, `review`, `blocked`) *is* present, the report names it.
-* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], unkinded_memory_count, unkinded_memories[], contested_memory_count, contested_memories[], stale_plan_count, stale_plans[], unreferenced_skill_count, unreferenced_skills[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`).
+* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], unkinded_memory_count, unkinded_memories[], contested_memory_count, contested_memories[], stale_plan_count, stale_plans[], stale_concept_count, stale_concepts[], unreferenced_skill_count, unreferenced_skills[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count, plan_status_census}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`).
 
 **Examples**
 
