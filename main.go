@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -27,6 +28,55 @@ var embeddedFrontend embed.FS
 // using: go build -ldflags "-X main.Version=0.1.0"
 var Version = "0.1.0"
 
+// defaultDataDir returns the OS-aware default wiki content directory for
+// bare-binary launches (no explicit -data flag).
+//
+//   - Windows: %AppData%\nexwiki\nexwiki-data (os.UserConfigDir), falling
+//     back to %USERPROFILE%\.config\nexwiki\nexwiki-data, then ./data.
+//   - Linux/macOS: $XDG_CONFIG_HOME/nexwiki/nexwiki-data when XDG_CONFIG_HOME
+//     is an absolute path, else $HOME/.config/nexwiki/nexwiki-data, then ./data.
+//
+// macOS deliberately uses ~/.config (not ~/Library/Application Support) so the
+// default matches Linux. Docker is unaffected: the image ENTRYPOINT always
+// passes an explicit -data=/app/data which overrides this default.
+func defaultDataDir() string {
+	if runtime.GOOS == "windows" {
+		cfgDir, _ := os.UserConfigDir()
+		var home string
+		if h, err := os.UserHomeDir(); err == nil {
+			home = h
+		}
+		return resolveDefaultDataDir(runtime.GOOS, "", cfgDir, home)
+	}
+	var home string
+	if h, err := os.UserHomeDir(); err == nil {
+		home = h
+	}
+	return resolveDefaultDataDir(runtime.GOOS, os.Getenv("XDG_CONFIG_HOME"), "", home)
+}
+
+// resolveDefaultDataDir is the pure, testable core of defaultDataDir. Empty
+// strings mean "unavailable" (unset env, lookup error). cfgDir is only
+// consulted on Windows; xdg is only consulted on non-Windows.
+func resolveDefaultDataDir(goos, xdg, cfgDir, home string) string {
+	if goos == "windows" {
+		if cfgDir != "" {
+			return filepath.Join(cfgDir, "nexwiki", "nexwiki-data")
+		}
+		if home != "" {
+			return filepath.Join(home, ".config", "nexwiki", "nexwiki-data")
+		}
+		return "./data"
+	}
+	if xdg != "" && filepath.IsAbs(xdg) {
+		return filepath.Join(xdg, "nexwiki", "nexwiki-data")
+	}
+	if home != "" {
+		return filepath.Join(home, ".config", "nexwiki", "nexwiki-data")
+	}
+	return "./data"
+}
+
 func main() {
 	// Force all log statements to print exclusively to Stderr!
 	// This prevents logs from corrupting the Stdio MCP JSON-RPC communication on Stdout.
@@ -34,7 +84,7 @@ func main() {
 
 	// Set up command-line configurations
 	port := flag.String("port", "8080", "Port to run the web server on")
-	dataDir := flag.String("data", "./data", "Directory to persist wiki markdown files and assets")
+	dataDir := flag.String("data", defaultDataDir(), "Directory to persist wiki markdown files and assets")
 	wikiName := flag.String("name", "NexWiki", "The custom name/title of your wiki displayed in the UI")
 	theme := flag.String("theme", "default", "The default theme of your wiki")
 	themeScheduling := flag.Bool("theme-scheduling", false, "Enable opt-in seasonal theme scheduling auto-swaps")
