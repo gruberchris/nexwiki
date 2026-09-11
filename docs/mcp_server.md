@@ -761,9 +761,9 @@ Exports the entire knowledge base as a conformant **Open Knowledge Format (OKF v
 Imports an **Open Knowledge Format (OKF v0.2) bundle** (`.zip`, with dual-era OKF v0.1 support) from a filesystem path into the knowledge base.
 
 * **Arguments**:
-  * `path` (string, **required**): Filesystem path to the `.zip` bundle.
+  * `path` (string, **required**): Filesystem path to the .zip bundle. Must be located inside the wiki's data directory (relative paths resolve against the data directory).
 * **Behavior**:
-  Walks the bundle, parses each non-reserved `.md` as an OKF concept document, maps its `type` (reserved values → agent classes / Attested Computation; otherwise `Wiki`), translates bundle-relative Markdown links back to `[[WikiLinks]]`, and creates/updates each article via the storage layer (dedup by slug; reserved `index.md`/`log.md` are consumed). Legacy status tags on older bundles are automatically extracted into the `status` field, and all OKF v0.2 trust signals (`sources`, `verified`, `generated`, `stale_after`, computation runtime/params/executor/attester) are preserved. The importer is **permissive** (OKF §9): a document with a missing/unknown type defaults to `Wiki` and is flagged in the returned conformance report rather than rejected. REST equivalent: `POST /api/okf/import` (multipart `file` upload).
+  Walks the bundle, parses each non-reserved `.md` as an OKF concept document, maps its `type` (reserved values → agent classes / Attested Computation; otherwise `Wiki`), translates bundle-relative Markdown links back to `[[WikiLinks]]`, and creates/updates each article via the storage layer (dedup by slug; reserved `index.md`/`log.md` are consumed). Legacy status tags on older bundles are automatically extracted into the `status` field, and all OKF v0.2 trust signals (`sources`, `verified`, `generated`, `stale_after`, computation runtime/params/executor/attester) are preserved. Paths attempting to escape the data directory are rejected for security. The importer is **permissive** (OKF §9): a document with a missing/unknown type defaults to `Wiki` and is flagged in the returned conformance report rather than rejected. REST equivalent: `POST /api/okf/import` (multipart `file` upload).
 
 ---
 

@@ -265,3 +265,81 @@ func TestMCPEndpointReturns413ForOversizedBody(t *testing.T) {
 			w3.Code, strings.TrimSpace(w3.Body.String()))
 	}
 }
+
+// TestApplySecurityHeaders verifies that baseline hardening headers, including Content-Security-Policy
+// and X-Frame-Options: DENY, are applied directly and via EnableCORS middleware.
+func TestApplySecurityHeaders(t *testing.T) {
+	// 1. Direct applySecurityHeaders check
+	rec := httptest.NewRecorder()
+	applySecurityHeaders(rec)
+
+	if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("X-Frame-Options: got %q, want %q", got, "DENY")
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options: got %q, want %q", got, "nosniff")
+	}
+	if got := rec.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Errorf("Referrer-Policy: got %q, want %q", got, "no-referrer")
+	}
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	expectedDirectives := []string{
+		"default-src 'self'",
+		"script-src 'self'",
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data: blob: https:",
+		"font-src 'self' data:",
+		"connect-src 'self'",
+		"media-src 'self'",
+		"object-src 'none'",
+		"base-uri 'self'",
+		"frame-ancestors 'none'",
+	}
+	for _, directive := range expectedDirectives {
+		if !strings.Contains(csp, directive) {
+			t.Errorf("Content-Security-Policy missing directive %q; got: %q", directive, csp)
+		}
+	}
+
+	// 2. EnableCORS middleware check (normal request)
+	handler := EnableCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/articles", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Code)
+	}
+	if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("EnableCORS X-Frame-Options: got %q, want %q", got, "DENY")
+	}
+	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("EnableCORS X-Content-Type-Options: got %q, want %q", got, "nosniff")
+	}
+	if got := w.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Errorf("EnableCORS Referrer-Policy: got %q, want %q", got, "no-referrer")
+	}
+	if gotCSP := w.Header().Get("Content-Security-Policy"); gotCSP != csp {
+		t.Errorf("EnableCORS Content-Security-Policy: got %q, want %q", gotCSP, csp)
+	}
+
+	// 3. EnableCORS middleware check (rejected origin)
+	reqForbidden := httptest.NewRequest(http.MethodGet, "/api/articles", nil)
+	reqForbidden.Header.Set("Origin", "http://unauthorized.evil.com")
+	wForbidden := httptest.NewRecorder()
+	handler.ServeHTTP(wForbidden, reqForbidden)
+
+	if wForbidden.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden, got %d", wForbidden.Code)
+	}
+	if got := wForbidden.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("EnableCORS forbidden response X-Frame-Options: got %q, want %q", got, "DENY")
+	}
+	if gotCSP := wForbidden.Header().Get("Content-Security-Policy"); gotCSP != csp {
+		t.Errorf("EnableCORS forbidden response Content-Security-Policy: got %q, want %q", gotCSP, csp)
+	}
+}

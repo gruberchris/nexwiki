@@ -91,7 +91,7 @@ func main() {
 	themeScheduling := flag.Bool("theme-scheduling", false, "Enable opt-in seasonal theme scheduling auto-swaps")
 	mcpOnly := flag.Bool("mcp-only", false, "Run as a pure stdio MCP server (skip the web port bind entirely)")
 	launchBrowser := flag.Bool("launch-in-browser", false, "Open the wiki URL in the system default web browser on startup")
-	bindAddr := flag.String("bind", "", "Network interface to bind (e.g. 127.0.0.1 to accept only local connections). Empty binds all interfaces")
+	bindAddr := flag.String("bind", "", "Network interface to bind (default: 127.0.0.1 for native local security; all interfaces in containers). Set to 0.0.0.0 or NEXWIKI_BIND to bind all interfaces")
 	agentName := flag.String("agent-name", "", "Fallback attribution recorded in the activity log for MCP clients that do not identify themselves. Clients that send MCP clientInfo are credited by their own name regardless of this")
 	flag.Parse()
 
@@ -302,14 +302,11 @@ func main() {
 	// and cap request body sizes so a single request cannot exhaust memory or disk.
 	handler := server.EnableCORS(server.LimitRequestBodies(mux))
 
-	// The MCP spec recommends local servers bind loopback only. That cannot be the default here:
-	// inside a container, binding 127.0.0.1 makes the wiki unreachable from the host, which would
-	// break every existing Docker deployment. So all interfaces stays the default and -bind (or
-	// NEXWIKI_BIND) is the opt-in for people running the binary directly on a shared network.
-	bindHost := *bindAddr
-	if envBind := os.Getenv("NEXWIKI_BIND"); envBind != "" {
-		bindHost = envBind
-	}
+	// Bind host resolution: native desktop execution defaults to binding loopback (127.0.0.1)
+	// to avoid accidental exposure on shared LAN/Wi-Fi networks. In containerized environments,
+	// it defaults to all interfaces ("") so container port mapping functions properly.
+	// Users can explicitly configure binding via -bind flag or NEXWIKI_BIND environment variable.
+	bindHost := resolveBindHost(*bindAddr, os.Getenv("NEXWIKI_BIND"), isRunningInContainer())
 	addr := fmt.Sprintf("%s:%s", bindHost, *port)
 
 	// Explicit timeouts: the zero-value http.Server has none, leaving the process open to
@@ -354,7 +351,7 @@ func main() {
 	// concatenating it onto "http://localhost" only reads correctly when -bind is unset and the
 	// host half is empty: with -bind 127.0.0.1 it printed "http://localhost127.0.0.1:8137".
 	displayHost := bindHost
-	if displayHost == "" {
+	if displayHost == "" || displayHost == "0.0.0.0" {
 		displayHost = "localhost" // all interfaces: localhost is the address that works locally
 	}
 	log.Printf("NexWiki web server is running on http://%s:%s", displayHost, *port)
@@ -431,6 +428,24 @@ func waitForServer(host, port string, timeout time.Duration) bool {
 	return false
 }
 
+// isRunningInContainer detects whether the process is executing inside a container
+// (such as Docker, Podman, or Kubernetes).
+func isRunningInContainer() bool {
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
+		return true
+	}
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return true
+	}
+	if os.Getenv("CONTAINER") != "" {
+		return true
+	}
+	return false
+}
+
 // openBrowser opens url in the system default web browser using only stdlib
 // process spawning (no new dependencies, keeps the CGO_ENABLED=0 static build).
 func openBrowser(url string) error {
@@ -452,6 +467,22 @@ func openBrowser(url string) error {
 		}
 	}
 	return cmd.Start()
+}
+
+// resolveBindHost determines the host interface to bind to. Native desktop execution
+// defaults to loopback (127.0.0.1) for security, while containerized environments
+// default to all interfaces ("") to allow container port mapping.
+func resolveBindHost(flagBind string, envBind string, inContainer bool) string {
+	if flagBind != "" {
+		return flagBind
+	}
+	if envBind != "" {
+		return envBind
+	}
+	if inContainer {
+		return ""
+	}
+	return "127.0.0.1"
 }
 
 // probeForPrimary reports whether a NexWiki web server is already running on the given port,

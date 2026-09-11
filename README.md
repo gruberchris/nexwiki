@@ -114,7 +114,7 @@ All settings can be set via CLI flags. The `NEXWIKI_NAME`, `NEXWIKI_THEME`, and 
 | Activity archive cap | — | `NEXWIKI_SECRET_SCAN` | `refuse` | Disposition when an agent write carries credential-shaped text: `refuse`, `warn`, or `off` |
 | `NEXWIKI_ACTIVITY_MAX_ARCHIVES` | unlimited | Maximum number of rotated `activity-<UTC>.jsonl` archives to retain |
 | Agent attribution | `-agent-name` | `NEXWIKI_AGENT_NAME` | (unset) | Name recorded in the activity log for MCP clients that do not identify themselves. Clients sending MCP `clientInfo` are credited by their own name regardless. **Not** the same as `-name`, which is the wiki's display title |
-| Bind interface | `-bind` | `NEXWIKI_BIND` | (all interfaces) | Network interface to bind, e.g. `127.0.0.1` to accept only local connections. Leave unset for Docker |
+| Bind interface | `-bind` | `NEXWIKI_BIND` | `127.0.0.1` (all interfaces in Docker) | Network interface to bind (defaults to `127.0.0.1` natively for local security; all interfaces in containers). Set to `0.0.0.0` to bind all interfaces |
 | Extra browser origins | — | `NEXWIKI_ALLOWED_ORIGINS` | (loopback only) | Comma-separated origins allowed to call the API from a browser, e.g. `https://wiki.example.com`. Needed only when serving NexWiki from a DNS name |
 
 > **Bind-or-halt:** a normal launch *is* the web server — it binds the port or exits rather than silently falling back. To run a stdio MCP server next to an already-running instance, use `-mcp-only`.
