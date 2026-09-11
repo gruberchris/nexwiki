@@ -112,7 +112,8 @@ func originAllowed(origin, host string) (string, bool) {
 func applySecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
 }
 
 // applyCORSHeaders echoes the validated origin (never "*" unless explicitly opted in) and

@@ -4,7 +4,7 @@
 
 **NexWiki has no authentication.** There are no accounts, no passwords, and no API tokens. Anyone who can reach the port has full read, write, and delete access to every article — and to every MCP tool, including `delete_wiki_article`, `import_okf_bundle`, and `export_okf_bundle`.
 
-NexWiki is designed for **a single user on a trusted machine or private network**. That is the supported deployment.
+NexWiki is designed for **a single user on a trusted machine or private network**. That is the supported deployment. Native binaries default to binding strictly to `127.0.0.1`, keeping unauthenticated access limited to the local machine, while containers bind to `0.0.0.0` for Docker port publishing.
 
 > ⚠️ **Do not expose NexWiki directly to the public internet.** The reverse-proxy examples in the [README](./README.md#3-setting-up-ssl--reverse-proxy-caddy--nginx) terminate TLS; they do **not** add access control. If you need NexWiki reachable from outside your network, put it behind something that authenticates — a VPN (Tailscale, WireGuard), an identity-aware proxy, or your reverse proxy's own auth (e.g. Caddy `basic_auth`, `oauth2-proxy`).
 
@@ -30,10 +30,12 @@ DNS names are deliberately not auto-trusted via the same-origin rule: that would
 
 ## Other hardening in place
 
+- A baseline Content Security Policy (`frame-ancestors 'none'`, `script-src 'self'`, etc.) is enforced and `X-Frame-Options` is set to `DENY` to protect against clickjacking and frame injection.
 - Uploaded SVGs are served with `Content-Disposition: attachment` and a restrictive CSP, so they cannot execute as same-origin scripts. Inline `<img>` embedding still works.
 - Upload MIME types must agree with the file extension, and all assets are served with `X-Content-Type-Options: nosniff`.
 - Search snippets are HTML-escaped before rendering.
 - The HTTP server sets read and idle timeouts.
+- In `import_okf_bundle`, bundle paths are strictly validated and jailed to the wiki data directory, preventing arbitrary host filesystem reads.
 
 ## Secret scanning on agent writes
 

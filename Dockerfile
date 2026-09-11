@@ -66,5 +66,8 @@ EXPOSE 8080
 # Persistent storage mount point for articles and uploaded assets
 VOLUME ["/app/data"]
 
+# Explicitly bind all interfaces inside containers for host port-mapping
+ENV NEXWIKI_BIND=0.0.0.0
+
 # Run the single binary, directing persistence to the mounted volume
 ENTRYPOINT ["/app/nexwiki", "-port=8080", "-data=/app/data"]
