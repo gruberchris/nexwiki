@@ -1918,18 +1918,21 @@ type SearchResult struct {
 	Tags     []string `json:"tags,omitempty"`
 }
 
-// SearchArticles searches for keywords inside article titles and contents, returning HTML highlighted snippets.
+// SearchArticles is the human/browser convenience wrapper: whole-corpus search across wiki
+// articles, agent memories, plans, and skills (same default as the search_wiki MCP tool).
+// Archived documents stay excluded unless the query itself names them — the browser UI has no
+// archived toggle, so typing "archived" is the only way a human can surface them.
 func (s *Storage) SearchArticles(queryStr string) ([]SearchResult, error) {
-	return s.SearchArticlesWithOptions(queryStr, SearchOptions{legacyQueryHeuristics: true})
+	return s.SearchArticlesWithOptions(queryStr, SearchOptions{
+		IncludeArchived: strings.Contains(strings.ToLower(queryStr), "archived"),
+	})
 }
 
 // SearchArticlesWithOptions runs a full-text search with explicit facets.
 //
-// The distinction from SearchArticles matters. The human sidebar wants agent documents hidden by
-// default — they would drown out the wiki. An *agent* searching its own second brain wants the
-// opposite: memories and plans are the whole point, and hiding them means the agent re-derives
-// knowledge it already recorded. Facets make that an explicit choice by the caller rather than a
-// property of the query text.
+// The default (zero value) spans every document type: memories and plans are the point of the
+// second brain, and hiding them means re-deriving knowledge already recorded. Facets make
+// narrowing an explicit choice by the caller rather than a property of the query text.
 func (s *Storage) SearchArticlesWithOptions(queryStr string, opts SearchOptions) ([]SearchResult, error) {
 	if queryStr == "" {
 		return []SearchResult{}, nil
