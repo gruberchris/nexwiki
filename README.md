@@ -81,12 +81,15 @@ Pulls the latest multi-arch image (`ghcr.io/gruberchris/nexwiki:latest`) and aut
 
 - **macOS / Linux**:
   ```bash
-  ./scripts/docker-run.sh
+  curl -fsSL https://raw.githubusercontent.com/gruberchris/nexwiki/main/scripts/docker-run.sh | bash
   ```
+  *(or run `./scripts/docker-run.sh` from a cloned repo)*
+
 - **Windows (PowerShell)**:
   ```powershell
-  .\scripts\docker-run.ps1
+  irm https://raw.githubusercontent.com/gruberchris/nexwiki/main/scripts/docker-run.ps1 | iex
   ```
+  *(or run `.\scripts\docker-run.ps1` from a cloned repo)*
 
 ### 2. Launching
 

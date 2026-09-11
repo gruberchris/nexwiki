@@ -46,11 +46,19 @@ Uninstallers remove **the binary only** — your wiki content (`~/.config/nexwik
 ## Docker run — latest image, correct data dir
 
 ```bash
+# One-line run without cloning
+curl -fsSL https://raw.githubusercontent.com/gruberchris/nexwiki/main/scripts/docker-run.sh | bash
+
+# From a cloned repository
 ./scripts/docker-run.sh
 IMAGE=ghcr.io/gruberchris/nexwiki TAG=v0.2.0 CONTAINER_NAME=nexwiki HOST_PORT=5808 ./scripts/docker-run.sh
 ```
 
 ```powershell
+# One-line run without cloning
+irm https://raw.githubusercontent.com/gruberchris/nexwiki/main/scripts/docker-run.ps1 | iex
+
+# From a cloned repository
 .\scripts\docker-run.ps1
 .\scripts\docker-run.ps1 -Tag v0.2.0 -HostPort 5808
 ```
