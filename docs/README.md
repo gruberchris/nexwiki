@@ -103,7 +103,7 @@ A technical and user guide to the enforced plan status lifecycle:
 ### 14. [NexWiki Install Scripts Guide](./install_scripts_guide.md)
 How to install the latest release without building from source:
 * **Binary Installers**: `scripts/install.sh` (macOS/Linux) and `scripts/install.ps1` (Windows) with SHA256 verification, plus `uninstall` companions that leave wiki data in place.
-* **Docker Runner**: `scripts/docker-run.sh` pulls `ghcr.io/gruberchris/nexwiki:latest` and mounts the OS-correct data directory.
+* **Docker Runner**: `scripts/docker-run.sh` (macOS/Linux) / `scripts/docker-run.ps1` (Windows) pulls `ghcr.io/gruberchris/nexwiki:latest` and mounts the OS-correct data directory.
 * **Browser Launch**: The `-launch-in-browser` flag that opens the wiki once the server answers.
 
 ---

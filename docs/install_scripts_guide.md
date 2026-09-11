@@ -50,6 +50,11 @@ Uninstallers remove **the binary only** — your wiki content (`~/.config/nexwik
 IMAGE=ghcr.io/gruberchris/nexwiki TAG=v0.2.0 CONTAINER_NAME=nexwiki HOST_PORT=5808 ./scripts/docker-run.sh
 ```
 
+```powershell
+.\scripts\docker-run.ps1
+.\scripts\docker-run.ps1 -Tag v0.2.0 -HostPort 5808
+```
+
 What it does:
 1. Resolves the OS-correct data directory (`$XDG_CONFIG_HOME` else `~/.config/nexwiki/nexwiki-data` on Linux, `~/.config/...` on macOS, `%AppData%/nexwiki/nexwiki-data` under Git Bash).
 2. `docker pull`s the latest **released** image (`ghcr.io/gruberchris/nexwiki:latest`).
