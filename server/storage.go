@@ -879,10 +879,18 @@ type ArticleOverrides struct {
 	// MemoryKind classifies what sort of fact a memory holds. See MemoryKinds in tags.go.
 	MemoryKind *string
 	// OKF v0.2 overrides
-	Sources    *[]OKFSource
-	StaleAfter *time.Time
-	Generated  *OKFGenerated
-	Verified   *[]OKFVerification
+	Sources     *[]OKFSource
+	StaleAfter  *time.Time
+	Generated   *OKFGenerated
+	Verified    *[]OKFVerification
+	UsageWindow *OKFUsageWindow
+
+	// Attested Computation overrides (§10)
+	Runtime     *string
+	Parameters  *[]OKFParameter
+	Computation *string
+	Executor    *OKFExecutor
+	Attester    *OKFAttester
 }
 
 // SaveArticleWithStatus is SaveArticle plus an explicit lifecycle status. Retained as the name
@@ -1160,16 +1168,39 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	if overrides.Verified != nil {
 		art.Verified = *overrides.Verified
 	}
-	if overrides.Generated != nil {
-		art.Generated = overrides.Generated
+	if overrides.UsageWindow != nil {
+		art.UsageWindow = overrides.UsageWindow
+	}
+	if overrides.Runtime != nil {
+		art.Runtime = *overrides.Runtime
+	}
+	if overrides.Parameters != nil {
+		art.Parameters = *overrides.Parameters
+	}
+	if overrides.Computation != nil {
+		art.Computation = *overrides.Computation
+	}
+	if overrides.Executor != nil {
+		art.Executor = overrides.Executor
+	}
+	if overrides.Attester != nil {
+		art.Attester = overrides.Attester
 	}
 
-	if art.Generated == nil {
-		art.Generated = &OKFGenerated{By: "nexwiki", At: now}
+	if overrides.Generated != nil {
+		art.Generated = overrides.Generated
+		if art.Generated.At.IsZero() {
+			art.Generated.At = now
+		}
+		art.Timestamp = art.Generated.At
 	} else {
-		art.Generated.At = now
+		if art.Generated == nil {
+			art.Generated = &OKFGenerated{By: "nexwiki", At: now}
+		} else {
+			art.Generated.At = now
+		}
+		art.Timestamp = now
 	}
-	art.Timestamp = now
 	art.TrustTier = DeriveTrustTier(art.Verified)
 	art.IsStale = IsStale(art)
 

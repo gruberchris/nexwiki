@@ -12,17 +12,18 @@ import (
 )
 
 // OKFVersion is the Open Knowledge Format spec version NexWiki emits in the exported bundle root.
-const OKFVersion = "0.1"
+const OKFVersion = "0.2"
 
 // okfDirLabels maps a bundle subdirectory to a human label for the synthesized index headings.
 var okfDirLabels = map[string]string{
-	"wiki":       "Wiki Articles",
-	"aimemories": "Agent Memories",
-	"aiplans":    "Agent Plans",
-	"aiskills":   "Agent Skills",
+	"wiki":         "Wiki Articles",
+	"aimemories":   "Agent Memories",
+	"aiplans":      "Agent Plans",
+	"aiskills":     "Agent Skills",
+	"computations": "Attested Computations",
 }
 
-// ExportOKFBundle serializes the entire knowledge base into a conformant OKF v0.1 bundle (a zip).
+// ExportOKFBundle serializes the entire knowledge base into a conformant OKF v0.2 bundle (a zip).
 // Native files are already OKF YAML, so export mainly synthesizes the bundle hierarchy (by type),
 // the reserved index.md files, a date-grouped log.md, and translates WikiLinks to bundle paths.
 func (s *Storage) ExportOKFBundle() ([]byte, error) {
@@ -259,7 +260,7 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 		// one of the four canonical values — the checks below used to compare against it and could
 		// therefore never fire, leaving MissingType permanently empty. The coercion happened; only
 		// the report of it was missing, which is the half that makes permissiveness auditable.
-		if art.DeclaredType == "" || normalizeType(art.DeclaredType) != art.DeclaredType {
+		if art.DeclaredType == "" || (art.Type == ContentTypeWiki && !strings.EqualFold(strings.TrimSpace(art.DeclaredType), "wiki")) {
 			report.MissingType = append(report.MissingType, art.Slug)
 		}
 
@@ -302,7 +303,43 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 		// export/import round-trip would silently declassify every memory it carried, which is
 		// exactly the corpus-wide data loss a bundle is supposed to prevent.
 		importKind := art.MemoryKind
-		if _, err := s.SaveArticleWithOverrides(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, normalizeType(art.Type), ArticleOverrides{Status: &importStatus, MemoryKind: &importKind}); err != nil {
+
+		overrides := ArticleOverrides{
+			Status:     &importStatus,
+			MemoryKind: &importKind,
+		}
+		if len(art.Sources) > 0 {
+			overrides.Sources = &art.Sources
+		}
+		if art.UsageWindow != nil {
+			overrides.UsageWindow = art.UsageWindow
+		}
+		if art.Generated != nil {
+			overrides.Generated = art.Generated
+		}
+		if len(art.Verified) > 0 {
+			overrides.Verified = &art.Verified
+		}
+		if !art.StaleAfter.IsZero() {
+			overrides.StaleAfter = &art.StaleAfter
+		}
+		if art.Runtime != "" {
+			overrides.Runtime = &art.Runtime
+		}
+		if len(art.Parameters) > 0 {
+			overrides.Parameters = &art.Parameters
+		}
+		if art.Computation != "" {
+			overrides.Computation = &art.Computation
+		}
+		if art.Executor != nil {
+			overrides.Executor = art.Executor
+		}
+		if art.Attester != nil {
+			overrides.Attester = art.Attester
+		}
+
+		if _, err := s.SaveArticleWithOverrides(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, normalizeType(art.Type), overrides); err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: save failed: %v", f.Name, err))
 			continue
 		}

@@ -15,6 +15,7 @@ func TestGetArticleDirectory(t *testing.T) {
 		{"skill", ContentTypeSkill, "aiskills"},
 		{"lowercase memory normalized", "ai-agent-memory", "aimemories"},
 		{"lowercase plan normalized", "ai-agent-plan", "aiplans"},
+		{"computation", ContentTypeComputation, "computations"},
 		{"unknown type defaults to wiki", "Something-Else", "wiki"},
 	}
 

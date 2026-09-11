@@ -522,3 +522,34 @@ func TestRenameHealsAssetLinks(t *testing.T) {
 		t.Errorf("healed asset URL does not resolve: %v", err)
 	}
 }
+
+func TestTranslateLinksComputationsAndFootnotes(t *testing.T) {
+	pathForSlug := map[string]string{
+		"revenue-model": "/computations/revenue-model.md",
+		"core-concept":  "/wiki/core-concept.md",
+	}
+
+	raw := "See [[revenue-model]][^1] and [[core-concept|Core System]].[^note]\n\n[^1]: Reference to [[revenue-model|Revenue Model]].\n[^note]: Footnote note."
+
+	// Export translation
+	exported := TranslateWikiLinksToBundlePaths(raw, pathForSlug)
+	wantExported := "See [revenue-model](/computations/revenue-model.md)[^1] and [Core System](/wiki/core-concept.md).[^note]\n\n[^1]: Reference to [Revenue Model](/computations/revenue-model.md).\n[^note]: Footnote note."
+	if exported != wantExported {
+		t.Errorf("TranslateWikiLinksToBundlePaths:\ngot:  %s\nwant: %s", exported, wantExported)
+	}
+
+	// Import translation
+	imported := TranslateBundleLinksToWikiLinks(exported)
+	// [[revenue-model]] because Slugify("Revenue Model") == "revenue-model" drops the alias,
+	// while [[core-concept|Core System]] preserves the alias because slugs differ.
+	wantImported := "See [[revenue-model]][^1] and [[core-concept|Core System]].[^note]\n\n[^1]: Reference to [[revenue-model]].\n[^note]: Footnote note."
+	if imported != wantImported {
+		t.Errorf("TranslateBundleLinksToWikiLinks:\ngot:  %s\nwant: %s", imported, wantImported)
+	}
+
+	// Footnote reference edge case: [^id](destination.md) must not be corrupted
+	fnLink := "Text with [^1](not-a-bundle-link.md) preserved."
+	if got := TranslateBundleLinksToWikiLinks(fnLink); got != fnLink {
+		t.Errorf("TranslateBundleLinksToWikiLinks corrupted footnote link: got %q, want %q", got, fnLink)
+	}
+}
