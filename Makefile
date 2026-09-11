@@ -48,7 +48,7 @@ docker-build:
 docker-up:
 	@echo "🐳 Starting local container cluster..."
 	docker compose up -d --build
-	@echo "🚀 NexWiki running on http://localhost:8080"
+	@echo "🚀 NexWiki running on http://localhost:5808"
 
 docker-down:
 	@echo "🐳 Stopping local container cluster..."

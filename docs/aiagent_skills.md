@@ -74,7 +74,7 @@ NexWiki registers three lightweight REST API endpoints, allowing any AI agent, C
     "description": "This skill instructs the agent on how to safely prune unused Docker containers, images, and volumes while safeguarding running environments.",
     "tags": ["docker", "devops"],
     "version": 2,
-    "raw_url": "http://localhost:8080/api/skills/docker-cleanup/raw",
+    "raw_url": "http://localhost:5808/api/skills/docker-cleanup/raw",
     "updated_at": "2026-06-01T00:36:25-04:00"
   }
 ]

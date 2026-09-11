@@ -16,7 +16,7 @@ Because NexWiki is unauthenticated and typically runs on `localhost`, any websit
 
 - Requests with **no `Origin` header** — non-browser clients such as `curl`, MCP SDKs, and native apps.
 - **Loopback origins** — the wiki's own UI and the Vite dev server on `:5173`.
-- **Same-origin requests where the host is a loopback address or a bare IP** — for example reaching the wiki from your phone at `http://192.168.1.50:8080`.
+- **Same-origin requests where the host is a loopback address or a bare IP** — for example reaching the wiki from your phone at `http://192.168.1.50:5808`.
 
 If you serve NexWiki from a DNS name (a reverse-proxied domain), name that origin explicitly:
 

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"nexwiki/server"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -83,12 +84,13 @@ func main() {
 	log.SetOutput(os.Stderr)
 
 	// Set up command-line configurations
-	port := flag.String("port", "8080", "Port to run the web server on")
+	port := flag.String("port", "5808", "Port to run the web server on")
 	dataDir := flag.String("data", defaultDataDir(), "Directory to persist wiki markdown files and assets")
 	wikiName := flag.String("name", "NexWiki", "The custom name/title of your wiki displayed in the UI")
 	theme := flag.String("theme", "default", "The default theme of your wiki")
 	themeScheduling := flag.Bool("theme-scheduling", false, "Enable opt-in seasonal theme scheduling auto-swaps")
 	mcpOnly := flag.Bool("mcp-only", false, "Run as a pure stdio MCP server (skip the web port bind entirely)")
+	launchBrowser := flag.Bool("launch-in-browser", false, "Open the wiki URL in the system default web browser on startup")
 	bindAddr := flag.String("bind", "", "Network interface to bind (default: 127.0.0.1 for native local security; all interfaces in containers). Set to 0.0.0.0 or NEXWIKI_BIND to bind all interfaces")
 	agentName := flag.String("agent-name", "", "Fallback attribution recorded in the activity log for MCP clients that do not identify themselves. Clients that send MCP clientInfo are credited by their own name regardless of this")
 	flag.Parse()
@@ -114,6 +116,12 @@ func main() {
 	themeSchedulingEnabled := *themeScheduling
 	if envSched := os.Getenv("NEXWIKI_THEME_SCHEDULING"); envSched != "" {
 		themeSchedulingEnabled = envSched == "true"
+	}
+
+	// Environment variable NEXWIKI_LAUNCH_BROWSER takes precedence over the flag.
+	launchInBrowser := *launchBrowser
+	if envLB := os.Getenv("NEXWIKI_LAUNCH_BROWSER"); envLB != "" {
+		launchInBrowser = envLB == "true" || envLB == "1"
 	}
 
 	log.Printf("Starting NexWiki backend...")
@@ -348,6 +356,16 @@ func main() {
 	}
 	log.Printf("NexWiki web server is running on http://%s:%s", displayHost, *port)
 
+	// Open the wiki in the user's browser when requested. The opener runs in a
+	// goroutine that waits until the server answers /api/config, so the tab
+	// does not land on a connection-refused page on slow disks (first-run
+	// index build). Never fatal: a headless box simply logs a warning.
+	// -mcp-only never reaches here (it returns above), so there is no need to
+	// guard against the headless stdio mode.
+	if launchInBrowser {
+		go waitForServerAndOpenBrowser(probeHost(bindHost), *port, buildAppURL(displayHost, *port))
+	}
+
 	// Bind-or-halt: a normal launch IS the web server. If the port is already in use or
 	// misconfigured, it halts rather than silently falling back. To run a stdio MCP server
 	// alongside an already-running web server, use -mcp-only instead.
@@ -366,6 +384,50 @@ func main() {
 // container runtime allows by default, so the index is always closed before any SIGKILL.
 const shutdownTimeout = 5 * time.Second
 
+// buildAppURL assembles the pasteable/openable wiki URL from the display
+// host (bind interface, or "localhost" when bound to all interfaces) and port.
+func buildAppURL(displayHost, port string) string {
+	return fmt.Sprintf("http://%s:%s", displayHost, port)
+}
+
+// probeHost picks the address waitForServerAndOpenBrowser polls. The server
+// may be bound to a specific interface, so probe that interface — except the
+// wildcard binds, which are not dialable and fall back to loopback.
+func probeHost(bindHost string) string {
+	if bindHost == "" || bindHost == "0.0.0.0" || bindHost == "::" {
+		return "127.0.0.1"
+	}
+	return bindHost
+}
+
+// waitForServerAndOpenBrowser polls /api/config until the server answers (or
+// a deadline passes), then opens appURL in the system default browser.
+// Failures are stderr warnings only — a headless machine must still serve.
+func waitForServerAndOpenBrowser(host, port, appURL string) {
+	waitForServer(host, port, 15*time.Second)
+	if err := openBrowser(appURL); err != nil {
+		log.Printf("Warning: -launch-in-browser could not open %s: %v", appURL, err)
+	}
+}
+
+// waitForServer polls http://host:port/api/config until it answers 200 or
+// timeout elapses. Pure polling, no side effects — safe to unit test.
+func waitForServer(host, port string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 750 * time.Millisecond}
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(fmt.Sprintf("http://%s:%s/api/config", host, port))
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return true
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
 // isRunningInContainer detects whether the process is executing inside a container
 // (such as Docker, Podman, or Kubernetes).
 func isRunningInContainer() bool {
@@ -382,6 +444,29 @@ func isRunningInContainer() bool {
 		return true
 	}
 	return false
+}
+
+// openBrowser opens url in the system default web browser using only stdlib
+// process spawning (no new dependencies, keeps the CGO_ENABLED=0 static build).
+func openBrowser(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		if _, err := exec.LookPath("xdg-open"); err == nil {
+			cmd = exec.Command("xdg-open", url)
+		} else if _, err := exec.LookPath("sensible-browser"); err == nil {
+			cmd = exec.Command("sensible-browser", url)
+		} else if _, err := exec.LookPath("wslview"); err == nil {
+			cmd = exec.Command("wslview", url)
+		} else {
+			return fmt.Errorf("no browser opener found (xdg-open, sensible-browser, wslview)")
+		}
+	}
+	return cmd.Start()
 }
 
 // resolveBindHost determines the host interface to bind to. Native desktop execution
@@ -404,7 +489,7 @@ func resolveBindHost(flagBind string, envBind string, inContainer bool) string {
 // by issuing a short GET /api/config against the loopback interface.
 func probeForPrimary(port string) bool {
 	if port == "" {
-		port = "8080"
+		port = "5808"
 	}
 	client := &http.Client{Timeout: 750 * time.Millisecond}
 	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%s/api/config", port))

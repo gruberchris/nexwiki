@@ -73,7 +73,7 @@ cd nexwiki
 make
 
 # Run the server
-./nexwiki -port=8080 -data=./data -name="NexWiki Development"
+./nexwiki -port=5808 -data=./data -name="NexWiki Development"
 ```
 
 ### Frontend Hot-Reloading Mode
@@ -86,7 +86,7 @@ cd frontend
 npm run dev
 
 # Terminal 2: Go backend
-go run main.go -port=8080 -data=./data
+go run main.go -port=5808 -data=./data
 ```
 
 ### Docker Development

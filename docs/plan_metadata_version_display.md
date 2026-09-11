@@ -37,7 +37,7 @@ To maintain workspace integrity and prevent conflict:
 You can trigger the tool over the HTTP MCP transport layer using a standard `POST` request:
 
 ```bash
-curl -X POST http://localhost:8080/api/mcp \
+curl -X POST http://localhost:5808/api/mcp \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",

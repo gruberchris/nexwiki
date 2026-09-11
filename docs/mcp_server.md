@@ -69,7 +69,7 @@ Over HTTP it must also mirror those fields into headers, which NexWiki validates
 Modern servers must implement it. One request returns supported versions, capabilities, and identity — no handshake needed:
 
 ```bash
-curl -X POST http://localhost:8080/api/mcp \
+curl -X POST http://localhost:5808/api/mcp \
   -H "Content-Type: application/json" \
   -H "MCP-Protocol-Version: 2026-07-28" \
   -H "Mcp-Method: server/discover" \
@@ -159,11 +159,11 @@ A custom scheme rather than `file://`: an article's identity here is its **slug*
 
 ```bash
 # List every document as a resource
-curl -X POST http://localhost:8080/api/mcp -H "Content-Type: application/json" \
+curl -X POST http://localhost:5808/api/mcp -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{}}'
 
 # Read one
-curl -X POST http://localhost:8080/api/mcp -H "Content-Type: application/json" \
+curl -X POST http://localhost:5808/api/mcp -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"nexwiki://article/home"}}'
 ```
 
@@ -180,7 +180,7 @@ A missing resource returns `-32602` with the URI echoed in `data` — never an e
 The events already existed: the same `EventBus` has been driving the browser's live activity drawer all along. This wires that signal to a second consumer.
 
 ```bash
-curl -N -X POST http://localhost:8080/api/mcp -H "Content-Type: application/json" \
+curl -N -X POST http://localhost:5808/api/mcp -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":77,"method":"subscriptions/listen","params":{"notifications":{
         "resourcesListChanged": true,
         "resourceSubscriptions": ["nexwiki://article/bleve-decision"]}}}'
@@ -225,7 +225,7 @@ That is exactly the documented Claude Desktop stdio configuration. It used to ha
 ```
 
 ```
--mcp-only: web server detected on port 8080; running as a proxy to it.
+-mcp-only: web server detected on port 5808; running as a proxy to it.
            The primary owns the data directory; this process forwards MCP traffic to it.
 ```
 
@@ -826,7 +826,7 @@ Audits the knowledge base for maintenance work in one call. Everything it report
 To connect your AI agents (Claude Desktop, Cursor, Copilot CLI, Claude Code, or Google `agy` CLI) to NexWiki, you can choose between two transport models:
 
 1. **Streamable HTTP (Recommended 🚀)**:
-   Connects the client directly to your active running web server on port `8080` (at `http://localhost:8080/api/mcp`).
+   Connects the client directly to your active running web server on port `5808` (at `http://localhost:5808/api/mcp`).
    * **Advantages**: Zero process overhead, and **completely avoids database file lock contentions** (since the active running Go server process maintains exclusive locks, and all clients share it over HTTP).
 2. **Stdio (Process-Based Alternative 📦)**:
    The client spawns its own isolated background process of the `nexwiki` Go executable on demand.
@@ -844,7 +844,7 @@ To connect Cursor:
 4. Configure the server:
    * **Name**: `nexwiki`
    * **Type**: `Streamable HTTP` *(Note: select `SSE` as a fallback if your Cursor version does not list the new 2025 Streamable HTTP type yet)*
-   * **URL**: `http://localhost:8080/api/mcp`
+   * **URL**: `http://localhost:5808/api/mcp`
 5. Click **Save**.
 
 ---
@@ -861,7 +861,7 @@ Add the `nexwiki` server configuration block:
 {
   "mcpServers": {
     "nexwiki": {
-      "url": "http://localhost:8080/api/mcp"
+      "url": "http://localhost:5808/api/mcp"
     }
   }
 }
@@ -891,7 +891,7 @@ Anthropic's terminal agent **Claude Code** (`claude` CLI) can dynamically connec
 #### Option A: Streamable HTTP (Recommended)
 Run this command in your shell to register the running server:
 ```bash
-claude mcp add --transport http nexwiki http://localhost:8080/api/mcp
+claude mcp add --transport http nexwiki http://localhost:5808/api/mcp
 ```
 
 #### Option B: Stdio Process Fallback
@@ -909,7 +909,7 @@ GitHub Copilot's CLI environment supports connecting to custom HTTP/SSE servers.
 {
   "mcpServers": {
     "nexwiki": {
-      "url": "http://localhost:8080/api/mcp"
+      "url": "http://localhost:5808/api/mcp"
     }
   }
 }

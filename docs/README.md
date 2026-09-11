@@ -93,13 +93,18 @@ A technical and user guide to the enforced plan status lifecycle:
 * **Safety Guards**: Dry-run mode, the activity-log audit trail, and the backlink guard that refuses to delete referenced plans.
 * **The One-Time Migration**: How existing status tags are moved into the `status` field on first boot.
 
-### 13. [NexWiki Open Knowledge Format (OKF v0.2) Guide](./okf_v02_guide.md)
-A comprehensive guide to the Open Knowledge Format (OKF v0.2) specification implementation in NexWiki:
+### 13. [NexWiki Open Knowledge Format (OKF v0.2) Guide](./okf_v02_guide.md)A comprehensive guide to the Open Knowledge Format (OKF v0.2) specification implementation in NexWiki:
 * **The 5 Trust Signals**: Provenance (`sources`), Trust (`generated`, `verified`), Freshness (`stale_after`), Lifecycle (`status`), and Attested Computations.
 * **Trust Tiers & Human Verification**: How `human-reviewed`, `machine-confirmed`, and `unverified` tiers are derived, displayed with responsive badges, and confirmed via the one-click Verify button.
 * **Freshness & Stale Concepts**: Setting expiration timestamps, prominent reader alerts, and `wiki_health` automated diagnostics.
 * **Attested Computations**: Defining reproducible algorithms, runtimes, typed parameters, executors, and attester verification receipts.
 * **Dual-Era Interoperability**: Transparent coexistence, automatic migration of legacy fields, and bundle import/export round-tripping for OKF v0.1 and v0.2.
+
+### 14. [NexWiki Install Scripts Guide](./install_scripts_guide.md)
+How to install the latest release without building from source:
+* **Binary Installers**: `scripts/install.sh` (macOS/Linux) and `scripts/install.ps1` (Windows) with SHA256 verification, plus `uninstall` companions that leave wiki data in place.
+* **Docker Runner**: `scripts/docker-run.sh` (macOS/Linux) / `scripts/docker-run.ps1` (Windows) pulls `ghcr.io/gruberchris/nexwiki:latest` and mounts the OS-correct data directory.
+* **Browser Launch**: The `-launch-in-browser` flag that opens the wiki once the server answers.
 
 ---
 
