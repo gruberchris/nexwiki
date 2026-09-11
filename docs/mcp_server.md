@@ -326,7 +326,7 @@ Performs a high-speed, full-text search across the **entire** knowledge base usi
 * **Behavior**:
   Executes the query against the local Bleve index and converts scored matches into a readable text block, reporting each hit's document `Type` so you can tell a memory from an article. HTML `<mark>` highlights become Markdown bold (`**`) to save context. When facets are applied they are echoed in the response header line, so an empty result set is distinguishable from an over-narrow filter. An unrecognized `type` value is reported as an error rather than silently returning nothing.
 
-> **Agents search everything by default.** Earlier versions hid memories, plans, and skills unless the *query text* happened to contain the words "memory", "plan", or "skill". That meant a memory recording *"we chose Bleve over Elasticsearch"* was invisible to `search_wiki("elasticsearch")`, and the agent would re-derive a decision it had already stored. Agent-facing search now spans every type unless you narrow it with `type`. The browser sidebar is unchanged and still hides agent documents from human searches.
+> **Search spans everything by default — agents and browser alike.** Earlier versions hid memories, plans, and skills unless the *query text* happened to contain the words "memory", "plan", or "skill". That meant a memory recording *"we chose Bleve over Elasticsearch"* was invisible to `search_wiki("elasticsearch")`, and the agent would re-derive a decision it had already stored. Search now spans every type unless you narrow it with `type`, in both the MCP tool and the browser search view (`GET /api/search`).
 
 **Examples**
 

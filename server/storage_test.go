@@ -138,7 +138,8 @@ func TestStorageVersioning(t *testing.T) {
 		t.Errorf("Expected error deleting protected memory-scope tag, got nil")
 	}
 
-	// Verify search filtering of agent documents (by type) by default
+	// Browser search spans the whole corpus by default (same as the search_wiki MCP tool),
+	// so agent documents are surfaced without any magic word in the query.
 	_, err = storage.SaveArticle("", "AI Plan Page", "# Content", "", "", "", "Summary", nil, ContentTypePlan)
 	if err != nil {
 		t.Fatalf("SaveArticle for AI plan failed: %v", err)
@@ -149,19 +150,24 @@ func TestStorageVersioning(t *testing.T) {
 		t.Fatalf("SearchArticles failed: %v", err)
 	}
 
+	foundAIPlan := false
 	for _, res := range results {
 		if res.Slug == "ai-plan-page" {
-			t.Errorf("Expected AI plan page to be filtered out from default search")
+			foundAIPlan = true
+			break
 		}
 	}
+	if !foundAIPlan {
+		t.Errorf("Expected default search to find AI plan page")
+	}
 
-	// A query that names the plan class ('plan') opts agent plans back into the results
+	// A query that names the plan class ('plan') still finds it as well
 	resultsExplicit, err := storage.SearchArticles("plan")
 	if err != nil {
 		t.Fatalf("SearchArticles explicit failed: %v", err)
 	}
 
-	foundAIPlan := false
+	foundAIPlan = false
 	for _, res := range resultsExplicit {
 		if res.Slug == "ai-plan-page" {
 			foundAIPlan = true

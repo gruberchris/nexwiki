@@ -12,9 +12,10 @@ const (
 // SearchOptions expresses what a caller wants back from a search, rather than inferring it from
 // the words in the query.
 //
-// The zero value is the strictest, most agent-friendly form: no type filter, no tag filter,
-// default limit, archived documents excluded, and *all* document types eligible. Callers that
-// want the human sidebar's behavior opt into legacyQueryHeuristics.
+// The zero value is the default for every caller, human or agent: no type filter, no tag
+// filter, default limit, archived documents excluded, and *all* document types eligible.
+// Callers that want the legacy query-text heuristics opt into legacyQueryHeuristics (currently
+// unused by production callers; kept for the archived/type magic-word behavior it encodes).
 type SearchOptions struct {
 	// Types restricts results to these document types. Accepts OKF type names ("AI-Agent-Memory")
 	// or the friendly aliases used elsewhere in the tool surface ("memories", "plans", "skills",
@@ -41,10 +42,11 @@ type SearchOptions struct {
 	// unkinded wiki article alongside them would make the facet meaningless.
 	MemoryKind string
 
-	// legacyQueryHeuristics restores the pre-facet behavior used by the human-facing sidebar and
-	// REST endpoint: agent documents and archived pages are hidden unless the *query text*
-	// happens to mention them. It is deliberately unexported — it exists to keep the browser UI
-	// bit-identical, and is exactly the behavior the facets above replace for agent callers.
+	// legacyQueryHeuristics restores the pre-facet behavior where agent documents and archived
+	// pages were hidden unless the *query text* happened to mention them. It is deliberately
+	// unexported and currently unused by production callers — both the browser and the MCP tool
+	// now search the whole corpus — and is kept only to preserve the historic behavior in one
+	// place.
 	legacyQueryHeuristics bool
 }
 

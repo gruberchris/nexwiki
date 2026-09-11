@@ -737,6 +737,9 @@ func (srv *Server) HandleGetAsset(w http.ResponseWriter, r *http.Request) {
 // EnableCORS lives in security.go, alongside the Origin allow-list it enforces.
 
 // HandleSearchArticles executes full-text search against the index and returns matching summaries.
+// It searches the whole corpus (wiki articles, agent memories, plans, and skills), matching the
+// search_wiki MCP default. Archived documents stay excluded unless the query names them; "home"
+// is always excluded (see Storage.SearchArticles).
 func (srv *Server) HandleSearchArticles(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	results, err := srv.Storage.SearchArticles(query)

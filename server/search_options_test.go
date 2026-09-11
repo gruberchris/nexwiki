@@ -198,36 +198,24 @@ func TestLimitIsFilledDespiteFiltering(t *testing.T) {
 	}
 }
 
-// TestHumanSearchStillHidesAgentDocs pins that the browser sidebar is unchanged. The facets are
-// for agents; a human searching the wiki should not suddenly see every agent memory.
-func TestHumanSearchStillHidesAgentDocs(t *testing.T) {
+// TestHumanSearchSpansWholeCorpus pins that browser search matches the agent default:
+// no facets means all types. The legacy magic-word hiding was retired so a human searching
+// the home view finds memories, plans, and skills without typing "memory"/"plan"/"skill".
+func TestHumanSearchSpansWholeCorpus(t *testing.T) {
 	storage := seedSearchCorpus(t)
 
 	results, err := storage.SearchArticles("zqterm")
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
 	}
+	if len(results) != 4 {
+		t.Fatalf("browser search must span the whole corpus, expected 4 documents, got %d", len(results))
+	}
 	types := resultTypes(results)
-	if types[ContentTypeMemory] || types[ContentTypePlan] || types[ContentTypeSkill] {
-		t.Errorf("human search must still hide agent documents by default, got %v", types)
-	}
-	if !types[ContentTypeWiki] {
-		t.Error("human search must still return wiki articles")
-	}
-
-	// The legacy magic-word affordance still works for humans, who have no facets in the UI.
-	planResults, err := storage.SearchArticles("plan")
-	if err != nil {
-		t.Fatalf("search failed: %v", err)
-	}
-	found := false
-	for _, r := range planResults {
-		if r.Type == ContentTypePlan {
-			found = true
+	for _, want := range []string{ContentTypeWiki, ContentTypeMemory, ContentTypePlan, ContentTypeSkill} {
+		if !types[want] {
+			t.Errorf("browser search must surface %s results, got %v", want, types)
 		}
-	}
-	if !found {
-		t.Error("legacy human behavior should still surface plans when the query names them")
 	}
 }
 

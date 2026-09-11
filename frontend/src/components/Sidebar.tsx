@@ -559,12 +559,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Sidebar Footer */}
-      <div className="p-4 border-t border-themeBorder bg-themeBgPrimary/30 flex items-center justify-between text-[10px] text-themeTextMuted font-semibold tracking-wide">
+      <div className="p-4 border-t border-themeBorder bg-themeBgPrimary/30 flex items-center justify-start text-[10px] text-themeTextMuted font-semibold tracking-wide">
         <span>v{version}</span>
-        <span className="flex items-center gap-1 text-themeTextMuted">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
-          Single-User Mode
-        </span>
       </div>
 
       {showFilterHelp && <SidebarFilterHelpModal onClose={() => setShowFilterHelp(false)} />}
