@@ -1,10 +1,14 @@
 package main
 
 import (
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"nexwiki/server"
 )
@@ -126,5 +130,57 @@ func TestNewStorage_CreatesMissingDefaultTree(t *testing.T) {
 		if fi, err := os.Stat(filepath.Join(simulated, sub)); err != nil || !fi.IsDir() {
 			t.Errorf("expected %s/ to exist after NewStorage, stat err=%v", sub, err)
 		}
+	}
+}
+
+func TestBuildAppURL(t *testing.T) {
+	cases := []struct{ host, port, want string }{
+		{"localhost", "5808", "http://localhost:5808"},
+		{"127.0.0.1", "9090", "http://127.0.0.1:9090"},
+		{"192.168.1.50", "5808", "http://192.168.1.50:5808"},
+	}
+	for _, tc := range cases {
+		if got := buildAppURL(tc.host, tc.port); got != tc.want {
+			t.Errorf("buildAppURL(%q, %q) = %q, want %q", tc.host, tc.port, got, tc.want)
+		}
+	}
+}
+
+func TestProbeHost(t *testing.T) {
+	cases := []struct{ bind, want string }{
+		{"", "127.0.0.1"},
+		{"0.0.0.0", "127.0.0.1"},
+		{"::", "127.0.0.1"},
+		{"127.0.0.1", "127.0.0.1"},
+		{"192.168.1.50", "192.168.1.50"},
+	}
+	for _, tc := range cases {
+		if got := probeHost(tc.bind); got != tc.want {
+			t.Errorf("probeHost(%q) = %q, want %q", tc.bind, got, tc.want)
+		}
+	}
+}
+
+func TestWaitForServer_Healthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/config" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	host, port, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if !waitForServer(host, port, 5*time.Second) {
+		t.Errorf("waitForServer against healthy httptest server returned false")
+	}
+}
+
+func TestWaitForServer_Unreachable(t *testing.T) {
+	// Port 1 is privileged/closed: the poll must exhaust the timeout and
+	// report false rather than hang or succeed.
+	if waitForServer("127.0.0.1", "1", 300*time.Millisecond) {
+		t.Errorf("waitForServer against closed port returned true")
 	}
 }

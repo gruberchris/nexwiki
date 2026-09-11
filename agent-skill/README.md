@@ -26,16 +26,16 @@ Copy the **whole `nexwiki/` folder** — the `references/` load only when used.
 ## Step 1 — Connect the MCP server
 
 The skill tells the agent *how* to use NexWiki; the MCP server gives it the tools. Point
-your agent at your running instance's Streamable HTTP endpoint (`http://localhost:8080/api/mcp`).
+your agent at your running instance's Streamable HTTP endpoint (`http://localhost:5808/api/mcp`).
 For example, in Claude Code:
 
 ```bash
-claude mcp add --transport http nexwiki http://localhost:8080/api/mcp
+claude mcp add --transport http nexwiki http://localhost:5808/api/mcp
 ```
 
 See [docs/mcp_server.md](../docs/mcp_server.md) for the per-client MCP config (Copilot,
 opencode, Codex, Antigravity, Cursor). One gotcha: **Antigravity** requires the `serverUrl`
-field for remote servers (`{"mcpServers":{"nexwiki":{"serverUrl":"http://localhost:8080/api/mcp"}}}`),
+field for remote servers (`{"mcpServers":{"nexwiki":{"serverUrl":"http://localhost:5808/api/mcp"}}}`),
 not the legacy `url`/`httpUrl` keys.
 
 ## Step 2 — Install the skill

@@ -28,21 +28,21 @@ Your notes and your agent's memory live in the **same human-editable Markdown fi
 
 ## ⚡ Quick Start
 
-Pick whichever fits — all three give you the same server on `http://localhost:8080`.
+Pick whichever fits — all three give you the same server on `http://localhost:5808`.
 
 <details open>
 <summary><b>🐳 Docker (recommended)</b></summary>
 
 ```bash
 docker run -d \
-  -p 8080:8080 \
+  -p 5808:5808 \
   -v "$(pwd)/my-wiki-data:/app/data" \
   --name my-wiki \
   --restart unless-stopped \
   ghcr.io/gruberchris/nexwiki:latest
 ```
 
-Open `http://localhost:8080`. Full options, Docker Compose, and volume details: [Docker deployment](#-docker-deployment).
+Open `http://localhost:5808`. Full options, Docker Compose, and volume details: [Docker deployment](#-docker-deployment).
 
 </details>
 
@@ -90,7 +90,7 @@ chmod +x nexwiki-*-linux-amd64    # Linux x86_64
 .\nexwiki-1.0.0-windows-amd64.exe
 ```
 
-Open your browser to `http://localhost:8080`. On first launch NexWiki creates its data directory automatically (`articles/`, `assets/`, `history/`, search index): `~/.config/nexwiki/nexwiki-data/` on macOS/Linux (`$XDG_CONFIG_HOME/nexwiki/nexwiki-data/` when that env var is set to an absolute path), `%AppData%\nexwiki\nexwiki-data` on Windows, or `./data` as a fallback when no home/config directory is available. Pass `-data <path>` to override. Docker still uses `/app/data` via the image `ENTRYPOINT`. Upgrading from an older binary that used `./data`? Pass `-data ./data` once or copy that folder to the new default to keep your existing wiki.
+Open your browser to `http://localhost:5808`. On first launch NexWiki creates its data directory automatically (`articles/`, `assets/`, `history/`, search index): `~/.config/nexwiki/nexwiki-data/` on macOS/Linux (`$XDG_CONFIG_HOME/nexwiki/nexwiki-data/` when that env var is set to an absolute path), `%AppData%\nexwiki\nexwiki-data` on Windows, or `./data` as a fallback when no home/config directory is available. Pass `-data <path>` to override. Docker still uses `/app/data` via the image `ENTRYPOINT`. Upgrading from an older binary that used `./data`? Pass `-data ./data` once or copy that folder to the new default to keep your existing wiki.
 
 #### 4. Configuration
 
@@ -98,12 +98,13 @@ All settings can be set via CLI flags. The `NEXWIKI_NAME`, `NEXWIKI_THEME`, and 
 
 | Option | CLI Flag | Env Variable | Default | Description |
 |---|---|---|---|---|
-| HTTP port | `-port` | — | `8080` | Port the web server listens on |
+| HTTP port | `-port` | — | `5808` | Port the web server listens on |
 | Data directory | `-data` | — | `~/.config/nexwiki/nexwiki-data` (macOS/Linux), `%AppData%\nexwiki\nexwiki-data` (Windows), `./data` fallback | Directory for articles, assets, and the search index (`/app/data` in Docker via `ENTRYPOINT`) |
 | Wiki name | `-name` | `NEXWIKI_NAME` | `NexWiki` | Title displayed in the UI and HTML headers |
 | Default theme | `-theme` | `NEXWIKI_THEME` | `default` | Initial active color theme |
 | Seasonal themes | `-theme-scheduling` | `NEXWIKI_THEME_SCHEDULING` | `false` | Enable automatic annual seasonal theme switching |
 | Stdio MCP-only mode | `-mcp-only` | `NEXWIKI_MCP_ONLY` | `false` | Run as a pure stdio MCP server, skipping the web port bind entirely. Required when spawning a stdio MCP subprocess alongside an already-running web server |
+| Launch in browser | `-launch-in-browser` | `NEXWIKI_LAUNCH_BROWSER` | `false` | Open the wiki URL in the system default web browser once the server answers (ignored under `-mcp-only`) |
 | Archive auto-delete | — | `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Days after archiving before an article is permanently deleted on startup |
 | Plan lifecycle interval | — | `NEXWIKI_PLAN_LIFECYCLE_INTERVAL_DAYS` | `1` | How often the plan lifecycle worker sweeps (it also sweeps once at startup) |
 | Plan auto-archive | — | `NEXWIKI_PLAN_ARCHIVE_AFTER_DAYS` | `90` | Days a plan stays `completed`/`superseded` before auto-archiving (`0` disables) |
@@ -173,16 +174,16 @@ Once the frontend assets exist in `frontend/dist/`, you can compile and start th
 **Option A: Manual CLI Commands**
 ```bash
 go build -o nexwiki main.go
-./nexwiki -port=8080 -data=./data -name="NexWiki Development"
+./nexwiki -port=5808 -data=./data -name="NexWiki Development"
 ```
 
 **Option B: Makefile Command**
 *(This compiles both the frontend assets and backend binary in a single command)*
 ```bash
 make
-./nexwiki -port=8080 -data=./data -name="NexWiki Development"
+./nexwiki -port=5808 -data=./data -name="NexWiki Development"
 ```
-Now, you can access the combined app at `http://localhost:8080`.
+Now, you can access the combined app at `http://localhost:5808`.
 
 #### 3. Frictionless Frontend Dev Mode (Hot-Reloading)
 For active frontend development, you don't want to rebuild every time. Instead, run Vite's development server:
@@ -192,7 +193,7 @@ cd frontend
 npm run dev
 
 # Terminal 2: Run Go API backend server
-go run main.go -port=8080 -data=./data
+go run main.go -port=5808 -data=./data
 ```
 The Go backend includes a built-in CORS middleware that automatically permits requests from Vite's local dev server (`http://localhost:5173`).
 
@@ -212,7 +213,7 @@ NexWiki supports the [Streamable HTTP transport](https://modelcontextprotocol.io
 {
   "mcpServers": {
     "nexwiki": {
-      "url": "http://localhost:8080/api/mcp"
+      "url": "http://localhost:5808/api/mcp"
     }
   }
 }
@@ -256,7 +257,7 @@ Connecting the MCP server gives your agent the *tools*. The **agent skill** is w
 
 The skill is a single folder, [`agent-skill/nexwiki/`](./agent-skill/nexwiki), following the vendor-neutral [Agent Skills](https://agentskills.io) standard (a `SKILL.md` in its own folder). The same folder works across Claude Code, GitHub Copilot CLI, opencode, OpenAI Codex, and Google Antigravity.
 
-1. **Connect the MCP server** (above), e.g. `claude mcp add --transport http nexwiki http://localhost:8080/api/mcp`.
+1. **Connect the MCP server** (above), e.g. `claude mcp add --transport http nexwiki http://localhost:5808/api/mcp`.
 2. **Copy the `agent-skill/nexwiki/` folder** into your agent's `skills/` directory — project scope to share it with a repo, or home scope to reuse it everywhere:
 
 | Agent CLI | Project scope | Home scope (reuse everywhere) |
@@ -304,6 +305,7 @@ Agents load it automatically when relevant, or invoke it explicitly with `/nexwi
 - 📊 **Native Mermaid Diagrams**: ```` ```mermaid ```` fenced code blocks render as theme-aware SVG diagrams in the article viewer, the editor's live preview, and print/PDF exports. The ~800KB library is lazy-loaded only by pages that actually contain a diagram, wide diagrams scroll in their own container, and a diagram with a syntax error falls back to its source code with an inline note instead of a blank hole.
 - 🖥️ **Reader & Dashboard Experience**: The reading column scales responsively up to 4K displays instead of staying a 672px ribbon, the home dashboard's Agent Plans section defaults its filter to `!completed` (visible and clearable like any typed filter), Back/Forward restores the dashboard — filters, expanded sections, and scroll position — exactly as you left it, and every filter autosuggestion dropdown is a proper ARIA combobox navigated with the arrow keys (Tab moves focus, as it should).
 - **⚙️ Dynamic Customization**: Personalize your wiki's name via environment variables (`NEXWIKI_NAME`) or command-line flags.
+- 🚀 **Install Scripts & Browser Launch**: `scripts/install.sh` (macOS/Linux), `scripts/install.ps1` (Windows), and `scripts/docker-run.sh` always fetch the **latest GitHub release** — never an unreleased main-branch build — with SHA256 verification, OS/arch detection, and the OS-correct data directory (`~/.config/nexwiki/nexwiki-data`, `%AppData%\nexwiki\nexwiki-data`). `scripts/uninstall.sh` / `uninstall.ps1` remove the binary while leaving your wiki data in place. Full guide: [docs/install_scripts_guide.md](./docs/install_scripts_guide.md). The `-launch-in-browser` flag (or `NEXWIKI_LAUNCH_BROWSER=true`) opens the wiki in your default browser once the server answers.
 - 🎨 **Seasonal Theme Scheduling & Customizable Palettes**: Configure default themes via CLI flags or environment variables, customize dual-variant (Light/Dark) palettes using custom pickers, and schedule annual seasonal themes (`independence-day`, `halloween`, `christmas`, `new-years`) using CLI flags (`-theme-scheduling`) or environment parameters (`NEXWIKI_THEME_SCHEDULING`). Features scheduled badges and a deterministic overlap date hash resolver.
 - 💻 **IDE-Grade CodeMirror 6 Editor & Cheat Sheet**: Replaced the primitive textarea with CodeMirror 6, complete with auto-resizing, Tab-indent formatting, image drag-and-drop, and clean transactional toolbar formats. Pressing `Ctrl+/` / `Cmd+/` instantly overlays a glassmorphic Markdown Syntax cheat cheatsheet. Integrates dynamic colors wrapping active themes (Option B) natively at runtime.
 - 🔍 **Real-Time Markdown Linter & Inline Warnings**: Debounced validation checks your writing against standard rules (MD001 hierarchy, MD025 multiple H1s, MD037 interior spacing, MD034 bare URLs) and broken internal links in both forms — `[[WikiLinks]]` and `[text](/articles/slug)`. Shows severity wavy underlines, hover details/quick fixes, right-click custom context menus, and a rich Diagnostics Dashboard modal with sorting, filters, cursor jumps, and AI Correction prompt copy tools.
@@ -339,7 +341,7 @@ docker pull ghcr.io/gruberchris/nexwiki:1.0.0
 **Minimal (defaults):**
 ```bash
 docker run -d \
-  -p 8080:8080 \
+  -p 5808:5808 \
   -v "$(pwd)/my-wiki-data:/app/data" \
   --name my-wiki \
   --restart unless-stopped \
@@ -378,7 +380,7 @@ services:
     volumes:
       - wiki-data:/app/data
     ports:
-      - "8080:8080"
+      - "5808:5808"
     restart: unless-stopped
 
 volumes:
@@ -386,7 +388,7 @@ volumes:
     driver: local
 ```
 
-Open your browser to `http://localhost:8080`.
+Open your browser to `http://localhost:5808`.
 
 #### Understanding the Volume Mount (`/app/data`)
 
@@ -414,7 +416,7 @@ Always mount this path to a persistent local directory or named Docker volume to
 | `NEXWIKI_ACTIVITY_MAX_ARCHIVES` | unlimited | Maximum number of rotated `activity-<UTC>.jsonl` archives to retain |
 | `NEXWIKI_ALLOWED_ORIGINS` | (loopback only) | Comma-separated browser origins allowed to call the API, e.g. `https://wiki.example.com`. Needed only when serving NexWiki from a DNS name |
 
-The image ENTRYPOINT defaults to `-port=8080 -data=/app/data`. The simplest approach is to leave both alone and adjust the `-p` host mapping and volume mount instead. If you do need a different in-container port, append `-port=<n>` after the image name (as shown above) — trailing flags override the ENTRYPOINT defaults — and update `-p` to match.
+The image ENTRYPOINT defaults to `-port=5808 -data=/app/data`. The simplest approach is to leave both alone and adjust the `-p` host mapping and volume mount instead. If you do need a different in-container port, append `-port=<n>` after the image name (as shown above) — trailing flags override the ENTRYPOINT defaults — and update `-p` to match.
 
 ---
 
@@ -435,7 +437,7 @@ We provide a standard `docker-compose.yml` that mounts a persistent local data v
    ```
 3. Once the build and application startup completed, open your browser and navigate to:
    ```
-   http://localhost:8080
+   http://localhost:5808
    ```
 4. You will see your newly initialized wiki with a default seeded homepage ready to edit!
 
@@ -449,7 +451,7 @@ If you prefer running the container manually without Docker Compose:
 2. **Run the Container**:
    ```bash
    docker run -d \
-     -p 8080:8080 \
+     -p 5808:5808 \
      -v "$(pwd)/my-wiki-data:/app/data" \
      -e NEXWIKI_NAME="My Personal Wiki" \
      --name personal-wiki \
@@ -604,7 +606,7 @@ Every binary is stamped with `-ldflags "-X main.Version=<version>"`, so the runn
 gh run watch                                    # follow the Release workflow to completion
 gh release view v0.12.0                         # binaries + checksums attached?
 docker pull ghcr.io/gruberchris/nexwiki:0.12.0
-curl -s localhost:8080/api/config | jq .version # after deploying, confirm the version served
+curl -s localhost:5808/api/config | jq .version # after deploying, confirm the version served
 ```
 
 ### Step 6 — Roll it out
@@ -650,7 +652,7 @@ services:
     volumes:
       - wiki-prod-data:/app/data
     ports:
-      - "8080:8080"
+      - "5808:5808"
     restart: always
 
 volumes:
@@ -669,7 +671,7 @@ wiki.yourdomain.com {
         yourname $2a$14$replace.with.your.own.bcrypt.hash
     }
 
-    reverse_proxy localhost:8080
+    reverse_proxy localhost:5808
 }
 ```
 
@@ -683,7 +685,7 @@ server {
     server_name wiki.yourdomain.com;
 
     location / {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://localhost:5808;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
@@ -691,7 +693,7 @@ server {
     # Streaming endpoints: disable buffering for Streamable HTTP MCP
     # and the live activity SSE stream.
     location ~ ^/api/(mcp|activity/stream)$ {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://localhost:5808;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_buffering off;

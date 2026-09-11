@@ -86,7 +86,7 @@ Twelve read tools additionally declare an **`outputSchema`** and return `structu
 Agents can also enumerate tools at runtime with the standard `tools/list` MCP method:
 
 ```bash
-curl -X POST http://localhost:8080/api/mcp \
+curl -X POST http://localhost:5808/api/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}'
 ```
@@ -139,7 +139,7 @@ Add the `nexwiki` server block inside the `mcpServers` object:
 {
   "mcpServers": {
     "nexwiki": {
-      "url": "http://localhost:8080/api/mcp"
+      "url": "http://localhost:5808/api/mcp"
     }
   }
 }
@@ -157,7 +157,7 @@ If you run NexWiki via Docker with the container name `personal-wiki`:
   }
 }
 ```
-`docker exec` bypasses the image ENTRYPOINT, so `-mcp-only` and `-data` must be passed explicitly — otherwise the process inherits the `:8080` default and collides with the container's own web server.
+`docker exec` bypasses the image ENTRYPOINT, so `-mcp-only` and `-data` must be passed explicitly — otherwise the process inherits the `:5808` default and collides with the container's own web server.
 
 #### Option C: Stdio via Local Go Binary
 If you compiled the binary on your local machine:
@@ -189,7 +189,7 @@ NexWiki implements the modern **Streamable HTTP** transport at `/api/mcp`, servi
 4. Configure the server with the following settings:
    * **Name**: `nexwiki`
    * **Type**: `Streamable HTTP` *(Note: select `SSE` as a fallback if your Cursor version does not list the new 2025 Streamable HTTP type yet)*
-   * **URL**: `http://localhost:8080/api/mcp` (or your production domain e.g. `https://wiki.yourdomain.com/api/mcp`)
+   * **URL**: `http://localhost:5808/api/mcp` (or your production domain e.g. `https://wiki.yourdomain.com/api/mcp`)
 5. Click **Save**.
 
 Cursor will establish a stream connection and immediately list all twenty-nine NexWiki tools in the sidebar. You can now use Cursor Composer or chat (`Cmd+K` / `Ctrl+K`) and reference your wiki directly during code generation!
@@ -237,7 +237,7 @@ asyncio.run(query_wiki())
 If you don't want to use an MCP SDK and prefer standard HTTP requests, you can interact with the server's Streamable HTTP endpoint. For execution, issue standard HTTP `POST` requests to `/api/mcp`:
 
 ```bash
-curl -X POST http://localhost:8080/api/mcp \
+curl -X POST http://localhost:5808/api/mcp \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",

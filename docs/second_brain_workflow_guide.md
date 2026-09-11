@@ -27,7 +27,7 @@ docker compose up -d --build
 Streamable HTTP is preferred over stdio — all clients share the running server process, which avoids Bleve search-index file-lock contention:
 
 ```bash
-claude mcp add --transport http nexwiki http://localhost:8080/api/mcp
+claude mcp add --transport http nexwiki http://localhost:5808/api/mcp
 ```
 
 (See the [MCP Server Guide](./mcp_server.md) for Cursor, Claude Desktop, and Copilot CLI equivalents.)

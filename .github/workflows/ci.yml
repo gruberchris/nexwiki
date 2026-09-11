@@ -113,16 +113,16 @@ jobs:
       # and that the stylesheet it embeds is the one the source describes.
       - name: Smoke-test the image
         run: |
-          docker run -d --name nexwiki-ci -p 8080:8080 nexwiki:ci
+          docker run -d --name nexwiki-ci -p 5808:5808 nexwiki:ci
           for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:8080/api/articles >/dev/null; then break; fi
+            if curl -sf http://127.0.0.1:5808/api/articles >/dev/null; then break; fi
             sleep 1
           done
-          curl -sf http://127.0.0.1:8080/api/articles >/dev/null || {
+          curl -sf http://127.0.0.1:5808/api/articles >/dev/null || {
             echo "container never served /api/articles"; docker logs nexwiki-ci; exit 1; }
-          css_path=$(curl -sf http://127.0.0.1:8080/ | grep -o '/assets/[^"]*\.css' | head -1)
+          css_path=$(curl -sf http://127.0.0.1:5808/ | grep -o '/assets/[^"]*\.css' | head -1)
           [ -n "$css_path" ] || { echo "index.html references no stylesheet"; exit 1; }
-          css=$(curl -sf "http://127.0.0.1:8080$css_path")
+          css=$(curl -sf "http://127.0.0.1:5808$css_path")
           for token in bg-themeBgPrimary text-themeTextMuted --color-themeBgPrimary; do
             echo "$css" | grep -q -- "$token" || {
               echo "embedded stylesheet is missing $token — the frontend build is wrong"; exit 1; }

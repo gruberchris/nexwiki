@@ -3,7 +3,7 @@ services:
     build: .
     container_name: nexwiki
     ports:
-      - "8080:8080"
+      - "5808:5808"
     volumes:
       - ./my-wiki-data:/app/data
     restart: unless-stopped

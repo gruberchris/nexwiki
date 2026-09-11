@@ -12,7 +12,7 @@ import (
 
 // AllowedOriginsEnv is the environment variable that extends the browser Origin allow-list.
 // It holds a comma-separated list of exact origins (scheme://host[:port]), e.g.
-// "https://wiki.example.com,http://192.168.1.50:8080". The single value "*" restores the
+// "https://wiki.example.com,http://192.168.1.50:5808". The single value "*" restores the
 // legacy permissive behavior and is unsafe on any machine that also browses the web.
 const AllowedOriginsEnv = "NEXWIKI_ALLOWED_ORIGINS"
 
@@ -72,7 +72,7 @@ func isIPLiteral(authority string) bool {
 //  2. Loopback origin — the wiki's own UI and the Vite dev server on :5173. Allowed.
 //  3. Exactly listed in NEXWIKI_ALLOWED_ORIGINS. Allowed.
 //  4. Same-origin as the request's Host, but only when that Host is loopback or a bare IP
-//     (e.g. reaching the wiki from a phone at http://192.168.1.50:8080). A DNS name is
+//     (e.g. reaching the wiki from a phone at http://192.168.1.50:5808). A DNS name is
 //     excluded here because rebinding would otherwise satisfy Origin == Host; reverse-proxy
 //     deployments must name their domain in NEXWIKI_ALLOWED_ORIGINS.
 //
