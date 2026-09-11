@@ -343,4 +343,3 @@ func TestApplySecurityHeaders(t *testing.T) {
 		t.Errorf("EnableCORS forbidden response Content-Security-Policy: got %q, want %q", gotCSP, csp)
 	}
 }
-
