@@ -308,6 +308,15 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 			Status:     &importStatus,
 			MemoryKind: &importKind,
 		}
+		// The skill evolution lock rides through the bundle like status and memory kind, so an
+		// export/import round-trip neither locks an unlocked skill nor silently unlocks a
+		// locked one. saveArticleLocked still clears it on non-skill documents.
+		if art.LockedBy != "" {
+			locker := art.LockedBy
+			overrides.LockedBy = &locker
+			at := art.LockedAt
+			overrides.LockedAt = &at
+		}
 		if len(art.Sources) > 0 {
 			overrides.Sources = &art.Sources
 		}

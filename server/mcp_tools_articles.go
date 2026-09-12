@@ -718,7 +718,10 @@ func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSON
 	secretNote := secretWarning(warnedSecrets(edit.Content, derefOr(edit.Description), derefOr(edit.Source)))
 
 	art, err := srv.Storage.ApplyArticleEdit(eArgs.Slug, edit)
+	var lockedErr *SkillLockedError
 	switch {
+	case errors.As(err, &lockedErr):
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + lockedErr.Error()}}}, nil
 	case errors.Is(err, ErrVersionConflict):
 		if existing, gErr := srv.Storage.GetArticle(eArgs.Slug); gErr == nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: versionConflictMessage("article", eArgs.Slug, existing.Version, eArgs.LoadedVersion)}}}, nil
@@ -796,7 +799,11 @@ func (srv *Server) toolUpdateArticleTags(args json.RawMessage) (interface{}, *JS
 	cleanedTags := validateAndCleanUserTags(uArgs.Tags, existing.Tags, existing.Type)
 
 	art, err := srv.Storage.UpdateArticleTags(uArgs.Slug, cleanedTags, uArgs.LoadedVersion, uArgs.EditSummary)
-	if errors.Is(err, ErrVersionConflict) {
+	var lockedErr *SkillLockedError
+	switch {
+	case errors.As(err, &lockedErr):
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + lockedErr.Error()}}}, nil
+	case errors.Is(err, ErrVersionConflict):
 		// Re-read rather than reusing the `existing` fetched above: the conflict was detected
 		// against a fresher read inside UpdateArticleTags, and naming a version that is already
 		// stale would send the caller straight back into the loop this message exists to end.
@@ -853,6 +860,11 @@ func (srv *Server) toolDeleteWikiArticle(args json.RawMessage) (interface{}, *JS
 
 	if existing.Type == ContentTypeMemory {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: this article is a protected AI Agent Memory. Use 'delete_agent_memory' to delete it intentionally, or 'edit_agent_memory' to correct it instead."}}}, nil
+	}
+
+	// A locked skill is agent-read-only, including deletion: evolve it via candidates.
+	if err := checkSkillLock(existing); err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
 	}
 
 	err = srv.Storage.DeleteArticle(dArgs.Slug)
@@ -992,6 +1004,10 @@ func (srv *Server) toolRevertArticleVersion(args json.RawMessage) (interface{}, 
 
 	art, err := srv.Storage.RevertArticle(rArgs.Slug, rArgs.Version)
 	if err != nil {
+		var lockedErr *SkillLockedError
+		if errors.As(err, &lockedErr) {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + lockedErr.Error()}}}, nil
+		}
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Revert failed: %v", err)}}}, nil
 	}
 
