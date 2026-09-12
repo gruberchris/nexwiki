@@ -69,6 +69,7 @@ To easily distribute and work with your wiki articles, NexWiki provides an elega
 
 #### 📋 Clipboard Utilities
 * **Copy Markdown**: Copies the raw, frontmatter-free Markdown body content to your clipboard. All YAML metadata and page header templates are automatically stripped out, leaving only the clean document body text.
+* **Copy as Rich Text**: Copies rendered HTML alongside plain text to your clipboard using the modern Clipboard API (ClipboardItem). Pasting into rich-text applications like Microsoft Teams, Outlook, Word, and Slack renders headings, tables, bullet points, and code blocks directly without raw markdown syntax.
 * **Copy Share Link**: Instantly copies the current URL of the browser tab so you can share it with others.
 *Visual alerts will confirm when items are copied successfully.*
 

@@ -9,10 +9,23 @@ const article: Article = {
 };
 
 let writeText: ReturnType<typeof vi.fn>;
+let writeClipboard: ReturnType<typeof vi.fn>;
+
+class MockClipboardItem {
+  data: Record<string, Blob>;
+  constructor(data: Record<string, Blob>) {
+    this.data = data;
+  }
+}
 
 beforeEach(() => {
   writeText = vi.fn().mockResolvedValue(undefined);
-  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  writeClipboard = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText, write: writeClipboard },
+    configurable: true,
+  });
+  vi.stubGlobal('ClipboardItem', MockClipboardItem);
 });
 
 afterEach(() => {
@@ -65,6 +78,107 @@ describe('copy actions', () => {
     await act(async () => { await hook.result.current.copyMarkdown(); });
     expect(hook.result.current.copiedMd).toBe(false);
     expect(onAlert).toHaveBeenCalledWith('error', expect.stringContaining('Failed'));
+  });
+
+  it('copies rich text with formatting, flashes confirmation, and resets', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const contentEl = document.createElement('div');
+    contentEl.className = 'wiki-content';
+    contentEl.innerHTML = '<h1>Why Bleve</h1><p>Zero dependencies.</p>';
+    document.body.appendChild(contentEl);
+
+    const { hook, onAlert } = setup();
+
+    await act(async () => { await hook.result.current.copyRichText(); });
+
+    expect(writeClipboard).toHaveBeenCalledTimes(1);
+    const [items] = writeClipboard.mock.calls[0];
+    expect(items).toHaveLength(1);
+    const item = items[0] as MockClipboardItem;
+    expect(item.data['text/html']).toBeInstanceOf(Blob);
+    expect(item.data['text/plain']).toBeInstanceOf(Blob);
+    expect(item.data['text/html'].type).toBe('text/html');
+    expect(item.data['text/plain'].type).toBe('text/plain');
+    await expect(item.data['text/html'].text()).resolves.toBe('<h1>Why Bleve</h1><p>Zero dependencies.</p>');
+    await expect(item.data['text/plain'].text()).resolves.toBe(contentEl.innerText || contentEl.textContent || '');
+
+    expect(hook.result.current.copiedRichText).toBe(true);
+    expect(onAlert).toHaveBeenCalledWith(
+      'success',
+      'Rich text copied to clipboard! Ready to paste into Teams, Word, or Outlook.',
+    );
+
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(hook.result.current.copiedRichText).toBe(false);
+
+    document.body.removeChild(contentEl);
+    vi.useRealTimers();
+  });
+
+  it('falls back to article content if .wiki-content element is absent when copying rich text', async () => {
+    const { hook, onAlert } = setup();
+
+    await act(async () => { await hook.result.current.copyRichText(); });
+
+    expect(writeClipboard).toHaveBeenCalledTimes(1);
+    const [items] = writeClipboard.mock.calls[0];
+    const item = items[0] as MockClipboardItem;
+    await expect(item.data['text/html'].text()).resolves.toBe(article.content);
+    await expect(item.data['text/plain'].text()).resolves.toBe(article.content);
+    expect(hook.result.current.copiedRichText).toBe(true);
+    expect(onAlert).toHaveBeenCalledWith('success', expect.stringContaining('Rich text copied'));
+  });
+
+  it('closes the share dropdown when copying rich text', async () => {
+    const { hook } = setup();
+    act(() => hook.result.current.setShareDropdownOpen(true));
+    expect(hook.result.current.shareDropdownOpen).toBe(true);
+
+    await act(async () => { await hook.result.current.copyRichText(); });
+    expect(hook.result.current.shareDropdownOpen).toBe(false);
+  });
+
+  it('does nothing when copying rich text without an article', async () => {
+    const { hook, onAlert } = setup({ currentArticle: null });
+    await act(async () => { await hook.result.current.copyRichText(); });
+    expect(writeClipboard).not.toHaveBeenCalled();
+    expect(onAlert).not.toHaveBeenCalled();
+  });
+
+  it('handles clipboard errors when copying rich text and alerts error', async () => {
+    writeClipboard.mockRejectedValue(new Error('clipboard error'));
+    const { hook, onAlert } = setup();
+
+    await act(async () => { await hook.result.current.copyRichText(); });
+
+    expect(hook.result.current.copiedRichText).toBe(false);
+    expect(onAlert).toHaveBeenCalledWith('error', 'Failed to copy formatted rich text.');
+  });
+
+  it('uses document.execCommand fallback when ClipboardItem is undefined', async () => {
+    vi.stubGlobal('ClipboardItem', undefined);
+    const execCommand = vi.fn().mockImplementation(() => {
+      const event = new Event('copy', { bubbles: true, cancelable: true }) as ClipboardEvent;
+      const dataStore: Record<string, string> = {};
+      Object.defineProperty(event, 'clipboardData', {
+        value: {
+          setData: (format: string, data: string) => { dataStore[format] = data; },
+        },
+      });
+      document.dispatchEvent(event);
+      expect(dataStore['text/html']).toBe(article.content);
+      expect(dataStore['text/plain']).toBe(article.content);
+      return true;
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (document as any).execCommand = execCommand;
+
+    const { hook, onAlert } = setup();
+    await act(async () => { await hook.result.current.copyRichText(); });
+
+    expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(hook.result.current.copiedRichText).toBe(true);
+    expect(onAlert).toHaveBeenCalledWith('success', expect.stringContaining('Rich text copied'));
   });
 });
 
