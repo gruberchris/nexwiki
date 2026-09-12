@@ -58,7 +58,7 @@ Feature requests help shape the future of NexWiki.
 
 ### Prerequisites
 
-- **Go**: 1.26 or later
+- **Go**: 1.27 or later
 - **Node.js**: 20.x or later (includes `npm`)
 - **Docker**: Optional, for containerized development
 

@@ -28,7 +28,7 @@ RUN npm run build
 # ==========================================
 # Stage 2: Build the Go Web Server
 # ==========================================
-FROM golang:1.26-alpine AS backend-builder
+FROM golang:1.27-alpine AS backend-builder
 WORKDIR /app
 
 # Initialize Go environment

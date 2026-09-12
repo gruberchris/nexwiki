@@ -9,7 +9,7 @@ This guide provides everything needed to contribute to NexWiki, run local develo
 NexWiki is engineered as a zero-dependency, self-contained single binary containing both the Go backend server and the embedded React frontend:
 
 * **Backend Engine**:
-  * Written in **Go 1.26+** using standard library routing (`net/http` method matching introduced in Go 1.22+).
+  * Written in **Go 1.27+** using standard library routing (`net/http` method matching introduced in Go 1.22+).
   * Full-text search powered by [Bleve](https://github.com/blevesearch/bleve) with disk-backed indexing.
   * Flat-file Open Knowledge Format (OKF v0.2) markdown storage with gzip-compressed revision histories.
   * Real-time Server-Sent Events (SSE) bus and dual-era Model Context Protocol (MCP) server supporting Stdio and Streamable HTTP.
@@ -29,7 +29,7 @@ NexWiki is engineered as a zero-dependency, self-contained single binary contain
 
 To build and develop NexWiki locally, ensure you have the following installed:
 
-1. **Go**: Version `1.26` or higher (`go version`)
+1. **Go**: Version `1.27` or higher (`go version`)
 2. **Node.js**: Version `20.x` LTS or higher with `npm` (`node -v`, `npm -v`)
 3. **Make**: Standard GNU Make utility
 4. **Docker & Docker Compose** *(optional)*: For container-based workflows and multi-platform testing
