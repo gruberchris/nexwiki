@@ -45,7 +45,7 @@ spinner() {
 
 # 1. Header: Agent CLI startup
 printf "  ${BOLD}${BLUE}Claude Code${RESET} ${DIM}v0.2.29${RESET} ${GRAY}•${RESET} ${WHITE}personal-wiki${RESET}\n"
-printf "  ${GREEN}●${RESET} ${DIM}Connected to${RESET} ${BOLD}${CYAN}nexwiki${RESET} ${DIM}MCP server (Streamable HTTP • 31 tools active)${RESET}\n\n"
+printf "  ${GREEN}●${RESET} ${DIM}Connected to${RESET} ${BOLD}${CYAN}nexwiki${RESET} ${DIM}MCP server (Streamable HTTP • 36 tools active)${RESET}\n\n"
 sleep 0.6
 
 # 2. User prompt

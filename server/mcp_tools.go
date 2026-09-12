@@ -104,6 +104,11 @@ var mcpToolRegistry = []toolDef{
 	listAgentSkillsTool,
 	proposeSkillCandidateTool,
 	promoteSkillCandidateTool,
+	createEvolutionJobTool,
+	claimEvolutionJobTool,
+	heartbeatEvolutionJobTool,
+	uploadJobArtifactTool,
+	completeEvolutionJobTool,
 	getStatusTagsTool,
 	getRecentActivityTool,
 	getBacklinksTool,
@@ -138,6 +143,7 @@ var bareToolVerbs = map[string]bool{
 	"read": true, "search": true, "get": true, "list": true,
 	"update": true, "revert": true, "import": true, "export": true,
 	"propose": true, "promote": true,
+	"claim": true, "heartbeat": true, "upload": true, "complete": true,
 }
 
 // rejectToolArtifactTitle guards against a tool call whose arguments were mangled in transit,

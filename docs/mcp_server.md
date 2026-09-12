@@ -26,7 +26,7 @@ The MCP specification changed shape in revision **`2026-07-28`**. NexWiki implem
 | Results | carry `resultType: "complete"` | bare result object |
 | Protocol errors | real HTTP status (`400`/`404`) | `200` with an error body |
 
-**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 31 tools and the same 2 prompts — only the envelope differs.
+**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 36 tools and the same 2 prompts — only the envelope differs.
 
 #### Modern-era requirements
 
@@ -84,7 +84,7 @@ curl -X POST http://localhost:5808/api/mcp \
 
 Every tool carries MCP `annotations` telling your client what calling it actually does. Clients use these to **auto-approve safe reads and confirm destructive writes**, so an agent isn't interrupting you to run `get_context_overview` — the tool the agent skill says to call first in every session.
 
-This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 31 tools might destroy data and reach arbitrary external systems.
+This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 36 tools might destroy data and reach arbitrary external systems.
 
 | Hint | NexWiki's values |
 |---|---|
@@ -96,9 +96,11 @@ This matters because the spec's defaults are **pessimistic**: an unannotated too
 
 **Read-only (14):** `search_wiki` · `read_article` · `list_articles` · `get_article_history` · `get_wiki_statistics` · `list_agent_memories` · `list_agent_plans` · `list_agent_skills` · `get_status_tags` · `get_recent_activity` · `get_backlinks` · `get_context_overview` · `export_okf_bundle` · `wiki_health`
 
-**Additive writes (7)** — create new content, never overwrite: the four `create_*` tools plus `append_agent_memory`, `append_agent_plan`, and `propose_skill_candidate`.
+**Additive writes (8)** — create new content, never overwrite: the five `create_*` tools plus `append_agent_memory`, `append_agent_plan`, and `propose_skill_candidate`.
 
-**Destructive writes (10)** — can overwrite or remove existing content: `edit_wiki_article` · `edit_agent_memory` · `edit_agent_plan` · `edit_agent_skill` · `update_article_tags` · `delete_wiki_article` · `delete_agent_memory` · `revert_article_version` · `import_okf_bundle` · `promote_skill_candidate`
+**Destructive writes (11)** — can overwrite or remove existing content: `edit_wiki_article` · `edit_agent_memory` · `edit_agent_plan` · `edit_agent_skill` · `update_article_tags` · `delete_wiki_article` · `delete_agent_memory` · `revert_article_version` · `import_okf_bundle` · `promote_skill_candidate` · `complete_evolution_job`
+
+**Job control (3)** — advance a headless evolution job's lease or record its output, never wiki content: `claim_evolution_job` · `heartbeat_evolution_job` · `upload_job_artifact`.
 
 > **Annotations are hints, not guarantees.** The specification is explicit that clients must treat them as untrusted from untrusted servers. They describe intent; the actual guards are the optimistic-locking checks and the reserved-type rules enforced inside the handlers.
 >
@@ -311,7 +313,7 @@ State is per resolved agent, bounded (8 lookups each, 64 agents, least-recently-
 
 > **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port (and is the primary that persists the activity log); if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server, it forwards its activity events to it; with no NexWiki web server, it persists the log itself. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
 
-The NexWiki MCP server registers and exposes thirty-one powerful tools for AI agents:
+The NexWiki MCP server registers and exposes thirty-six powerful tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across the **entire** knowledge base using the built-in **Bleve Search** engine — wiki articles *and* your agent memories, plans, and skills.
@@ -844,6 +846,74 @@ Audits the knowledge base for maintenance work in one call. Everything it report
 // Only flag plans that have been idle for a quarter, and keep the report short
 { "stale_days": 90, "limit": 10 }
 ```
+
+---
+
+### 32. `create_evolution_job`
+Queues a headless evolution run for one skill and mints its per-harness token. One run per skill — refused while the skill has an active job. The token is returned **once** and never retrievable again; every later lifecycle call must present it.
+
+* **Arguments**:
+  * `skill_slug` (string, **required**): The URL-safe slug of the skill to evolve.
+  * `candidate_id` (string, *optional*): A pending candidate this run evolves. Must belong to the same skill.
+  * `profile` (string, *optional*): BYO CLI profile to run (server configuration): `opencode` or `claude-code`. Defaults to `opencode`.
+* **Behavior**:
+  Records a `queued` job as inert JSON under `data/skill_jobs` (never indexed, never executed) with a 90-minute run deadline. Operator-only: needs `jobs.manage`, which no evolution phase role holds.
+
+---
+
+### 33. `claim_evolution_job`
+Claims a queued job for a runner, starting its 60-second heartbeat lease. A lease-expired (requeued) job is claimable again.
+
+* **Arguments**:
+  * `id` (string, **required**): The job ID to claim.
+  * `job_token` (string, **required**): The per-harness token minted at creation, scoped to this job.
+  * `runner` (string, *optional*): Runner identity recorded on the claim.
+* **Behavior**:
+  A call carrying the job's own token is authorized regardless of the process-wide phase role; anything else needs `jobs.manage` and is denied (audited as a `deny` event).
+
+---
+
+### 34. `heartbeat_evolution_job`
+Renews a job's 60-second lease and records progress. When a pause was requested, the heartbeat parks the job at this step boundary instead of advancing it.
+
+* **Arguments**:
+  * `id` (string, **required**): The job ID to heartbeat.
+  * `job_token` (string, **required**): The per-harness token minted at creation, scoped to this job.
+  * `iteration` (integer, *optional*): Step number completed (max 12 — past the cap the job fails).
+  * `progress` (number, *optional*): Progress fraction 0–1.
+  * `note` (string, *optional*): Progress note recorded on the job.
+* **Behavior**:
+  Token-scoped like claiming. A heartbeat on an expired lease fails and tells the harness to stop and re-claim; a heartbeat past the 90-minute run cap marks the job `timeout`.
+
+---
+
+### 35. `upload_job_artifact`
+Attaches a file to a claimed/running job. The `content_hash` (SHA-256 hex over the content bytes, the skill-audit convention) is verified **before** acceptance — a mismatch stores nothing.
+
+* **Arguments**:
+  * `id` (string, **required**): The job ID to attach the artifact to.
+  * `job_token` (string, **required**): The per-harness token minted at creation, scoped to this job.
+  * `name` (string, **required**): Bare filename for the artifact.
+  * `content` (string, **required**): Artifact content, stored byte-identical after hash verification.
+  * `content_hash` (string, **required**): SHA-256 hex over the content bytes.
+  * `idempotency_key` (string, *optional*): Key deduplicating re-uploads — the same key returns the original without duplicating, unless the hash differs (a conflict, not a retry).
+* **Behavior**:
+  Token-scoped like claiming. Artifacts live under `data/skill_jobs/<id>/artifacts/`; at most 32 per job, 1 MiB each.
+
+---
+
+### 36. `complete_evolution_job`
+Marks a claimed/running job `complete` or `failed`. Terminal — releases the per-skill lock. Re-completing with the same outcome is a no-op.
+
+* **Arguments**:
+  * `id` (string, **required**): The job ID to complete.
+  * `job_token` (string, **required**): The per-harness token minted at creation, scoped to this job.
+  * `outcome` (string, **required**): `complete` or `failed`.
+  * `error` (string, *optional*): Failure detail recorded on the job.
+* **Behavior**:
+  Token-scoped like claiming. Cancellation, pause, and resume are operator APIs (wired to the story 08 UI), not MCP tools — the tool surface stays minimal.
+
+> **Headless job runner.** The five tools above drive background evolution runs with no terminal and no PTY: the server spawns an allowlisted BYO CLI (`opencode`, `claude-code`) as a same-host child with stdout/stderr captured to files, job JSON piped over stdin, and progress/artifact/complete callbacks parsed from stdout. CLI profiles live in server configuration only (`NEXWIKI_JOB_PROFILES_FILE` / `NEXWIKI_JOB_*` env — see [configuration](./configuration.md)): arbitrary command templates are refused at startup, wiki content is never interpolated into shell, and secrets stay in server env or harness-side. Job records are data files under `data/skill_jobs`, never wiki content.
 
 ---
 

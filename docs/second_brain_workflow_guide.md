@@ -20,7 +20,7 @@ The second-brain tools (`get_context_overview`, `get_backlinks`, `edit_agent_mem
 docker compose up -d --build
 ```
 
-**Verify**: ask your agent to list NexWiki's tools — you should see **31**, including `get_context_overview` and `get_recent_activity`.
+**Verify**: ask your agent to list NexWiki's tools — you should see **36**, including `get_context_overview` and `get_recent_activity`.
 
 ### 2. Connect your CLI over Streamable HTTP
 
@@ -161,7 +161,7 @@ That sequence exercises every piece of the system: the ingest skill, overview + 
 
 ## 📚 Related Guides
 
-* [MCP Server Guide](./mcp_server.md) — all 31 tools in detail, client connection configs
+* [MCP Server Guide](./mcp_server.md) — all 36 tools in detail, client connection configs
 * [AI Agent Integration & SOP Guide](./agent_integration_guide.md) — governance layers and the guidelines skill
 * [Tags & AI Agent Memories Guide](./tags.md) — protected tags and memory isolation
 * [AI Agent Skills & Custom Registry Guide](./aiagent_skills.md) — the skills registry powering `ingest-source`
