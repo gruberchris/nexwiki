@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,9 +23,11 @@ import (
 // a timestamp. Promoting a candidate writes a new skill version; rejecting one leaves the
 // live skill byte-identical.
 //
-// Deliberately NOT built here (stories 03/04 own them): the validation gate, R_best
-// scoring, skill-impact/logs audit writes, and the job/lease/BYO-CLI runner. Each has a
-// stub or a TODO hook point below so later stories have a clean seam to attach to.
+// Deliberately NOT built here (story 04 owns it): the job/lease/BYO-CLI runner.
+// The story 03 validation gate, R_best scoring, and the harness-owned audit
+// trail (server/skill_audit.go) are wired in below; full eval-store/scorer
+// versioning is story 11, which plugs into RBestScore without touching the
+// promote flow or the audit shape.
 
 // SkillLockedError reports a refused write to a locked skill. It names the locker and the
 // lock timestamp so the agent knows who to ask and how fresh the lock is.
@@ -268,30 +271,82 @@ func (s *Storage) ListSkillCandidates() ([]SkillCandidate, error) {
 	return out, nil
 }
 
-// ValidateSkillCandidateForPromote is the hook point for the story 03 validation gate.
-// It currently approves every pending candidate with a well-formed parent; story 03
-// replaces this stub with real validation scoring without touching the promote flow.
-func ValidateSkillCandidateForPromote(c *SkillCandidate, parent *Article) error {
-	// TODO(story-03): implement the validation gate here (checks + scoring threshold).
-	// Until then every structurally valid candidate is promotable.
+// SkillGateRejection reports a candidate the story 03 validation gate refused
+// to promote: its score did not beat the running best. It carries both numbers
+// so the operator (and the audit record) can see the margin.
+type SkillGateRejection struct {
+	CandidateID string
+	Score       float64
+	Best        float64
+}
+
+func (e *SkillGateRejection) Error() string {
+	return fmt.Sprintf("skill candidate '%s' rejected by validation gate: score %.4f does not beat R_best %.4f — strengthen the proposal (more evidence, clearer diff) and propose again",
+		e.CandidateID, e.Score, e.Best)
+}
+
+// ValidateSkillCandidateForPromote is the story 03 validation gate: a pending
+// candidate promotes only when its validation score beats the running best
+// for the skill. A perfect score (1.0) accepts outright via the early-stop
+// hook — even against a perfect best — so a strictly-greater compare can
+// never deadlock the trail at the ceiling.
+func ValidateSkillCandidateForPromote(c *SkillCandidate, parent *Article, rBestBefore float64) error {
 	if c.Status != SkillCandidatePending {
 		return fmt.Errorf("skill candidate '%s' is already decided (%s)", c.ID, c.Status)
+	}
+	score := RBestScore(c)
+	if score >= 1.0 {
+		return nil
+	}
+	if score <= rBestBefore {
+		return &SkillGateRejection{CandidateID: c.ID, Score: score, Best: rBestBefore}
 	}
 	return nil
 }
 
-// RBestScore is the hook point for the story 03 R_best scoring function. It is recorded
-// on the candidate at promote time but does not gate promotion until story 03 lands.
+// RBestScore is the story 03 R_best scoring function: a minimal deterministic
+// heuristic over the candidate's own fields (full body, diff, motivating
+// patterns, body substance), rounded to 4 decimals and capped at 1.0 so
+// scores compare exactly. Full eval-store/scorer versioning is story 11,
+// which plugs in here and bumps SkillAuditScorerVersion — the gate compare
+// and the audit shape stay untouched.
+// TODO(story-11): versioned scorer + eval store.
 func RBestScore(c *SkillCandidate) float64 {
-	// TODO(story-03): implement R_best scoring (pattern-match strength, proposer history).
-	return 0
+	if c == nil {
+		return 0
+	}
+	score := 0.0
+	if strings.TrimSpace(c.ProposedBody) != "" {
+		score += 0.4
+	}
+	if strings.TrimSpace(c.Diff) != "" {
+		score += 0.2
+	}
+	if n := len(c.PatternSlugs); n > 3 {
+		score += 0.3
+	} else {
+		score += 0.1 * float64(n)
+	}
+	if n := len(c.ProposedBody); n > 0 {
+		if bonus := float64(n) / 100000.0; bonus > 0.1 {
+			score += 0.1
+		} else {
+			score += bonus
+		}
+	}
+	if score > 1 {
+		score = 1
+	}
+	return math.Round(score*10000) / 10000
 }
 
 // PromoteSkillCandidate writes the candidate's proposed body as a new version of the
 // parent skill and links the two (candidate records the parent version it was cut from
 // and the result version it produced; the skill's edit summary names the candidate).
 // Promotion is the one write path that may change a locked skill: it runs through
-// saveArticleLocked directly, bypassing the agent-edit lock guard.
+// saveArticleLocked directly, bypassing the agent-edit lock guard. The gate decision
+// is audited first (story 03): an accept appends an accepted record and proceeds, a
+// gate rejection appends a rejected record, marks the candidate rejected, and refuses.
 func (s *Storage) PromoteSkillCandidate(id string) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -300,6 +355,9 @@ func (s *Storage) PromoteSkillCandidate(id string) (*Article, error) {
 	if err != nil {
 		return nil, err
 	}
+	if c.Status != SkillCandidatePending {
+		return nil, fmt.Errorf("skill candidate '%s' is already decided (%s)", c.ID, c.Status)
+	}
 	parent, err := s.GetArticle(c.ParentSlug)
 	if err != nil {
 		return nil, fmt.Errorf("cannot promote candidate '%s': parent skill not found: %s", c.ID, c.ParentSlug)
@@ -307,16 +365,55 @@ func (s *Storage) PromoteSkillCandidate(id string) (*Article, error) {
 	if parent.Type != ContentTypeSkill {
 		return nil, fmt.Errorf("cannot promote candidate '%s': parent '%s' is no longer a skill", c.ID, c.ParentSlug)
 	}
-	if err := ValidateSkillCandidateForPromote(c, parent); err != nil {
-		return nil, err
-	}
+	// Structural validation is intentionally unaudited: only gate decisions
+	// (accept/reject) append audit records, so this diff-only refusal returns
+	// before any gate/audit work.
 	if strings.TrimSpace(c.ProposedBody) == "" {
 		return nil, fmt.Errorf("cannot promote candidate '%s': diff-only candidates need a full proposed body to promote", c.ID)
 	}
 
-	// TODO(story-03): write the skill-impact/logs audit-trail entries for this promotion.
+	// Story 03 gate: score against the running best from the harness-owned
+	// trail, then audit the decision — accept or reject — before mutating
+	// anything. The audit append comes first so a decision can never land
+	// without its record; a failed append aborts the promotion.
 	// TODO(story-04): run promotion through the job/lease/BYO-CLI runner instead of inline.
-	c.BestScore = RBestScore(c)
+	score := RBestScore(c)
+	before, err := s.currentRBest(c.ParentSlug)
+	if err != nil {
+		return nil, fmt.Errorf("cannot promote candidate '%s': failed to read audit trail: %w", c.ID, err)
+	}
+	after := before
+	outcome := SkillAuditAccepted
+	if gateErr := ValidateSkillCandidateForPromote(c, parent, before); gateErr != nil {
+		after = before
+		outcome = SkillAuditRejected
+		if auditErr := s.appendSkillAuditRecord(SkillAuditRecord{
+			CandidateID: c.ID, SkillSlug: c.ParentSlug, ParentVersion: c.ParentVersion,
+			ContentHash: SkillCandidateContentHash(c), ValidationScore: score,
+			RBestBefore: before, RBestAfter: after, Outcome: outcome,
+			Decider: SkillAuditDeciderGate, ScorerVersion: SkillAuditScorerVersion,
+			Timestamp: time.Now().UTC(),
+		}); auditErr != nil {
+			return nil, fmt.Errorf("validation gate refused candidate '%s' but the audit write failed: %v (gate: %v)", c.ID, auditErr, gateErr)
+		}
+		c.Status = SkillCandidateRejected
+		c.DecidedAt = time.Now().UTC()
+		if err := s.writeCandidate(c); err != nil {
+			return nil, err
+		}
+		return nil, gateErr
+	}
+	after = score
+	if auditErr := s.appendSkillAuditRecord(SkillAuditRecord{
+		CandidateID: c.ID, SkillSlug: c.ParentSlug, ParentVersion: c.ParentVersion,
+		ContentHash: SkillCandidateContentHash(c), ValidationScore: score,
+		RBestBefore: before, RBestAfter: after, Outcome: outcome,
+		Decider: SkillAuditDeciderGate, ScorerVersion: SkillAuditScorerVersion,
+		Timestamp: time.Now().UTC(),
+	}); auditErr != nil {
+		return nil, fmt.Errorf("validation gate accepted candidate '%s' but the audit write failed: %v", c.ID, auditErr)
+	}
+	c.BestScore = score
 
 	summary := fmt.Sprintf("Promoted skill candidate %s (parent %s v%d, proposed by %s)",
 		c.ID, c.ParentSlug, c.ParentVersion, c.Proposer)
@@ -336,7 +433,9 @@ func (s *Storage) PromoteSkillCandidate(id string) (*Article, error) {
 }
 
 // RejectSkillCandidate marks a candidate rejected. The live skill is never touched —
-// callers can verify byte-identity by comparing content before and after.
+// callers can verify byte-identity by comparing content before and after. The
+// explicit human decision is audited (story 03, decider "human") before the
+// candidate is marked, so a rejection can never land without its record.
 func (s *Storage) RejectSkillCandidate(id string) (*SkillCandidate, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -347,6 +446,20 @@ func (s *Storage) RejectSkillCandidate(id string) (*SkillCandidate, error) {
 	}
 	if c.Status != SkillCandidatePending {
 		return nil, fmt.Errorf("skill candidate '%s' is already decided (%s)", c.ID, c.Status)
+	}
+	score := RBestScore(c)
+	before, err := s.currentRBest(c.ParentSlug)
+	if err != nil {
+		return nil, fmt.Errorf("cannot reject candidate '%s': failed to read audit trail: %w", c.ID, err)
+	}
+	if auditErr := s.appendSkillAuditRecord(SkillAuditRecord{
+		CandidateID: c.ID, SkillSlug: c.ParentSlug, ParentVersion: c.ParentVersion,
+		ContentHash: SkillCandidateContentHash(c), ValidationScore: score,
+		RBestBefore: before, RBestAfter: before, Outcome: SkillAuditRejected,
+		Decider: SkillAuditDeciderHuman, ScorerVersion: SkillAuditScorerVersion,
+		Timestamp: time.Now().UTC(),
+	}); auditErr != nil {
+		return nil, fmt.Errorf("cannot reject candidate '%s': audit write failed: %v", c.ID, auditErr)
 	}
 	c.Status = SkillCandidateRejected
 	c.DecidedAt = time.Now().UTC()
