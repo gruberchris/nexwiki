@@ -397,7 +397,16 @@ func memoryScopeTags(tags []string) []string {
 
 // executeToolCall parses parameters and executes requested MCP tools, with automatic logging hooks.
 // agent is the attribution recorded against the call — see resolveAgent.
+//
+// The story 02 scope gate runs first: a denied call is audited as a "deny" event and
+// answered as a tool-level error, never reaching its handler.
 func (srv *Server) executeToolCall(params json.RawMessage, agent string) (interface{}, *JSONRPCError) {
+	if name, args, ok := parseToolCallParams(params); ok {
+		if scopeErr := srv.checkWikiskillScope(name, args); scopeErr != nil {
+			srv.auditScopeDenial(name, args, agent, scopeErr)
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + scopeErr.Error()}}}, nil
+		}
+	}
 	result, rpcErr := srv.executeToolCallInternal(params)
 	if rpcErr == nil && !isToolError(result) {
 		srv.logMCPToolCall(params, agent)
@@ -462,6 +471,20 @@ func isToolError(result interface{}) bool {
 	return ok && resp.IsError
 }
 
+// parseToolCallParams extracts the tool name and raw arguments from a tools/call
+// params object. It reports false when the params are malformed, so the gate can let
+// the dispatch path below report the real problem instead of a misleading denial.
+func parseToolCallParams(params json.RawMessage) (string, json.RawMessage, bool) {
+	var args struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(params, &args); err != nil || args.Name == "" {
+		return "", nil, false
+	}
+	return args.Name, args.Arguments, true
+}
+
 // executeToolCallInternal parses parameters and executes requested MCP tools.
 func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{}, *JSONRPCError) {
 	type ToolCallArgs struct {
@@ -472,6 +495,22 @@ func (srv *Server) executeToolCallInternal(params json.RawMessage) (interface{},
 	var args ToolCallArgs
 	if err := json.Unmarshal(params, &args); err != nil {
 		return nil, &JSONRPCError{Code: -32602, Message: "Invalid tool call parameters"}
+	}
+
+	// Story 02 scope gate. The outer executeToolCall already checked with the resolved
+	// agent, but direct internal callers (and the modern path's re-entry) land here —
+	// so the gate holds on this path too, attributing the denial the same way every
+	// unattributed call is attributed. A denial here never double-audits: the outer
+	// path returns before reaching this function when it denies.
+	if scopeErr := srv.checkWikiskillScope(args.Name, args.Arguments); scopeErr != nil {
+		srv.auditScopeDenial(args.Name, args.Arguments, srv.resolveAgent(parseParamsEnvelope(params)), scopeErr)
+		return ToolResponse{
+			IsError: true,
+			Content: []ToolContent{{
+				Type: "text",
+				Text: "Error: " + scopeErr.Error(),
+			}},
+		}, nil
 	}
 
 	tool, ok := toolsByName[args.Name]

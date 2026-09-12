@@ -79,7 +79,7 @@ On first launch, NexWiki automatically creates its data directory (`articles/`, 
 
 ## 🤖 Connecting AI Agents via MCP
 
-NexWiki contains an always-on Model Context Protocol (MCP) server exposing **29 built-in tools** for search, content retrieval, memory management, and agent planning.
+NexWiki contains an always-on Model Context Protocol (MCP) server exposing **31 built-in tools** for search, content retrieval, memory management, and agent planning.
 
 ### Streamable HTTP (Recommended)
 Reuses your running web server at `http://localhost:5808/api/mcp` and sidesteps search index locks:
@@ -123,7 +123,7 @@ When running headless without the web interface:
 ## ✨ Key Features
 
 - **📦 Zero-Dependency Go Binary**: Standalone Go executable with the React 19 SPA embedded via `go:embed`—no external asset servers or database processes required. ([Developer Guide](docs/developer_guide.md))
-- **🤖 29 Built-in MCP Tools**: Comprehensive semantic tools over Streamable HTTP and stdio, providing agents safe search, structured reads, optimistic writes, and rollback controls. ([MCP Server Guide](docs/mcp_server.md))
+- **🤖 31 Built-in MCP Tools**: Comprehensive semantic tools over Streamable HTTP and stdio, providing agents safe search, structured reads, optimistic writes, and rollback controls. ([MCP Server Guide](docs/mcp_server.md))
 - **📂 Flat-File Markdown & OKF v0.2**: All pages persist as human-readable Markdown files with conformant Open Knowledge Format front matter and five trust signals (provenance, trust, freshness, lifecycle, and computations). ([OKF Guide](docs/okf_v02_guide.md))
 - **🧠 Isolated AI Agent Memories & Custom Skills**: Dedicated storage for agent plans, skills, and memories, cleanly segregated from standard notes with two-axis memory classification (`memory_kind` and `memory_type`). ([Skills Guide](docs/aiagent_skills.md) · [Tags & Memory Guide](docs/tags.md))
 - **🕒 Gzipped History & Visual Diffs**: Compressed `.md.gz` revision snapshots with split or unified visual diffs, instant rollbacks, and optimistic locking conflict guards. ([Version Control Guide](docs/version_control.md))
@@ -139,7 +139,7 @@ Explore in-depth technical manuals, architectural specifications, and workflow g
 
 - [User & Content Creation Guide](docs/user_guide.md) — Managing articles, trust signals, backlinks, and export options.
 - [Second Brain Workflow Guide](docs/second_brain_workflow_guide.md) — Orientation loop, progressive disclosure, and source ingestion.
-- [Model Context Protocol (MCP) Reference](docs/mcp_server.md) — Canonical reference for all 29 tools, annotations, and schemas.
+- [Model Context Protocol (MCP) Reference](docs/mcp_server.md) — Canonical reference for all 31 tools, annotations, and schemas.
 - [Agent Integration & SOP Guide](docs/agent_integration_guide.md) — Governance layers, standard operating procedures, and agent blueprints.
 - [Plan Lifecycle & State Machine Guide](docs/plan_lifecycle_guide.md) — Enforced plan statuses, auto-archiving, and retention timers.
 - [Open Knowledge Format (OKF v0.2) Guide](docs/okf_v02_guide.md) — Trust tiers, freshness expiration, and bundle import/export.

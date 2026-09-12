@@ -95,7 +95,7 @@ Open `CHANGELOG.md` and promote the `[Unreleased]` block to the new version head
 
 ### Step 3: Verify Documentation Consistency
 Check for claims that can drift across releases:
-* Verify that the total MCP tool count stated across documentation (`README.md`, `AGENTS.md`, `docs/README.md`, `docs/mcp_server.md`) remains strictly accurate (**29 tools**).
+* Verify that the total MCP tool count stated across documentation (`README.md`, `AGENTS.md`, `docs/README.md`, `docs/mcp_server.md`) remains strictly accurate (**31 tools**).
 * Ensure any new CLI flags or environment variables are reflected in `docs/configuration.md`.
 
 ### Step 4: PR and Merge

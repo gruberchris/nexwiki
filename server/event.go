@@ -13,7 +13,7 @@ type LogEvent struct {
 	ID        string    `json:"id"`
 	Timestamp time.Time `json:"timestamp"`
 	Source    string    `json:"source"` // "mcp" or "api"
-	Action    string    `json:"action"` // "create", "edit", "delete", "read"
+	Action    string    `json:"action"` // "create", "edit", "delete", "read", "revert", "deny"
 	Tool      string    `json:"tool"`   // "search_wiki", "read_article", etc. (empty for REST API)
 	Slug      string    `json:"slug"`
 	Title     string    `json:"title"`

@@ -26,7 +26,7 @@ The MCP specification changed shape in revision **`2026-07-28`**. NexWiki implem
 | Results | carry `resultType: "complete"` | bare result object |
 | Protocol errors | real HTTP status (`400`/`404`) | `200` with an error body |
 
-**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 29 tools and the same 2 prompts — only the envelope differs.
+**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 31 tools and the same 2 prompts — only the envelope differs.
 
 #### Modern-era requirements
 
@@ -84,7 +84,7 @@ curl -X POST http://localhost:5808/api/mcp \
 
 Every tool carries MCP `annotations` telling your client what calling it actually does. Clients use these to **auto-approve safe reads and confirm destructive writes**, so an agent isn't interrupting you to run `get_context_overview` — the tool the agent skill says to call first in every session.
 
-This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 29 tools might destroy data and reach arbitrary external systems.
+This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 31 tools might destroy data and reach arbitrary external systems.
 
 | Hint | NexWiki's values |
 |---|---|
@@ -96,9 +96,9 @@ This matters because the spec's defaults are **pessimistic**: an unannotated too
 
 **Read-only (14):** `search_wiki` · `read_article` · `list_articles` · `get_article_history` · `get_wiki_statistics` · `list_agent_memories` · `list_agent_plans` · `list_agent_skills` · `get_status_tags` · `get_recent_activity` · `get_backlinks` · `get_context_overview` · `export_okf_bundle` · `wiki_health`
 
-**Additive writes (6)** — create new content, never overwrite: the four `create_*` tools plus `append_agent_memory` and `append_agent_plan`.
+**Additive writes (7)** — create new content, never overwrite: the four `create_*` tools plus `append_agent_memory`, `append_agent_plan`, and `propose_skill_candidate`.
 
-**Destructive writes (9)** — can overwrite or remove existing content: `edit_wiki_article` · `edit_agent_memory` · `edit_agent_plan` · `edit_agent_skill` · `update_article_tags` · `delete_wiki_article` · `delete_agent_memory` · `revert_article_version` · `import_okf_bundle`
+**Destructive writes (10)** — can overwrite or remove existing content: `edit_wiki_article` · `edit_agent_memory` · `edit_agent_plan` · `edit_agent_skill` · `update_article_tags` · `delete_wiki_article` · `delete_agent_memory` · `revert_article_version` · `import_okf_bundle` · `promote_skill_candidate`
 
 > **Annotations are hints, not guarantees.** The specification is explicit that clients must treat them as untrusted from untrusted servers. They describe intent; the actual guards are the optimistic-locking checks and the reserved-type rules enforced inside the handlers.
 >
@@ -311,7 +311,7 @@ State is per resolved agent, bounded (8 lookups each, 64 agents, least-recently-
 
 > **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port (and is the primary that persists the activity log); if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server, it forwards its activity events to it; with no NexWiki web server, it persists the log itself. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
 
-The NexWiki MCP server registers and exposes twenty-nine powerful tools for AI agents:
+The NexWiki MCP server registers and exposes thirty-one powerful tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across the **entire** knowledge base using the built-in **Bleve Search** engine — wiki articles *and* your agent memories, plans, and skills.
@@ -636,7 +636,33 @@ Lists all Custom AI Skills (OKF type `AI-Agent-Skill`) currently saved in the kn
 
 ---
 
-### 21. `get_status_tags`
+### 21. `propose_skill_candidate`
+Proposes a skill evolution candidate: records a unified diff and/or a full proposed body against a parent skill, with motivating wiki pattern slugs. The live skill is never written — promotion is a separate, operator-only step.
+
+* **Arguments**:
+  * `parent_slug` (string, **required**): The URL-safe slug of the parent skill this candidate evolves.
+  * `proposed_body` (string, *optional*): Full proposed replacement body for the skill. Required to ever promote — a diff alone cannot be promoted.
+  * `diff` (string, *optional*): Unified diff of the proposed change, for review.
+  * `pattern_slugs` (array of strings, *optional*): Wiki pattern slugs motivating this evolution.
+  * `proposer` (string, *optional*): Proposer identity recorded on the candidate. Self-reported provenance, not authorization — the scope gate decides who may propose.
+* **Behavior**:
+  Validates the parent is a Custom AI Skill, secret-scans the proposed body like every other write path, and stores the candidate as inert JSON under `data/skill_candidates` (never indexed, never executed). At least one of `proposed_body` / `diff` is required.
+
+---
+
+### 22. `promote_skill_candidate`
+Promotes a pending skill candidate: writes its proposed body as a new version of the parent skill and records the parent/result version linkage. Operator-only — no evolution phase role may call it.
+
+* **Arguments**:
+  * `id` (string, **required**): The candidate ID to promote (returned by `propose_skill_candidate`).
+* **Behavior**:
+  Refuses already-decided candidates and diff-only candidates (promotion needs a full body). The promotion bypasses the skill lock — it is the sanctioned write path — and names the candidate in the skill's edit summary.
+
+> **WikiSkill evolution roles (least-privilege).** When the server runs with `-wikiskill-role` / `NEXWIKI_WIKISKILL_ROLE` set to `inference`, `maintainer`, or `proposer`, every tool call above is checked against that phase's scopes before its handler runs. `inference` may read skills and append raw memories only; `maintainer` may read/write raw memories and wiki articles and read skills; `proposer` may read wiki articles and skills and propose candidates. No phase may publish or promote skills or write audit entries. A refused call fails with an explicit `lacks scope` error and is audited to the activity log as a `deny` event. With no role configured the server is unrestricted, exactly as before. The role is process-wide configuration — clients cannot declare or escalate it. See [configuration](./configuration.md).
+
+---
+
+### 23. `get_status_tags`
 Returns the recognized values for the `status` **field**, which only agent plans and agent skills have.
 
 * **Arguments**: None (empty object `{}`).
@@ -649,7 +675,7 @@ Returns the recognized values for the `status` **field**, which only agent plans
 
 ---
 
-### 22. `get_context_overview`
+### 24. `get_context_overview`
 Returns a **cheap progressive-disclosure index** of the entire knowledge base — the recommended first call of any agent session. Each entry is one compact line: title, slug, one-line summary, tags, and updated date, grouped into Wiki Articles / Agent Memories / Agent Plans / Agent Skills sections.
 
 * **Arguments**:
@@ -673,7 +699,7 @@ Each line: Title (slug) — summary <memory kind> [tags] (updated). Use read_art
 
 ---
 
-### 23. `get_backlinks`
+### 25. `get_backlinks`
 Lists all articles whose content links to a given article, in **either** internal link form — double-bracket `[[WikiLinks]]` or absolute `[text](/articles/<slug>)` Markdown links — reverse traversal of the knowledge graph.
 
 * **Arguments**:
@@ -684,7 +710,7 @@ Lists all articles whose content links to a given article, in **either** interna
 
 ---
 
-### 24. `edit_agent_memory`
+### 26. `edit_agent_memory`
 Replaces or corrects an existing protected AI Agent Memory **in place** — the core memory-hygiene tool. Prefer this over creating a near-duplicate memory when facts go stale.
 
 * **Arguments**:
@@ -719,7 +745,7 @@ Replaces or corrects an existing protected AI Agent Memory **in place** — the 
 
 ---
 
-### 25. `delete_agent_memory`
+### 27. `delete_agent_memory`
 Permanently deletes an obsolete or fully superseded protected AI Agent Memory.
 
 * **Arguments**:
@@ -730,13 +756,13 @@ Permanently deletes an obsolete or fully superseded protected AI Agent Memory.
 
 ---
 
-### 26. `get_recent_activity`
+### 28. `get_recent_activity`
 Queries the **durable activity log** (`data/activity.jsonl`) to see what changed in the wiki and when — the "what happened since my last session?" tool.
 
 * **Arguments**:
   * `since` (string, **optional**): Only return events newer than this. Accepts a Go duration (`30m`, `24h`, `168h`) or an RFC3339 timestamp (`2026-06-10T00:00:00Z`).
   * `limit` (integer, **optional**): Maximum events returned, newest kept (default 50, max 500).
-  * `action` (string, **optional**): Filter by `create`, `edit`, `delete`, `read`, or `revert`.
+  * `action` (string, **optional**): Filter by `create`, `edit`, `delete`, `read`, `revert`, or `deny` (least-privilege refusals).
   * `source` (string, **optional**): Filter by origin — `mcp` (AI tool calls) or `api` (human web UI actions).
 * **Behavior**:
   Reads the persisted JSON Lines activity log written by the primary server process (every REST and MCP mutation/read event, deduplicated within 2-second windows), **spanning the active file plus rotated archives** so durable history survives rotation. Falls back to the in-memory 200-event ring buffer when no durable log exists yet. At 10 MB the active log is rotated aside into a **non-destructive, timestamped archive** (`activity-<UTC>.jsonl`) — earlier archives are never overwritten (optional retention cap via `NEXWIKI_ACTIVITY_MAX_ARCHIVES`, default unlimited). The Activity Drawer also pages this durable history via `GET /api/activity/log` ("Load older history"). Events from a different MCP process may lag by milliseconds while being forwarded to the primary.
@@ -750,14 +776,14 @@ Recent wiki activity (3 events, oldest first):
 2026-06-11 14:03:22 [mcp/edit] edit_agent_memory → 'Build Quirk' (build-quirk) by Claude
 ```
 
-### 27. `export_okf_bundle`
+### 29. `export_okf_bundle`
 Exports the entire knowledge base as a conformant **Open Knowledge Format (OKF v0.2) bundle** (a `.zip`, with dual-era OKF v0.1 support).
 
 * **Arguments**: none.
 * **Behavior**:
   Native files are already OKF YAML, so export synthesizes the **bundle hierarchy** from each document's `type` (`wiki/`, `aimemories/`, `aiplans/`, `aiskills/`, and `computations/` for Attested Computations), the reserved per-directory and root `index.md` files (the root carries `okf_version: "0.2"`), a date-grouped `log.md` built from the durable activity log, and translates `[[WikiLinks]]` into bundle-relative concept paths (`/wiki/<slug>.md`, OKF §5.1). Full OKF v0.2 trust metadata (`sources`, `generated`, `verified`, `stale_after`, computation specifications) are preserved. The archive is written into the data directory and its path is returned. REST equivalent: `GET /api/okf/export` (streams the `.zip` as a download).
 
-### 28. `import_okf_bundle`
+### 30. `import_okf_bundle`
 Imports an **Open Knowledge Format (OKF v0.2) bundle** (`.zip`, with dual-era OKF v0.1 support) from a filesystem path into the knowledge base.
 
 * **Arguments**:
@@ -767,7 +793,7 @@ Imports an **Open Knowledge Format (OKF v0.2) bundle** (`.zip`, with dual-era OK
 
 ---
 
-### 29. `wiki_health`
+### 31. `wiki_health`
 Audits the knowledge base for maintenance work in one call. Everything it reports is something the wiki already knows but never volunteers.
 
 * **Arguments**:

@@ -35,6 +35,14 @@ type Server struct {
 	// provenance.go.
 	AgentName string
 
+	// WikiskillRole fixes the process-wide WikiSkill evolution least-privilege role for
+	// the MCP layer: "inference", "maintainer", or "proposer" (story 02). Empty means
+	// unrestricted — the pre-story-02 behavior every existing deployment relies on. Set
+	// from -wikiskill-role / NEXWIKI_WIKISKILL_ROLE. There is deliberately no
+	// per-request role input: a caller that could declare its own role could escalate
+	// to it (see server/skill_scopes.go for the trust assumption and story 04 hook).
+	WikiskillRole string
+
 	// stdioClient holds the identity from a legacy `initialize` on the stdio connection, which is
 	// the only transport where a handshake can be attributed for the life of a connection.
 	stdioClient agentIdentity
