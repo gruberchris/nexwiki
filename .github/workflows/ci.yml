@@ -174,9 +174,9 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          # golangci-lint v1 is built with Go 1.24 and refuses to lint a module targeting
-          # go 1.27; the v2 line is required here.
-          version: v2.12.2
+          # golangci-lint v2.12 is built with Go 1.26 and refuses to lint a module targeting
+          # go 1.27; the v2.13 line is required here.
+          version: v2.13.2
           # "." rather than main.go: a named .go file can't be mixed with a package pattern.
           # Listed explicitly instead of ./... to skip frontend/node_modules.
           args: --timeout=5m . ./server/...
