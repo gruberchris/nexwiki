@@ -569,6 +569,13 @@ type Article struct {
 	// eventually becomes a third axis.
 	MemoryKind string `json:"memory_kind,omitempty"`
 
+	// LockedBy/LockedAt mark a skill as agent-read-only (wikiskill evolution, story 01).
+	// Only ever set on AI-Agent-Skill documents; a locked skill rejects agent-facing edits
+	// and advances only through the skill-candidate promote path. The *scope* axis stays on
+	// tags; this is a separate evolution lock, not a lifecycle status.
+	LockedBy string    `json:"locked_by,omitempty"`
+	LockedAt time.Time `json:"locked_at,omitzero"`
+
 	// OKF v0.2 core models: provenance, trust, and lifecycle (§5)
 	Generated   *OKFGenerated     `json:"generated,omitempty"`
 	Verified    []OKFVerification `json:"verified,omitempty"`
@@ -609,13 +616,16 @@ func (a *Article) DeriveTrustTier() string {
 
 // Storage manages persistent article files and uploaded assets on disk.
 type Storage struct {
-	DataDir     string
-	ArticleDir  string
-	AssetDir    string
-	HistoryDir  string
-	SearchIndex bleve.Index
-	ThemeStore  *ThemeStore
-	closeOnce   sync.Once
+	DataDir    string
+	ArticleDir string
+	AssetDir   string
+	HistoryDir string
+	// CandidateDir holds skill-candidate JSON records (wikiskill evolution, story 01).
+	// Candidates are data files, not OKF articles: they never enter the search index.
+	CandidateDir string
+	SearchIndex  bleve.Index
+	ThemeStore   *ThemeStore
+	closeOnce    sync.Once
 
 	// cache memoizes parsed article metadata and link targets, validated by file mtime+size so
 	// edits made outside NexWiki are still picked up. See article_cache.go.
@@ -652,6 +662,10 @@ func NewStorage(dataDir string) (*Storage, error) {
 	if err := os.MkdirAll(historyDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create history directory: %w", err)
 	}
+	candidateDir := filepath.Join(dataDir, "skill_candidates")
+	if err := os.MkdirAll(candidateDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create skill candidate directory: %w", err)
+	}
 
 	// Open or create the Bleve index, under a deadline.
 	//
@@ -671,13 +685,14 @@ func NewStorage(dataDir string) (*Storage, error) {
 	}
 
 	s := &Storage{
-		DataDir:     dataDir,
-		ArticleDir:  articleDir,
-		AssetDir:    assetDir,
-		HistoryDir:  historyDir,
-		SearchIndex: index,
-		ThemeStore:  NewThemeStore(dataDir),
-		cache:       newArticleCache(),
+		DataDir:      dataDir,
+		ArticleDir:   articleDir,
+		AssetDir:     assetDir,
+		HistoryDir:   historyDir,
+		CandidateDir: candidateDir,
+		SearchIndex:  index,
+		ThemeStore:   NewThemeStore(dataDir),
+		cache:        newArticleCache(),
 	}
 
 	// Seed standard 'home' page if no articles exist
@@ -878,6 +893,10 @@ type ArticleOverrides struct {
 	Status *string
 	// MemoryKind classifies what sort of fact a memory holds. See MemoryKinds in tags.go.
 	MemoryKind *string
+	// LockedBy/LockedAt set or clear the skill evolution lock (story 01). Nil means preserve;
+	// pass a pointer to "" to unlock. Only meaningful on AI-Agent-Skill documents.
+	LockedBy *string
+	LockedAt *time.Time
 	// OKF v0.2 overrides
 	Sources     *[]OKFSource
 	StaleAfter  *time.Time
@@ -939,6 +958,8 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	renamedFromSlug := ""                      // set when a slug rename occurs, to heal inbound WikiLinks
 	prevStatus := ""                           // the status before this save, for change stamping
 	prevMemoryKind := ""                       // the memory kind before this save, preserved unless overridden
+	prevLockedBy := ""                         // the skill lock holder before this save, preserved unless overridden
+	var prevLockedAt time.Time
 
 	// If updating an existing article
 	if oldSlug != "" {
@@ -955,6 +976,8 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 				}
 				prevStatus = existingArt.Status
 				prevMemoryKind = existingArt.MemoryKind
+				prevLockedBy = existingArt.LockedBy
+				prevLockedAt = existingArt.LockedAt
 				art = &Article{
 					Type:            resolvedType,
 					Title:           title,
@@ -1021,6 +1044,25 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	// in the corpus that no reader can interpret and no filter will ever match.
 	if resolvedType != ContentTypeMemory {
 		resolvedMemoryKind = ""
+	}
+
+	// The skill lock resolves the same way: preserved unless overridden, and meaningless
+	// anywhere but a skill. A bare locker with no timestamp is treated as unlocked so a
+	// half-written lock can never claim a document forever.
+	resolvedLockedBy := prevLockedBy
+	resolvedLockedAt := prevLockedAt
+	if overrides.LockedBy != nil {
+		resolvedLockedBy = strings.TrimSpace(*overrides.LockedBy)
+	}
+	if overrides.LockedAt != nil {
+		resolvedLockedAt = *overrides.LockedAt
+	}
+	if resolvedType != ContentTypeSkill {
+		resolvedLockedBy = ""
+		resolvedLockedAt = time.Time{}
+	}
+	if resolvedLockedBy == "" {
+		resolvedLockedAt = time.Time{}
 	}
 
 	if oldSlug != "" {
@@ -1147,6 +1189,8 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 
 	art.Status = resolvedStatus
 	art.MemoryKind = resolvedMemoryKind
+	art.LockedBy = resolvedLockedBy
+	art.LockedAt = resolvedLockedAt
 
 	if overrides.Sources != nil {
 		art.Sources = *overrides.Sources
@@ -1526,6 +1570,11 @@ type articleFrontMatter struct {
 	StatusChangedAt string `yaml:"status_changed_at,omitempty"`
 	// MemoryKind is a NexWiki custom key carried only by AI-Agent-Memory documents (see tags.go).
 	MemoryKind string `yaml:"memory_kind,omitempty"`
+	// LockedBy/LockedAt are NexWiki custom keys carried only by AI-Agent-Skill documents
+	// (wikiskill evolution, story 01). Like status_changed_at and memory_kind they are
+	// namespaced custom keys, not OKF v0.2 core — never relabelled, never stripped.
+	LockedBy string `yaml:"locked_by,omitempty"`
+	LockedAt string `yaml:"locked_at,omitempty"`
 }
 
 // extractCitationsFromBody parses a legacy v0.1 Markdown '# Citations' section (§13.1).
@@ -1676,6 +1725,14 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 			art.StatusChangedAt = t
 		}
 	}
+	if strings.TrimSpace(fm.LockedBy) != "" {
+		art.LockedBy = strings.TrimSpace(fm.LockedBy)
+		if fm.LockedAt != "" {
+			if t, err := parseISO8601(fm.LockedAt); err == nil {
+				art.LockedAt = t
+			}
+		}
+	}
 
 	// `slug` derivation
 	if art.Slug == "" {
@@ -1783,6 +1840,12 @@ func serializeFrontMatter(art *Article) string {
 	}
 	if !art.StatusChangedAt.IsZero() {
 		fm.StatusChangedAt = art.StatusChangedAt.UTC().Format(time.RFC3339)
+	}
+	if art.LockedBy != "" {
+		fm.LockedBy = art.LockedBy
+		if !art.LockedAt.IsZero() {
+			fm.LockedAt = art.LockedAt.UTC().Format(time.RFC3339)
+		}
 	}
 
 	out, err := yaml.Marshal(&fm)
@@ -2202,6 +2265,12 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 		return nil, err
 	}
 
+	// A locked skill is agent-read-only: it advances only through the skill-candidate
+	// promote path, never through direct edits.
+	if err := checkSkillLock(existing); err != nil {
+		return nil, err
+	}
+
 	// A stored version of 0 means the file predates versioning — there is nothing to compare
 	// against, so any loaded_version is accepted. Once an article has a version, the caller must
 	// supply the matching one: a 0 against a versioned article is a stale read, not a waiver of
@@ -2251,6 +2320,13 @@ func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 		return nil, err
 	}
 
+	// Reverting a locked skill would rewrite its body outside the candidate flow.
+	if live, err := s.GetArticle(slug); err == nil {
+		if err := checkSkillLock(live); err != nil {
+			return nil, err
+		}
+	}
+
 	summary := fmt.Sprintf("Reverted to version %d", version)
 	// A revision written before status became a field carries it as a tag, so lift it out rather
 	// than let a revert resurrect a tag set that validation now rejects. A revision that already
@@ -2276,6 +2352,11 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 
 	art, err := s.GetArticle(slug)
 	if err != nil {
+		return nil, err
+	}
+
+	// Tag writes are writes: a locked skill accepts none from agent paths.
+	if err := checkSkillLock(art); err != nil {
 		return nil, err
 	}
 

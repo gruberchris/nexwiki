@@ -200,6 +200,12 @@ func (srv *Server) toolEditAgentSkill(args json.RawMessage) (interface{}, *JSONR
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: target article is not a Custom AI Skill (type must be AI-Agent-Skill)."}}}, nil
 	}
 
+	// A locked skill is agent-read-only: it advances through skill candidates, never
+	// through direct edits. The error names the locker and timestamp.
+	if err := checkSkillLock(existing); err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+	}
+
 	if existing.Version > 0 && existing.Version != eArgs.LoadedVersion {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: versionConflictMessage("skill", eArgs.Slug, existing.Version, eArgs.LoadedVersion)}}}, nil
 	}
