@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-09-11
+
 ### Added
 - **Copy as Rich Text in Share & Export Dropdown**:
   - Added "Copy as Rich Text" button in the article header dropdown, writing rendered HTML and plain text to the clipboard via the modern Clipboard API (`ClipboardItem`) with fallback to `document.execCommand`.
@@ -17,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   - Upgraded Go language version declaration in `go.mod` to `1.27.1`.
   - Updated Dockerfile multi-stage backend builder base image to `golang:1.27-alpine`.
   - Updated developer guides and contributing documentation to reflect Go 1.27+ prerequisites.
+  - Bumped CI `golangci-lint` to `v2.13.2` for Go 1.27 compatibility.
 
 ## [0.17.1] — 2026-09-11
 
@@ -471,7 +474,8 @@ Completes the memory-enforcement work begun in 0.14.0. That release moved three 
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/gruberchris/nexwiki/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/gruberchris/nexwiki/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/gruberchris/nexwiki/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/gruberchris/nexwiki/compare/v0.15.1...v0.16.0
