@@ -132,7 +132,7 @@ A production deployment manual covering security boundaries, persistent storage,
 
 ### 18. [NexWiki Developer Setup & Build Automation Guide](./developer_guide.md)
 A technical manual for developers contributing to the Go backend and React frontend:
-* **Prerequisites & Toolchain**: Requirements for Go 1.26+ and Node.js 20.x+.
+* **Prerequisites & Toolchain**: Requirements for Go 1.27+ and Node.js 20.x+.
 * **Frictionless Dev Mode**: Running Vite hot-reloading dev server on `:5173` with backend CORS proxying on `:5808`.
 * **Makefile Automation**: Overview of build, clean, and Docker automation targets.
 * **Multi-Platform Cross-Compilation**: Compiling standalone binaries for Windows AMD64, Linux AMD64, Linux ARM64, and macOS ARM64 with embedded assets (`go:embed`).

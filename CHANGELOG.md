@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+- **Go Toolchain Upgraded to 1.27.1**:
+  - Upgraded Go language version declaration in `go.mod` to `1.27.1`.
+  - Updated Dockerfile multi-stage backend builder base image to `golang:1.27-alpine`.
+  - Updated developer guides and contributing documentation to reflect Go 1.27+ prerequisites.
+
 ## [0.17.1] — 2026-09-11
 
 ### Fixed
