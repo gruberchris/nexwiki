@@ -130,6 +130,7 @@ When running headless without the web interface:
 - **🔍 Bleve Full-Text Search Engine**: Embedded Bleve index with real-time indexing, boolean query expressions, term scoring, and highlighted matching snippets. ([User Guide](docs/user_guide.md))
 - **📡 Real-Time SSE Updates & Activity Drawer**: Single-connection Server-Sent Events push live document edits, glowing unread badges, and detailed audit history to the slide-in Activity Drawer. ([Editor & Activity Guide](docs/editor_activity_linter_guide.md))
 - **📊 Responsive 4K Reader & Mermaid Diagrams**: Viewport-scaling reading column for ultra-wide displays, native theme-aware Mermaid SVG diagram rendering, and clean PDF exports. ([Reader & Dashboard Guide](docs/reader_dashboard_guide.md))
+- **📋 Rich Text Clipboard & Formatted Sharing**: One-click "Copy as Rich Text" in the Share & Export menu writes both HTML and plain text to the clipboard for formatted pasting directly into rich-text applications like Microsoft Teams, Outlook, Word, and Slack without raw markdown syntax. ([Rich Text Sharing Guide](docs/rich_text_sharing_guide.md))
 
 ---
 
@@ -143,6 +144,7 @@ Explore in-depth technical manuals, architectural specifications, and workflow g
 - [Agent Integration & SOP Guide](docs/agent_integration_guide.md) — Governance layers, standard operating procedures, and agent blueprints.
 - [Plan Lifecycle & State Machine Guide](docs/plan_lifecycle_guide.md) — Enforced plan statuses, auto-archiving, and retention timers.
 - [Open Knowledge Format (OKF v0.2) Guide](docs/okf_v02_guide.md) — Trust tiers, freshness expiration, and bundle import/export.
+- [Rich Text Sharing & Clipboard Guide](docs/rich_text_sharing_guide.md) — Formatting interoperability, clipboard APIs, and sharing to Teams/Slack/Outlook.
 - [Configuration & CLI Flags Reference](docs/configuration.md) — Complete guide to environment variables, flags, and storage defaults.
 - [Docker Deployment Guide](docs/docker_deployment.md) — Container setup, multi-arch images, and volume persistence.
 - [Production Deployment & Reverse Proxy Guide](docs/production_deployment.md) — Caddy/Nginx reverse proxy, TLS, and auth boundaries.

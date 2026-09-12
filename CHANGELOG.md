@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- **Copy as Rich Text in Share & Export Dropdown**:
+  - Added "Copy as Rich Text" button in the article header dropdown, writing rendered HTML and plain text to the clipboard via the modern Clipboard API (`ClipboardItem`) with fallback to `document.execCommand`.
+  - Enables seamless, styled pasting into WYSIWYG rich-text composers such as Microsoft Teams, Outlook, Slack, and Microsoft Word without displaying raw Markdown syntax.
+  - Added dedicated companion user guide `docs/rich_text_sharing_guide.md`.
+
 ### Changed
 - **Go Toolchain Upgraded to 1.27.1**:
   - Upgraded Go language version declaration in `go.mod` to `1.27.1`.
