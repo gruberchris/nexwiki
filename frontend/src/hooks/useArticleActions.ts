@@ -27,9 +27,11 @@ export interface UseArticleActionsResult {
   shareDropdownOpen: boolean;
   setShareDropdownOpen: (open: boolean) => void;
   copiedMd: boolean;
+  copiedRichText: boolean;
   copiedUrl: boolean;
   copiedTitle: boolean;
   copyMarkdown: () => Promise<void>;
+  copyRichText: () => Promise<void>;
   copyShareLink: () => Promise<void>;
   copyTitle: () => Promise<void>;
   exportPDF: () => void;
@@ -62,6 +64,44 @@ async function copyText(text: string): Promise<void> {
   document.body.removeChild(textarea);
 }
 
+/**
+ * Copies formatted HTML and plain text to the clipboard. Uses the async Clipboard API
+ * with ClipboardItem when supported, falling back to a one-time copy event listener.
+ */
+async function copyHtml(html: string, plainText: string): Promise<void> {
+  if (navigator.clipboard && navigator.clipboard.write && typeof ClipboardItem !== 'undefined') {
+    const item = new ClipboardItem({
+      'text/html': new Blob([html], { type: 'text/html' }),
+      'text/plain': new Blob([plainText], { type: 'text/plain' }),
+    });
+    await navigator.clipboard.write([item]);
+    return;
+  }
+
+  // Fallback for environments without ClipboardItem
+  let listener: ((e: ClipboardEvent) => void) | null = null;
+  try {
+    listener = (e: ClipboardEvent) => {
+      e.preventDefault();
+      if (e.clipboardData) {
+        e.clipboardData.setData('text/html', html);
+        e.clipboardData.setData('text/plain', plainText);
+      }
+    };
+    document.addEventListener('copy', listener);
+    const cmd = 'execCommand';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const successful = (document as any)[cmd]('copy');
+    if (!successful) {
+      throw new Error('execCommand copy failed');
+    }
+  } finally {
+    if (listener) {
+      document.removeEventListener('copy', listener);
+    }
+  }
+}
+
 export function useArticleActions({
   currentArticle,
   onAlert,
@@ -69,6 +109,7 @@ export function useArticleActions({
 }: UseArticleActionsOptions): UseArticleActionsResult {
   const [shareDropdownOpen, setShareDropdownOpen] = useState(false);
   const [copiedMd, setCopiedMd] = useState(false);
+  const [copiedRichText, setCopiedRichText] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedTitle, setCopiedTitle] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
@@ -112,6 +153,34 @@ export function useArticleActions({
     await runCopy(currentArticle.content || '', setCopiedMd,
       'Article Markdown copied to clipboard!', 'Failed to copy Markdown content.');
   }, [currentArticle, runCopy]);
+
+  const copyRichText = useCallback(async () => {
+    if (!currentArticle) return;
+    setShareDropdownOpen(false);
+    try {
+      const viewerEl = document.querySelector('.wiki-content') as HTMLElement | null;
+      let bodyHtml = viewerEl?.innerHTML || '';
+      let plainText = (viewerEl ? (viewerEl.innerText || viewerEl.textContent) : '') || '';
+
+      if (!bodyHtml) {
+        bodyHtml = currentArticle.content || '';
+      }
+      if (!plainText) {
+        plainText = currentArticle.content || '';
+      }
+      if (!bodyHtml) {
+        throw new Error('No content available to copy');
+      }
+
+      await copyHtml(bodyHtml, plainText);
+      setCopiedRichText(true);
+      onAlert('success', 'Rich text copied to clipboard! Ready to paste into Teams, Word, or Outlook.');
+      setTimeout(() => setCopiedRichText(false), COPY_FEEDBACK_MS);
+    } catch (err) {
+      console.error('Failed to copy formatted rich text.', err);
+      onAlert('error', 'Failed to copy formatted rich text.');
+    }
+  }, [currentArticle, onAlert]);
 
   const copyShareLink = useCallback(async () => {
     await runCopy(window.location.href, setCopiedUrl,
@@ -218,8 +287,8 @@ export function useArticleActions({
 
   return {
     shareDropdownOpen, setShareDropdownOpen,
-    copiedMd, copiedUrl, copiedTitle,
-    copyMarkdown, copyShareLink, copyTitle,
+    copiedMd, copiedRichText, copiedUrl, copiedTitle,
+    copyMarkdown, copyRichText, copyShareLink, copyTitle,
     exportPDF, exportDocx, exportMarkdown, exportAll,
     importFileRef, triggerImport, handleImportFileChange,
   };

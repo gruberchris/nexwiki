@@ -99,8 +99,8 @@ export const App: React.FC = () => {
   // Clipboard, export, and backup/restore actions.
   const {
     shareDropdownOpen, setShareDropdownOpen,
-    copiedMd, copiedUrl, copiedTitle,
-    copyMarkdown, copyShareLink, copyTitle,
+    copiedMd, copiedRichText, copiedUrl, copiedTitle,
+    copyMarkdown, copyRichText, copyShareLink, copyTitle,
     exportPDF, exportDocx, exportMarkdown, exportAll,
     importFileRef, triggerImport, handleImportFileChange,
   } = useArticleActions({
@@ -760,6 +760,13 @@ export const App: React.FC = () => {
                           >
                             {copiedMd ? <Check size={12} className="text-emerald-500 animate-pulse" /> : <Copy size={12} className="text-indigo-500" />}
                             <span>{copiedMd ? 'Copied Markdown!' : 'Copy Markdown'}</span>
+                          </button>
+                          <button
+                            onClick={copyRichText}
+                            className="dropdown-item"
+                          >
+                            {copiedRichText ? <Check size={12} className="text-emerald-500 animate-pulse" /> : <ClipboardList size={12} className="text-indigo-500" />}
+                            <span>{copiedRichText ? 'Copied Rich Text!' : 'Copy as Rich Text'}</span>
                           </button>
                           <button
                             onClick={copyShareLink}
