@@ -33,10 +33,12 @@ import (
 // startup. Every phase of one wiki must therefore run in its own process (or the
 // operator runs with no role set, which is unrestricted).
 //
-// TODO(story-04): bind roles to per-harness tokens instead of the process. The seam is
-// roleForRequest: it currently returns the process-wide role. Story 04 replaces that
-// lookup with a credential check (token -> role for this request) and rejects requests
-// carrying no (or a forged) credential, without touching the scope map or the gate.
+// Story 04 binds the headless job lifecycle to per-harness tokens instead of the
+// process role: checkWikiskillScope consults validJobTokenForArgs first, so a call
+// carrying the job's own token authorizes that job's lifecycle tools (claim,
+// heartbeat, artifact, complete) regardless of the process role. Creation mints
+// the token and stays on the process path. Anything without a valid token falls
+// through to the scope map below, where jobs.manage is granted to no phase.
 
 // WikiSkill evolution roles.
 const (
@@ -66,6 +68,7 @@ const (
 	ScopeAuditRead        = "audit.read"  // get_recent_activity (the log read path)
 	ScopeAuditWrite       = "audit.write" // skill-impact/log audit writes (story 03 owns the writes; the scope is enforced here first)
 	ScopeSystemRead       = "system.read" // get_status_tags: lifecycle vocabulary, harmless to every phase
+	ScopeJobsManage       = "jobs.manage" // headless evolution job lifecycle (story 04): no phase holds it
 )
 
 // wikiskillRoleGrants is the least-privilege matrix: exactly what each phase needs.
@@ -215,6 +218,13 @@ func (srv *Server) requiredWikiskillScopes(toolName string, args json.RawMessage
 		return []string{ScopeSkillsPromote, ScopeAuditWrite}
 	case "get_recent_activity":
 		return []string{ScopeAuditRead}
+	case "create_evolution_job", "claim_evolution_job", "heartbeat_evolution_job",
+		"upload_job_artifact", "complete_evolution_job":
+		// Headless job lifecycle (story 04): operator/harness only. A call carrying
+		// the job's own per-harness token bypasses the process role via
+		// validJobTokenForArgs in checkWikiskillScope; everything else needs a
+		// scope no phase holds, so agent roles are denied like promotion.
+		return []string{ScopeJobsManage}
 	case "get_status_tags":
 		return []string{ScopeSystemRead}
 	case "import_okf_bundle":
@@ -275,10 +285,15 @@ func (srv *Server) scopesForSlug(args json.RawMessage, write bool) []string {
 }
 
 // checkWikiskillScope enforces the process role against one tool call. It returns nil
-// when the call may proceed: no role configured (unrestricted, pre-story-02 behavior),
-// an unresolvable scope mapping, or every required scope granted. Otherwise it returns
-// a *SkillScopeError naming the role and the missing scope(s).
+// when the call may proceed: a valid per-harness job token on a job lifecycle tool
+// (story 04 — the token authorizes its own job regardless of process role), no role
+// configured (unrestricted, pre-story-02 behavior), an unresolvable scope mapping,
+// or every required scope granted. Otherwise it returns a *SkillScopeError naming
+// the role and the missing scope(s).
 func (srv *Server) checkWikiskillScope(toolName string, args json.RawMessage) *SkillScopeError {
+	if srv.validJobTokenForArgs(toolName, args) {
+		return nil
+	}
 	role := srv.roleForRequest()
 	if role == "" {
 		return nil

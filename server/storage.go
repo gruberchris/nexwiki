@@ -623,9 +623,12 @@ type Storage struct {
 	// CandidateDir holds skill-candidate JSON records (wikiskill evolution, story 01).
 	// Candidates are data files, not OKF articles: they never enter the search index.
 	CandidateDir string
-	SearchIndex  bleve.Index
-	ThemeStore   *ThemeStore
-	closeOnce    sync.Once
+	// JobDir holds headless evolution job records (wikiskill evolution, story 04).
+	// Jobs are data files, not OKF articles: they never enter the search index.
+	JobDir      string
+	SearchIndex bleve.Index
+	ThemeStore  *ThemeStore
+	closeOnce   sync.Once
 
 	// cache memoizes parsed article metadata and link targets, validated by file mtime+size so
 	// edits made outside NexWiki are still picked up. See article_cache.go.
@@ -666,6 +669,10 @@ func NewStorage(dataDir string) (*Storage, error) {
 	if err := os.MkdirAll(candidateDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create skill candidate directory: %w", err)
 	}
+	jobDir := filepath.Join(dataDir, "skill_jobs")
+	if err := os.MkdirAll(jobDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create evolution job directory: %w", err)
+	}
 
 	// Open or create the Bleve index, under a deadline.
 	//
@@ -690,6 +697,7 @@ func NewStorage(dataDir string) (*Storage, error) {
 		AssetDir:     assetDir,
 		HistoryDir:   historyDir,
 		CandidateDir: candidateDir,
+		JobDir:       jobDir,
 		SearchIndex:  index,
 		ThemeStore:   NewThemeStore(dataDir),
 		cache:        newArticleCache(),

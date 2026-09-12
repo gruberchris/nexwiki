@@ -125,6 +125,14 @@ func main() {
 		launchInBrowser = envLB == "true" || envLB == "1"
 	}
 
+	// Fail fast on an invalid headless job-runner configuration (wikiskill story 04):
+	// BYO CLI profiles are allowlisted command templates from server config only
+	// (NEXWIKI_JOB_PROFILES_FILE / NEXWIKI_JOB_* env). An arbitrary template refuses
+	// the whole process at startup rather than failing one job later.
+	if err := server.ValidateJobRunnerConfig(); err != nil {
+		log.Fatalf("Fatal: %v", err)
+	}
+
 	log.Printf("Starting NexWiki backend...")
 	log.Printf("Data directory: %s", *dataDir)
 	log.Printf("Wiki Name/Title: %s", name)
