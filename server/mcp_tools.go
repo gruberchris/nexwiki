@@ -102,6 +102,8 @@ var mcpToolRegistry = []toolDef{
 	createAgentSkillTool,
 	editAgentSkillTool,
 	listAgentSkillsTool,
+	proposeSkillCandidateTool,
+	promoteSkillCandidateTool,
 	getStatusTagsTool,
 	getRecentActivityTool,
 	getBacklinksTool,
@@ -135,6 +137,7 @@ var bareToolVerbs = map[string]bool{
 	"create": true, "edit": true, "append": true, "delete": true,
 	"read": true, "search": true, "get": true, "list": true,
 	"update": true, "revert": true, "import": true, "export": true,
+	"propose": true, "promote": true,
 }
 
 // rejectToolArtifactTitle guards against a tool call whose arguments were mangled in transit,

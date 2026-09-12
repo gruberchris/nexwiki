@@ -93,6 +93,7 @@ func main() {
 	launchBrowser := flag.Bool("launch-in-browser", false, "Open the wiki URL in the system default web browser on startup")
 	bindAddr := flag.String("bind", "", "Network interface to bind (default: 127.0.0.1 for native local security; all interfaces in containers). Set to 0.0.0.0 or NEXWIKI_BIND to bind all interfaces")
 	agentName := flag.String("agent-name", "", "Fallback attribution recorded in the activity log for MCP clients that do not identify themselves. Clients that send MCP clientInfo are credited by their own name regardless of this")
+	wikiskillRole := flag.String("wikiskill-role", "", "WikiSkill evolution least-privilege role for the MCP layer: inference, maintainer, or proposer. Empty (default) is unrestricted. Can also be set via NEXWIKI_WIKISKILL_ROLE, which takes precedence")
 	flag.Parse()
 
 	// NEXWIKI_MCP_ONLY env overrides the flag (e.g., set in a Claude Desktop spawn config).
@@ -175,6 +176,17 @@ func main() {
 	// Attribution fallback for MCP callers that send no clientInfo. Deliberately NOT `name`:
 	// NEXWIKI_NAME is the wiki's display title, and using it here is the defect this fixes.
 	srv.AgentName = server.ResolveConfiguredAgentName(*agentName)
+	// Process-wide WikiSkill evolution role (story 02 least-privilege). Empty is
+	// unrestricted. An unrecognized non-empty value normalizes to unrestricted with a
+	// warning rather than failing startup, so a typo cannot take a wiki offline.
+	srv.WikiskillRole = server.ResolveWikiskillRole(*wikiskillRole)
+	if strings.TrimSpace(*wikiskillRole) != "" || strings.TrimSpace(os.Getenv(server.WikiskillRoleEnv)) != "" {
+		if srv.WikiskillRole == "" {
+			log.Printf("Warning: unrecognized %s value; running with unrestricted MCP tool access", server.WikiskillRoleEnv)
+		} else {
+			log.Printf("WikiSkill evolution role: %s (MCP least-privilege enforced)", srv.WikiskillRole)
+		}
+	}
 
 	// Any process reaching here owns its data directory outright: a detected primary would have
 	// been proxied to above, so there is no secondary to forward activity events from.
