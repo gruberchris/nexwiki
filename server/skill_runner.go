@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,11 @@ import (
 //     iteration budget is spent, then the dispatcher fails it.
 //   - exit 0: the step succeeded; a nonzero exit fails the step (and the run past
 //     the iteration cap). stderr is always captured to stderr.log, never parsed.
+//
+// LOOP MODE (story 07): the loop stepper in skill_loop.go drives one step per
+// evolution phase by adding `phase` to the stdin payload and gating each
+// iteration server-side; plain story-04 dispatches are unchanged. A shim
+// written for plain dispatch keeps working under the stepper.
 //
 // A real deployment wraps the vendor CLI in a small shell-free shim (a script or
 // binary on the operator's machine) that translates this protocol to whatever the
@@ -258,12 +264,18 @@ func ValidateJobRunnerConfig() error {
 // follow. `data` is untrusted wiki material quoted as data: skill bodies,
 // pattern excerpts, candidate diffs. A shim forwarding this into a model prompt
 // must quote `data`, never concatenate it as instructions.
+//
+// `phase` is the story 07 loop stepper's addition: in loop mode the stepper
+// spawns one CLI step per evolution phase (inference → maintaining → proposing)
+// and names the phase here so the harness runs exactly that phase's work. Plain
+// story-04 dispatches leave it empty.
 type JobStdinPayload struct {
 	JobID       string            `json:"job_id"`
 	SkillSlug   string            `json:"skill_slug"`
 	CandidateID string            `json:"candidate_id,omitempty"`
 	Iteration   int               `json:"iteration"`
 	MaxIter     int               `json:"max_iterations"`
+	Phase       string            `json:"phase,omitempty"`
 	Task        string            `json:"task"`
 	Data        map[string]string `json:"data,omitempty"`
 	Boundary    string            `json:"instruction_boundary"`
@@ -292,6 +304,28 @@ type shimCallback struct {
 	IdempotencyKey string  `json:"idempotency_key,omitempty"`
 	Outcome        string  `json:"outcome,omitempty"`
 	Error          string  `json:"error,omitempty"`
+}
+
+// stepSpec describes one harness step. Story-04 plain dispatches carry only the
+// step number; the story 07 loop stepper adds the evolution phase so one CLI
+// step runs one phase and the log files separate per phase.
+type stepSpec struct {
+	// label names the captured log files (e.g. "3" or "3-maintaining").
+	label string
+	// phase is the payload phase ("" for a plain story-04 step).
+	phase string
+	// iteration is the payload iteration number.
+	iteration int
+}
+
+// stepResult reports how a step ended. done means "stop scheduling" (terminal
+// reached or the job parked); applied records whether every captured callback
+// was applied — a park that fired mid-callbacks drops the rest, and the loop
+// stepper needs that distinction to decide whether a phase may be marked
+// complete or must be re-run on resume.
+type stepResult struct {
+	done    bool
+	applied bool
 }
 
 // Runner executes evolution jobs headlessly: same-host child processes, no PTY,
@@ -446,12 +480,13 @@ func (r *Runner) Dispatch(jobID, token string, input JobInput) error {
 			return nil
 		}
 		steps++
-		stepDone, stepErr := r.runStep(job, token, profile, input)
+		next := job.Iteration + 1
+		res, stepErr := r.runStep(job, token, profile, input, stepSpec{label: strconv.Itoa(next), iteration: next})
 		if stepErr != nil {
 			_, _ = r.Storage.CompleteEvolutionJob(jobID, token, EvolutionJobOutcomeFailed, stepErr.Error())
 			return stepErr
 		}
-		if stepDone {
+		if res.done {
 			return nil
 		}
 	}
@@ -459,28 +494,27 @@ func (r *Runner) Dispatch(jobID, token string, input JobInput) error {
 
 // runStep spawns one headless step and applies its callbacks. It returns
 // done=true when the run reached a terminal state or paused during the step.
-func (r *Runner) runStep(job *EvolutionJob, token string, profile CLIProfile, input JobInput) (bool, error) {
-	next := job.Iteration + 1
+func (r *Runner) runStep(job *EvolutionJob, token string, profile CLIProfile, input JobInput, spec stepSpec) (stepResult, error) {
 	payload := JobStdinPayload{
 		JobID: job.ID, SkillSlug: job.SkillSlug, CandidateID: job.CandidateID,
-		Iteration: next, MaxIter: job.MaxIterations,
+		Iteration: spec.iteration, MaxIter: job.MaxIterations, Phase: spec.phase,
 		Task:     input.Task,
 		Data:     input.Data,
 		Boundary: InstructionBoundary,
 	}
 	stdin, err := json.Marshal(payload)
 	if err != nil {
-		return true, fmt.Errorf("failed to encode job payload: %w", err)
+		return stepResult{done: true}, fmt.Errorf("failed to encode job payload: %w", err)
 	}
 	dir, err := r.Storage.jobFilesDir(job.ID)
 	if err != nil {
-		return true, err
+		return stepResult{done: true}, err
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return true, fmt.Errorf("failed to create job working directory: %w", err)
+		return stepResult{done: true}, fmt.Errorf("failed to create job working directory: %w", err)
 	}
-	stdoutPath := filepath.Join(dir, fmt.Sprintf("step-%d.stdout.log", next))
-	stderrPath := filepath.Join(dir, fmt.Sprintf("step-%d.stderr.log", next))
+	stdoutPath := filepath.Join(dir, fmt.Sprintf("step-%s.stdout.log", spec.label))
+	stderrPath := filepath.Join(dir, fmt.Sprintf("step-%s.stderr.log", spec.label))
 
 	timeout := r.stepTimeoutFor(profile)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -492,19 +526,19 @@ func (r *Runner) runStep(job *EvolutionJob, token string, profile CLIProfile, in
 	// callbacks and captured to a file; stderr is captured, never parsed.
 	stdoutFile, err := os.Create(stdoutPath)
 	if err != nil {
-		return true, fmt.Errorf("failed to capture job stdout: %w", err)
+		return stepResult{done: true}, fmt.Errorf("failed to capture job stdout: %w", err)
 	}
 	defer func() { _ = stdoutFile.Close() }()
 	stderrFile, err := os.Create(stderrPath)
 	if err != nil {
-		return true, fmt.Errorf("failed to capture job stderr: %w", err)
+		return stepResult{done: true}, fmt.Errorf("failed to capture job stderr: %w", err)
 	}
 	defer func() { _ = stderrFile.Close() }()
 	cmd.Stdout = stdoutFile
 	cmd.Stderr = stderrFile
 
 	if err := cmd.Start(); err != nil {
-		return true, fmt.Errorf("failed to spawn CLI profile '%s': %w", profile.Binary, err)
+		return stepResult{done: true}, fmt.Errorf("failed to spawn CLI profile '%s': %w", profile.Binary, err)
 	}
 	_ = r.setJobPID(job.ID, cmd.Process.Pid)
 	runErr := cmd.Wait()
@@ -515,20 +549,22 @@ func (r *Runner) runStep(job *EvolutionJob, token string, profile CLIProfile, in
 	scrubJobToken(stderrPath, token)
 
 	if ctx.Err() == context.DeadlineExceeded {
-		return true, fmt.Errorf("step %d timed out after %s (per-step timeout)", next, timeout)
+		return stepResult{done: true}, fmt.Errorf("step %s timed out after %s (per-step timeout)", spec.label, timeout)
 	}
 	callbacks, logs, err := parseShimOutput(stdoutPath)
 	if err != nil {
-		return true, fmt.Errorf("step %d produced unreadable output: %w", next, err)
+		return stepResult{done: true}, fmt.Errorf("step %s produced unreadable output: %w", spec.label, err)
 	}
 	_ = logs // captured to the step log file already; parsed callbacks drive state
 	for _, cb := range callbacks {
-		done, err := r.applyCallback(job.ID, token, next, cb)
+		done, err := r.applyCallback(job.ID, token, spec.iteration, cb)
 		if err != nil {
-			return true, fmt.Errorf("step %d callback refused: %w", next, err)
+			return stepResult{done: true}, fmt.Errorf("step %s callback refused: %w", spec.label, err)
 		}
 		if done {
-			return true, nil
+			// Parked or terminated mid-callbacks: whatever remains in the file is
+			// dropped, so the step's work is not fully applied.
+			return stepResult{done: true, applied: false}, nil
 		}
 	}
 	// No explicit progress callback still advances the lease: a live step is a
@@ -536,17 +572,17 @@ func (r *Runner) runStep(job *EvolutionJob, token string, profile CLIProfile, in
 	// naming it, so a chatty-but-idle harness cannot burn the budget.
 	if _, _, err := r.Storage.HeartbeatEvolutionJob(job.ID, token, 0, job.Progress, ""); err != nil {
 		if _, ok := err.(*JobLeaseExpiredError); ok {
-			return true, nil // lease lost mid-step; the sweep owns the job now
+			return stepResult{done: true, applied: true}, nil // lease lost mid-step; the sweep owns the job now
 		}
 		if _, ok := err.(*JobTimeoutError); ok {
-			return true, nil
+			return stepResult{done: true, applied: true}, nil
 		}
-		return true, err
+		return stepResult{done: true}, err
 	}
 	if runErr != nil {
-		return true, fmt.Errorf("step %d CLI exited with an error: %v", next, runErr)
+		return stepResult{done: true, applied: true}, fmt.Errorf("step %s CLI exited with an error: %v", spec.label, runErr)
 	}
-	return false, nil
+	return stepResult{applied: true}, nil
 }
 
 // applyCallback applies one shim callback through the token-scoped storage

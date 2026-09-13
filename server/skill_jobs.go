@@ -139,17 +139,24 @@ type EvolutionJob struct {
 	BaselineS0     float64   `json:"baseline_s0,omitempty"`
 	BaselineScorer string    `json:"baseline_scorer,omitempty"`
 	EvalUploadedAt time.Time `json:"eval_uploaded_at,omitzero"`
-	Checkpoint     string    `json:"checkpoint,omitempty"`
-	PauseRequested bool      `json:"pause_requested,omitempty"`
-	CancelReason   string    `json:"cancel_reason,omitempty"`
-	Error          string    `json:"error,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	ClaimedAt      time.Time `json:"claimed_at,omitzero"`
-	LastHeartbeat  time.Time `json:"last_heartbeat,omitzero"`
-	LeaseExpiresAt time.Time `json:"lease_expires_at,omitzero"`
-	RunDeadlineAt  time.Time `json:"run_deadline_at"`
-	CompletedAt    time.Time `json:"completed_at,omitzero"`
+	// Story 07 loop stepper: how the evolution loop ended (completed, exhausted,
+	// plateaued, cancelled — see skill_loop.go), the human approve-early request,
+	// and the plateau stop rule (consecutive rejected iterations with no pattern
+	// gain; 0 falls back to the story default of 3).
+	LoopOutcome      string    `json:"loop_outcome,omitempty"`
+	ApproveRequested bool      `json:"approve_requested,omitempty"`
+	PlateauLimit     int       `json:"plateau_limit,omitempty"`
+	Checkpoint       string    `json:"checkpoint,omitempty"`
+	PauseRequested   bool      `json:"pause_requested,omitempty"`
+	CancelReason     string    `json:"cancel_reason,omitempty"`
+	Error            string    `json:"error,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	ClaimedAt        time.Time `json:"claimed_at,omitzero"`
+	LastHeartbeat    time.Time `json:"last_heartbeat,omitzero"`
+	LeaseExpiresAt   time.Time `json:"lease_expires_at,omitzero"`
+	RunDeadlineAt    time.Time `json:"run_deadline_at"`
+	CompletedAt      time.Time `json:"completed_at,omitzero"`
 }
 
 // evolutionJobActive reports whether the job holds the per-skill lock.
@@ -349,6 +356,7 @@ func (s *Storage) CreateEvolutionJob(skillSlug, candidateID, profile string) (*E
 		Profile:       profile,
 		Status:        EvolutionJobQueued,
 		MaxIterations: evolutionJobMaxIterations,
+		PlateauLimit:  evolutionPlateauDefault,
 		TokenHash:     hash,
 		CreatedAt:     now,
 		UpdatedAt:     now,
@@ -681,6 +689,13 @@ func (s *Storage) CancelEvolutionJob(id, reason string) (*EvolutionJob, error) {
 	if err := s.writeEvolutionJob(job); err != nil {
 		return nil, err
 	}
+	// Story 07: an abort is coherent with the loop stepper's records — the
+	// in-flight iteration is marked interrupted and the loop state reads
+	// terminal/cancelled. Best-effort: the cancel itself must not fail because
+	// loop bookkeeping could not be written.
+	if _, err := s.reconcileLoopTerminalLocked(job); err != nil {
+		logRunnerf("loop reconcile after cancel of job %s failed: %v", job.ID, err)
+	}
 	return job, nil
 }
 
@@ -714,6 +729,11 @@ func (s *Storage) PauseEvolutionJob(id, checkpoint string) (*EvolutionJob, error
 	}
 	if err := s.writeEvolutionJob(job); err != nil {
 		return nil, err
+	}
+	// Story 07: reflect the park in the loop stepper's state so the wizard reads
+	// one coherent position (iteration/phase kept, status paused).
+	if err := s.pauseLoopStateLocked(job.ID); err != nil {
+		logRunnerf("loop pause-state update for job %s failed: %v", job.ID, err)
 	}
 	return job, nil
 }
@@ -833,13 +853,15 @@ func killJobProcess(pid int, grace time.Duration) {
 
 // jobLifecycleTokenTools are the lifecycle tools a per-harness token unlocks.
 // Creation mints the token and stays on the process path; everything after that
-// is token-scoped to its job.
+// is token-scoped to its job. The story 07 loop read tool joins the set: a
+// token-holding harness may read its own run's iteration state.
 var jobLifecycleTokenTools = map[string]bool{
 	"claim_evolution_job":       true,
 	"heartbeat_evolution_job":   true,
 	"upload_job_artifact":       true,
 	"upload_evolution_eval_set": true,
 	"complete_evolution_job":    true,
+	"get_evolution_iterations":  true,
 }
 
 // validJobTokenForArgs reports whether a tool call carries the addressed job's

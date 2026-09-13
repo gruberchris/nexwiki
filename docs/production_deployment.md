@@ -12,7 +12,7 @@ Before deploying NexWiki to any remote server or cloud environment, you **must**
 * **No Built-in Authentication**: NexWiki contains **no user accounts, no passwords, no session tokens, and no API keys**. 
 * **Full Access Granted**: Any client or browser that can route network traffic to NexWiki's port has unrestricted permissions:
   * Read, edit, and delete any wiki article or media asset.
-  * Execute all 38 Model Context Protocol (MCP) tools (including `delete_wiki_article` and bundle imports/exports).
+  * Execute all 39 Model Context Protocol (MCP) tools (including `delete_wiki_article` and bundle imports/exports).
   * Read system activity logs and search indexes.
 * **Intended Boundary**: Designed for a single user running on a local workstation (`127.0.0.1`) or inside a secure private network perimeter.
 

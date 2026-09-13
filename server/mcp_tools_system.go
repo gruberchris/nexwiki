@@ -139,7 +139,7 @@ var getRecentActivityTool = toolDef{
 				"action": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional filter by action type.",
-					"enum":        []string{"create", "edit", "delete", "read", "revert", "deny"},
+					"enum":        []string{"create", "edit", "delete", "read", "revert", "deny", "pause", "abort", "approve"},
 				},
 				"source": map[string]interface{}{
 					"type":        "string",

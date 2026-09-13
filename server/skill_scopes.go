@@ -219,11 +219,14 @@ func (srv *Server) requiredWikiskillScopes(toolName string, args json.RawMessage
 	case "get_recent_activity":
 		return []string{ScopeAuditRead}
 	case "create_evolution_job", "claim_evolution_job", "heartbeat_evolution_job",
-		"upload_job_artifact", "upload_evolution_eval_set", "complete_evolution_job":
-		// Headless job lifecycle (stories 04–05): operator/harness only. A call carrying
+		"upload_job_artifact", "upload_evolution_eval_set", "complete_evolution_job",
+		"get_evolution_iterations":
+		// Headless job lifecycle (stories 04–07): operator/harness only. A call carrying
 		// the job's own per-harness token bypasses the process role via
 		// validJobTokenForArgs in checkWikiskillScope; everything else needs a
-		// scope no phase holds, so agent roles are denied like promotion.
+		// scope no phase holds, so agent roles are denied like promotion. The
+		// story 07 read tool joins the set: a token-holding harness may read its
+		// own run's iteration state; agents still cannot.
 		return []string{ScopeJobsManage}
 	case "get_status_tags":
 		return []string{ScopeSystemRead}
