@@ -196,10 +196,14 @@ type ArticleRequest struct {
 	Status        *string  `json:"status"`         // Optional lifecycle status; omit to preserve
 	// MemoryKind classifies an AI-Agent-Memory; omit to preserve. Only meaningful on the update
 	// path — REST creation always produces a Wiki article, which has no kind.
-	MemoryKind *string           `json:"memory_kind"`
-	Sources    []OKFSource       `json:"sources,omitempty"`
-	StaleAfter string            `json:"stale_after,omitempty"`
-	Verified   []OKFVerification `json:"verified,omitempty"`
+	MemoryKind *string     `json:"memory_kind"`
+	Sources    []OKFSource `json:"sources,omitempty"`
+	StaleAfter string      `json:"stale_after,omitempty"`
+	// SupersededBy declares which article replaced this one (story 10).
+	// Omit or send empty to preserve the existing value; only a non-empty
+	// value is applied, matching stale_after's REST semantics.
+	SupersededBy string            `json:"superseded_by,omitempty"`
+	Verified     []OKFVerification `json:"verified,omitempty"`
 }
 
 type CreateArticleReq = ArticleRequest
@@ -230,6 +234,10 @@ type CreateArticleReq = ArticleRequest
 //     any tag edit and an agent cannot make an arbitrary document agent-immutable. The
 //     agent-facing edit refusals for reports live at the MCP tool layer (mcp_tools_articles.go);
 //     the human-facing REST editor keeps the documented amend path.
+//   - wikiskill-wiki on Wiki documents (story 10): marks the article as wiki-scope — the
+//     accumulative wiki layer the evolution loop writes into. An agent may set the tag on a
+//     wiki article it writes (doing so only restricts that article: revert and delete are
+//     refused for it), and an edit can never strip it from an article that carries it.
 func validateAndCleanUserTags(incomingTags []string, existingTags []string, docType string) []string {
 	// Only a memory document has tool-managed scope tags worth defending.
 	toolManagesScope := docType == ContentTypeMemory
@@ -237,6 +245,8 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string, docT
 	toolManagesTrained := docType == ContentTypeSkill
 	// Only a wiki document can be a generated result report worth defending.
 	toolManagesReport := docType == ContentTypeWiki
+	// Only a wiki document can be wiki-scope (story 10) worth defending.
+	toolManagesWikiScope := docType == ContentTypeWiki
 
 	existingMemoryScope := make(map[string]bool)
 	if toolManagesScope {
@@ -254,6 +264,10 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string, docT
 	existingReportMarker := false
 	if toolManagesReport {
 		existingReportMarker = hasTag(existingTags, SkillResultReportTag)
+	}
+	existingWikiScope := false
+	if toolManagesWikiScope {
+		existingWikiScope = hasTag(existingTags, WikiskillWikiTag)
 	}
 
 	var result []string
@@ -277,6 +291,10 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string, docT
 	if toolManagesReport && existingReportMarker && !seen[SkillResultReportTag] {
 		seen[SkillResultReportTag] = true
 		result = append(result, SkillResultReportTag)
+	}
+	if toolManagesWikiScope && existingWikiScope && !seen[WikiskillWikiTag] {
+		seen[WikiskillWikiTag] = true
+		result = append(result, WikiskillWikiTag)
 	}
 
 	for _, t := range incomingTags {
@@ -443,6 +461,10 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 	if req.Verified != nil {
 		overridesVerified = &req.Verified
 	}
+	var overridesSupersededBy *string
+	if strings.TrimSpace(req.SupersededBy) != "" {
+		overridesSupersededBy = &req.SupersededBy
+	}
 
 	// Existence check, optimistic-locking guard, field merge, and write happen atomically inside
 	// ApplyArticleEdit. Omitted description/source/resource preserve existing values; explicit
@@ -464,6 +486,7 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		LoadedVersion: req.LoadedVersion,
 		Sources:       overridesSources,
 		StaleAfter:    overridesStaleAfter,
+		SupersededBy:  overridesSupersededBy,
 		Generated:     &OKFGenerated{By: "human:local", At: time.Now()},
 		Verified:      overridesVerified,
 	})

@@ -632,6 +632,10 @@ var editWikiArticleTool = toolDef{
 					"type":        "string",
 					"description": "Optional ISO 8601 timestamp after which the article is considered stale. Omit to preserve, pass empty string \"\" to clear.",
 				},
+				"superseded_by": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional slug of the successor article that replaced this one (WikiSkill wiki layer). Omit to preserve, pass empty string \"\" to clear. A declaration only: wiki_health reports the chain, nothing is pruned automatically.",
+				},
 			},
 			"required": []string{"slug", "title", "content", "loaded_version"},
 		},
@@ -653,6 +657,7 @@ func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSON
 		EditSummary   string       `json:"edit_summary"`
 		Sources       *[]OKFSource `json:"sources"`
 		StaleAfter    *string      `json:"stale_after"`
+		SupersededBy  *string      `json:"superseded_by"`
 	}
 	var eArgs EditArgs
 	if e := decodeToolArgs(args, &eArgs); e != nil {
@@ -706,6 +711,11 @@ func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSON
 			}
 			edit.StaleAfter = &t
 		}
+	}
+	if eArgs.SupersededBy != nil {
+		// The successor pointer uses the same pointer semantics as
+		// stale_after/resource: omit preserves, "" clears, a value sets.
+		edit.SupersededBy = eArgs.SupersededBy
 	}
 
 	// ApplyArticleEdit performs the version check and the write under one lock. Reading the
@@ -886,7 +896,12 @@ func (srv *Server) toolDeleteWikiArticle(args json.RawMessage) (interface{}, *JS
 
 	// A generated Trained Skill Result report is agent-immutable, including
 	// deletion (story 09): the report is the run's record.
+	// A wiki-scope article is accumulative-only (story 10): agents patch and
+	// append, they do not delete — the wiki layer never resets.
 	if err := checkReportImmutability(existing); err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+	}
+	if err := checkWikiScopeAccumulative(existing, "delete"); err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
 	}
 
@@ -1027,8 +1042,13 @@ func (srv *Server) toolRevertArticleVersion(args json.RawMessage) (interface{}, 
 
 	// A generated Trained Skill Result report is agent-immutable (story 09):
 	// a revert would rewrite it outside the wiki's own generation path.
+	// A wiki-scope article is accumulative-only (story 10): a revert would
+	// roll back accumulated wiki knowledge, which agents must not do.
 	if existing, gErr := srv.Storage.GetArticle(rArgs.Slug); gErr == nil {
 		if err := checkReportImmutability(existing); err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+		}
+		if err := checkWikiScopeAccumulative(existing, "revert"); err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
 		}
 	}

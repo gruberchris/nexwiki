@@ -116,6 +116,33 @@ type HealthOutput struct {
 	// PlanStatusCensus counts plans per lifecycle status (archived plans included, unlike every
 	// other check), so the report answers "where does the plan corpus stand?" at a glance.
 	PlanStatusCensus map[string]int `json:"plan_status_census,omitempty"`
+
+	// --- wikiskill three-layer guards (story 10) ---
+
+	// RawArtifactIntegrityCount and RawArtifactIssues report evolution
+	// artifacts (job records, attached output, eval splits, candidate
+	// records, the audit trail) that fail their recorded hash verification or
+	// no longer parse. The raw layer is immutable evidence, so tampering is
+	// damage, not a draft: every issue here means a human should restore the
+	// file from backup.
+	RawArtifactIntegrityCount int             `json:"raw_artifact_integrity_count"`
+	RawArtifactIssues         []HealthFinding `json:"raw_artifact_issues"`
+
+	// SupersededWikiCount and SupersededWikiArticles report the supersession
+	// chain of wiki-scope articles: each entry names its successor, and the
+	// broken shapes (successor missing, superseded without successor) are
+	// counted in SupersededWikiActionable. The wiki layer is accumulative —
+	// this is a report, never a prune.
+	SupersededWikiCount      int             `json:"superseded_wiki_count"`
+	SupersededWikiActionable int             `json:"superseded_wiki_actionable"`
+	SupersededWikiArticles   []HealthFinding `json:"superseded_wiki_articles"`
+
+	// PurposeBacklinkCount reports trained skills whose motivating wiki
+	// patterns are unrecorded — a WARNING, not an error: the skill works, its
+	// motivation just needs a PURPOSE link to (or from) the wiki-scope
+	// pattern articles that drove it.
+	PurposeBacklinkCount int             `json:"purpose_backlink_count"`
+	PurposeBacklinkFind  []HealthFinding `json:"purpose_backlink_findings"`
 }
 
 // planStatusCensusSchema declares one integer property per possible census key, since the schema
@@ -150,35 +177,42 @@ func healthOutputSchema() map[string]interface{} {
 	}, "slug", "title", "other_slug", "detail")
 
 	return schemaObject(map[string]interface{}{
-		"total_documents":            schemaOf("integer", "Documents scanned, including the home dashboard."),
-		"stale_days":                 schemaOf("integer", "Age threshold applied to in-flight plans."),
-		"limit":                      schemaOf("integer", "Maximum items returned per category."),
-		"truncated":                  schemaOf("boolean", "True when a category hit the limit and its list is shorter than its count."),
-		"orphan_count":               schemaOf("integer", "Documents no other document links to."),
-		"orphans":                    schemaArrayOf(finding, "Orphaned documents, up to the limit."),
-		"broken_link_count":          schemaOf("integer", "Internal links with no destination, in either link form."),
-		"broken_links":               schemaArrayOf(broken, "Broken internal links, up to the limit."),
-		"unsourced_memory_count":     schemaOf("integer", "Agent memories recorded without a source."),
-		"unsourced_memories":         schemaArrayOf(finding, "Memories missing provenance, up to the limit."),
-		"unkinded_memory_count":      schemaOf("integer", "Agent memories carrying no memory_kind — written before the kind axis existed."),
-		"unkinded_memories":          schemaArrayOf(finding, "Unclassified memories, up to the limit. This is the backfill worklist."),
-		"contested_memory_count":     schemaOf("integer", "Agent memories holding an unresolved conflict, recorded via edit_agent_memory with change_intent 'contradict'."),
-		"contested_memories":         schemaArrayOf(finding, "Contested memories awaiting adjudication, up to the limit."),
-		"stale_plan_count":           schemaOf("integer", "In-flight plans untouched for longer than stale_days. Excludes plans tagged finished or parked."),
-		"stale_plans":                schemaArrayOf(finding, "Stale plans, up to the limit."),
-		"stale_concept_count":        schemaOf("integer", "Concepts whose freshness expiration (stale_after) has passed."),
-		"stale_concepts":             schemaArrayOf(finding, "Concepts whose freshness expiration has passed, up to the limit."),
-		"unreferenced_skill_count":   schemaOf("integer", "Skills no live document links or names in a read_article call. Excludes the nexwiki-agent-guidelines skill, which the MCP tool descriptions reference from code."),
-		"unreferenced_skills":        schemaArrayOf(finding, "Unreferenced skills, up to the limit."),
-		"cold_days":                  schemaOf("integer", "Recency threshold applied to memories."),
-		"cold_memory_scan_ran":       schemaOf("boolean", "False when the activity log does not reach back cold_days, in which case the cold-memory check was skipped rather than reporting every memory."),
-		"cold_memory_skipped_reason": schemaOf("string", "Why the cold-memory check did not run, when it did not."),
-		"cold_memory_count":          schemaOf("integer", "Memories neither read nor edited within cold_days."),
-		"cold_memories":              schemaArrayOf(finding, "Cold memories, up to the limit."),
-		"duplicate_memory_count":     schemaOf("integer", "Pairs of memories in the same scope with closely matching titles."),
-		"duplicate_memories":         schemaArrayOf(duplicate, "Near-duplicate memory pairs, up to the limit."),
-		"parked_plan_count":          schemaOf("integer", "Plans deliberately set aside; reported as a count only, since they need no action."),
-		"plan_status_census":         planStatusCensusSchema(),
+		"total_documents":              schemaOf("integer", "Documents scanned, including the home dashboard."),
+		"stale_days":                   schemaOf("integer", "Age threshold applied to in-flight plans."),
+		"limit":                        schemaOf("integer", "Maximum items returned per category."),
+		"truncated":                    schemaOf("boolean", "True when a category hit the limit and its list is shorter than its count."),
+		"orphan_count":                 schemaOf("integer", "Documents no other document links to."),
+		"orphans":                      schemaArrayOf(finding, "Orphaned documents, up to the limit."),
+		"broken_link_count":            schemaOf("integer", "Internal links with no destination, in either link form."),
+		"broken_links":                 schemaArrayOf(broken, "Broken internal links, up to the limit."),
+		"unsourced_memory_count":       schemaOf("integer", "Agent memories recorded without a source."),
+		"unsourced_memories":           schemaArrayOf(finding, "Memories missing provenance, up to the limit."),
+		"unkinded_memory_count":        schemaOf("integer", "Agent memories carrying no memory_kind — written before the kind axis existed."),
+		"unkinded_memories":            schemaArrayOf(finding, "Unclassified memories, up to the limit. This is the backfill worklist."),
+		"contested_memory_count":       schemaOf("integer", "Agent memories holding an unresolved conflict, recorded via edit_agent_memory with change_intent 'contradict'."),
+		"contested_memories":           schemaArrayOf(finding, "Contested memories awaiting adjudication, up to the limit."),
+		"stale_plan_count":             schemaOf("integer", "In-flight plans untouched for longer than stale_days. Excludes plans tagged finished or parked."),
+		"stale_plans":                  schemaArrayOf(finding, "Stale plans, up to the limit."),
+		"stale_concept_count":          schemaOf("integer", "Concepts whose freshness expiration (stale_after) has passed."),
+		"stale_concepts":               schemaArrayOf(finding, "Concepts whose freshness expiration has passed, up to the limit."),
+		"unreferenced_skill_count":     schemaOf("integer", "Skills no live document links or names in a read_article call. Excludes the nexwiki-agent-guidelines skill, which the MCP tool descriptions reference from code."),
+		"unreferenced_skills":          schemaArrayOf(finding, "Unreferenced skills, up to the limit."),
+		"cold_days":                    schemaOf("integer", "Recency threshold applied to memories."),
+		"cold_memory_scan_ran":         schemaOf("boolean", "False when the activity log does not reach back cold_days, in which case the cold-memory check was skipped rather than reporting every memory."),
+		"cold_memory_skipped_reason":   schemaOf("string", "Why the cold-memory check did not run, when it did not."),
+		"cold_memory_count":            schemaOf("integer", "Memories neither read nor edited within cold_days."),
+		"cold_memories":                schemaArrayOf(finding, "Cold memories, up to the limit."),
+		"duplicate_memory_count":       schemaOf("integer", "Pairs of memories in the same scope with closely matching titles."),
+		"duplicate_memories":           schemaArrayOf(duplicate, "Near-duplicate memory pairs, up to the limit."),
+		"parked_plan_count":            schemaOf("integer", "Plans deliberately set aside; reported as a count only, since they need no action."),
+		"plan_status_census":           planStatusCensusSchema(),
+		"raw_artifact_integrity_count": schemaOf("integer", "WikiSkill evolution artifacts that fail their recorded hash verification or no longer parse — job records, attached runner output, eval splits, candidate records, or the audit trail."),
+		"raw_artifact_issues":          schemaArrayOf(finding, "Raw-layer integrity issues, up to the limit."),
+		"superseded_wiki_count":        schemaOf("integer", "Wiki-scope articles carrying a supersession pointer or a 'superseded' tag — every link in the chain is listed."),
+		"superseded_wiki_actionable":   schemaOf("integer", "Chain links that need action: a successor that does not exist, or a superseded article naming no successor."),
+		"superseded_wiki_articles":     schemaArrayOf(finding, "The supersession chain of wiki-scope articles, up to the limit. Reported, never pruned: no automatic deletion exists for the wiki layer."),
+		"purpose_backlink_count":       schemaOf("integer", "Trained skills whose motivating wiki patterns are unrecorded — a warning, not an error."),
+		"purpose_backlink_findings":    schemaArrayOf(finding, "Trained skills with zero pattern backlinks, up to the limit."),
 	}, "total_documents", "stale_days", "limit", "truncated",
 		"orphan_count", "orphans", "broken_link_count", "broken_links",
 		"unsourced_memory_count", "unsourced_memories",
@@ -193,7 +227,7 @@ func healthOutputSchema() map[string]interface{} {
 var wikiHealthTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "wiki_health",
-		"description": "Audit the knowledge base for maintenance work: orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source' or without a 'memory_kind', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
+		"description": "Audit the knowledge base for maintenance work: orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source' or without a 'memory_kind', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, near-duplicate memories in the same scope that may have drifted apart, WikiSkill evolution artifacts that fail their integrity check, the supersession chain of wiki-scope articles (reported, never auto-pruned), and trained skills with no motivating pattern backlinks (warning). Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -393,24 +427,47 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 	cold := scanColdMemories(ActivityLogPath(srv.Storage.DataDir), memories, coldDays)
 	duplicates := findDuplicateMemories(memories, graph.Outbound)
 
+	// --- wikiskill three-layer guards (story 10) ---
+	supersededFindings, supersededActionable := scanSupersededWiki(slugs, graph)
+	purposeFindings := scanSkillsWithoutPurpose(slugs, graph, srv.Storage)
+	rawIssues := []HealthFinding{}
+	if rawFindings, rawErr := srv.Storage.ScanRawArtifactIntegrity(); rawErr != nil {
+		rawIssues = append(rawIssues, HealthFinding{
+			Title:  "Raw artifact integrity scan",
+			Detail: fmt.Sprintf("The integrity scan itself failed: %v — inspect the data directory manually before trusting the evolution records.", rawErr),
+		})
+	} else {
+		for _, f := range rawFindings {
+			rawIssues = append(rawIssues, HealthFinding{
+				Slug:   f.ID,
+				Title:  "Evolution artifact (" + f.Kind + ")",
+				Detail: f.Path + " — " + f.Detail,
+			})
+		}
+	}
+
 	out := HealthOutput{
-		TotalDocuments:         len(graph.Meta),
-		StaleDays:              staleDays,
-		Limit:                  limit,
-		UnreferencedSkillCount: len(unreferencedSkills),
-		OrphanCount:            len(orphans),
-		BrokenLinkCount:        len(graph.Broken),
-		UnsourcedCount:         len(unsourced),
-		UnkindedCount:          len(unkinded),
-		ContestedCount:         len(contested),
-		StalePlanCount:         len(stalePlans),
-		StaleConceptCount:      len(staleConcepts),
-		ColdDays:               coldDays,
-		ColdMemoryScanRan:      cold.Ran,
-		ColdMemoryCount:        len(cold.Findings),
-		DuplicateCount:         len(duplicates),
-		ParkedPlanCount:        parkedPlans,
-		PlanStatusCensus:       planCensus,
+		TotalDocuments:            len(graph.Meta),
+		StaleDays:                 staleDays,
+		Limit:                     limit,
+		UnreferencedSkillCount:    len(unreferencedSkills),
+		OrphanCount:               len(orphans),
+		BrokenLinkCount:           len(graph.Broken),
+		UnsourcedCount:            len(unsourced),
+		UnkindedCount:             len(unkinded),
+		ContestedCount:            len(contested),
+		StalePlanCount:            len(stalePlans),
+		StaleConceptCount:         len(staleConcepts),
+		ColdDays:                  coldDays,
+		ColdMemoryScanRan:         cold.Ran,
+		ColdMemoryCount:           len(cold.Findings),
+		DuplicateCount:            len(duplicates),
+		ParkedPlanCount:           parkedPlans,
+		PlanStatusCensus:          planCensus,
+		RawArtifactIntegrityCount: len(rawIssues),
+		SupersededWikiCount:       len(supersededFindings),
+		SupersededWikiActionable:  supersededActionable,
+		PurposeBacklinkCount:      len(purposeFindings),
 	}
 	if !cold.Ran {
 		out.ColdMemorySkipped = fmt.Sprintf("the activity log only reaches back %d days, less than the %d-day "+
@@ -437,6 +494,21 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		out.BrokenLinks = out.BrokenLinks[:limit]
 		out.Truncated = true
 	}
+	out.RawArtifactIssues = rawIssues
+	if len(out.RawArtifactIssues) > limit {
+		out.RawArtifactIssues = out.RawArtifactIssues[:limit]
+		out.Truncated = true
+	}
+	out.SupersededWikiArticles = supersededFindings
+	if len(out.SupersededWikiArticles) > limit {
+		out.SupersededWikiArticles = out.SupersededWikiArticles[:limit]
+		out.Truncated = true
+	}
+	out.PurposeBacklinkFind = purposeFindings
+	if len(out.PurposeBacklinkFind) > limit {
+		out.PurposeBacklinkFind = out.PurposeBacklinkFind[:limit]
+		out.Truncated = true
+	}
 
 	return ToolResponse{
 		Content:           []ToolContent{{Type: "text", Text: renderHealthReport(out)}},
@@ -447,6 +519,123 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 // isFinished reports whether a plan's status says its life is over.
 func isFinished(status string) bool {
 	return hasAnyTag([]string{status}, finishedStatusTags)
+}
+
+// scanSupersededWiki reports the supersession chain of wiki-scope articles
+// (story 10, WIKI layer). A wiki-scope article points to its successor with
+// the superseded_by front-matter key; every link in the chain is listed, and
+// the second return counts the links that need action: a successor slug that
+// does not exist, or a superseded article that names no successor. Reporting
+// is all this check does — the wiki layer never resets, so nothing here
+// deletes, rewrites, or archives anything.
+func scanSupersededWiki(slugs []string, graph *LinkGraph) ([]HealthFinding, int) {
+	findings := []HealthFinding{}
+	actionable := 0
+	for _, slug := range slugs {
+		doc := graph.Meta[slug]
+		if doc.Type != ContentTypeWiki || !hasTag(doc.Tags, WikiskillWikiTag) || IsArchived(&doc) {
+			continue
+		}
+		successor := strings.TrimSpace(doc.SupersededBy)
+		switch {
+		case successor == "":
+			if hasTag(doc.Tags, "superseded") {
+				actionable++
+				findings = append(findings, HealthFinding{
+					Slug: slug, Title: doc.Title, Type: doc.Type,
+					Detail: "Marked superseded but names no successor: set the superseded_by front-matter key (edit_wiki_article superseded_by) to the slug of the article that replaced it, so the chain stays traversable.",
+				})
+			}
+		case graph.Meta[successor].Slug == "":
+			actionable++
+			findings = append(findings, HealthFinding{
+				Slug: slug, Title: doc.Title, Type: doc.Type,
+				Detail: fmt.Sprintf("Superseded by '%s', which does not exist — the chain is broken. Create the successor, fix the slug, or clear superseded_by.", successor),
+			})
+		default:
+			succ := graph.Meta[successor]
+			findings = append(findings, HealthFinding{
+				Slug: slug, Title: doc.Title, Type: doc.Type,
+				Detail: fmt.Sprintf("Superseded by [%s](/articles/%s) — listed so the chain stays visible. Nothing is pruned automatically: keep, merge, or archive the old page by hand.", succ.Title, successor),
+			})
+		}
+	}
+	return findings, actionable
+}
+
+// scanSkillsWithoutPurpose flags evolution-managed skills whose motivating
+// wiki patterns are unrecorded (story 10, SKILLS layer). A skill is
+// evolution-managed when it carries the trained marker or is the parent of a
+// skill candidate. A pattern connection is any wiki-layer link between the
+// skill and a wiki-scope article in either direction — the skill's PURPOSE
+// section linking the patterns that drove it, or a pattern article linking
+// the skill (a pattern backlink proper, what get_backlinks returns). The
+// story-09 report's own Run-table link to its skill is exempt via its
+// wikiskill-report marker: every run produces one, so it is boilerplate, not
+// recorded motivation. Zero connections is a WARNING: flag, never refuse.
+func scanSkillsWithoutPurpose(slugs []string, graph *LinkGraph, storage *Storage) []HealthFinding {
+	// Wiki-scope pattern targets, report articles exempt.
+	isPattern := map[string]bool{}
+	for slug, doc := range graph.Meta {
+		if doc.Type == ContentTypeWiki && hasTag(doc.Tags, WikiskillWikiTag) &&
+			!hasTag(doc.Tags, SkillResultReportTag) && !IsArchived(&doc) {
+			isPattern[slug] = true
+		}
+	}
+
+	// Skills that spawned candidates are evolution-managed even before a gate
+	// accepts anything. A listing failure fails open: the warning is advisory.
+	parented := map[string]bool{}
+	if candidates, err := storage.ListSkillCandidates(); err == nil {
+		for _, c := range candidates {
+			if c.ParentSlug != "" {
+				parented[c.ParentSlug] = true
+			}
+		}
+	}
+
+	connected := map[string]bool{}
+	// Outbound: skill → wiki-scope pattern (its PURPOSE link).
+	for _, slug := range slugs {
+		if graph.Meta[slug].Type != ContentTypeSkill {
+			continue
+		}
+		for _, ref := range graph.Outbound[slug] {
+			if isPattern[ref.Slug] {
+				connected[slug] = true
+				break
+			}
+		}
+	}
+	// Inbound: wiki-scope pattern → skill (the pattern backlink proper).
+	for from, refs := range graph.Outbound {
+		if !isPattern[from] {
+			continue
+		}
+		for _, ref := range refs {
+			if graph.Meta[ref.Slug].Type == ContentTypeSkill {
+				connected[ref.Slug] = true
+			}
+		}
+	}
+
+	findings := []HealthFinding{}
+	for _, slug := range slugs {
+		doc := graph.Meta[slug]
+		if doc.Type != ContentTypeSkill || connected[slug] || IsArchived(&doc) {
+			continue
+		}
+		managed := hasTag(doc.Tags, TrainedMarkerTag) || !doc.TrainedAt.IsZero() ||
+			doc.TrainedVersion > 0 || parented[slug]
+		if !managed {
+			continue
+		}
+		findings = append(findings, HealthFinding{
+			Slug: slug, Title: doc.Title, Type: doc.Type,
+			Detail: "Trained through the evolution flow but its motivating wiki patterns are unrecorded (WARNING, not an error): link the skill's PURPOSE section to the wiki-scope pattern articles that drove it, or have those pattern articles link back here.",
+		})
+	}
+	return findings
 }
 
 // isParked reports whether a plan has been deliberately set aside. Parked is not finished — the
@@ -527,9 +716,13 @@ func renderHealthReport(out HealthOutput) string {
 		}
 		b.WriteString("\n")
 	}
+	fmt.Fprintf(&b, "- Raw artifact integrity issues (WikiSkill evolution data): %d\n", out.RawArtifactIntegrityCount)
+	fmt.Fprintf(&b, "- Superseded wiki-scope articles (reported, never auto-pruned): %d\n", out.SupersededWikiCount)
+	fmt.Fprintf(&b, "- Trained skills without pattern backlinks (warning): %d\n", out.PurposeBacklinkCount)
 
 	needsAttention := out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount + out.UnkindedCount + out.ContestedCount +
-		out.StalePlanCount + out.StaleConceptCount + out.ColdMemoryCount + out.DuplicateCount + out.UnreferencedSkillCount
+		out.StalePlanCount + out.StaleConceptCount + out.ColdMemoryCount + out.DuplicateCount + out.UnreferencedSkillCount +
+		out.RawArtifactIntegrityCount + out.SupersededWikiActionable + out.PurposeBacklinkCount
 	if needsAttention == 0 {
 		b.WriteString("\nNothing needs attention — the wiki is healthy. 🎉\n")
 		return b.String()
@@ -570,6 +763,9 @@ func renderHealthReport(out HealthOutput) string {
 	writeFindings("Stale plans", out.StalePlanCount, out.StalePlans)
 	writeFindings("Stale concepts", out.StaleConceptCount, out.StaleConcepts)
 	writeFindings("Cold memories", out.ColdMemoryCount, out.ColdMemories)
+	writeFindings("Raw artifact integrity issues", out.RawArtifactIntegrityCount, out.RawArtifactIssues)
+	writeFindings("Superseded wiki-scope articles (reported, never auto-pruned)", out.SupersededWikiCount, out.SupersededWikiArticles)
+	writeFindings("Trained skills without pattern backlinks (warning)", out.PurposeBacklinkCount, out.PurposeBacklinkFind)
 
 	if out.DuplicateCount > 0 {
 		fmt.Fprintf(&b, "\n== Possible duplicate memories (%d) ==\n", out.DuplicateCount)
