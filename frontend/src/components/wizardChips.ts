@@ -132,6 +132,35 @@ export function iterationOutcomeLabel(outcome: string): string {
   }
 }
 
+/** Chip classes for a skill audit record's outcome (story 09 Review step). */
+export function auditOutcomeChipClass(outcome: string): string {
+  switch (outcome) {
+    case 'accepted':
+      return DONE_CHIP;
+    case 'rejected':
+      return BAD_CHIP;
+    case 'revoked':
+      // A rollback's or unlock's revocation: attention, not failure.
+      return WAIT_CHIP;
+    default:
+      return NEUTRAL_CHIP;
+  }
+}
+
+/** Human label for a skill audit record's outcome. */
+export function auditOutcomeLabel(outcome: string): string {
+  switch (outcome) {
+    case 'accepted':
+      return 'Accepted';
+    case 'rejected':
+      return 'Rejected';
+    case 'revoked':
+      return 'Revoked';
+    default:
+      return outcome;
+  }
+}
+
 /**
  * The why-waiting line: what the loop is standing on right now, from the loop
  * state's phase, phase_status, and note — so the operator always knows what

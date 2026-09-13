@@ -68,13 +68,15 @@ type EvolutionJobView struct {
 	PauseRequested   bool              `json:"pause_requested,omitempty"`
 	CancelReason     string            `json:"cancel_reason,omitempty"`
 	Error            string            `json:"error,omitempty"`
-	CreatedAt        time.Time         `json:"created_at"`
-	UpdatedAt        time.Time         `json:"updated_at"`
-	ClaimedAt        time.Time         `json:"claimed_at,omitzero"`
-	LastHeartbeat    time.Time         `json:"last_heartbeat,omitzero"`
-	LeaseExpiresAt   time.Time         `json:"lease_expires_at,omitzero"`
-	RunDeadlineAt    time.Time         `json:"run_deadline_at"`
-	CompletedAt      time.Time         `json:"completed_at,omitzero"`
+	// Story 09: the Trained Skill Result report article this run generated.
+	ResultReportSlug string    `json:"result_report_slug,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	ClaimedAt        time.Time `json:"claimed_at,omitzero"`
+	LastHeartbeat    time.Time `json:"last_heartbeat,omitzero"`
+	LeaseExpiresAt   time.Time `json:"lease_expires_at,omitzero"`
+	RunDeadlineAt    time.Time `json:"run_deadline_at"`
+	CompletedAt      time.Time `json:"completed_at,omitzero"`
 }
 
 // viewOfJob projects a job record for REST responses: every field copied
@@ -107,6 +109,7 @@ func viewOfJob(job *EvolutionJob) EvolutionJobView {
 		PauseRequested:   job.PauseRequested,
 		CancelReason:     job.CancelReason,
 		Error:            job.Error,
+		ResultReportSlug: job.ResultReportSlug,
 		CreatedAt:        job.CreatedAt,
 		UpdatedAt:        job.UpdatedAt,
 		ClaimedAt:        job.ClaimedAt,

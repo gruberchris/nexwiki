@@ -183,17 +183,18 @@ func TestLoopHappyPathTwoAcceptedIterations(t *testing.T) {
 		t.Fatalf("terminal job wrong: %+v", fresh)
 	}
 
-	// The live skill is the last accepted body, two versions past the seed.
+	// The live skill is the last accepted body with the story 09 report linked
+	// from it (one linked block per run; the append re-stamps the marker).
 	live, err := s.GetArticle(skill.Slug)
 	if err != nil {
 		t.Fatalf("reload skill failed: %v", err)
 	}
-	if live.Version != 3 || live.Content != c2.ProposedBody {
+	if live.Version != 4 || !strings.Contains(live.Content, c2.ProposedBody) || !strings.Contains(live.Content, "## Trained Skill Result reports") {
 		t.Fatalf("promoted skill wrong: v%d %q", live.Version, live.Content)
 	}
 
 	// The story 06 marker names the final acceptance and the eval hash that
-	// trained it.
+	// trained it, still active on the link-carrying version.
 	entry, err := s.GetSkillTrainedState(skill.Slug)
 	if err != nil {
 		t.Fatalf("trained state failed: %v", err)
@@ -201,7 +202,7 @@ func TestLoopHappyPathTwoAcceptedIterations(t *testing.T) {
 	if entry.State != TrainedStateTrained {
 		t.Fatalf("marker state = %s (%s), want trained", entry.State, entry.Reason)
 	}
-	if entry.TrainedVersion != 3 || entry.TrainedCandidate != c2.ID || entry.CurrentVersion != 3 {
+	if entry.TrainedVersion != live.Version || entry.TrainedCandidate != c2.ID || entry.CurrentVersion != live.Version {
 		t.Fatalf("marker metadata wrong: %+v", entry)
 	}
 	if entry.TrainedEvalHash != evalHash {
@@ -443,10 +444,21 @@ func TestLoopPerfectScoreEarlyStop(t *testing.T) {
 		t.Fatalf("terminal job wrong: %+v", fresh)
 	}
 	live, _ := s.GetArticle(skill.Slug)
-	if live.Version != 2 {
-		t.Fatalf("perfect candidate must promote: v%d", live.Version)
+	// The perfect accept promoted (v2) and the story 09 report appended its
+	// backlink section to the live skill — one more version, on the promoted
+	// body.
+	if live.Version != 3 || !strings.Contains(live.Content, perfectCandidateBodyPrefix) || !strings.Contains(live.Content, "## Trained Skill Result reports") {
+		t.Fatalf("promoted skill wrong: v%d %q", live.Version, live.Content)
+	}
+	entry, _ := s.GetSkillTrainedState(skill.Slug)
+	if entry.State != TrainedStateTrained || entry.TrainedVersion != live.Version {
+		t.Fatalf("marker must name the link-carrying version: %+v", entry)
 	}
 }
+
+// perfectCandidateBodyPrefix is the promoted body's stable head, for content
+// assertions that must hold across the report-link append.
+const perfectCandidateBodyPrefix = "# perfect xxxxxxxxxxxx"
 
 func TestLoopPauseAtPhaseBoundaryResumesAtNextPhase(t *testing.T) {
 	s := newLifecycleStorage(t)
@@ -682,12 +694,14 @@ func TestLoopApproveEarlyMidRunAcceptsCurrentBest(t *testing.T) {
 		t.Fatalf("approved job wrong: %+v", fresh)
 	}
 	live, _ := s.GetArticle(skill.Slug)
-	if live.Version != 2 || live.Content != c1.ProposedBody {
-		t.Fatalf("current best must be promoted: v%d", live.Version)
+	// The approve-early accept promoted the current best (v2) and the story 09
+	// report appended its backlink section (v3).
+	if live.Version != 3 || !strings.Contains(live.Content, c1.ProposedBody) || !strings.Contains(live.Content, "## Trained Skill Result reports") {
+		t.Fatalf("current best must be promoted and linked: v%d", live.Version)
 	}
 	entry, _ := s.GetSkillTrainedState(skill.Slug)
-	if entry.State != TrainedStateTrained || entry.TrainedCandidate != c1.ID {
-		t.Fatalf("marker must stamp the approved acceptance: %+v", entry)
+	if entry.State != TrainedStateTrained || entry.TrainedCandidate != c1.ID || entry.TrainedVersion != live.Version {
+		t.Fatalf("marker must stamp the approved acceptance on the link version: %+v", entry)
 	}
 	rec, _ := s.GetIterationRecord(job.ID, 1)
 	if rec.Outcome != IterationOutcomeAccepted || rec.CandidateID != c1.ID {

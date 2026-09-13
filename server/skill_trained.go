@@ -88,6 +88,18 @@ func ensureTrainedMarkerTag(tags []string) []string {
 	return append(out, TrainedMarkerTag)
 }
 
+// ensureReportMarkerTag returns tags with the story-09 result-report marker
+// asserted, deduped case-insensitively. It always copies so a caller's tag
+// slice is never mutated through a shared backing array.
+func ensureReportMarkerTag(tags []string) []string {
+	if hasTag(tags, SkillResultReportTag) {
+		return tags
+	}
+	out := make([]string, len(tags), len(tags)+1)
+	copy(out, tags)
+	return append(out, SkillResultReportTag)
+}
+
 // skillContentHash is the SHA-256 content hash recorded on revocation and
 // unlock audit records: what was on the skill at the moment its marker was
 // withdrawn. Same convention as the story-03 candidate hash (SHA-256 hex).

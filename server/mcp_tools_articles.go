@@ -717,11 +717,22 @@ func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSON
 	}
 	secretNote := secretWarning(warnedSecrets(edit.Content, derefOr(edit.Description), derefOr(edit.Source)))
 
+	// A generated Trained Skill Result report is agent-immutable (story 09):
+	// the wiki wrote it from stored run records and no agent path rewrites it.
+	if existing, gErr := srv.Storage.GetArticle(eArgs.Slug); gErr == nil {
+		if err := checkReportImmutability(existing); err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+		}
+	}
+
 	art, err := srv.Storage.ApplyArticleEdit(eArgs.Slug, edit)
 	var lockedErr *SkillLockedError
+	var reportErr *ReportImmutableError
 	switch {
 	case errors.As(err, &lockedErr):
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + lockedErr.Error()}}}, nil
+	case errors.As(err, &reportErr):
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + reportErr.Error()}}}, nil
 	case errors.Is(err, ErrVersionConflict):
 		if existing, gErr := srv.Storage.GetArticle(eArgs.Slug); gErr == nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: versionConflictMessage("article", eArgs.Slug, existing.Version, eArgs.LoadedVersion)}}}, nil
@@ -796,6 +807,12 @@ func (srv *Server) toolUpdateArticleTags(args json.RawMessage) (interface{}, *JS
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", uArgs.Slug)}}}, nil
 	}
 
+	// A generated Trained Skill Result report is agent-immutable (story 09):
+	// no agent path retags the wiki's own report.
+	if err := checkReportImmutability(existing); err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+	}
+
 	cleanedTags := validateAndCleanUserTags(uArgs.Tags, existing.Tags, existing.Type)
 
 	art, err := srv.Storage.UpdateArticleTags(uArgs.Slug, cleanedTags, uArgs.LoadedVersion, uArgs.EditSummary)
@@ -864,6 +881,12 @@ func (srv *Server) toolDeleteWikiArticle(args json.RawMessage) (interface{}, *JS
 
 	// A locked skill is agent-read-only, including deletion: evolve it via candidates.
 	if err := checkSkillLock(existing); err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+	}
+
+	// A generated Trained Skill Result report is agent-immutable, including
+	// deletion (story 09): the report is the run's record.
+	if err := checkReportImmutability(existing); err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
 	}
 
@@ -1002,11 +1025,23 @@ func (srv *Server) toolRevertArticleVersion(args json.RawMessage) (interface{}, 
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. Requires 'slug' and positive 'version'"}
 	}
 
+	// A generated Trained Skill Result report is agent-immutable (story 09):
+	// a revert would rewrite it outside the wiki's own generation path.
+	if existing, gErr := srv.Storage.GetArticle(rArgs.Slug); gErr == nil {
+		if err := checkReportImmutability(existing); err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+		}
+	}
+
 	art, err := srv.Storage.RevertArticle(rArgs.Slug, rArgs.Version)
 	if err != nil {
 		var lockedErr *SkillLockedError
+		var reportErr *ReportImmutableError
 		if errors.As(err, &lockedErr) {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + lockedErr.Error()}}}, nil
+		}
+		if errors.As(err, &reportErr) {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + reportErr.Error()}}}, nil
 		}
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Revert failed: %v", err)}}}, nil
 	}

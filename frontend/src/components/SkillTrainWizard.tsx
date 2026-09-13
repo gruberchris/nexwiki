@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { EvolutionJob, SkillRegistryEntry } from '../types';
+import type { EvolutionJob, SkillRegistryEntry, SkillTrainedState, SkillTrainedStateEntry } from '../types';
 import { useEvolutionRun, isEvolutionJobTerminal } from '../hooks/useEvolutionRun';
 import { useSplitPane } from '../hooks/useSplitPane';
 import { pickFollowedJob } from './wizardChips';
@@ -8,19 +8,20 @@ import { WizardStepper, type WizardStepId, type WizardStepInfo } from './WizardS
 import { WizardRunHeader, type WizardControl } from './WizardRunHeader';
 import { WizardScoreStrip } from './WizardScoreStrip';
 import { WizardIterationCard } from './WizardIterationCard';
-import { WizardStepSelect, WizardStepData, WizardStepBaseline, WizardStepReviewStub, WizardStepReportStub } from './WizardStepPanels';
+import { WizardStepSelect, WizardStepData, WizardStepBaseline, WizardStepReview, WizardStepReport } from './WizardStepPanels';
 import { TrainedBadge } from './TrainedBadge';
 
 /**
- * The WikiSkill evolution wizard (story 08, Phase D/D1 + D2): a full page at
- * /skills/<slug>/train with the six-step rail on the left and the detail pane
- * on the right, reusing the app's minimizable-sidebar and split-resize
- * patterns and only the theme tokens.
+ * The WikiSkill evolution wizard (story 08, Phase D/D1 + D2; story 09, Phase
+ * D3): a full page at /skills/<slug>/train with the six-step rail on the left
+ * and the detail pane on the right, reusing the app's minimizable-sidebar and
+ * split-resize patterns and only the theme tokens.
  *
  * Steps 1-3 render server state (picker, eval upload, baseline). Step 4 is the
- * live loop view. Steps 5-6 are story 09 placeholders. The run header and the
+ * live loop view; step 5 the Review tables with the audited Rollback control,
+ * and step 6 the run's auto-generated Result report. The run header and the
  * iteration feed poll the story-08 REST seam, and the human controls call the
- * audited story-07 wrappers through it.
+ * audited story-07/09 wrappers through it.
  */
 
 export type ToastFn = (type: 'success' | 'error', text: string) => void;
@@ -53,6 +54,18 @@ export const SkillTrainWizard: React.FC<SkillTrainWizardProps> = ({
   onAlert,
 }) => {
   const skill = skills.find((entry) => entry.name === slug) ?? null;
+
+  // --- derived trained state, with the rollback path's override (story 09):
+  // POST /api/skills/{slug}/rollback answers with the refreshed derived state,
+  // so the badges and the Review banner re-render from that body directly —
+  // no registry reload gymnastics.
+  const [trainedStateOverrides, setTrainedStateOverrides] = useState<Record<string, SkillTrainedState>>({});
+  const handleTrainedStateUpdate = useCallback((state: SkillTrainedStateEntry) => {
+    setTrainedStateOverrides((prev) => ({ ...prev, [state.slug]: state }));
+  }, []);
+  const trainedState: SkillTrainedState | null = skill
+    ? (trainedStateOverrides[slug] ?? skill.trained_state)
+    : (trainedStateOverrides[slug] ?? null);
 
   // --- run discovery: follow the skill's newest job, re-checking on a slow
   // loop so a new dispatch (or a terminal run followed by a retrain) is picked
@@ -100,12 +113,16 @@ export const SkillTrainWizard: React.FC<SkillTrainWizardProps> = ({
 
   // --- step state + readiness from server truth
   const [step, setStep] = useState<WizardStepId>(1);
-  const steppedIntoLive = useRef(false);
+  // The auto-jump to the live view is keyed by the job being watched: the run
+  // that was on screen when the wizard opened (or was re-trained past) drags
+  // the operator to Evolve once, while a fresh dispatch — a new job id — gets
+  // the jump again.
+  const autoJumpedFor = useRef<string | null>(null);
   useEffect(() => {
-    // A live run opening the wizard jumps it straight to the Evolve step once —
+    // A live run opening the wizard jumps it straight to the Evolve step —
     // the operator came here to watch the run, not to click through.
-    if (job && !steppedIntoLive.current) {
-      steppedIntoLive.current = true;
+    if (job && autoJumpedFor.current !== job.id) {
+      autoJumpedFor.current = job.id;
       setStep(4);
     }
   }, [job]);
@@ -115,6 +132,7 @@ export const SkillTrainWizard: React.FC<SkillTrainWizardProps> = ({
     const hasEval = !!run.evalMeta;
     const s0 = run.evalMeta?.baseline_s0 ?? job?.baseline_s0 ?? 0;
     const hasBaseline = hasEval || s0 > 0;
+    const isTerminal = !!job && isEvolutionJobTerminal(job.status);
     // Status comes from server truth, never from the operator's clicks: a step
     // is done when the run actually passed it, locked when nothing can show
     // there yet, and the rail highlights the step being viewed separately.
@@ -142,10 +160,20 @@ export const SkillTrainWizard: React.FC<SkillTrainWizardProps> = ({
         hint: hasJob ? `Run ${job?.status}` : 'No run yet',
         status: hasJob ? ('available' as const) : ('locked' as const),
       },
-      { id: 5, title: 'Review', hint: 'Story 09 adds the tables', status: 'available' as const },
-      { id: 6, title: 'Report', hint: 'Story 09 writes the report', status: 'available' as const },
+      {
+        id: 5,
+        title: 'Review',
+        hint: hasJob ? `${iterations.length} recorded iterations` : 'No run yet',
+        status: hasJob ? ('available' as const) : ('locked' as const),
+      },
+      {
+        id: 6,
+        title: 'Report',
+        hint: !hasJob ? 'No run yet' : isTerminal ? 'Result report ready' : 'Publishes when the run ends',
+        status: hasJob && isTerminal ? ('available' as const) : ('locked' as const),
+      },
     ];
-  }, [job, run.evalMeta]);
+  }, [job, run.evalMeta, iterations.length]);
 
   // --- elapsed ticking for the run header
   const [now, setNow] = useState(() => Date.now());
@@ -211,6 +239,15 @@ export const SkillTrainWizard: React.FC<SkillTrainWizardProps> = ({
     void runControl('approve', `/api/evolution/jobs/${job.id}/approve`);
   }, [job, runControl]);
 
+  // Re-train (story 09 Review step): restart the flow at the picker. The run
+  // just reviewed is marked as watched so it cannot drag the operator back to
+  // the live view, while the discovery loop keeps polling — a fresh dispatch
+  // is a new job id and gets the auto-jump again.
+  const handleRetrain = useCallback(() => {
+    if (job) autoJumpedFor.current = job.id;
+    setStep(1);
+  }, [job]);
+
   // --- layout: minimizable rail + split-resize detail pane (App sidebar pattern)
   const [railMinimized, setRailMinimized] = useState(false);
   const { splitPercentage, isDragging, containerRef, startResizing } = useSplitPane(26);
@@ -229,7 +266,9 @@ export const SkillTrainWizard: React.FC<SkillTrainWizardProps> = ({
       case 1:
         return (
           <WizardStepSelect
-            skills={skills}
+            skills={skills.map((entry) =>
+              trainedStateOverrides[entry.name] ? { ...entry, trained_state: trainedStateOverrides[entry.name] } : entry,
+            )}
             selectedSlug={slug}
             loading={false}
             onSelectSkill={handleSelectSkill}
@@ -298,9 +337,21 @@ export const SkillTrainWizard: React.FC<SkillTrainWizardProps> = ({
           </div>
         );
       case 5:
-        return <WizardStepReviewStub onBack={() => setStep(4)} />;
+        return (
+          <WizardStepReview
+            slug={slug}
+            job={job}
+            evalMeta={run.evalMeta}
+            iterations={iterations}
+            trainedState={trainedState}
+            onBack={() => setStep(4)}
+            onRetrain={handleRetrain}
+            onTrainedStateUpdate={handleTrainedStateUpdate}
+            onAlert={onAlert}
+          />
+        );
       case 6:
-        return <WizardStepReportStub onBack={() => setStep(4)} />;
+        return <WizardStepReport jobId={job?.id ?? null} onBack={() => setStep(4)} onNavigate={onNavigate} />;
     }
   };
 
@@ -332,7 +383,7 @@ export const SkillTrainWizard: React.FC<SkillTrainWizardProps> = ({
                   <h2 className="text-sm font-black text-themeTextPrimary truncate">{skill.title}</h2>
                 </div>
                 <div className="flex items-center gap-2">
-                  <TrainedBadge state={skill.trained_state} />
+                  <TrainedBadge state={trainedState} />
                   <span className="text-[10px] text-themeTextMuted">v{skill.version}</span>
                 </div>
               </div>
