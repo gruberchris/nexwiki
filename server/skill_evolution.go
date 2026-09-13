@@ -347,6 +347,9 @@ func RBestScore(c *SkillCandidate) float64 {
 // saveArticleLocked directly, bypassing the agent-edit lock guard. The gate decision
 // is audited first (story 03): an accept appends an accepted record and proceeds, a
 // gate rejection appends a rejected record, marks the candidate rejected, and refuses.
+// A gate accept is also the training event (story 06): the same save stamps the
+// harness-managed trained-wikiskill marker plus its metadata, so promotion and
+// (re-)training cannot disagree.
 func (s *Storage) PromoteSkillCandidate(id string) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -404,21 +407,40 @@ func (s *Storage) PromoteSkillCandidate(id string) (*Article, error) {
 		return nil, gateErr
 	}
 	after = score
+	stampAt := time.Now().UTC()
 	if auditErr := s.appendSkillAuditRecord(SkillAuditRecord{
 		CandidateID: c.ID, SkillSlug: c.ParentSlug, ParentVersion: c.ParentVersion,
 		ContentHash: SkillCandidateContentHash(c), ValidationScore: score,
 		RBestBefore: before, RBestAfter: after, Outcome: outcome,
 		Decider: SkillAuditDeciderGate, ScorerVersion: SkillAuditScorerVersion,
-		Timestamp: time.Now().UTC(),
+		Timestamp: stampAt,
 	}); auditErr != nil {
 		return nil, fmt.Errorf("validation gate accepted candidate '%s' but the audit write failed: %v", c.ID, auditErr)
 	}
 	c.BestScore = score
 
+	// Story 06: the gate accept IS the training event. Stamp the trained marker
+	// (tag + trained_at/version/parent/candidate/val_score/eval_hash) in the same
+	// save that writes the promoted body, so the marker always names the version
+	// carrying it and re-training overwrites it. The eval hash is the skill's
+	// most recent accepted eval upload — the same baseline the staleness check
+	// later compares against — or empty when the skill has never had eval data.
+	evalHash, err := s.latestEvalHashForSkill(parent.Slug)
+	if err != nil {
+		return nil, fmt.Errorf("failed to promote skill candidate '%s': failed to read eval history: %w", c.ID, err)
+	}
 	summary := fmt.Sprintf("Promoted skill candidate %s (parent %s v%d, proposed by %s)",
 		c.ID, c.ParentSlug, c.ParentVersion, c.Proposer)
 	art, err := s.saveArticleLocked(parent.Slug, parent.Title, c.ProposedBody, parent.Description,
-		parent.Source, parent.Resource, summary, parent.Tags, parent.Type, ArticleOverrides{})
+		parent.Source, parent.Resource, summary, parent.Tags, parent.Type, ArticleOverrides{
+			TrainedStamp: &TrainedStamp{
+				At:            stampAt,
+				ParentVersion: c.ParentVersion,
+				CandidateID:   c.ID,
+				ValScore:      score,
+				EvalHash:      evalHash,
+			},
+		})
 	if err != nil {
 		return nil, fmt.Errorf("failed to promote skill candidate '%s': %w", c.ID, err)
 	}

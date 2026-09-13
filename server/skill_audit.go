@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -18,8 +19,10 @@ import (
 // SkillAuditRecord carrying the candidate ID, target skill slug, parent
 // version, diff-or-body hash, validation score, R_best before/after, the
 // accept/reject outcome, the decider identity (gate or human), and a
-// timestamp. Records with a missing field are refused by validate, so a
-// partial record can never be written.
+// timestamp. Story 06 adds the third outcome, "revoked", for the trained
+// marker's withdrawal paths (rollback and human unlock); those records carry a
+// Reason. Records with a missing field are refused by validate, so a partial
+// record can never be written.
 //
 // OWNERSHIP: the append path (appendSkillAuditRecord) is unexported and the
 // only callers are the harness paths in skill_evolution.go
@@ -44,6 +47,11 @@ import (
 const (
 	SkillAuditAccepted = "accepted"
 	SkillAuditRejected = "rejected"
+	// SkillAuditRevoked marks a story-06 marker withdrawal: a rollback (the
+	// trained metadata is kept and the revocation reason recorded) or an
+	// explicit human unlock (the marker cleared). Both are human decisions and
+	// both must land with a Reason.
+	SkillAuditRevoked = "revoked"
 )
 
 // Skill audit deciders: the validation gate, or an explicit human/operator
@@ -67,17 +75,20 @@ const SkillAuditFilename = "skill_audit.jsonl"
 // required: validate refuses a record with any of them missing, so a
 // missing-field record is impossible by construction on the write path.
 type SkillAuditRecord struct {
-	CandidateID     string    `json:"candidate_id"`
-	SkillSlug       string    `json:"skill_slug"`
-	ParentVersion   int       `json:"parent_version"`
-	ContentHash     string    `json:"content_hash"`
-	ValidationScore float64   `json:"validation_score"`
-	RBestBefore     float64   `json:"r_best_before"`
-	RBestAfter      float64   `json:"r_best_after"`
-	Outcome         string    `json:"outcome"`
-	Decider         string    `json:"decider"`
-	ScorerVersion   string    `json:"scorer_version"`
-	Timestamp       time.Time `json:"timestamp"`
+	CandidateID     string  `json:"candidate_id"`
+	SkillSlug       string  `json:"skill_slug"`
+	ParentVersion   int     `json:"parent_version"`
+	ContentHash     string  `json:"content_hash"`
+	ValidationScore float64 `json:"validation_score"`
+	RBestBefore     float64 `json:"r_best_before"`
+	RBestAfter      float64 `json:"r_best_after"`
+	Outcome         string  `json:"outcome"`
+	Decider         string  `json:"decider"`
+	ScorerVersion   string  `json:"scorer_version"`
+	// Reason is required on a revoked record (story 06 rollback / unlock) and
+	// empty on the gate's accept/reject decisions, which need no free-text why.
+	Reason    string    `json:"reason,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // validate refuses a record with any required field missing or out of range.
@@ -103,9 +114,15 @@ func (r SkillAuditRecord) validate() error {
 	if r.RBestAfter < 0 || r.RBestAfter > 1 {
 		return fmt.Errorf("skill audit record refuses write: R_best after %.4f out of range [0,1]", r.RBestAfter)
 	}
-	if r.Outcome != SkillAuditAccepted && r.Outcome != SkillAuditRejected {
-		return fmt.Errorf("skill audit record refuses write: outcome must be %q or %q, got %q",
-			SkillAuditAccepted, SkillAuditRejected, r.Outcome)
+	switch r.Outcome {
+	case SkillAuditAccepted, SkillAuditRejected:
+	case SkillAuditRevoked:
+		if strings.TrimSpace(r.Reason) == "" {
+			return fmt.Errorf("skill audit record refuses write: a %q record requires a reason", r.Outcome)
+		}
+	default:
+		return fmt.Errorf("skill audit record refuses write: outcome must be %q, %q, or %q, got %q",
+			SkillAuditAccepted, SkillAuditRejected, SkillAuditRevoked, r.Outcome)
 	}
 	if r.Decider != SkillAuditDeciderGate && r.Decider != SkillAuditDeciderHuman {
 		return fmt.Errorf("skill audit record refuses write: decider must be %q or %q, got %q",

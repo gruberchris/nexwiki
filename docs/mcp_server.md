@@ -26,7 +26,7 @@ The MCP specification changed shape in revision **`2026-07-28`**. NexWiki implem
 | Results | carry `resultType: "complete"` | bare result object |
 | Protocol errors | real HTTP status (`400`/`404`) | `200` with an error body |
 
-**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 37 tools and the same 2 prompts — only the envelope differs.
+**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 38 tools and the same 2 prompts — only the envelope differs.
 
 #### Modern-era requirements
 
@@ -84,17 +84,17 @@ curl -X POST http://localhost:5808/api/mcp \
 
 Every tool carries MCP `annotations` telling your client what calling it actually does. Clients use these to **auto-approve safe reads and confirm destructive writes**, so an agent isn't interrupting you to run `get_context_overview` — the tool the agent skill says to call first in every session.
 
-This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 37 tools might destroy data and reach arbitrary external systems.
+This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 38 tools might destroy data and reach arbitrary external systems.
 
 | Hint | NexWiki's values |
 |---|---|
-| `readOnlyHint` | `true` on **14** tools that never modify the wiki |
+| `readOnlyHint` | `true` on **15** tools that never modify the wiki |
 | `destructiveHint` | `false` for creates and appends; `true` for edits, deletes, tag replacement, revert, and bundle import |
 | `idempotentHint` | `true` on the deletes — deleting an already-deleted document changes nothing further |
 | `openWorldHint` | **`false` on every tool, without exception.** The entire surface operates on the local wiki directory and never reaches an external system |
 | `title` | A human-readable display name, e.g. `Get Context Overview` |
 
-**Read-only (14):** `search_wiki` · `read_article` · `list_articles` · `get_article_history` · `get_wiki_statistics` · `list_agent_memories` · `list_agent_plans` · `list_agent_skills` · `get_status_tags` · `get_recent_activity` · `get_backlinks` · `get_context_overview` · `export_okf_bundle` · `wiki_health`
+**Read-only (15):** `search_wiki` · `read_article` · `list_articles` · `get_article_history` · `get_wiki_statistics` · `list_agent_memories` · `list_agent_plans` · `list_agent_skills` · `get_status_tags` · `get_recent_activity` · `get_backlinks` · `get_context_overview` · `get_skill_trained_state` · `export_okf_bundle` · `wiki_health`
 
 **Additive writes (8)** — create new content, never overwrite: the five `create_*` tools plus `append_agent_memory`, `append_agent_plan`, and `propose_skill_candidate`.
 
@@ -108,11 +108,11 @@ This matters because the spec's defaults are **pessimistic**: an unannotated too
 
 ### 📤 Structured output — parse data, don't scrape prose
 
-Twelve read tools declare an **`outputSchema`** and return a **`structuredContent`** object alongside their text. An agent that needs an article's version number to pass as `loaded_version` reads an integer instead of pulling one out of a sentence.
+Thirteen read tools declare an **`outputSchema`** and return a **`structuredContent`** object alongside their text. An agent that needs an article's version number to pass as `loaded_version` reads an integer instead of pulling one out of a sentence.
 
 | | |
 |---|---|
-| Tools with `outputSchema` | `search_wiki` · `read_article` · `list_articles` · `list_agent_memories` · `list_agent_plans` · `list_agent_skills` · `get_backlinks` · `get_article_history` · `get_wiki_statistics` · `get_status_tags` · `get_recent_activity` · `wiki_health` |
+| Tools with `outputSchema` | `search_wiki` · `read_article` · `list_articles` · `list_agent_memories` · `list_agent_plans` · `list_agent_skills` · `get_backlinks` · `get_article_history` · `get_wiki_statistics` · `get_status_tags` · `get_recent_activity` · `get_skill_trained_state` · `wiki_health` |
 | Prose only | every write tool, plus `get_context_overview` (progressive-disclosure prose is its whole purpose), `export_okf_bundle`, and `import_okf_bundle` |
 
 Three properties hold across all of them:
@@ -313,7 +313,7 @@ State is per resolved agent, bounded (8 lookups each, 64 agents, least-recently-
 
 > **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port (and is the primary that persists the activity log); if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server, it forwards its activity events to it; with no NexWiki web server, it persists the log itself. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
 
-The NexWiki MCP server registers and exposes thirty-seven powerful tools for AI agents:
+The NexWiki MCP server registers and exposes thirty-eight powerful tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across the **entire** knowledge base using the built-in **Bleve Search** engine — wiki articles *and* your agent memories, plans, and skills.
@@ -927,6 +927,26 @@ Uploads one validated training-data file for an evolution job and records its S0
   Token-scoped like claiming. The format gate refuses malformed rows, sets below the minimum counts (30 train / 10 val by default, tunable via `NEXWIKI_EVAL_MIN_TRAIN` / `NEXWIKI_EVAL_MIN_VAL`), duplicate cases, train/val input overlap (leakage), and secrets/PII — with per-issue fix-it errors, storing nothing. On success it stores deterministic splits under `data/skill_jobs/<id>.files/eval/` (`train.jsonl`, `val.jsonl`, `meta.json`) with the SHA-256 eval hash, the S0 baseline (current skill on val, v0 scorer), a 5-sample dry run, and a static cost-estimate stub (fields only — never enforced). Uploaded cases are untrusted quoted data throughout: scanned before any write, truncated in previews, never interpolated into shell.
 
 > **Headless job runner.** The six tools above drive background evolution runs with no terminal and no PTY: the server spawns an allowlisted BYO CLI (`opencode`, `claude-code`) as a same-host child with stdout/stderr captured to files, job JSON piped over stdin, and progress/artifact/complete callbacks parsed from stdout. CLI profiles live in server configuration only (`NEXWIKI_JOB_PROFILES_FILE` / `NEXWIKI_JOB_*` env — see [configuration](./configuration.md)): arbitrary command templates are refused at startup, wiki content is never interpolated into shell, and secrets stay in server env or harness-side. Job records are data files under `data/skill_jobs`, never wiki content.
+
+---
+
+### 38. `get_skill_trained_state`
+Reads the harness-managed trained marker on Custom AI Skills (story 06): each skill is `untrained` (no marker), `trained` (a validation gate accepted a promoted candidate), or `stale` (flagged with a reason — a post-train skill edit, an eval-set re-upload after training, a revoked marker, or a tag/metadata disagreement left by hand-editing). Pass `slug` for one skill; omit it to list every skill.
+
+* **Arguments**:
+  * `slug` (string, *optional*): URL-safe slug of one skill. Omit to list the trained state of every skill.
+* **Behavior**:
+  Read-only, with `structuredContent` as `{count, skills[]}` where each row carries the skill's `slug`/`title` plus `state`, `reason`, `trained_at`, `trained_version`, `trained_parent_version`, `trained_candidate`, `trained_val_score`, `trained_eval_hash`, `revoked_at`, `revoked_reason`, and the compared `current_version`/`current_eval_hash`. The state is derived, never stored — staleness is computed from the live document and the stored eval data, so it is tamper-evident rather than taken on faith. The `trained-wikiskill` tag is tool-managed: agents can neither forge it onto an untrained skill nor strip it from a trained one; it is stamped by `promote_skill_candidate`'s gate accept and withdrawn only by the operator (rollback/unlock).
+
+**Examples**
+
+```jsonc
+// Every skill's trained state
+{}
+
+// One skill
+{ "slug": "wizard-pick-skill" }
+```
 
 ---
 

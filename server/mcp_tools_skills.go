@@ -283,6 +283,18 @@ func (srv *Server) toolListAgentSkills(args json.RawMessage) (interface{}, *JSON
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
 	}
 
+	// Story 06: each row also reports its derived trained state (untrained /
+	// trained / stale with reason), computed server-side because staleness needs
+	// the stored eval history. Full metadata: get_skill_trained_state.
+	trainedStates, stateErr := srv.Storage.ListSkillTrainedStates()
+	if stateErr != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: stateErr.Error()}}}, nil
+	}
+	stateBySlug := make(map[string]SkillTrainedState, len(trainedStates))
+	for _, e := range trainedStates {
+		stateBySlug[e.Slug] = e.SkillTrainedState
+	}
+
 	var text string
 	count := 0
 	matched := []Article{}
@@ -306,7 +318,8 @@ func (srv *Server) toolListAgentSkills(args json.RawMessage) (interface{}, *JSON
 			if art.Description != "" {
 				text += fmt.Sprintf("    Summary: %s\n", art.Description)
 			}
-			text += fmt.Sprintf("    Tags: %s\n\n", strings.Join(art.Tags, ", "))
+			text += fmt.Sprintf("    Tags: %s\n", strings.Join(art.Tags, ", "))
+			text += fmt.Sprintf("    Trained: %s\n\n", trainedStateLine(stateBySlug[art.Slug]))
 		}
 	}
 

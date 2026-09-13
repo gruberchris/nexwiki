@@ -204,21 +204,31 @@ type ArticleRequest struct {
 
 type CreateArticleReq = ArticleRequest
 
-// validateAndCleanUserTags preserves tool-managed memory-scope tags (memory-<scope>) that already
-// exist on a document and strips any the user tries to forge onto one. The document *class* is carried
+// validateAndCleanUserTags preserves tool-managed tags that already exist on a document and
+// strips any the user tries to forge onto one. The document *class* is carried
 // by the OKF `type` field, not by tags, so there is no class-tag stripping here anymore. Free user tags
 // and recognized status tags pass through unchanged (deduplicated, case-insensitively).
 //
-// The preservation is scoped to AI-Agent-Memory documents, because that is the only class where a
-// memory-<scope> tag is genuinely tool-managed: create_agent_memory derives it from memory_type, and
-// dropping it would orphan the memory from its scope. On any other class the tag is stray data — no
-// tool sets one there — and re-asserting it made such a tag permanently unremovable through every
-// write path, since DeleteTagGlobally refuses memory-scope tags outright. A superseded
-// AI-Agent-Skill carrying a stray `memory-rules` tag could therefore never be cleaned up, and kept
-// outranking the real format templates in style-guide searches.
+// Two tag families are tool-managed today, each scoped to the one class where it is
+// genuinely tool-managed:
+//
+//   - memory-<scope> on AI-Agent-Memory documents: create_agent_memory derives it from
+//     memory_type, and dropping it would orphan the memory from its scope. On any other
+//     class the tag is stray data — no tool sets one there — and re-asserting it made such a
+//     tag permanently unremovable through every write path, since DeleteTagGlobally refuses
+//     memory-scope tags outright. A superseded AI-Agent-Skill carrying a stray `memory-rules`
+//     tag could therefore never be cleaned up, and kept outranking the real format templates
+//     in style-guide searches. Preservation is scoped to memory documents, but a forged
+//     memory-<scope> tag is stripped on every document type.
+//   - trained-wikiskill on AI-Agent-Skill documents (story 06): the harness stamps it when a
+//     gate accept promotes a candidate, so a trained skill keeps its marker through any agent
+//     tag edit and an agent cannot badge an untrained skill as trained. saveArticleLocked
+//     enforces the same rule at the storage choke point for every other write path.
 func validateAndCleanUserTags(incomingTags []string, existingTags []string, docType string) []string {
 	// Only a memory document has tool-managed scope tags worth defending.
 	toolManagesScope := docType == ContentTypeMemory
+	// Only a skill document has a tool-managed trained marker worth defending.
+	toolManagesTrained := docType == ContentTypeSkill
 
 	existingMemoryScope := make(map[string]bool)
 	if toolManagesScope {
@@ -229,11 +239,15 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string, docT
 			}
 		}
 	}
+	existingTrainedMarker := false
+	if toolManagesTrained {
+		existingTrainedMarker = hasTag(existingTags, TrainedMarkerTag)
+	}
 
 	var result []string
 	seen := make(map[string]bool)
 
-	// Re-assert existing memory-scope tags first so a user edit can never drop them.
+	// Re-assert existing tool-managed tags first so a user edit can never drop them.
 	if toolManagesScope {
 		for _, t := range existingTags {
 			tTrimmed := strings.TrimSpace(t)
@@ -244,6 +258,10 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string, docT
 			}
 		}
 	}
+	if toolManagesTrained && existingTrainedMarker && !seen[TrainedMarkerTag] {
+		seen[TrainedMarkerTag] = true
+		result = append(result, TrainedMarkerTag)
+	}
 
 	for _, t := range incomingTags {
 		tTrimmed := strings.TrimSpace(t)
@@ -253,6 +271,11 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string, docT
 		tLower := strings.ToLower(tTrimmed)
 		// Users may not forge new memory-scope tags onto a document; only pre-existing ones survive.
 		if strings.HasPrefix(tLower, MemoryScopeTagPrefix) && !existingMemoryScope[tLower] {
+			continue
+		}
+		// The trained marker is forged the same way: only the harness promote path
+		// sets it, so an incoming one on an untrained skill is stripped.
+		if toolManagesTrained && tLower == TrainedMarkerTag && !existingTrainedMarker {
 			continue
 		}
 		if !seen[tLower] {
@@ -1043,6 +1066,10 @@ type SkillResp struct {
 	Version     int       `json:"version"`
 	RawURL      string    `json:"raw_url"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// TrainedState is the story-06 derived trained state (untrained/trained/stale
+	// with reason and marker metadata), so the wizard and any REST consumer can
+	// render the picker without recomputing staleness. See server/skill_trained.go.
+	TrainedState SkillTrainedState `json:"trained_state"`
 }
 
 // extractDescription isolates the first non-heading, non-empty paragraph of a Markdown page,
@@ -1068,7 +1095,8 @@ func extractDescription(content string) string {
 }
 
 // HandleListSkills queries all pages, isolates skill documents (OKF type AI-Agent-Skill),
-// parses their descriptions, and exposes them as a JSON registry with fully qualified raw URLs.
+// parses their descriptions, and exposes them as a JSON registry with fully qualified raw URLs
+// and the derived trained state of each skill.
 func (srv *Server) HandleListSkills(w http.ResponseWriter, r *http.Request) {
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
@@ -1080,6 +1108,11 @@ func (srv *Server) HandleListSkills(w http.ResponseWriter, r *http.Request) {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
+	}
+	evalHashes, err := srv.Storage.latestEvalHashesBySkill()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	for _, art := range articles {
@@ -1096,13 +1129,14 @@ func (srv *Server) HandleListSkills(w http.ResponseWriter, r *http.Request) {
 
 		rawURL := fmt.Sprintf("%s://%s/api/skills/%s/raw", scheme, r.Host, art.Slug)
 		skills = append(skills, SkillResp{
-			Name:        art.Slug,
-			Title:       art.Title,
-			Description: desc,
-			Tags:        art.Tags,
-			Version:     art.Version,
-			RawURL:      rawURL,
-			UpdatedAt:   art.Timestamp,
+			Name:         art.Slug,
+			Title:        art.Title,
+			Description:  desc,
+			Tags:         art.Tags,
+			Version:      art.Version,
+			RawURL:       rawURL,
+			UpdatedAt:    art.Timestamp,
+			TrainedState: deriveSkillTrainedState(&art, evalHashes[art.Slug]),
 		})
 	}
 
@@ -1133,15 +1167,21 @@ func (srv *Server) HandleGetSkill(w http.ResponseWriter, r *http.Request) {
 		scheme = "https"
 	}
 	rawURL := fmt.Sprintf("%s://%s/api/skills/%s/raw", scheme, r.Host, art.Slug)
+	currentEvalHash, err := srv.Storage.latestEvalHashForSkill(art.Slug)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusOK, SkillResp{
-		Name:        art.Slug,
-		Title:       art.Title,
-		Description: extractDescription(art.Content),
-		Tags:        art.Tags,
-		Version:     art.Version,
-		RawURL:      rawURL,
-		UpdatedAt:   art.Timestamp,
+		Name:         art.Slug,
+		Title:        art.Title,
+		Description:  extractDescription(art.Content),
+		Tags:         art.Tags,
+		Version:      art.Version,
+		RawURL:       rawURL,
+		UpdatedAt:    art.Timestamp,
+		TrainedState: deriveSkillTrainedState(art, currentEvalHash),
 	})
 }
 

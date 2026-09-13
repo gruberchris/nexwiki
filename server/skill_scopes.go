@@ -207,7 +207,7 @@ func (srv *Server) requiredWikiskillScopes(toolName string, args json.RawMessage
 	case "create_agent_skill", "edit_agent_skill":
 		// Publishing a skill outside the candidate flow: no evolution phase may do it.
 		return []string{ScopeSkillsPublish}
-	case "list_agent_skills":
+	case "list_agent_skills", "get_skill_trained_state":
 		return []string{ScopeSkillsRead}
 	case "propose_skill_candidate":
 		return []string{ScopeCandidatePropose}

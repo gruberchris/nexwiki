@@ -798,6 +798,19 @@ func TestValidateAndCleanUserTags(t *testing.T) {
 		{"stray scope tag removable from a plan", []string{"wip"}, []string{"memory-nexwiki"}, ContentTypePlan, 1, "wip", "memory-nexwiki"},
 		{"scope tag still unforgeable onto a skill", []string{"memory-rules", "ready"}, nil, ContentTypeSkill, 1, "ready", "memory-rules"},
 		{"scope tag cannot be re-added to a skill that had one", []string{"memory-rules"}, []string{"memory-rules"}, ContentTypeSkill, 0, "", "memory-rules"},
+
+		// The story-06 trained marker is tool-managed on an AI-Agent-Skill: an existing
+		// marker survives any agent tag edit, and an agent cannot badge an untrained
+		// skill as trained by adding the tag itself.
+		//
+		// "preserved through a skill tag edit": only the tool-managed marker is
+		// re-asserted from the existing set; the free tag "old" is not in the incoming
+		// edit, and an edit replaces the free tag set (same as the "fresh" case below),
+		// so the result is [marker, topics] = 2, not 3.
+		{"trained marker preserved through a skill tag edit", []string{"topics"}, []string{TrainedMarkerTag, "old"}, ContentTypeSkill, 2, TrainedMarkerTag, ""},
+		{"trained marker dropped by an incoming edit is re-asserted", []string{"fresh"}, []string{TrainedMarkerTag}, ContentTypeSkill, 2, TrainedMarkerTag, ""},
+		{"trained marker unforgeable onto an untrained skill", []string{TrainedMarkerTag, "real"}, nil, ContentTypeSkill, 1, "real", TrainedMarkerTag},
+		{"trained marker on a non-skill is a free tag", []string{TrainedMarkerTag}, nil, ContentTypeWiki, 1, TrainedMarkerTag, ""},
 	}
 
 	for _, tc := range tests {
