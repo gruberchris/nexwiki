@@ -154,6 +154,101 @@ A job's `injection_mode` config chooses how the stdin payload is filled: `all` (
 
 ---
 
+## 🧪 KimmyDB Stability S0 Pilot Runbook (story 12)
+
+The stability pilot trains the **`KimmyDB Cluster Stability Protocol`** skill (`kimmydb-cluster-stability-protocol`) on seeded scenarios and checks the story 12 (E5) success bar mechanically: training must halve the protocol's false-bug rate on held-out val cases while losing zero true detections. **A live KimmyDB cluster is not required** — scenarios are seeded text, the scorers are sandboxed deterministic expressions, and every number is computed from stored records. The canonical copy of this runbook lives in `server/skill_pilot_runbook.go` (`PilotRunbook()`), held against the real tool names, env vars, and endpoints by `TestPilotRunbookAccuracy`. Run the in-repo reference implementation first — the whole loop in-process, no network, no model:
+
+```bash
+go test ./server/ -run TestStabilityPilot -count=1
+```
+
+### Success bar (E5)
+
+1. False bugs on val at least halved versus the S0 baseline (2 × final ≤ baseline).
+2. Zero true-detection loss: every true-bug val case is still caught.
+3. Exactly ONE Trained Skill Result report for the run (generated once, at the end).
+4. Every rejected attempt preserved: candidate record (status `rejected`), iteration record, and gate-rejected audit record.
+
+All four are asserted by `TestStabilityPilot` over the stored records and re-derived at any time with `PilotSummaryFor(job, baselineBody)` (`PilotE5MetricsFor` is the math) over the stored val split under the eval's own scorers — the same numbers the validation gate decided on.
+
+### Step 1 — Ensure the skill exists (operator, over MCP)
+
+Check with `list_agent_skills` and `get_skill_trained_state` (expect state `untrained` for a fresh skill); if absent, create it with `create_agent_skill`, title `KimmyDB Cluster Stability Protocol`, and the baseline body from `PilotBaselineBody()` in `server/skill_pilot.go`. It must carry the verdict contract with the stable marker phrase *"A verdict without its scenario key is not a verdict, and a key without a verdict is not an answer."* and this verdict table — the S0 baseline over-flags every family, which is the pathology the pilot trains away:
+
+```
+- drop-reports-success-without-delete: BUG
+- lag-gauge-wrong-both-ways: BUG
+- empty-set-must-block: BUG
+- tombstone-hidden-by-barrier: BUG
+- contaminated-baseline: BUG
+- front-routing-artefact: BUG
+- schema-vs-wave-barrier-timing: BUG
+- dim-4096-vector-walk: BUG
+- mixed-version-roll-divergence: BUG
+- quorum-lease-echo: BUG
+```
+
+Never hand-edit a trained skill — the evolution flow owns the body from here on.
+
+### Step 2 — Create the evolution job (injection mode)
+
+Create the job over MCP (`create_evolution_job`) with `"skill_slug": "kimmydb-cluster-stability-protocol"` and `"profile": "opencode"` (or `claude-code`). The response mints the per-harness `job_token` once — never retrievable again, so capture it where the harness keeps credentials. Injection mode defaults to `all` (full injection, the pilot's default); pass `"injection_mode": "retrieve"` only to exercise the story-11 BM25 pre-filter. One run per skill: a second active job is refused.
+
+### Step 3 — Upload the eval sets via MCP (the real scenarios)
+
+Upload with `upload_evolution_eval_set`, using the job's `id` and `job_token`, filename `stability-s0.json`, and content from `PilotEvalUploadJSON()` — user-supplied splits, every case shaped `{"input": <scenario description>, "expected": "<key>: <verdict>", "scorer": "contains(lower(output), lower(expected))"}`. That scorer is the verdict-correctness measure: a body passes a case exactly when it carries that scenario's correct directive. The format gate refuses duplicates, train/val input overlap, and secret/PII-bearing cases before anything is stored. Split floors default to 30 train / 10 val (`NEXWIKI_EVAL_MIN_TRAIN` / `NEXWIKI_EVAL_MIN_VAL`); the seeded S0 set is 6 train / 4 val, so lower the floors to 6/4 for this pilot or grow the set — a set below the floors is refused, never truncated.
+
+**Train scenarios (6):**
+
+| Scenario key | Round | Correct verdict | Why |
+|---|---|---|---|
+| `drop-reports-success-without-delete` | R-1042 | BUG | reported success without a persisted tombstone is a durability lie — the delete was never recorded |
+| `lag-gauge-wrong-both-ways` | R-1043 | BUG | a gauge that is wrong in both directions cannot bound catch-up — the protocol flags it |
+| `empty-set-must-block` | R-1044 | BUG | the protocol requires blocking empty operation sets — accepting one is a violation |
+| `tombstone-hidden-by-barrier` | R-1045 | BUG | a barrier that hides a tombstone past its drain window is a real visibility bug |
+| `contaminated-baseline` | R-1046 | NO-BUG | a contaminated baseline is a measurement fault, not a cluster bug — re-baseline and re-run (NO-BUG) |
+| `front-routing-artefact` | R-1047 | NO-BUG | a front-routing artefact of the probe path is not a cluster fault (NO-BUG) |
+
+**Val scenarios (4) — held out:**
+
+| Scenario key | Round | Correct verdict | Why |
+|---|---|---|---|
+| `schema-vs-wave-barrier-timing` | R-2042 | NO-BUG | schema-vs-barrier timing is expected to resolve at drain — a trap the baseline wrongly flags (NO-BUG) |
+| `dim-4096-vector-walk` | R-2043 | NO-BUG | harness float reordering explains the first-walk drift — a trap the baseline wrongly flags (NO-BUG) |
+| `mixed-version-roll-divergence` | R-2044 | BUG | cross-version divergence past the divergence budget is a true bug the baseline already catches |
+| `quorum-lease-echo` | R-2045 | BUG | a lease-handoff echo past the handoff window is a true bug the baseline already catches |
+
+The baseline scores S0 = 0.5000 on val (both traps wrong, both true bugs caught) and a 0.6667 train fit (both train traps wrong) — the upload response reports both.
+
+### Step 4 — Dispatch with a real OpenCode/Claude profile (harness side)
+
+The harness holds the job token and drives the loop with the runner's `RunLoop` (`server/skill_loop.go`) under a CLI profile from `NEXWIKI_JOB_PROFILES_FILE` (allowlisted binaries: `opencode`, `claude-code`). The stepper spawns one CLI step per evolution phase (inference → maintaining → proposing), names the phase in the stdin payload, and resolves each iteration's validation gate server-side. During the proposing phase the harness proposes the candidate it drafted over MCP (`propose_skill_candidate`, full proposed body plus motivating pattern slugs); the gate then decides — an accept promotes and stamps the trained marker, a rejection leaves the live skill byte-identical and the attempt in the audit trail. For the in-repo rehearsal the profile is the scripted shim behind `TestStabilityPilot` following `PilotCandidateStages()`: the partial fix (accepted), the over-trimmed draft the gate must reject (preserved), and the full protocol that reaches 1.0 and stops the loop.
+
+### Step 5 — Monitor the iterations
+
+MCP: `get_evolution_iterations` with the job's `id` and `job_token` — current iteration, phase, plateau count, and every recorded iteration with its score vs R_best. Browser: the wizard's live view at `GET /api/evolution/jobs/{id}/loop` (the wizard never holds the harness token). A healthy S0 run reads: an early iteration accepted on a partial fix, a rejected iteration (preserved — that is the gate working), then an accept at 1.0 that stops the loop `completed` via the perfect-score early stop.
+
+### Step 6 — Verify the success bar (mechanical)
+
+1. The run's Trained Skill Result report (`GET /api/evolution/jobs/{id}/report`): the *Evaluation set* table carries the eval hash and scorer version, *Scores: baseline vs final* carries S0 and R_best, *Iteration history* carries every accept and reject. One report per run, generated once at the end.
+2. Re-derive the E5 bar mechanically: `PilotSummaryFor(job, baselineBody)` over the stored val split, the pre-run baseline body, and the final live body. The re-derived baseline val score must equal the recorded S0 — same scorers, same rounding, same gate math.
+3. The audit trail (`data/skill_audit.jsonl`, or `GET /api/skills/{slug}/audit`) must carry every rejected attempt alongside the accepts.
+
+`TestStabilityPilot` performs exactly these three steps in-process; treat its output as the reference for the real run.
+
+### Step 7 — Human promote, review, and rollback
+
+The gate promotes on accept automatically — the trained marker stamps with the run's val score and eval hash, and the wiki generates the run's result report once the run ends. The human controls are operator-only and audited: `POST /api/evolution/jobs/{id}/pause` (cooperative park), `POST /api/evolution/jobs/{id}/approve` (approve-early: the newest pending candidate goes through the normal gate and the run finishes `completed` either way), `POST /api/evolution/jobs/{id}/abort` (cancel; the skill stays at its last accepted version), `GET /api/skills/{slug}/audit` (the Review step's source of record), and `POST /api/skills/{slug}/rollback` (withdraw the trained marker and restore the pre-training body; the audit trail and the report survive). The report article is immutable to agents (the `wikiskill-report` marker) — humans amend it through the editor by appending a dated note.
+
+### Notes and boundaries
+
+- No live KimmyDB cluster, no network, and no model calls are needed for S0; the real pilot's per-scenario behavior lives in the protocol body, not in a cluster.
+- The payload boundary holds: `task` is the operator's instruction, `data` is quoted untrusted material, and wiki content never enters argv or env.
+- A job is bounded by the 90-minute run cap and the iteration cap (12 by default); the scripted in-repo run finishes in under a minute.
+- Every record the run writes is RAW-layer evidence: never rewritten, never reverted, never deleted.
+
+---
+
 ## 🚀 Practical Example: Creating a Git Skill
 
 Here is a practical example of a skill that you can write inside NexWiki to guide your AI assistant on how you prefer git commits to be structured.
