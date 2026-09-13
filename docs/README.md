@@ -26,7 +26,7 @@ An advanced technical and user guide covering the flat-file gzipped backup and c
 ### 3. [NexWiki Model Context Protocol (MCP) Server Guide](./mcp_server.md)
 A comprehensive technical manual describing the always-on Go MCP engine:
 * **Transport Layers**: Connecting AI clients over standard input/output (Stdio) or Streamable HTTP network streams.
-* **Exposed Tools**: In-depth explanations of all thirty-six exposed tools including read, search, context overview, backlinks, memory lifecycle, optimistic locked writes, reverts, tag management, status tags, activity history, [OKF v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format) bundle import/export, and dead internal-link scanners.
+* **Exposed Tools**: In-depth explanations of all thirty-seven exposed tools including read, search, context overview, backlinks, memory lifecycle, optimistic locked writes, reverts, tag management, status tags, activity history, [OKF v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format) bundle import/export, and dead internal-link scanners.
 * **Client Configurations**: Step-by-step setup guides for Claude Desktop and Cursor IDE.
 
 ### 4. [NexWiki Tags & AI Agent Memories Guide](./tags.md)

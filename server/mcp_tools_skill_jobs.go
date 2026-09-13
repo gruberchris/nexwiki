@@ -9,7 +9,8 @@ import (
 )
 
 // This file holds story 04's MCP surface for the headless evolution job runner:
-// five tools covering the lifecycle in skill_jobs.go. Cancellation, pause, and
+// five tools covering the lifecycle in skill_jobs.go (a sixth, the story 05
+// eval upload, lives in mcp_tools_skill_eval.go). Cancellation, pause, and
 // resume stay internal Go APIs (Storage.Cancel/Pause/ResumeEvolutionJob) for the
 // story 08 UI to wire — the MCP surface stays minimal per the docs-integrity
 // rule. All five run through the story-02 scope gate in executeToolCall*: they

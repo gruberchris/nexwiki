@@ -80,8 +80,8 @@ func TestProxyForwardsLegacyCalls(t *testing.T) {
 	}
 
 	tools := msgs[0]["result"].(map[string]interface{})["tools"].([]interface{})
-	if len(tools) != 36 {
-		t.Errorf("proxied tools/list returned %d tools, want 36", len(tools))
+	if len(tools) != 37 {
+		t.Errorf("proxied tools/list returned %d tools, want 37", len(tools))
 	}
 	if msgs[0]["id"].(float64) != 1 || msgs[1]["id"].(float64) != 2 {
 		t.Error("responses must preserve their request ids and order")
