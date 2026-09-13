@@ -130,17 +130,26 @@ type EvolutionJob struct {
 	ProgressNote    string            `json:"progress_note,omitempty"`
 	Artifacts       []JobArtifact     `json:"artifacts,omitempty"`
 	IdempotencyKeys map[string]string `json:"idempotency_keys,omitempty"`
-	Checkpoint      string            `json:"checkpoint,omitempty"`
-	PauseRequested  bool              `json:"pause_requested,omitempty"`
-	CancelReason    string            `json:"cancel_reason,omitempty"`
-	Error           string            `json:"error,omitempty"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
-	ClaimedAt       time.Time         `json:"claimed_at,omitzero"`
-	LastHeartbeat   time.Time         `json:"last_heartbeat,omitzero"`
-	LeaseExpiresAt  time.Time         `json:"lease_expires_at,omitzero"`
-	RunDeadlineAt   time.Time         `json:"run_deadline_at"`
-	CompletedAt     time.Time         `json:"completed_at,omitzero"`
+	// Story 05 eval intake: summary of the accepted training-data upload.
+	// The full splits live under <id>.files/eval/ (train.jsonl, val.jsonl,
+	// meta.json); these fields let operators read readiness off the job JSON.
+	EvalHash       string    `json:"eval_hash,omitempty"`
+	EvalTrainCount int       `json:"eval_train_count,omitempty"`
+	EvalValCount   int       `json:"eval_val_count,omitempty"`
+	BaselineS0     float64   `json:"baseline_s0,omitempty"`
+	BaselineScorer string    `json:"baseline_scorer,omitempty"`
+	EvalUploadedAt time.Time `json:"eval_uploaded_at,omitzero"`
+	Checkpoint     string    `json:"checkpoint,omitempty"`
+	PauseRequested bool      `json:"pause_requested,omitempty"`
+	CancelReason   string    `json:"cancel_reason,omitempty"`
+	Error          string    `json:"error,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	ClaimedAt      time.Time `json:"claimed_at,omitzero"`
+	LastHeartbeat  time.Time `json:"last_heartbeat,omitzero"`
+	LeaseExpiresAt time.Time `json:"lease_expires_at,omitzero"`
+	RunDeadlineAt  time.Time `json:"run_deadline_at"`
+	CompletedAt    time.Time `json:"completed_at,omitzero"`
 }
 
 // evolutionJobActive reports whether the job holds the per-skill lock.
@@ -826,10 +835,11 @@ func killJobProcess(pid int, grace time.Duration) {
 // Creation mints the token and stays on the process path; everything after that
 // is token-scoped to its job.
 var jobLifecycleTokenTools = map[string]bool{
-	"claim_evolution_job":     true,
-	"heartbeat_evolution_job": true,
-	"upload_job_artifact":     true,
-	"complete_evolution_job":  true,
+	"claim_evolution_job":       true,
+	"heartbeat_evolution_job":   true,
+	"upload_job_artifact":       true,
+	"upload_evolution_eval_set": true,
+	"complete_evolution_job":    true,
 }
 
 // validJobTokenForArgs reports whether a tool call carries the addressed job's

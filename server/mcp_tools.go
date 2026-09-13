@@ -108,6 +108,7 @@ var mcpToolRegistry = []toolDef{
 	claimEvolutionJobTool,
 	heartbeatEvolutionJobTool,
 	uploadJobArtifactTool,
+	uploadEvolutionEvalSetTool,
 	completeEvolutionJobTool,
 	getStatusTagsTool,
 	getRecentActivityTool,

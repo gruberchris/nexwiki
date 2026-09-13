@@ -26,7 +26,7 @@ The MCP specification changed shape in revision **`2026-07-28`**. NexWiki implem
 | Results | carry `resultType: "complete"` | bare result object |
 | Protocol errors | real HTTP status (`400`/`404`) | `200` with an error body |
 
-**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 36 tools and the same 2 prompts — only the envelope differs.
+**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 37 tools and the same 2 prompts — only the envelope differs.
 
 #### Modern-era requirements
 
@@ -84,7 +84,7 @@ curl -X POST http://localhost:5808/api/mcp \
 
 Every tool carries MCP `annotations` telling your client what calling it actually does. Clients use these to **auto-approve safe reads and confirm destructive writes**, so an agent isn't interrupting you to run `get_context_overview` — the tool the agent skill says to call first in every session.
 
-This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 36 tools might destroy data and reach arbitrary external systems.
+This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 37 tools might destroy data and reach arbitrary external systems.
 
 | Hint | NexWiki's values |
 |---|---|
@@ -100,7 +100,7 @@ This matters because the spec's defaults are **pessimistic**: an unannotated too
 
 **Destructive writes (11)** — can overwrite or remove existing content: `edit_wiki_article` · `edit_agent_memory` · `edit_agent_plan` · `edit_agent_skill` · `update_article_tags` · `delete_wiki_article` · `delete_agent_memory` · `revert_article_version` · `import_okf_bundle` · `promote_skill_candidate` · `complete_evolution_job`
 
-**Job control (3)** — advance a headless evolution job's lease or record its output, never wiki content: `claim_evolution_job` · `heartbeat_evolution_job` · `upload_job_artifact`.
+**Job control (4)** — advance a headless evolution job's lease, record its output, or attach its validated training data, never wiki content: `claim_evolution_job` · `heartbeat_evolution_job` · `upload_job_artifact` · `upload_evolution_eval_set`.
 
 > **Annotations are hints, not guarantees.** The specification is explicit that clients must treat them as untrusted from untrusted servers. They describe intent; the actual guards are the optimistic-locking checks and the reserved-type rules enforced inside the handlers.
 >
@@ -313,7 +313,7 @@ State is per resolved agent, bounded (8 lookups each, 64 agents, least-recently-
 
 > **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port (and is the primary that persists the activity log); if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server, it forwards its activity events to it; with no NexWiki web server, it persists the log itself. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
 
-The NexWiki MCP server registers and exposes thirty-six powerful tools for AI agents:
+The NexWiki MCP server registers and exposes thirty-seven powerful tools for AI agents:
 
 ### 1. `search_wiki`
 Performs a high-speed, full-text search across the **entire** knowledge base using the built-in **Bleve Search** engine — wiki articles *and* your agent memories, plans, and skills.
@@ -913,7 +913,20 @@ Marks a claimed/running job `complete` or `failed`. Terminal — releases the pe
 * **Behavior**:
   Token-scoped like claiming. Cancellation, pause, and resume are operator APIs (wired to the story 08 UI), not MCP tools — the tool surface stays minimal.
 
-> **Headless job runner.** The five tools above drive background evolution runs with no terminal and no PTY: the server spawns an allowlisted BYO CLI (`opencode`, `claude-code`) as a same-host child with stdout/stderr captured to files, job JSON piped over stdin, and progress/artifact/complete callbacks parsed from stdout. CLI profiles live in server configuration only (`NEXWIKI_JOB_PROFILES_FILE` / `NEXWIKI_JOB_*` env — see [configuration](./configuration.md)): arbitrary command templates are refused at startup, wiki content is never interpolated into shell, and secrets stay in server env or harness-side. Job records are data files under `data/skill_jobs`, never wiki content.
+---
+
+### 37. `upload_evolution_eval_set`
+Uploads one validated training-data file for an evolution job and records its S0 baseline. Accepted formats are CSV, JSONL, JSON, text, and logs (the asset-upload extension conventions: `.csv`, `.json`, `.jsonl`, `.ndjson`, `.txt`, `.log`, `.md`); every case must be shaped `{input, expected [, scorer]}`.
+
+* **Arguments**:
+  * `id` (string, **required**): The job ID to attach the eval set to.
+  * `job_token` (string, **required**): The per-harness token minted at creation, scoped to this job.
+  * `filename` (string, **required**): Bare filename declaring the format (extension selects the parser).
+  * `content` (string, **required**): Eval file content. JSON may carry user-supplied splits as `{"train": [...], "val": [...]}` (or per-record `"split"` fields in JSONL/CSV); anything else is deterministically auto-split (last quarter to val). Text/log lines are `input ||| expected`.
+* **Behavior**:
+  Token-scoped like claiming. The format gate refuses malformed rows, sets below the minimum counts (30 train / 10 val by default, tunable via `NEXWIKI_EVAL_MIN_TRAIN` / `NEXWIKI_EVAL_MIN_VAL`), duplicate cases, train/val input overlap (leakage), and secrets/PII — with per-issue fix-it errors, storing nothing. On success it stores deterministic splits under `data/skill_jobs/<id>.files/eval/` (`train.jsonl`, `val.jsonl`, `meta.json`) with the SHA-256 eval hash, the S0 baseline (current skill on val, v0 scorer), a 5-sample dry run, and a static cost-estimate stub (fields only — never enforced). Uploaded cases are untrusted quoted data throughout: scanned before any write, truncated in previews, never interpolated into shell.
+
+> **Headless job runner.** The six tools above drive background evolution runs with no terminal and no PTY: the server spawns an allowlisted BYO CLI (`opencode`, `claude-code`) as a same-host child with stdout/stderr captured to files, job JSON piped over stdin, and progress/artifact/complete callbacks parsed from stdout. CLI profiles live in server configuration only (`NEXWIKI_JOB_PROFILES_FILE` / `NEXWIKI_JOB_*` env — see [configuration](./configuration.md)): arbitrary command templates are refused at startup, wiki content is never interpolated into shell, and secrets stay in server env or harness-side. Job records are data files under `data/skill_jobs`, never wiki content.
 
 ---
 
