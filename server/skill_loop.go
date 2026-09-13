@@ -663,8 +663,21 @@ func (s *Storage) findCandidateForGate(job *EvolutionJob, rec *IterationRecord) 
 // the approve-early path call it (CompleteEvolutionJob is the harness's
 // token-scoped equivalent). Idempotent like its sibling: re-finalizing the
 // same status is a no-op; a different terminal status is refused — history is
-// not rewritten.
+// not rewritten. Every stop, including a repeated one, lands the story-09
+// Trained Skill Result report (idempotent generation, best-effort — a report
+// failure never fails the stop).
 func (s *Storage) completeLoopJob(jobID, outcome, reason string) (*EvolutionJob, error) {
+	job, err := s.completeLoopJobLocked(jobID, outcome, reason)
+	if err != nil {
+		return nil, err
+	}
+	s.ensureResultReportBestEffort(job.ID)
+	return job, nil
+}
+
+// completeLoopJobLocked is completeLoopJob's body. The caller must NOT hold
+// writeMu (the lock is taken inside, as before).
+func (s *Storage) completeLoopJobLocked(jobID, outcome, reason string) (*EvolutionJob, error) {
 	s.writeMu.Lock()
 	job, err := s.GetEvolutionJob(jobID)
 	if err != nil {

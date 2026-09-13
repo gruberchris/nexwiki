@@ -210,7 +210,8 @@ type CreateArticleReq = ArticleRequest
 // and recognized status tags pass through unchanged (deduplicated, case-insensitively).
 //
 // Two tag families are tool-managed today, each scoped to the one class where it is
-// genuinely tool-managed:
+// genuinely tool-managed, plus one marker that is tool-managed on the class
+// where the wiki itself sets it:
 //
 //   - memory-<scope> on AI-Agent-Memory documents: create_agent_memory derives it from
 //     memory_type, and dropping it would orphan the memory from its scope. On any other
@@ -224,11 +225,18 @@ type CreateArticleReq = ArticleRequest
 //     gate accept promotes a candidate, so a trained skill keeps its marker through any agent
 //     tag edit and an agent cannot badge an untrained skill as trained. saveArticleLocked
 //     enforces the same rule at the storage choke point for every other write path.
+//   - wikiskill-report on Wiki documents (story 09): the wiki stamps it on the Trained Skill
+//     Result report it generated for one completed run, so a report keeps its marker through
+//     any tag edit and an agent cannot make an arbitrary document agent-immutable. The
+//     agent-facing edit refusals for reports live at the MCP tool layer (mcp_tools_articles.go);
+//     the human-facing REST editor keeps the documented amend path.
 func validateAndCleanUserTags(incomingTags []string, existingTags []string, docType string) []string {
 	// Only a memory document has tool-managed scope tags worth defending.
 	toolManagesScope := docType == ContentTypeMemory
 	// Only a skill document has a tool-managed trained marker worth defending.
 	toolManagesTrained := docType == ContentTypeSkill
+	// Only a wiki document can be a generated result report worth defending.
+	toolManagesReport := docType == ContentTypeWiki
 
 	existingMemoryScope := make(map[string]bool)
 	if toolManagesScope {
@@ -242,6 +250,10 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string, docT
 	existingTrainedMarker := false
 	if toolManagesTrained {
 		existingTrainedMarker = hasTag(existingTags, TrainedMarkerTag)
+	}
+	existingReportMarker := false
+	if toolManagesReport {
+		existingReportMarker = hasTag(existingTags, SkillResultReportTag)
 	}
 
 	var result []string
@@ -262,6 +274,10 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string, docT
 		seen[TrainedMarkerTag] = true
 		result = append(result, TrainedMarkerTag)
 	}
+	if toolManagesReport && existingReportMarker && !seen[SkillResultReportTag] {
+		seen[SkillResultReportTag] = true
+		result = append(result, SkillResultReportTag)
+	}
 
 	for _, t := range incomingTags {
 		tTrimmed := strings.TrimSpace(t)
@@ -276,6 +292,12 @@ func validateAndCleanUserTags(incomingTags []string, existingTags []string, docT
 		// The trained marker is forged the same way: only the harness promote path
 		// sets it, so an incoming one on an untrained skill is stripped.
 		if toolManagesTrained && tLower == TrainedMarkerTag && !existingTrainedMarker {
+			continue
+		}
+		// The report marker likewise: only the wiki's own generation path sets
+		// it, so an incoming one on a document that does not carry it is
+		// stripped — an agent cannot immunize an arbitrary article.
+		if tLower == SkillResultReportTag && !existingReportMarker {
 			continue
 		}
 		if !seen[tLower] {

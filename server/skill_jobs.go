@@ -143,13 +143,17 @@ type EvolutionJob struct {
 	// plateaued, cancelled — see skill_loop.go), the human approve-early request,
 	// and the plateau stop rule (consecutive rejected iterations with no pattern
 	// gain; 0 falls back to the story default of 3).
-	LoopOutcome      string    `json:"loop_outcome,omitempty"`
-	ApproveRequested bool      `json:"approve_requested,omitempty"`
-	PlateauLimit     int       `json:"plateau_limit,omitempty"`
-	Checkpoint       string    `json:"checkpoint,omitempty"`
-	PauseRequested   bool      `json:"pause_requested,omitempty"`
-	CancelReason     string    `json:"cancel_reason,omitempty"`
-	Error            string    `json:"error,omitempty"`
+	LoopOutcome      string `json:"loop_outcome,omitempty"`
+	ApproveRequested bool   `json:"approve_requested,omitempty"`
+	PlateauLimit     int    `json:"plateau_limit,omitempty"`
+	Checkpoint       string `json:"checkpoint,omitempty"`
+	PauseRequested   bool   `json:"pause_requested,omitempty"`
+	CancelReason     string `json:"cancel_reason,omitempty"`
+	Error            string `json:"error,omitempty"`
+	// Story 09: the Trained Skill Result report article this run generated.
+	// Stamped once by EnsureSkillResultReport (skill_report.go) and is the
+	// pointer the wizard's Report step and the idempotency check follow.
+	ResultReportSlug string    `json:"result_report_slug,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
 	ClaimedAt        time.Time `json:"claimed_at,omitzero"`
@@ -390,8 +394,31 @@ func (s *Storage) claimEvolutionJobLocked(job *EvolutionJob, runner string, now 
 }
 
 // ClaimEvolutionJob claims a queued job for a runner. The per-harness token is
-// required; a requeued (lease-expired) job is claimable again by design.
+// required; a requeued (lease-expired) job is claimable again by design. A
+// claim is never a run end, so it never generates a story-09 report — the
+// report must reflect the run END. The one exception is the run-cap refusal
+// inside claimEvolutionJob: there the claim itself marks the job timeout, so
+// that terminal stop lands its report (best-effort, idempotent).
 func (s *Storage) ClaimEvolutionJob(id, token, runner string) (*EvolutionJob, error) {
+	job, err := s.claimEvolutionJob(id, token, runner)
+	if err == nil {
+		return job, nil
+	}
+	// A refused claim left the job terminal only where the refusal ENDED the
+	// run (the run-cap timeout above — and the idempotent re-ensure over an
+	// already-terminal job, which returns its existing report). Any other
+	// refusal (bad token, wrong status) leaves a live job: the terminal gate
+	// inside EnsureSkillResultReport would refuse to invent a report anyway,
+	// so the terminal check here keeps the log quiet.
+	if refused, gerr := s.GetEvolutionJob(id); gerr == nil && evolutionJobTerminal(refused.Status) {
+		s.ensureResultReportBestEffort(id)
+	}
+	return nil, err
+}
+
+// claimEvolutionJob is ClaimEvolutionJob's body; the lock is taken
+// inside, as before.
+func (s *Storage) claimEvolutionJob(id, token, runner string) (*EvolutionJob, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -617,7 +644,21 @@ func (s *Storage) UploadJobArtifact(id, token, name, content, contentHash, idemp
 // CompleteEvolutionJob marks a claimed/running job complete or failed. Terminal:
 // the per-skill lock is released. Re-completing with the same outcome is a
 // no-op success (idempotent); a different outcome on a terminal job is refused.
+// Every stop — including a repeated one — lands the story-09 Trained Skill
+// Result report (best-effort, idempotent; a report failure never fails the
+// harness's complete call).
 func (s *Storage) CompleteEvolutionJob(id, token, outcome, errMsg string) (*EvolutionJob, error) {
+	job, err := s.completeEvolutionJobLocked(id, token, outcome, errMsg)
+	if err != nil {
+		return nil, err
+	}
+	s.ensureResultReportBestEffort(id)
+	return job, nil
+}
+
+// completeEvolutionJobLocked is CompleteEvolutionJob's body; the lock is taken
+// inside, as before.
+func (s *Storage) completeEvolutionJobLocked(id, token, outcome, errMsg string) (*EvolutionJob, error) {
 	outcome = strings.ToLower(strings.TrimSpace(outcome))
 	var status string
 	switch outcome {
@@ -663,8 +704,20 @@ func (s *Storage) CompleteEvolutionJob(id, token, outcome, errMsg string) (*Evol
 // CancelEvolutionJob cancels a live job: SIGTERM with a 10s grace, then SIGKILL,
 // then the lock is released and the cancelled-run record is persisted (status,
 // reason, last progress, completed_at). Cancelling a terminal job is refused —
-// history is not rewritten.
+// history is not rewritten. The abort lands the story-09 "no promotion" report
+// (best-effort, idempotent).
 func (s *Storage) CancelEvolutionJob(id, reason string) (*EvolutionJob, error) {
+	job, err := s.cancelEvolutionJobLocked(id, reason)
+	if err != nil {
+		return nil, err
+	}
+	s.ensureResultReportBestEffort(id)
+	return job, nil
+}
+
+// cancelEvolutionJobLocked is CancelEvolutionJob's body; the lock is taken
+// inside, as before.
+func (s *Storage) cancelEvolutionJobLocked(id, reason string) (*EvolutionJob, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -769,8 +822,22 @@ func (s *Storage) ResumeEvolutionJob(id string) (*EvolutionJob, error) {
 // lease expired return to queued with claim cleared (re-claimable), claimed jobs
 // silent past the claim timeout are requeued the same way, and anything past its
 // run deadline is marked timeout. It returns the IDs it requeued and timed out.
-// The runner calls it before every dispatch; operators call it directly.
+// The runner calls it before every dispatch; operators call it directly. Each
+// newly timed-out job lands its story-09 report (best-effort, idempotent).
 func (s *Storage) RequeueExpiredJobs(now time.Time) (requeued, timedOut []string, err error) {
+	requeued, timedOut, err = s.requeueExpiredJobsLocked(now)
+	if err != nil {
+		return requeued, timedOut, err
+	}
+	for _, id := range timedOut {
+		s.ensureResultReportBestEffort(id)
+	}
+	return requeued, timedOut, nil
+}
+
+// requeueExpiredJobsLocked is RequeueExpiredJobs's body; the lock is taken
+// inside, as before.
+func (s *Storage) requeueExpiredJobsLocked(now time.Time) (requeued, timedOut []string, err error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 

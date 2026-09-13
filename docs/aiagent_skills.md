@@ -94,7 +94,7 @@ NexWiki registers three lightweight REST API endpoints, allowing any AI agent, C
 
 ---
 
-## 🔁 Evolution Wizard REST API (story 08)
+## 🔁 Evolution Wizard REST API (stories 08–09)
 
 The WikiSkill evolution wizard (the browser UI at `/skills/<slug>/train`) reads and drives runs
 through the endpoints below. Everything rides under `/api`, so it is gated by the same
@@ -123,6 +123,21 @@ Each is a `POST` with an optional JSON body (`{"checkpoint": "…"}` for pause, 
 * **Endpoint**: `POST /api/evolution/jobs/{id}/approve` — approve-early: the newest pending candidate goes through the normal validation gate and the run finishes `completed` either way. An accept promotes (stamping the trained marker); a gate rejection leaves the skill byte-identical.
 
 Note on resuming: a paused run resumes by re-dispatching from the harness side (the process holding the job's token), not from the browser. The wizard's paused banner says so rather than offering a control that cannot work.
+
+### Review + result report (story 09)
+The Review and Report steps read from the same seam: the skill's audited gate trail, the human rollback control, and the run's auto-generated result report.
+
+* **Endpoint**: `GET /api/skills/{slug}/audit`
+* **Response**: Every gate decision recorded for one skill (story 03 records, oldest first) — accept/reject entries with the candidate ref, parent version, content hash, validation score vs `r_best` before/after, decider, scorer version, and reason — plus the derived running best (`r_best`). This is the source of record for the Review step's audit table and the final R_best cell. `404` for a missing or non-skill slug.
+
+* **Endpoint**: `POST /api/skills/{slug}/rollback`
+* **Body**: `{"reason": "…"}` (required — the revocation is recorded with it).
+* **Response**: The refreshed derived trained state. The skill body is restored to its pre-training version (the trained candidate's parent) and the marker is recorded as revoked with the caller's reason — never deleted, so the training history stays readable. Audited in the activity log like every other operator control (`source: "api"`, action `rollback`). Statuses: `404` unknown or non-skill slug, `409` no trained marker / live evolution run, `500` otherwise. The audit trail and the run's report survive a rollback.
+
+* **Endpoint**: `GET /api/evolution/jobs/{id}/report`
+* **Response**: One run's Report-step view: `job_id`, `skill_slug`, `status`, `loop_outcome`, and `terminal`, plus `report` — the Trained Skill Result article the wiki generated for this run (absent until the run ends) — and `trained_state`, the skill's live derived trained state. Staleness is derived at serve time, never stored in the report: if the eval set is re-uploaded after the run, the skill is edited after training, or the marker is revoked, `trained_state` reports `stale` with the reason.
+
+The result report itself is written ONCE by the wiki (Go, from stored records — never a model call) when a run ends, whatever the ending: accepted, exhausted, plateaued, cancelled, or failed. It carries the `wikiskill-report` marker tag, which agents cannot edit, strip, or revert (agent write tools refuse), while a human may amend it through the editor by appending a dated note (the report's Amendments footer explains the convention). The report always reflects the run END — its outcome is the real terminal outcome with the end reason — and a no-promotion run touches the skill not at all: the report links the skill; the skill gains its backlink section only when the run promoted a candidate.
 
 ---
 

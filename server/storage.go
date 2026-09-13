@@ -1004,6 +1004,7 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	prevLockedBy := ""                         // the skill lock holder before this save, preserved unless overridden
 	var prevLockedAt time.Time
 	prevHadTrainedMarker := false // whether the on-disk skill carried the trained marker tag
+	prevHadReportMarker := false  // whether the on-disk wiki doc carried the result-report marker tag
 	prevTrainedAt, prevTrainedVersion := time.Time{}, 0
 	prevTrainedParentVersion := 0
 	prevTrainedCandidate, prevTrainedEvalHash, prevTrainedRevokedReason := "", "", ""
@@ -1028,6 +1029,7 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 				prevLockedBy = existingArt.LockedBy
 				prevLockedAt = existingArt.LockedAt
 				prevHadTrainedMarker = hasTag(existingArt.Tags, TrainedMarkerTag)
+				prevHadReportMarker = hasTag(existingArt.Tags, SkillResultReportTag)
 				prevTrainedAt = existingArt.TrainedAt
 				prevTrainedVersion = existingArt.TrainedVersion
 				prevTrainedParentVersion = existingArt.TrainedParentVersion
@@ -1311,6 +1313,12 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 		// is removable only through TrainedUnlock — the explicit human path that
 		// appends its own audit record.
 		art.Tags = ensureTrainedMarkerTag(art.Tags)
+	}
+	if resolvedType == ContentTypeWiki && prevHadReportMarker && !hasTag(art.Tags, SkillResultReportTag) {
+		// Tool-managed report marker: a write path that arrives without it (a tag
+		// edit that dropped it, a revert restoring pre-marker tags) cannot
+		// silently strip it — only the wiki's own generation path owns it.
+		art.Tags = ensureReportMarkerTag(art.Tags)
 	}
 
 	if overrides.Sources != nil {
@@ -2600,8 +2608,10 @@ func (s *Storage) CleanupArchivedArticles() error {
 
 // DeleteTagGlobally removes a tag from all articles in the wiki.
 // Enforces validation: it returns an error if the tag is a tool-managed memory-scope tag,
-// or the tool-managed trained marker tag (story 06), whose removal belongs to the
-// explicit unlock path (UnlockTrainedMarker) with its audit record.
+// the tool-managed trained marker tag (story 06), whose removal belongs to the
+// explicit unlock path (UnlockTrainedMarker) with its audit record, or the
+// tool-managed result-report marker tag (story 09), which the wiki's own
+// generation path owns.
 func (s *Storage) DeleteTagGlobally(tag string) error {
 	tagLower := strings.ToLower(tag)
 	if strings.HasPrefix(tagLower, MemoryScopeTagPrefix) {
@@ -2609,6 +2619,9 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 	}
 	if tagLower == TrainedMarkerTag {
 		return fmt.Errorf("cannot delete the trained marker tag '%s': it is tool-managed — re-train the skill or use the explicit unlock path (UnlockTrainedMarker), which records the removal with an audit entry", tag)
+	}
+	if tagLower == SkillResultReportTag {
+		return fmt.Errorf("cannot delete the result-report marker tag '%s': it is tool-managed — the wiki's generation path stamps it on Trained Skill Result reports, and agents cannot strip it", tag)
 	}
 
 	// Held across the whole sweep so the operation is all-or-nothing with respect to other

@@ -311,3 +311,66 @@ export interface EvalMeta {
   estimate: EvalCostEstimate;
   uploaded_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Story 09: the Review + Report steps. These mirror the Go types in
+// server/skill_audit.go, skill_trained.go (SkillTrainedStateEntry), and
+// skill_report.go as the REST surface serves them.
+// ---------------------------------------------------------------------------
+
+/** One gate decision from GET /api/skills/{slug}/audit (server/skill_audit.go). */
+export interface SkillAuditRecord {
+  candidate_id: string;
+  skill_slug: string;
+  parent_version: number;
+  content_hash: string;
+  validation_score: number;
+  r_best_before: number;
+  r_best_after: number;
+  /** accepted | rejected | revoked (a rollback's or unlock's revocation). */
+  outcome: string;
+  /** gate | human */
+  decider: string;
+  scorer_version: string;
+  reason?: string;
+  timestamp: string;
+}
+
+/** GET /api/skills/{slug}/audit — the skill's trail plus its derived running best. */
+export interface SkillAuditTrailView {
+  slug: string;
+  r_best: number;
+  records: SkillAuditRecord[];
+}
+
+/**
+ * GET /api/skills/{slug}/trained-state, and the POST /api/skills/{slug}/rollback
+ * response body: the skill's identity plus its embedded derived trained state
+ * (Go embeds the struct, so the JSON is flattened).
+ */
+export interface SkillTrainedStateEntry extends SkillTrainedState {
+  slug: string;
+  title: string;
+}
+
+/** The report-article pointer inside the Report-step view (server/skill_report.go). */
+export interface SkillResultReportRef {
+  slug: string;
+  title: string;
+  /** The article's canonical /articles/{slug} URL. */
+  url: string;
+  created_at?: string;
+}
+
+/** GET /api/evolution/jobs/{id}/report — the Report-step view (story 09). */
+export interface SkillResultReportView {
+  job_id: string;
+  skill_slug: string;
+  status: string;
+  loop_outcome?: string;
+  terminal: boolean;
+  /** The Trained Skill Result article — absent until the run ends and it exists. */
+  report?: SkillResultReportRef;
+  /** The skill's live derived trained state (staleness is derived at serve time). */
+  trained_state?: SkillTrainedState;
+}
