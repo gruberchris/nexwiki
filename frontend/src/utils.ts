@@ -241,6 +241,25 @@ export function formatRelativeTime(dateStr: string): string {
 }
 
 /**
+ * Formats an elapsed duration the run header ticks: mm:ss under an hour,
+ * h:mm:ss up to two days, then days + hours.
+ */
+export function formatRunElapsed(ms: number): string {
+  if (ms < 0 || !Number.isFinite(ms)) return '—';
+  const totalSec = Math.floor(ms / 1000);
+  const sec = totalSec % 60;
+  const min = Math.floor(totalSec / 60) % 60;
+  const hr = Math.floor(totalSec / 3600);
+  if (hr >= 48) {
+    const days = Math.floor(hr / 24);
+    const restHr = hr % 24;
+    return `${days}d ${restHr}h`;
+  }
+  if (hr > 0) return `${hr}:${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  return `${min}:${String(sec).padStart(2, '0')}`;
+}
+
+/**
  * Formats an activity event timestamp with a date-aware label, so events from previous days are
  * distinguishable once older history is loaded:
  *   today -> "Today, 3:42 PM"

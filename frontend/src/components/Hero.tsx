@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import type { Article } from '../types';
+import type { Article, SkillTrainedState } from '../types';
 import { isAgentDoc, isArchivedDoc, isMemory, isPlan, isSkill } from '../types';
 import {
   BookOpen,
@@ -65,9 +65,13 @@ interface HeroProps {
    * navigation to Home, which gives a clean dashboard.
    */
   restoreUiState?: boolean;
+  /** Skill trained states by slug (story 08): the trained badges on skill rows. */
+  trainedStates?: Map<string, SkillTrainedState>;
+  /** Opens the evolution wizard for a skill (the "Train" entry point). */
+  onTrainSkill?: (slug: string) => void;
 }
 
-export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, wikiName, restoreUiState = false }) => {
+export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, wikiName, restoreUiState = false, trainedStates, onTrainSkill }) => {
   // Read once at mount: lazy useState initializers only run then, which is exactly the
   // restore-on-remount semantics wanted (SSE-driven re-renders never reset the state).
   const [saved] = useState<Partial<HomeUiState> | null>(() => (restoreUiState ? readHomeUiState() : null));
@@ -359,6 +363,8 @@ export const Hero: React.FC<HeroProps> = ({ articles, onNavigate, onCreateNew, w
             filteredArticles={filteredAiSkills}
             onNavigate={onNavigate}
             statusTags={statusTags}
+            trainedStates={trainedStates}
+            onTrainSkill={onTrainSkill}
             emptyContent={
               <>
                 <Wrench size={32} className="mx-auto text-themeTextMuted animate-bounce" />

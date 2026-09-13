@@ -40,7 +40,7 @@ An advanced user and developer manual designed to help you organize content and 
 ### 5. [NexWiki AI Agent Skills & Custom Registry Guide](./aiagent_skills.md)
 A comprehensive technical manual describing the custom AI skills registry and management engine:
 * **UI Management & Types**: Creating skill pages and understanding the reserved `AI-Agent-Skill` document `type`.
-* **Registry REST APIs**: Details on the `/api/skills`, `/api/skills/{slug}`, and raw `SKILL.md` endpoints.
+* **Registry REST APIs**: Details on the `/api/skills`, `/api/skills/{slug}`, and raw `SKILL.md` endpoints — plus the evolution wizard's read endpoints and audited loop controls (`/api/evolution/…`).
 * **Search Isolation**: How skills are isolated in search by default, and how to trigger explicit search bypass.
 * **Integrations**: Connecting JetBrains editors and other custom AI agent systems to NexWiki as a custom skills registry.
 

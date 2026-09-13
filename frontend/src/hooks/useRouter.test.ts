@@ -40,6 +40,23 @@ describe('parseRoute', () => {
   it('does not decide whether an article exists', () => {
     expect(parseRoute('/articles/does-not-exist', '').route).toBe('article');
   });
+
+  it('maps the skill train wizard route', () => {
+    expect(parseRoute('/skills/docker-cleanup/train', '')).toMatchObject({
+      route: 'train',
+      slug: 'docker-cleanup',
+    });
+    expect(parseRoute('/skills/some-slug.v2/train/', '')).toMatchObject({
+      route: 'train',
+      slug: 'some-slug.v2',
+    });
+  });
+
+  it('leaves other /skills paths as 404', () => {
+    expect(parseRoute('/skills/docker-cleanup', '')).toMatchObject({ route: '404' });
+    expect(parseRoute('/skills/docker-cleanup/raw', '')).toMatchObject({ route: '404' });
+    expect(parseRoute('/skills/', '')).toMatchObject({ route: '404' });
+  });
 });
 
 describe('useRouter', () => {

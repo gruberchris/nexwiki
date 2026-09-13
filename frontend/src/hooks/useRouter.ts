@@ -12,7 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
  * callable means it can be tested exhaustively without rendering anything.
  */
 
-export type RouteName = 'home' | 'new' | 'search' | 'article' | '404';
+export type RouteName = 'home' | 'new' | 'search' | 'article' | 'train' | '404';
 
 export interface RouteInfo {
   route: RouteName;
@@ -30,7 +30,8 @@ export interface RouteInfo {
  *
  * Note this never returns '404' for an `/articles/:slug` path: whether a slug exists depends on
  * the loaded article list, which is the caller's concern. Parsing answers "what shape is this
- * URL", not "does that article exist".
+ * URL", not "does that article exist". The same applies to `/skills/:slug/train`: whether that
+ * skill exists is the wizard's concern, and it renders a not-found state of its own.
  */
 export function parseRoute(path: string, search: string): RouteInfo {
   if (path === '/' || path === '') {
@@ -51,6 +52,17 @@ export function parseRoute(path: string, search: string): RouteInfo {
   }
   if (path.startsWith('/articles/')) {
     return { route: 'article', slug: path.substring('/articles/'.length) };
+  }
+  // The WikiSkill evolution wizard: /skills/<slug>/train.
+  const trainMatch = path.match(/^\/skills\/([^/]+)\/train\/?$/);
+  if (trainMatch) {
+    let slug = trainMatch[1];
+    try {
+      slug = decodeURIComponent(slug);
+    } catch {
+      // Malformed escape: keep the raw segment, which Slugify can still reject.
+    }
+    return { route: 'train', slug };
   }
   return { route: '404', slug: '' };
 }

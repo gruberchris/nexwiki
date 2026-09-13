@@ -144,3 +144,170 @@ export function typeLabel(type?: ContentType): string {
 
 // Light/dark variant selection mode: explicit choice or follow the browser.
 export type ThemeMode = 'light' | 'dark' | 'auto';
+
+// ---------------------------------------------------------------------------
+// WikiSkill evolution wizard (story 08). These mirror the Go types in
+// server/skill_trained.go, skill_jobs.go, skill_loop.go, skill_eval.go, and
+// skill_evolution.go as the REST surface serves them — see
+// docs/aiagent_skills.md for the endpoint list.
+// ---------------------------------------------------------------------------
+
+/** The closed trained-state vocabulary from server/skill_trained.go. */
+export type TrainedStateName = 'untrained' | 'trained' | 'stale';
+
+export interface SkillTrainedState {
+  state: TrainedStateName;
+  reason?: string;
+  trained_at?: string;
+  trained_version?: number;
+  trained_parent_version?: number;
+  trained_candidate?: string;
+  trained_val_score?: number;
+  trained_eval_hash?: string;
+  revoked_at?: string;
+  revoked_reason?: string;
+  current_version: number;
+  current_eval_hash?: string;
+}
+
+/** One registry row from GET /api/skills: identity plus derived trained state. */
+export interface SkillRegistryEntry {
+  name: string;
+  title: string;
+  description?: string;
+  tags?: string[];
+  version: number;
+  raw_url?: string;
+  updated_at?: string;
+  trained_state: SkillTrainedState;
+}
+
+/** One job record from the evolution endpoints (token_hash withheld on REST). */
+export interface EvolutionJob {
+  id: string;
+  skill_slug: string;
+  candidate_id?: string;
+  profile: string;
+  status: 'queued' | 'claimed' | 'running' | 'paused' | 'complete' | 'failed' | 'timeout' | 'cancelled';
+  iteration: number;
+  max_iterations: number;
+  runner?: string;
+  pid?: number;
+  progress?: number;
+  progress_note?: string;
+  eval_hash?: string;
+  eval_train_count?: number;
+  eval_val_count?: number;
+  baseline_s0?: number;
+  baseline_scorer?: string;
+  eval_uploaded_at?: string;
+  loop_outcome?: string;
+  approve_requested?: boolean;
+  plateau_limit?: number;
+  checkpoint?: string;
+  pause_requested?: boolean;
+  cancel_reason?: string;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+  claimed_at?: string;
+  last_heartbeat?: string;
+  lease_expires_at?: string;
+  run_deadline_at: string;
+  completed_at?: string;
+}
+
+export interface LoopPhaseEntry {
+  phase: string;
+  entered_at: string;
+  exited_at?: string;
+  note?: string;
+  complete: boolean;
+}
+
+/** One iteration of the evolution loop, from server/skill_loop.go. */
+export interface IterationRecord {
+  job_id: string;
+  skill_slug: string;
+  iteration: number;
+  started_at: string;
+  completed_at?: string;
+  phases: LoopPhaseEntry[];
+  candidate_id?: string;
+  pattern_slugs?: string[];
+  val_score: number;
+  r_best: number;
+  /** accepted | rejected | interrupted | "" (in flight). */
+  outcome: string;
+  result_version?: number;
+  note?: string;
+}
+
+/** The loop stepper's current position, from server/skill_loop.go. */
+export interface LoopState {
+  job_id: string;
+  skill_slug: string;
+  status: 'running' | 'paused' | 'terminal';
+  current_iteration: number;
+  current_phase: string;
+  phase_status?: string;
+  note?: string;
+  outcome?: string;
+  outcome_reason?: string;
+  started_at: string;
+  updated_at: string;
+}
+
+/** GET /api/evolution/jobs/{id}/loop — one poll's body for the live view. */
+export interface EvolutionLoopResponse {
+  loop: LoopState | null;
+  iterations: IterationRecord[];
+  plateau_count: number;
+  max_iterations: number;
+  plateau_limit: number;
+}
+
+export interface SkillCandidate {
+  id: string;
+  parent_slug: string;
+  parent_version: number;
+  diff?: string;
+  proposed_body?: string;
+  pattern_slugs?: string[];
+  proposer: string;
+  created_at: string;
+  status: 'pending' | 'promoted' | 'rejected';
+  result_version?: number;
+  best_score?: number;
+  decided_at?: string;
+}
+
+export interface EvalDryRunSample {
+  index: number;
+  input_preview: string;
+  expected_preview: string;
+  pass: boolean;
+}
+
+export interface EvalCostEstimate {
+  estimated_val_cases: number;
+  estimated_cost_usd: number;
+  budget_enforced: boolean;
+  note: string;
+}
+
+/** Stored eval metadata from GET /api/evolution/jobs/{id}/eval. */
+export interface EvalMeta {
+  job_id: string;
+  skill_slug: string;
+  filename: string;
+  split_mode: string;
+  train_count: number;
+  val_count: number;
+  eval_hash: string;
+  baseline_s0: number;
+  scorer_version: string;
+  dry_run: EvalDryRunSample[];
+  estimate: EvalCostEstimate;
+  uploaded_at: string;
+}

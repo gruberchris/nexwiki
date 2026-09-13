@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import type { Article } from './types';
+import type { Article, SkillRegistryEntry, SkillTrainedState } from './types';
 import { ContentTypes, isAgentDoc, isSkill, isPlan, isRealTimestamp, typeLabel } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Viewer } from './components/Viewer';
@@ -19,6 +19,8 @@ import { useTheme } from './hooks/useTheme';
 import { useArticleActions } from './hooks/useArticleActions';
 import { useRouter, parseRoute } from './hooks/useRouter';
 import { ActivityLogDrawer } from './components/ActivityLogDrawer';
+import { TrainedBadge } from './components/TrainedBadge';
+import { SkillTrainWizard } from './components/SkillTrainWizard';
 import { 
   Edit, 
   Trash2, 
@@ -50,6 +52,26 @@ export const App: React.FC = () => {
   // Articles state
   const [articles, setArticles] = useState<Article[]>([]);
   const [currentArticle, setCurrentArticle] = useState<Article | null>(null);
+
+  // Skill registry state (GET /api/skills): feeds every trained badge and the
+  // evolution wizard's picker with the story-06 derived trained state.
+  const [skills, setSkills] = useState<SkillRegistryEntry[]>([]);
+  const fetchSkills = useCallback(async () => {
+    try {
+      const response = await fetch('/api/skills');
+      if (response.ok) {
+        const data = await response.json();
+        setSkills(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      // The badges render a loading pill until the next refresh succeeds.
+    }
+  }, []);
+  const trainedStates = useMemo(() => {
+    const map = new Map<string, SkillTrainedState>();
+    for (const skill of skills) map.set(skill.name, skill.trained_state);
+    return map;
+  }, [skills]);
   
   // Editor state
   const [isEditing, setIsEditing] = useState(false);
@@ -220,6 +242,8 @@ export const App: React.FC = () => {
     console.log('SSE Update received:', update);
     // Refresh articles listing dynamically
     void fetchArticles();
+    // Skill edits and gate-accept promotions change the derived trained state.
+    void fetchSkills();
 
     // If currently reading the updated article, refresh its body content
     if (routeInfo.route === 'article' && routeInfo.slug === update.slug && update.type === 'article-edited') {
@@ -267,6 +291,7 @@ export const App: React.FC = () => {
       });
 
       await fetchArticles();
+      await fetchSkills();
       setIsLoading(false);
     };
     void bootApp();
@@ -510,6 +535,15 @@ export const App: React.FC = () => {
           articles={articles}
           version={currentArticle ? currentArticle.version : undefined}
         />
+      ) : routeInfo.route === 'train' ? (
+        // WikiSkill evolution wizard (story 08): /skills/<slug>/train
+        <SkillTrainWizard
+          slug={routeInfo.slug}
+          skills={skills}
+          onSkillsRefresh={fetchSkills}
+          onNavigate={handleNavigate}
+          onAlert={triggerAlert}
+        />
       ) : routeInfo.route === 'home' ? (
         // Homepage welcoming Dashboard Hero
         <Hero
@@ -520,6 +554,8 @@ export const App: React.FC = () => {
           // Back/forward and reloads restore the dashboard as it was left; clicking Home
           // deliberately gives a clean one.
           restoreUiState={navigationKind !== 'push'}
+          trainedStates={trainedStates}
+          onTrainSkill={(slug) => navigate(`/skills/${slug}/train`)}
         />
       ) : routeInfo.route === 'search' ? (
         // Dedicated Google-Style Search Results View
@@ -579,6 +615,9 @@ export const App: React.FC = () => {
                       <h1 className="text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight leading-tight">
                         {currentArticle.title}
                       </h1>
+                      {isSkill(currentArticle) && (
+                        <TrainedBadge state={trainedStates.get(currentArticle.slug) ?? null} />
+                      )}
                       <button
                         onClick={copyTitle}
                         className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
@@ -713,6 +752,17 @@ export const App: React.FC = () => {
                   </div>
                   {/* Actions buttons */}
                   <div className="flex items-center justify-end gap-2 self-stretch no-print mt-1">
+                    {isSkill(currentArticle) && (
+                      <button
+                        onClick={() => navigate(`/skills/${currentArticle.slug}/train`)}
+                        title="Train with WikiSkill — open the evolution wizard"
+                        data-testid="train-with-wikiskill-button"
+                        className="flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-indigo-200 dark:border-indigo-800/60 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 font-semibold text-xs shadow-xs hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer"
+                      >
+                        <Wrench size={12} />
+                        <span>Train with WikiSkill</span>
+                      </button>
+                    )}
                     <button
                       onClick={handleVerifyArticle}
                       disabled={isVerifying}
