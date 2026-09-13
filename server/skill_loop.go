@@ -184,6 +184,19 @@ type IterationRecord struct {
 	ValScore float64 `json:"val_score"`
 	RBest    float64 `json:"r_best"`
 
+	// Story 11 (B2): the scoring context the gate decided under — the derived
+	// scorer version, the eval hash the score came from, and the train-split
+	// fit indicator beside the val score. Empty hash means the structural
+	// fallback scorer (v0) decided. With the stored eval splits on disk, the
+	// gate decision is reproducible from these fields alone.
+	ScorerVersion string  `json:"scorer_version,omitempty"`
+	EvalHash      string  `json:"eval_hash,omitempty"`
+	TrainScore    float64 `json:"train_score,omitempty"`
+
+	// Story 11 (B3): the retrieve-mode ranking trace the inference step's
+	// payload carried (nil in the default "all" mode).
+	Retrieval *RetrievalTrace `json:"retrieval,omitempty"`
+
 	// Outcome: accepted | rejected | interrupted | "" (in flight).
 	Outcome string `json:"outcome"`
 
@@ -969,11 +982,17 @@ func (s *Storage) applyApproveEarly(job *EvolutionJob) error {
 				r.Outcome = IterationOutcomeRejected
 				r.ValScore = rej.Score
 				r.RBest = rej.Best
+				r.ScorerVersion = rej.ScorerVersion
+				r.EvalHash = rej.EvalHash
+				r.TrainScore = rej.TrainScore
 			} else {
 				r.Outcome = IterationOutcomeAccepted
 				r.ValScore = cand.BestScore
 				r.RBest = cand.BestScore
 				r.ResultVersion = promotedVersion
+				r.ScorerVersion = cand.ValidationScorer
+				r.EvalHash = cand.ValidationEvalHash
+				r.TrainScore = cand.ValidationTrainScore
 			}
 			r.Note = "resolved by approve-early"
 		}); rerr != nil {
@@ -1333,6 +1352,15 @@ func (r *Runner) loopPhaseStep(job *EvolutionJob, token string, input JobInput, 
 	if next == "" {
 		next = LoopPhaseGating
 	}
+	// Story 11 (B3): a retrieve-mode inference step leaves its ranking trace
+	// on the iteration record, so the wizard can show why the payload carried
+	// the skills it did. Re-running an interrupted phase overwrites the trace
+	// with the fresh selection (last selection wins, like the phase trail).
+	if res.injection != nil && phase == LoopPhaseInference {
+		if err := r.Storage.stampRetrievalTrace(job.ID, loop.CurrentIteration, res.injection); err != nil {
+			return LoopStepResult{}, err
+		}
+	}
 	if _, err := r.Storage.mutateLoopState(job.ID, false, func(st *LoopState) {
 		st.CurrentPhase = next
 		st.PhaseStatus = ""
@@ -1341,6 +1369,38 @@ func (r *Runner) loopPhaseStep(job *EvolutionJob, token string, input JobInput, 
 		return LoopStepResult{}, err
 	}
 	return LoopStepResult{Advanced: true, Iteration: loop.CurrentIteration, Phase: phase}, nil
+}
+
+// stampRetrievalTrace records one retrieve-mode selection on the iteration
+// record. Best-effort neighbors on the step path keep the step honest; here a
+// trace write failure is a real fault (the record must describe the payload).
+func (s *Storage) stampRetrievalTrace(jobID string, iteration int, inj *SkillInjectionBlock) error {
+	if inj == nil {
+		return nil
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	rec, err := s.loadIterationRecord(jobID, iteration)
+	if err != nil {
+		return err
+	}
+	if rec == nil {
+		return fmt.Errorf("no iteration record for job '%s' iteration %d", jobID, iteration)
+	}
+	selected := make([]string, 0, len(inj.Skills))
+	for _, sk := range inj.Skills {
+		selected = append(selected, sk.Slug)
+	}
+	rec.Retrieval = &RetrievalTrace{
+		Mode:     inj.Mode,
+		Selected: selected,
+		Trace:    inj.Trace,
+	}
+	if topK, terr := retrievalTopK(); terr == nil {
+		rec.Retrieval.TopK = topK
+	}
+	return s.writeIterationRecordLocked(rec)
 }
 
 // loopGate resolves the iteration's validation gate server-side and either
@@ -1386,6 +1446,10 @@ func (r *Runner) loopGate(job *EvolutionJob, token string, loop *LoopState) (Loo
 	valScore, rBest := 0.0, 0.0
 	resultVersion := 0
 	var patterns []string
+	// Story 11 (B2): the scoring context stamped beside the outcome ("" hash
+	// and v0 for the structural fallback, the eval set's values otherwise).
+	scorerVersion, evalHash := "", ""
+	trainScore := 0.0
 	note := "no candidate proposed during the proposing phase"
 	if cand != nil {
 		note = ""
@@ -1400,11 +1464,17 @@ func (r *Runner) loopGate(job *EvolutionJob, token string, loop *LoopState) (Loo
 			valScore = decided.BestScore
 			rBest = decided.BestScore
 			resultVersion = art.Version
+			scorerVersion = decided.ValidationScorer
+			evalHash = decided.ValidationEvalHash
+			trainScore = decided.ValidationTrainScore
 			note = fmt.Sprintf("gate accepted candidate %s", cand.ID)
 		} else if gateRej := (*SkillGateRejection)(nil); errors.As(perr, &gateRej) {
 			outcome = IterationOutcomeRejected
 			valScore = gateRej.Score
 			rBest = gateRej.Best
+			scorerVersion = gateRej.ScorerVersion
+			evalHash = gateRej.EvalHash
+			trainScore = gateRej.TrainScore
 			note = "gate rejected the candidate (score does not beat R_best)"
 		} else {
 			// A real fault: fail the run, leaving the iteration interrupted.
@@ -1436,6 +1506,9 @@ func (r *Runner) loopGate(job *EvolutionJob, token string, loop *LoopState) (Loo
 		r.CandidateID = candidateIDOrEmpty(cand)
 		r.PatternSlugs = patterns
 		r.ResultVersion = resultVersion
+		r.ScorerVersion = scorerVersion
+		r.EvalHash = evalHash
+		r.TrainScore = trainScore
 		r.Note = note
 	}); err != nil {
 		return LoopStepResult{}, err

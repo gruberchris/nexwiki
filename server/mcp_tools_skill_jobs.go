@@ -38,6 +38,10 @@ var createEvolutionJobTool = toolDef{
 					"type":        "string",
 					"description": "BYO CLI profile to run (server configuration): opencode or claude-code. Defaults to opencode.",
 				},
+				"injection_mode": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional skill-injection toggle: all (default — the payload carries exactly what the harness supplies) or retrieve (a coarse server-side pre-filter: only the top-K skills whose name/description match the task keywords are quoted into the payload, always plus the skill under evolution; top-K via NEXWIKI_JOB_RETRIEVAL_TOPK, default 5). Full injection remains the paper's default.",
+				},
 			},
 			"required": []string{"skill_slug"},
 		},
@@ -48,9 +52,10 @@ var createEvolutionJobTool = toolDef{
 
 func (srv *Server) toolCreateEvolutionJob(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type CreateArgs struct {
-		SkillSlug   string `json:"skill_slug"`
-		CandidateID string `json:"candidate_id"`
-		Profile     string `json:"profile"`
+		SkillSlug     string `json:"skill_slug"`
+		CandidateID   string `json:"candidate_id"`
+		Profile       string `json:"profile"`
+		InjectionMode string `json:"injection_mode"`
 	}
 	var cArgs CreateArgs
 	if e := decodeToolArgs(args, &cArgs); e != nil {
@@ -59,13 +64,19 @@ func (srv *Server) toolCreateEvolutionJob(args json.RawMessage) (interface{}, *J
 	if strings.TrimSpace(cArgs.SkillSlug) == "" {
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'skill_slug' is required."}
 	}
-	job, token, err := srv.Storage.CreateEvolutionJob(cArgs.SkillSlug, cArgs.CandidateID, cArgs.Profile)
+	job, token, err := srv.Storage.CreateEvolutionJobWithMode(cArgs.SkillSlug, cArgs.CandidateID, cArgs.Profile, cArgs.InjectionMode)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating evolution job: %v", err)}}}, nil
 	}
+	injectionNote := ""
+	if injectionModeFor(job) == InjectionModeRetrieve {
+		if topK, kerr := retrievalTopK(); kerr == nil {
+			injectionNote = fmt.Sprintf("Injection: retrieve — the runner quotes only the top-%d skills matching the task keywords (plus the skill under evolution).\n", topK)
+		}
+	}
 	respText := fmt.Sprintf("Success! Evolution job '%s' queued for skill '%s' (profile %s, run cap %s).\n"+
-		"Job token (shown ONCE — store it harness-side, it is never retrievable again): %s\nStatus: %s\n",
-		job.ID, job.SkillSlug, job.Profile, job.RunDeadlineAt.Format(time.RFC3339), token, job.Status)
+		"Job token (shown ONCE — store it harness-side, it is never retrievable again): %s\nStatus: %s\n%s",
+		job.ID, job.SkillSlug, job.Profile, job.RunDeadlineAt.Format(time.RFC3339), token, job.Status, injectionNote)
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 

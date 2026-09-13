@@ -248,6 +248,12 @@ func LoadRunnerConfigFromEnv() (*RunnerConfig, error) {
 	if len(cfg.Profiles) == 0 {
 		return nil, fmt.Errorf("invalid job-runner configuration: no CLI profiles defined")
 	}
+	// Story 11 (B3): the retrieval top-K override is part of the runner
+	// configuration; a set-but-unparseable value refuses startup exactly like
+	// a bad profiles file.
+	if _, err := retrievalTopK(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }
 
@@ -269,6 +275,11 @@ func ValidateJobRunnerConfig() error {
 // spawns one CLI step per evolution phase (inference → maintaining → proposing)
 // and names the phase here so the harness runs exactly that phase's work. Plain
 // story-04 dispatches leave it empty.
+//
+// `skill_injection` is story 11's (B3) retrieval toggle in retrieve mode: the
+// top-K registry skills matching the task keywords (plus the skill under
+// evolution) quoted as data. Nil in the default "all" mode — the payload then
+// carries exactly what the harness supplied, unchanged.
 type JobStdinPayload struct {
 	JobID       string            `json:"job_id"`
 	SkillSlug   string            `json:"skill_slug"`
@@ -278,7 +289,10 @@ type JobStdinPayload struct {
 	Phase       string            `json:"phase,omitempty"`
 	Task        string            `json:"task"`
 	Data        map[string]string `json:"data,omitempty"`
-	Boundary    string            `json:"instruction_boundary"`
+	// SkillInjection quotes the retrieve-mode subset; the instruction_boundary
+	// label governs it exactly like Data.
+	SkillInjection *SkillInjectionBlock `json:"skill_injection,omitempty"`
+	Boundary       string               `json:"instruction_boundary"`
 }
 
 // InstructionBoundary is the on-the-wire label marking the task/data split.
@@ -322,10 +336,12 @@ type stepSpec struct {
 // reached or the job parked); applied records whether every captured callback
 // was applied — a park that fired mid-callbacks drops the rest, and the loop
 // stepper needs that distinction to decide whether a phase may be marked
-// complete or must be re-run on resume.
+// complete or must be re-run on resume. injection carries the story-11
+// retrieve-mode selection the step's payload carried, for the trace stamp.
 type stepResult struct {
-	done    bool
-	applied bool
+	done      bool
+	applied   bool
+	injection *SkillInjectionBlock
 }
 
 // Runner executes evolution jobs headlessly: same-host child processes, no PTY,
@@ -502,6 +518,25 @@ func (r *Runner) runStep(job *EvolutionJob, token string, profile CLIProfile, in
 		Data:     input.Data,
 		Boundary: InstructionBoundary,
 	}
+	// Story 11 (B3): retrieve mode pre-filters the registry server-side. The
+	// selected subset (top-K plus the skill under evolution, quoted as data)
+	// rides the payload; the ranking trace returns for the loop stepper to
+	// stamp on the iteration record. A selection failure — bad env, unreadable
+	// registry — fails the step fail-closed rather than silently widening the
+	// injection.
+	var injection *SkillInjectionBlock
+	if injectionModeFor(job) == InjectionModeRetrieve {
+		topK, err := retrievalTopK()
+		if err != nil {
+			return stepResult{done: true}, err
+		}
+		inj, err := r.Storage.selectSkillsForRetrieval(job.SkillSlug, input.Task, topK)
+		if err != nil {
+			return stepResult{done: true}, err
+		}
+		payload.SkillInjection = inj
+		injection = inj
+	}
 	stdin, err := json.Marshal(payload)
 	if err != nil {
 		return stepResult{done: true}, fmt.Errorf("failed to encode job payload: %w", err)
@@ -564,7 +599,7 @@ func (r *Runner) runStep(job *EvolutionJob, token string, profile CLIProfile, in
 		if done {
 			// Parked or terminated mid-callbacks: whatever remains in the file is
 			// dropped, so the step's work is not fully applied.
-			return stepResult{done: true, applied: false}, nil
+			return stepResult{done: true, applied: false, injection: injection}, nil
 		}
 	}
 	// No explicit progress callback still advances the lease: a live step is a
@@ -580,9 +615,9 @@ func (r *Runner) runStep(job *EvolutionJob, token string, profile CLIProfile, in
 		return stepResult{done: true}, err
 	}
 	if runErr != nil {
-		return stepResult{done: true, applied: true}, fmt.Errorf("step %s CLI exited with an error: %v", spec.label, runErr)
+		return stepResult{done: true, applied: true, injection: injection}, fmt.Errorf("step %s CLI exited with an error: %v", spec.label, runErr)
 	}
-	return stepResult{applied: true}, nil
+	return stepResult{applied: true, injection: injection}, nil
 }
 
 // applyCallback applies one shim callback through the token-scoped storage

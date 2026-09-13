@@ -218,7 +218,7 @@ func TestHandleGetEvolutionEvalAndCandidate(t *testing.T) {
 	if err := json.Unmarshal(w2.Body.Bytes(), &meta); err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
-	if meta.TrainCount != 6 || meta.ValCount != 2 || meta.EvalHash == "" || meta.ScorerVersion != SkillAuditScorerVersion {
+	if meta.TrainCount != 6 || meta.ValCount != 2 || meta.EvalHash == "" || meta.ScorerVersion != EvalScorerVersionBase {
 		t.Errorf("eval meta incomplete: %+v", meta)
 	}
 	if meta.BaselineS0 < 0 || meta.BaselineS0 > 1 {

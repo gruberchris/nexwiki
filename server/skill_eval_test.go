@@ -36,6 +36,17 @@ func evalCasesJSON(cases []EvalCase) string {
 	return string(raw)
 }
 
+// evalCasesWithScorer stamps every case with the same custom scorer source —
+// the story-11 way to give an eval set a versioned scoring function.
+func evalCasesWithScorer(cases []EvalCase, scorer string) string {
+	stamped := make([]EvalCase, len(cases))
+	for i, c := range cases {
+		c.Scorer = scorer
+		stamped[i] = c
+	}
+	return evalCasesJSON(stamped)
+}
+
 func seedEvalJob(t *testing.T, s *Storage) (*EvolutionJob, string) {
 	t.Helper()
 	skill := seedSkill(t, s, "Eval Skill", "# eval skill body covering weekly review summary workstream action items")
@@ -75,8 +86,17 @@ func TestEvalUploadAutoSplitValid(t *testing.T) {
 	if res.Meta.EvalHash == "" {
 		t.Error("eval hash must be recorded")
 	}
-	if res.Meta.ScorerVersion != SkillAuditScorerVersion {
-		t.Errorf("scorer version = %q, want %q", res.Meta.ScorerVersion, SkillAuditScorerVersion)
+	if res.Meta.ScorerVersion != EvalScorerVersionBase {
+		t.Errorf("scorer version = %q, want %q (the default exact-match scorer)", res.Meta.ScorerVersion, EvalScorerVersionBase)
+	}
+	if len(res.Meta.Scorers) != 0 {
+		t.Errorf("a default-only set must record no custom scorers, got %v", res.Meta.Scorers)
+	}
+	if res.Meta.BaselineTrain != res.Meta.BaselineS0 {
+		// Both splits hold the same default-exact pass/fail rule here, so the
+		// train fit and S0 must agree.
+		t.Errorf("baseline splits = train %v, val %v — the default scorer scores both splits identically",
+			res.Meta.BaselineTrain, res.Meta.BaselineS0)
 	}
 	if res.Meta.BaselineS0 < 0 || res.Meta.BaselineS0 > 1 {
 		t.Errorf("S0 baseline = %v, want in [0,1]", res.Meta.BaselineS0)
@@ -99,7 +119,7 @@ func TestEvalUploadAutoSplitValid(t *testing.T) {
 	if len(train) != 6 || len(val) != 2 {
 		t.Fatalf("stored splits = %d/%d, want 6/2", len(train), len(val))
 	}
-	if meta.EvalHash != res.Meta.EvalHash || evalSetHash(train, val) != res.Meta.EvalHash {
+	if meta.EvalHash != res.Meta.EvalHash || evalSetHash(train, val, evalScorerVersionOfCases(train, val)) != res.Meta.EvalHash {
 		t.Error("stored splits must reproduce the recorded eval hash")
 	}
 
@@ -111,7 +131,7 @@ func TestEvalUploadAutoSplitValid(t *testing.T) {
 	if stored.EvalHash != res.Meta.EvalHash || stored.EvalTrainCount != 6 || stored.EvalValCount != 2 {
 		t.Errorf("job eval summary wrong: %+v", stored)
 	}
-	if stored.BaselineS0 != res.Meta.BaselineS0 || stored.BaselineScorer != SkillAuditScorerVersion {
+	if stored.BaselineS0 != res.Meta.BaselineS0 || stored.BaselineScorer != EvalScorerVersionBase {
 		t.Errorf("job baseline wrong: S0=%v scorer=%q", stored.BaselineS0, stored.BaselineScorer)
 	}
 	if stored.EvalUploadedAt.IsZero() {
@@ -179,10 +199,14 @@ func TestEvalUploadCSVAndJSONL(t *testing.T) {
 	var csvBody strings.Builder
 	csvBody.WriteString("input,expected,scorer\n")
 	for i := 0; i < 8; i++ {
-		fmt.Fprintf(&csvBody, "\"summarize workstream number %d for review\",\"weekly review summary of workstream number %d\",v0\n", i, i)
+		fmt.Fprintf(&csvBody, "\"summarize workstream number %d for review\",\"weekly review summary of workstream number %d\",exact\n", i, i)
 	}
-	if _, err := s.UploadEvolutionEvalSet(job.ID, token, "cases.csv", csvBody.String()); err != nil {
+	res, err := s.UploadEvolutionEvalSet(job.ID, token, "cases.csv", csvBody.String())
+	if err != nil {
 		t.Fatalf("CSV upload failed: %v", err)
+	}
+	if res.Meta.ScorerVersion != EvalScorerVersionBase {
+		t.Errorf("a set of explicit built-in names must stay at %q, got %q", EvalScorerVersionBase, res.Meta.ScorerVersion)
 	}
 
 	skill := seedSkill(t, s, "Eval Skill Two", "# body weekly review summary workstream")
@@ -198,12 +222,12 @@ func TestEvalUploadCSVAndJSONL(t *testing.T) {
 		})
 		jsonlBody.WriteString(string(raw) + "\n")
 	}
-	res, err := s.UploadEvolutionEvalSet(job2.ID, token2, "cases.jsonl", jsonlBody.String())
+	res2, err := s.UploadEvolutionEvalSet(job2.ID, token2, "cases.jsonl", jsonlBody.String())
 	if err != nil {
 		t.Fatalf("JSONL upload failed: %v", err)
 	}
-	if res.Meta.TrainCount != 6 || res.Meta.ValCount != 2 {
-		t.Errorf("JSONL splits = %d/%d, want 6/2", res.Meta.TrainCount, res.Meta.ValCount)
+	if res2.Meta.TrainCount != 6 || res2.Meta.ValCount != 2 {
+		t.Errorf("JSONL splits = %d/%d, want 6/2", res2.Meta.TrainCount, res2.Meta.ValCount)
 	}
 }
 
@@ -645,7 +669,10 @@ func TestEvalToolRegisteredWithJobScope(t *testing.T) {
 func TestEvalBaselineSensitiveToSkillBody(t *testing.T) {
 	t.Setenv(EvalMinTrainEnv, "2")
 	t.Setenv(EvalMinValEnv, "1")
-	content := evalCasesJSON(evalFixture(4))
+	// A sandboxed overlap scorer: a case scores 1 when at least half of its
+	// expected-answer tokens already appear in the scored body — the v0
+	// heuristic, now expressed as a versioned custom scorer.
+	content := evalCasesWithScorer(evalFixture(4), "overlap(expected, output) >= 0.5")
 
 	s := newLifecycleStorage(t)
 	job, token := seedEvalJob(t, s) // skill body covers the fixture vocabulary
@@ -666,7 +693,59 @@ func TestEvalBaselineSensitiveToSkillBody(t *testing.T) {
 	if covered.Meta.BaselineS0 <= uncovered.Meta.BaselineS0 {
 		t.Errorf("S0 must reflect skill coverage: covering=%v bare=%v", covered.Meta.BaselineS0, uncovered.Meta.BaselineS0)
 	}
+	if covered.Meta.ScorerVersion == EvalScorerVersionBase || covered.Meta.ScorerVersion == SkillAuditScorerVersion {
+		t.Errorf("a custom scorer must derive its own version, got %q", covered.Meta.ScorerVersion)
+	}
+	if covered.Meta.ScorerVersion != uncovered.Meta.ScorerVersion {
+		t.Errorf("the same scorer set must derive the same version: %q vs %q", covered.Meta.ScorerVersion, uncovered.Meta.ScorerVersion)
+	}
 	if got := filepath.Base(covered.TrainPath); got != "train.jsonl" {
 		t.Errorf("train path base = %q", got)
+	}
+}
+
+// Story 11 (B2): the upload gate must refuse unknown or unsafe scorer names
+// with a specific per-issue error — and store nothing.
+func TestEvalUploadRefusesUnknownScorer(t *testing.T) {
+	t.Setenv(EvalMinTrainEnv, "1")
+	t.Setenv(EvalMinValEnv, "1")
+	s := newLifecycleStorage(t)
+	job, token := seedEvalJob(t, s)
+
+	cases := []EvalCase{
+		{Input: "i1", Expected: "e1", Scorer: "gpt4"},
+		{Input: "i2", Expected: "e2", Scorer: "llm-judge"},
+	}
+	res, err := s.UploadEvolutionEvalSet(job.ID, token, "cases.json", evalCasesJSON(cases))
+	if err == nil {
+		t.Fatalf("unknown scorer names must refuse, got %+v", res)
+	}
+	for _, name := range []string{"gpt4", "llm-judge", `scorer "gpt4" refused`} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("refusal must name %q, got: %v", name, err)
+		}
+	}
+	if evalDirExists(s, job.ID) {
+		t.Error("a scorer refusal must store nothing")
+	}
+
+	// An expression that is unsafe to run is the same refusal: it never
+	// compiles, so nothing is stored.
+	unsafe, err := s.UploadEvolutionEvalSet(job.ID, token, "cases.json", evalCasesJSON([]EvalCase{
+		{Input: "i1", Expected: "e1", Scorer: `exec(expected)`},
+	}))
+	if err == nil {
+		t.Fatalf("an unscorable expression must refuse, got %+v", unsafe)
+	}
+	if !strings.Contains(err.Error(), "unknown function") {
+		t.Errorf("the refusal must name the parse failure, got: %v", err)
+	}
+	if evalDirExists(s, job.ID) {
+		t.Error("an unsafe-expression refusal must store nothing")
+	}
+
+	// The built-in names still register cleanly.
+	if _, err := s.UploadEvolutionEvalSet(job.ID, token, "cases.json", evalCasesWithScorer(evalFixture(2), "exact")); err != nil {
+		t.Errorf("the built-in name must be accepted: %v", err)
 	}
 }
