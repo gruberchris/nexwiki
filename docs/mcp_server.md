@@ -309,7 +309,7 @@ State is per resolved agent, bounded (8 lookups each, 64 agents, least-recently-
 
 ## 🛠️ Exposed MCP Tools
 
-> **Native OKF storage & document `type`.** Every NexWiki `.md` file is a conformant Open Knowledge Format (OKF v0.2) concept document at rest (real YAML front matter, with dual-era OKF v0.1 backward compatibility). Each document carries a `type` — `Wiki`, `Attested Computation`, or one of the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags remain: **status tags** (e.g. `wip`, `completed`, `inbox`) and tool-managed **memory-scope tags** (`memory-<scope>`).
+> **Native OKF storage & document `type`.** Every NexWiki `.md` file is a conformant Open Knowledge Format (OKF v0.2) concept document at rest (real YAML front matter, with dual-era OKF v0.1 backward compatibility). Each document carries a `type` — `Wiki`, `Attested Computation`, or one of the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags remain: **status tags** (e.g. `wip`, `completed`, `inbox`), tool-managed **memory-scope tags** (`memory-<scope>`), and the tool-managed **WikiSkill marker tags** (`trained-wikiskill`, `wikiskill-report`, `wikiskill-wiki` — see [tags](./tags.md)).
 
 > **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port (and is the primary that persists the activity log); if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server, it forwards its activity events to it; with no NexWiki web server, it persists the log itself. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
 
@@ -376,7 +376,7 @@ Creates a new wiki article with a given title and raw Markdown content body.
   * `description` (string, **optional**): A one-line summary shown in list indexes and the context overview.
   * `source` (string, **optional**): Legacy provenance — the URL, document, or reference this knowledge came from. AI-created articles SHOULD cite their source.
   * `resource` (string, **optional**): Canonical OKF URI identifying what the concept *is* (e.g. an official spec or homepage URL). Distinct from `source`.
-  * `tags` (array of strings, **optional**): Any tags you like — wiki articles are never policed and have no lifecycle status. Tool-managed `memory-<scope>` tags are reserved and will be ignored if provided.
+  * `tags` (array of strings, **optional**): Any tags you like — wiki articles are never policed and have no lifecycle status. Tool-managed `memory-<scope>` tags are reserved and will be ignored if provided. Setting the WikiSkill `wikiskill-wiki` marker is allowed and meaningful: it marks the article as wiki-scope (the accumulative layer the evolution loop writes into) — see [tags](./tags.md).
   * `edit_summary` (string, **optional**): A summary describing the reason for creating the page.
   * `sources` (array of objects, **optional**): Array of source objects with credibility signals (OKF v0.2 provenance). Each source carries `resource` (string, **required**), and optional `id`, `title`, `author`, `usage_count`, `last_modified`.
   * `stale_after` (string, **optional**): Optional ISO 8601 timestamp (e.g. `2026-12-31`) after which the article's freshness expires.
@@ -400,8 +400,11 @@ Modifies the title, Markdown content, tags, or edit summary of an existing wiki 
   * `edit_summary` (string, **optional**): A summary detailing the modifications.
   * `sources` (array of objects, **optional**): Optional array of source objects. Omit to preserve existing sources, pass empty array `[]` to clear.
   * `stale_after` (string, **optional**): Optional ISO 8601 timestamp after which the article is considered stale. Omit to preserve, pass empty string `""` to clear.
+  * `superseded_by` (string, **optional**): Optional slug of the successor article that replaced this one (WikiSkill wiki layer). Omit to preserve, pass empty string `""` to clear. A declaration only: `wiki_health` reports the chain, nothing is pruned automatically.
 * **Behavior**:
   Employs **optimistic locking** to prevent write collision conflicts. If the `loaded_version` does not match the active version on disk, the write aborts with a conflict message. On success, stamps updated `generated` metadata, creates a new gzipped history backup snapshot (`.md.gz`), writes the updated flat Markdown file, and refreshes the search index.
+
+  Editing is also how a **wiki-scope article** (`wikiskill-wiki`) accumulates: agents patch and append these pages freely. What agents may not do to them — revert or delete — is refused by the dedicated tools below, so an edit is always the right tool for an old pattern page, and the refusal messages point here.
 
 > **A conflict names the value to retry with.** Every optimistic-locking failure — on `edit_wiki_article`, `edit_agent_memory`, `edit_agent_plan`, `edit_agent_skill`, and `update_article_tags` — reports the version on disk *and* the exact `loaded_version` to send next:
 >
@@ -426,7 +429,7 @@ Directly updates the tags array of an existing wiki article without modifying it
   * `loaded_version` (integer, **optional**): The active version number of the article loaded by the client (helps detect multi-session edit collisions).
   * `edit_summary` (string, **optional**): Optional summary explaining the tag updates.
 * **Behavior**:
-  Validates and cleans the supplied tags (stripping reserved `memory-<scope>` prefixes from the user-supplied list while preserving any existing tool-managed tags), applies optimistic locking if `loaded_version` is provided, increments the version, and saves the updated front-matter without touching the Markdown body. The document's OKF `type` is never altered.
+  Validates and cleans the supplied tags (stripping reserved `memory-<scope>` prefixes from the user-supplied list while preserving any existing tool-managed tags), applies optimistic locking if `loaded_version` is provided, increments the version, and saves the updated front-matter without touching the Markdown body. The document's OKF `type` is never altered. The WikiSkill marker tags are likewise tool-managed: `trained-wikiskill` cannot be forged or stripped on skills, `wikiskill-report` cannot be forged or stripped on generated reports, and a `wikiskill-wiki` marker already on an article survives any tag edit — an agent may set it on a wiki article it writes, but never strip it from one that carries it.
 
 ---
 
@@ -436,7 +439,7 @@ Permanently deletes an existing wiki article and its associated resources.
 * **Arguments**:
   * `slug` (string, **required**): The URL-safe slug of the article to delete.
 * **Behavior**:
-  Permanently deletes the Markdown file, all its gzip revision backups, and its uploaded media files/assets from the server. It also de-indexes the page from Bleve. **Protected AI Agent Memories are refused** — the tool returns an error steering the agent to `delete_agent_memory`, preventing curated memories from being destroyed by bulk cleanup calls. (Human deletion via the web UI/REST API is unaffected.)
+  Permanently deletes the Markdown file, all its gzip revision backups, and its uploaded media files/assets from the server. It also de-indexes the page from Bleve. **Protected AI Agent Memories are refused** — the tool returns an error steering the agent to `delete_agent_memory`, preventing curated memories from being destroyed by bulk cleanup calls. (Human deletion via the web UI/REST API is unaffected.) **Wiki-scope articles (`wikiskill-wiki`) are refused too** (WikiSkill story 10): the wiki layer is accumulative — even a superseded pattern leaves its lesson recorded — so an agent patches and appends those pages but never deletes them. The error names the convention and points at the `superseded_by` front-matter key as the way to retire a replaced page; deletion stays a human decision.
 
 ---
 
@@ -462,7 +465,7 @@ Reverts the active state of an article to a specific historical version number.
   * `slug` (string, **required**): The URL slug of the target article.
   * `version` (integer, **required**): The historical version number to restore.
 * **Behavior**:
-  Extracts the compressed `.md.gz` snapshot of that version, restores it to the active flat file on disk, increments the active version number, and updates the search index.
+  Extracts the compressed `.md.gz` snapshot of that version, restores it to the active flat file on disk, increments the active version number, and updates the search index. A revert of a **wiki-scope article (`wikiskill-wiki`)** is refused (WikiSkill story 10): rolling back accumulated wiki knowledge is the one thing agents must not do to the wiki layer — patch forward with `edit_wiki_article` instead, or declare `superseded_by` when a page has been replaced.
 
 ---
 
@@ -796,14 +799,14 @@ Imports an **Open Knowledge Format (OKF v0.2) bundle** (`.zip`, with dual-era OK
 ---
 
 ### 31. `wiki_health`
-Audits the knowledge base for maintenance work in one call. Everything it reports is something the wiki already knows but never volunteers.
+Audits the knowledge base for maintenance work in one call. Everything it reports is something the wiki already knows but never volunteers — including the WikiSkill evolution guards: artifacts that fail their integrity check, the supersession chain of wiki-scope articles, and trained skills with no recorded motivation.
 
 * **Arguments**:
   * `stale_days` (integer, *optional*): How many days an in-flight plan may go untouched before counting as stale. Default `30`.
   * `cold_days` (integer, *optional*): How many days a memory may go unread and unedited before counting as cold. Default `90`.
   * `limit` (integer, *optional*): Maximum items reported **per category**. Default `50`, maximum `500`. Counts are always complete even when the lists are capped.
 * **Behavior**:
-  Runs ten checks over a single cached pass of the article directory — the same `LinkGraph` scan `get_wiki_statistics` uses, so the two tools can never disagree about the same wiki:
+  Runs thirteen checks over a single cached pass of the article directory — the same `LinkGraph` scan `get_wiki_statistics` uses, so the two tools can never disagree about the same wiki:
 
   | Check | Finds | Why it matters |
   |---|---|---|
@@ -817,6 +820,15 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   | **Unkinded memories** | An `AI-Agent-Memory` with no `memory_kind` — written before the axis existed | Kind-filtered recall cannot find it. This is the backfill worklist; classify with `edit_agent_memory` |
   | **Contested memories** | A memory tagged `contested` by an `edit_agent_memory` call with `change_intent: "contradict"` | Two claims are stored side by side awaiting a human decision |
   | **Unreferenced skills** | An `AI-Agent-Skill` no live document links *or* names in a `read_article` call | A skill nothing points an agent at will never be loaded |
+  | **Raw artifact integrity issues** | A WikiSkill evolution artifact that fails its recorded hash verification or no longer parses | The raw layer is immutable evidence: tampering is damage to restore from backup, not a draft |
+  | **Superseded wiki-scope articles** | Every link in the supersession chain of `wikiskill-wiki` articles | Reported, never pruned — the wiki layer is accumulative, so a human decides what happens to an old page |
+  | **Trained skills without pattern backlinks** | An evolution-managed skill with zero pattern links (a **warning**, not an error) | A skill's motivating wiki patterns are unrecorded; the link is cheap, the lost motivation is not |
+
+  **The raw artifact integrity check** (`raw_artifact_integrity_count` / `raw_artifact_issues[]`) re-verifies what the wiki recorded when it accepted each piece of evolution data: every job artifact against its upload-time SHA-256 (and size), every accepted eval split against the job's eval hash, every decided (promoted or rejected) candidate against the content hash its audit decision recorded, every gate record against the candidate it decided — plus corrupt job/candidate/loop/iteration/audit records that the normal read paths silently skip. Each finding carries the owning record's `ID` (job or candidate) and the artifact's path relative to the data directory, in the form an operator needs to restore it. The scan runs read-only: it repairs nothing, and a flagged artifact stays flagged until a human restores or removes it. It is the same scan the server runs at startup — where every finding is also logged to Stderr as a warning — so tampering is never silent and never fatal.
+
+  **The superseded wiki-scope check** (`superseded_wiki_count` / `superseded_wiki_actionable` / `superseded_wiki_articles[]`) reports the supersession chain of wiki-scope articles (`wikiskill-wiki`). A page declares its replacement with the `superseded_by` front-matter key (see `edit_wiki_article`); every link in the chain is listed, and a link counts in `superseded_wiki_actionable` when the successor slug does not exist, or when a page carries a `superseded` tag but names no successor. **Reporting is all this check does** — the wiki layer is accumulative and nothing in NexWiki ever deletes, rewrites, or archives a wiki-scope page automatically: keep, merge, or archive the old page by hand.
+
+  **The purpose backlink check** (`purpose_backlink_count` / `purpose_backlink_findings[]`) flags skills the evolution flow manages — carrying the trained marker or having spawned a skill candidate — whose motivating wiki patterns are unrecorded. A pattern connection is any link in **either direction** between the skill and a wiki-scope article: the skill's PURPOSE section linking the patterns that drove it, or a pattern article linking the skill back. The generated Trained Skill Result report's own Run-table link to its skill is exempt (every run produces one, so it is boilerplate, not motivation). This is a WARNING: the skill works, its motivation just needs recording — flag, never refuse.
 
   Several rules keep the report actionable rather than noisy:
 
@@ -835,7 +847,7 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   * **Duplicate detection is scoped, and skips pairs that already link to each other.** A "Deployment Notes" memory about `docker` and one about `nexwiki` are separate by design. And when two memories reference one another, their author already knows both exist and has decided to keep them apart. It reports similarity, not disagreement: telling the two apart needs semantics NexWiki deliberately does not have.
 
   A stale plan does **not** need an in-flight tag. Requiring `wip` sounds tidier but makes the check incapable of firing on a real wiki, where plans typically carry a project tag and nothing else — what matters is that the plan was never marked finished and nobody has touched it since. When an in-flight tag (`wip`, `in-progress`, `draft`, `active`, `todo`, `pending`, `review`, `blocked`) *is* present, the report names it.
-* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], unkinded_memory_count, unkinded_memories[], contested_memory_count, contested_memories[], stale_plan_count, stale_plans[], stale_concept_count, stale_concepts[], unreferenced_skill_count, unreferenced_skills[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count, plan_status_census}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`).
+* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], unkinded_memory_count, unkinded_memories[], contested_memory_count, contested_memories[], stale_plan_count, stale_plans[], stale_concept_count, stale_concepts[], unreferenced_skill_count, unreferenced_skills[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count, plan_status_census, raw_artifact_integrity_count, raw_artifact_issues[], superseded_wiki_count, superseded_wiki_actionable, superseded_wiki_articles[], purpose_backlink_count, purpose_backlink_findings[]}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`). Each raw-integrity or chain entry carries the document or record `slug`, a `title`, and a `detail` naming the path, successor, or remedy.
 
 **Examples**
 

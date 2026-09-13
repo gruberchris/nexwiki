@@ -222,7 +222,7 @@ func (s *Storage) EnsureSkillResultReport(jobID string) (*Article, error) {
 	content := composeResultReport(job, skill, iterations, audit, eval, trained)
 
 	art, err := s.saveArticleLocked("", title, content, description, "", "",
-		reportEditSummary(job), []string{SkillResultReportTag}, ContentTypeWiki, ArticleOverrides{})
+		reportEditSummary(job), ensureWikiScopeTag([]string{SkillResultReportTag}), ContentTypeWiki, ArticleOverrides{})
 	if err != nil {
 		return nil, err
 	}

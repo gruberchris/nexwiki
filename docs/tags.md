@@ -201,6 +201,24 @@ In the web UI, kind renders as a badge beside the status badge on cards and in t
 
 > **Preservation applies only to `AI-Agent-Memory` documents.** That is the only class where the tag is genuinely tool-managed — `create_agent_memory` derives it from `memory_type`, and dropping it would orphan the memory from its scope. A `memory-*` tag sitting on a `Wiki`, `AI-Agent-Plan`, or `AI-Agent-Skill` document is stray data that no tool puts there, so it is **removable** by replacing that document's tags. It was not always: until this was fixed, such a tag survived every edit and `DeleteTagGlobally` refused it too, leaving it permanently stuck. Forging a new scope tag onto a non-memory document is still refused.
 
+### 🧷 Wikiskill marker tags
+
+The WikiSkill evolution flow (stories 06–10) stamps three tool-managed marker tags, one per layer it guards. All three are preserved automatically by every write path — a tag edit, a version revert, or an OKF import that arrives without one gets it re-asserted at the storage layer — and `DELETE /api/tags/{tag}` (`DeleteTagGlobally`) refuses all of them outright.
+
+| Tag | On | Set by | What it marks |
+|---|---|---|---|
+| `trained-wikiskill` | `AI-Agent-Skill` | the promotion gate (`promote_skill_candidate`) | The skill was trained through the evolution flow; the marker's metadata (`trained_at`, `trained_version`, `trained_candidate`, `trained_val_score`, `trained_eval_hash`) is real front matter. Withdrawn only by the operator (rollback / unlock), never by a tag edit. See [aiagent_skills](./aiagent_skills.md). |
+| `wikiskill-report` | `Wiki` | the wiki's own generation path | The page is a generated Trained Skill Result report for one finished run: agent-immutable (no edit, tag strip, revert, or delete), amendable by a human through the editor. |
+| `wikiskill-wiki` | `Wiki` | the evolution loop, and agents themselves | The article is **wiki-scope**: the accumulative wiki layer the evolution loop writes into (patterns, logs, generated reports). |
+
+**`wikiskill-wiki` — the accumulative wiki layer.** An agent *may* set this tag on a wiki article it writes (doing so only restricts that article), and an edit can never strip it from an article that carries it. Wiki-scope articles are the one place agents write but never rewind:
+
+* **Edit freely, never rewind.** `edit_wiki_article` and `update_article_tags` work as always; `revert_article_version` and `delete_wiki_article` refuse with a "wiki-scope" error. The human-facing REST editor keeps its documented amend path.
+* **Nothing is ever auto-deleted.** The archived-article cleanup never touches a wiki-scope article, and no other automatic deletion exists — not even for a page tagged `archived`. Staleness is declared with the `stale_after` front-matter key instead, which `wiki_health` reports.
+* **Supersession is a declaration, not an action.** A replaced page names its successor with the `superseded_by` front-matter key (`edit_wiki_article superseded_by`, or the REST editor's `superseded_by` field; a REST edit applies only a non-empty value). `wiki_health` reports the chain and its broken shapes (a successor that does not exist, or a `superseded` tag with no successor) — and follows nothing: keep, merge, or archive the old page by hand.
+
+The three layers exist because WikiSkill keeps memory and action asymmetric: evolution artifacts are immutable evidence, wiki-scope pages accumulate, and skills are reversible but purpose-linked (a trained skill with no motivating pattern link is reported by `wiki_health` as a warning). See `wiki_health` in [mcp_server](./mcp_server.md) for the three health checks these tags feed.
+
 ### 🛡️ Type rules & validation
 To preserve integrity while keeping documents fully collaborative:
 1. **Types are tool-assigned.** There is no user-facing type picker. The reserved `AI-Agent-*` values are set solely by `create_agent_memory` / `_plan` / `_skill`.

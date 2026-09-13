@@ -203,7 +203,10 @@ Mark plans completed with `edit_agent_plan` (add "completed" tag) once done.
 
 **4. Tag and slug rules**
 ```markdown
-Never relabel a reserved document `type` (`AI-Agent-Plan`, `AI-Agent-Skill`, `AI-Agent-Memory`) to a non-reserved one, and never strip a tool-managed `memory-<scope>` tag.
+Never relabel a reserved document `type` (`AI-Agent-Plan`, `AI-Agent-Skill`, `AI-Agent-Memory`) to a non-reserved one, and never strip a tool-managed
+`memory-<scope>` tag or a WikiSkill marker tag (`trained-wikiskill`, `wikiskill-report`, `wikiskill-wiki`).
+A `wikiskill-wiki` article is wiki-scope: edit it freely (patch/append), but revert and delete are refused and nothing
+auto-deletes it — retire a replaced page by setting the `superseded_by` front-matter key via `edit_wiki_article`.
 Article slugs must be lowercase, hyphenated, and descriptive (e.g., "go-api-database-schema").
 Use `get_status_tags` to see valid lifecycle tags (draft, wip, completed, etc.).
 ```

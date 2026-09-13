@@ -595,6 +595,13 @@ type Article struct {
 	TrainedRevokedAt     time.Time `json:"trained_revoked_at,omitzero"`
 	TrainedRevokedReason string    `json:"trained_revoked_reason,omitempty"`
 
+	// SupersededBy names the successor article (a slug) a wiki-scope article
+	// was replaced by (wikiskill evolution, story 10). It is a declaration,
+	// not an action: nothing follows, deletes, or rewrites it — wiki_health
+	// reports the chain and a human decides what to do with the old page.
+	// Only ever set on Wiki documents, via the superseded_by front-matter key.
+	SupersededBy string `json:"superseded_by,omitempty"`
+
 	// OKF v0.2 core models: provenance, trust, and lifecycle (§5)
 	Generated   *OKFGenerated     `json:"generated,omitempty"`
 	Verified    []OKFVerification `json:"verified,omitempty"`
@@ -737,6 +744,18 @@ func NewStorage(dataDir string) (*Storage, error) {
 	// Cleanup archived articles that have exceeded their retention period
 	if err := s.CleanupArchivedArticles(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to cleanup archived articles: %v\n", err)
+	}
+
+	// Story 10: raw-artifact integrity scan. Evolution artifacts are the raw
+	// layer — immutable evidence — so any tampering the upload-time hash
+	// checks did not catch is flagged loudly at startup: every finding is
+	// logged to Stderr and surfaced again by wiki_health. Never silent, and
+	// never fatal: a tampered artifact is evidence damage to report, not a
+	// reason to refuse to serve the wiki that needs to discover it.
+	if findings, scanErr := s.ScanRawArtifactIntegrity(); scanErr != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: raw artifact integrity scan failed: %v\n", scanErr)
+	} else {
+		logRawIntegrityWarnings(findings)
 	}
 
 	// Sync/populate search index
@@ -947,6 +966,10 @@ type ArticleOverrides struct {
 	Verified    *[]OKFVerification
 	UsageWindow *OKFUsageWindow
 
+	// SupersededBy sets or clears the wiki-scope supersession pointer
+	// (story 10). Nil preserves; a pointer to "" clears.
+	SupersededBy *string
+
 	// Attested Computation overrides (§10)
 	Runtime     *string
 	Parameters  *[]OKFParameter
@@ -1003,8 +1026,9 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	prevMemoryKind := ""                       // the memory kind before this save, preserved unless overridden
 	prevLockedBy := ""                         // the skill lock holder before this save, preserved unless overridden
 	var prevLockedAt time.Time
-	prevHadTrainedMarker := false // whether the on-disk skill carried the trained marker tag
-	prevHadReportMarker := false  // whether the on-disk wiki doc carried the result-report marker tag
+	prevHadTrainedMarker := false   // whether the on-disk skill carried the trained marker tag
+	prevHadReportMarker := false    // whether the on-disk wiki doc carried the result-report marker tag
+	prevHadWikiScopeMarker := false // whether the on-disk wiki doc carried the wiki-scope marker tag
 	prevTrainedAt, prevTrainedVersion := time.Time{}, 0
 	prevTrainedParentVersion := 0
 	prevTrainedCandidate, prevTrainedEvalHash, prevTrainedRevokedReason := "", "", ""
@@ -1030,6 +1054,7 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 				prevLockedAt = existingArt.LockedAt
 				prevHadTrainedMarker = hasTag(existingArt.Tags, TrainedMarkerTag)
 				prevHadReportMarker = hasTag(existingArt.Tags, SkillResultReportTag)
+				prevHadWikiScopeMarker = hasTag(existingArt.Tags, WikiskillWikiTag)
 				prevTrainedAt = existingArt.TrainedAt
 				prevTrainedVersion = existingArt.TrainedVersion
 				prevTrainedParentVersion = existingArt.TrainedParentVersion
@@ -1055,6 +1080,7 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 					Sources:         existingArt.Sources,
 					UsageWindow:     existingArt.UsageWindow,
 					StaleAfter:      existingArt.StaleAfter,
+					SupersededBy:    existingArt.SupersededBy,
 					Runtime:         existingArt.Runtime,
 					Parameters:      existingArt.Parameters,
 					Computation:     existingArt.Computation,
@@ -1320,6 +1346,13 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 		// silently strip it — only the wiki's own generation path owns it.
 		art.Tags = ensureReportMarkerTag(art.Tags)
 	}
+	if resolvedType == ContentTypeWiki && prevHadWikiScopeMarker && !hasTag(art.Tags, WikiskillWikiTag) {
+		// Tool-managed wiki-scope marker (story 10): a write path that arrives
+		// without it — a tag edit that dropped it, a revert restoring
+		// pre-marker tags, an import of a bundle without it — cannot silently
+		// unguard a wiki-scope article. Re-assert it, like the report marker.
+		art.Tags = ensureWikiScopeTag(art.Tags)
+	}
 
 	if overrides.Sources != nil {
 		art.Sources = *overrides.Sources
@@ -1339,6 +1372,11 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	}
 	if overrides.StaleAfter != nil {
 		art.StaleAfter = *overrides.StaleAfter
+	}
+	if overrides.SupersededBy != nil {
+		// The successor pointer is stored slug-normalized so wiki_health can
+		// check the chain against the directory; a pointer to "" clears it.
+		art.SupersededBy = Slugify(strings.TrimSpace(*overrides.SupersededBy))
 	}
 	if overrides.Verified != nil {
 		art.Verified = *overrides.Verified
@@ -1704,6 +1742,10 @@ type articleFrontMatter struct {
 	// namespaced custom keys, not OKF v0.2 core — never relabelled, never stripped.
 	LockedBy string `yaml:"locked_by,omitempty"`
 	LockedAt string `yaml:"locked_at,omitempty"`
+	// SupersededBy is a NexWiki custom key carried only by Wiki documents
+	// (wikiskill evolution, story 10): the wiki-scope article that replaced
+	// this one. It points forward and is never followed automatically.
+	SupersededBy string `yaml:"superseded_by,omitempty"`
 	// Trained-marker keys are NexWiki custom keys carried only by AI-Agent-Skill
 	// documents (wikiskill evolution, story 06). They are written only by the
 	// harness promote path and ride OKF export/import like locked_by.
@@ -1889,6 +1931,7 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 		}
 	}
 	art.TrainedRevokedReason = strings.TrimSpace(fm.TrainedRevokedReason)
+	art.SupersededBy = Slugify(strings.TrimSpace(fm.SupersededBy))
 
 	// `slug` derivation
 	if art.Slug == "" {
@@ -2015,6 +2058,7 @@ func serializeFrontMatter(art *Article) string {
 		fm.TrainedRevokedAt = art.TrainedRevokedAt.UTC().Format(time.RFC3339)
 	}
 	fm.TrainedRevokedReason = art.TrainedRevokedReason
+	fm.SupersededBy = art.SupersededBy
 
 	out, err := yaml.Marshal(&fm)
 	if err != nil {
@@ -2412,10 +2456,11 @@ type ArticleEdit struct {
 	LoadedVersion int
 
 	// OKF v0.2 optional edit fields
-	Sources    *[]OKFSource
-	StaleAfter *time.Time
-	Generated  *OKFGenerated
-	Verified   *[]OKFVerification
+	Sources      *[]OKFSource
+	StaleAfter   *time.Time
+	SupersededBy *string
+	Generated    *OKFGenerated
+	Verified     *[]OKFVerification
 }
 
 // ApplyArticleEdit loads the article, verifies LoadedVersion, merges the optional fields, and
@@ -2469,12 +2514,13 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 
 	return s.saveArticleLocked(slug, edit.Title, edit.Content, description, source, resource,
 		edit.EditSummary, cleanedTags, existing.Type, ArticleOverrides{
-			Status:     edit.Status,
-			MemoryKind: edit.MemoryKind,
-			Sources:    edit.Sources,
-			StaleAfter: edit.StaleAfter,
-			Generated:  edit.Generated,
-			Verified:   edit.Verified,
+			Status:       edit.Status,
+			MemoryKind:   edit.MemoryKind,
+			Sources:      edit.Sources,
+			StaleAfter:   edit.StaleAfter,
+			SupersededBy: edit.SupersededBy,
+			Generated:    edit.Generated,
+			Verified:     edit.Verified,
 		})
 }
 
@@ -2586,6 +2632,14 @@ func (s *Storage) CleanupArchivedArticles() error {
 
 	// Check each article
 	for _, art := range articles {
+		// Wiki-scope articles (wikiskill evolution, story 10) are never
+		// auto-deleted — not by this cleanup, not by anything else. The wiki
+		// layer is accumulative: even a superseded pattern leaves its lesson
+		// recorded, and a human decides when (if ever) a page is removed.
+		if hasTag(art.Tags, WikiskillWikiTag) {
+			continue
+		}
+
 		// Skip if not archived
 		if art.ArchivedAt.IsZero() {
 			continue
@@ -2609,9 +2663,10 @@ func (s *Storage) CleanupArchivedArticles() error {
 // DeleteTagGlobally removes a tag from all articles in the wiki.
 // Enforces validation: it returns an error if the tag is a tool-managed memory-scope tag,
 // the tool-managed trained marker tag (story 06), whose removal belongs to the
-// explicit unlock path (UnlockTrainedMarker) with its audit record, or the
+// explicit unlock path (UnlockTrainedMarker) with its audit record, the
 // tool-managed result-report marker tag (story 09), which the wiki's own
-// generation path owns.
+// generation path owns, or the tool-managed wiki-scope marker tag (story 10),
+// which is what makes a wiki-layer article accumulative-only.
 func (s *Storage) DeleteTagGlobally(tag string) error {
 	tagLower := strings.ToLower(tag)
 	if strings.HasPrefix(tagLower, MemoryScopeTagPrefix) {
@@ -2622,6 +2677,9 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 	}
 	if tagLower == SkillResultReportTag {
 		return fmt.Errorf("cannot delete the result-report marker tag '%s': it is tool-managed — the wiki's generation path stamps it on Trained Skill Result reports, and agents cannot strip it", tag)
+	}
+	if tagLower == WikiskillWikiTag {
+		return fmt.Errorf("cannot delete the wiki-scope marker tag '%s': it is tool-managed — it marks the accumulative wiki layer the evolution loop writes into, and stripping it would unguard every wiki-scope article it protects", tag)
 	}
 
 	// Held across the whole sweep so the operation is all-or-nothing with respect to other
