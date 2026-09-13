@@ -292,6 +292,18 @@ func main() {
 	mux.HandleFunc("GET /api/skills", srv.HandleListSkills)
 	mux.HandleFunc("GET /api/skills/{slug}", srv.HandleGetSkill)
 	mux.HandleFunc("GET /api/skills/{slug}/raw", srv.HandleGetSkillRaw)
+	mux.HandleFunc("GET /api/skills/{slug}/trained-state", srv.HandleGetSkillTrainedState)
+
+	// Register evolution wizard endpoints (story 08): read-mostly over the job
+	// lifecycle, plus the three audited human loop controls from story 07.
+	mux.HandleFunc("GET /api/evolution/jobs", srv.HandleListEvolutionJobs)
+	mux.HandleFunc("GET /api/evolution/jobs/{id}", srv.HandleGetEvolutionJob)
+	mux.HandleFunc("GET /api/evolution/jobs/{id}/loop", srv.HandleGetEvolutionLoop)
+	mux.HandleFunc("GET /api/evolution/jobs/{id}/eval", srv.HandleGetEvolutionEval)
+	mux.HandleFunc("GET /api/evolution/candidates/{id}", srv.HandleGetEvolutionCandidate)
+	mux.HandleFunc("POST /api/evolution/jobs/{id}/pause", srv.HandlePauseEvolutionJob)
+	mux.HandleFunc("POST /api/evolution/jobs/{id}/abort", srv.HandleAbortEvolutionJob)
+	mux.HandleFunc("POST /api/evolution/jobs/{id}/approve", srv.HandleApproveEvolutionJob)
 
 	// Create FS for React Frontend.
 	// We check if "frontend/dist" exists as a physical directory on disk for dev mode live-reloading.

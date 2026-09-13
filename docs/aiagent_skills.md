@@ -88,6 +88,42 @@ NexWiki registers three lightweight REST API endpoints, allowing any AI agent, C
 * **Endpoint**: `GET /api/skills/{slug}/raw`
 * **Response**: Serves the raw physical Markdown file (YAML frontmatter + Markdown body) directly as plain text (`text/plain`). This corresponds exactly to the `SKILL.md` file format that AI agents require.
 
+### 4. Trained State
+* **Endpoint**: `GET /api/skills/{slug}/trained-state`
+* **Response**: The derived trained state of one skill — `untrained`, `trained`, or `stale` with the reason the marker stopped matching (skill edited or eval set re-uploaded after training), plus the marker metadata (`trained_at`, `trained_version`, `trained_val_score`, …). The registry rows from `GET /api/skills` already carry the same `trained_state` per skill; this endpoint refreshes a single one.
+
+---
+
+## 🔁 Evolution Wizard REST API (story 08)
+
+The WikiSkill evolution wizard (the browser UI at `/skills/<slug>/train`) reads and drives runs
+through the endpoints below. Everything rides under `/api`, so it is gated by the same
+origin-allow-list policy as the rest of the REST API. The browser is the operator: these
+endpoints never accept (or expose) a per-harness job token — `token_hash` is withheld from every
+job response, and job creation, dispatch, resume-after-pause, and eval upload stay harness-side
+over MCP, where the token was minted.
+
+### Run reads
+* **Endpoint**: `GET /api/evolution/jobs?skill=<slug>`
+* **Response**: JSON array of evolution jobs (oldest first), optionally narrowed to one skill. The wizard follows the newest active job for a skill, or the newest record when nothing is active.
+* **Endpoint**: `GET /api/evolution/jobs/{id}`
+* **Response**: One job record — status, iteration, `eval_hash`, `eval_train_count`/`eval_val_count`, `baseline_s0`, `baseline_scorer`, `loop_outcome`, stop-rule fields (`max_iterations`, `plateau_limit`, `run_deadline_at`), and timestamps.
+* **Endpoint**: `GET /api/evolution/jobs/{id}/loop`
+* **Response**: One-poll body for the live view: `loop` (the stepper's current iteration/phase/status — `null` until first driven), `iterations` (every per-iteration record with its phase trail, candidate, `val_score` vs `r_best`, and outcome), `plateau_count`, `max_iterations`, and `plateau_limit`. The browser twin of the `get_evolution_iterations` MCP tool.
+* **Endpoint**: `GET /api/evolution/jobs/{id}/eval`
+* **Response**: The stored eval metadata — split summary, S0 baseline, the 5-sample dry run, and the cost-estimate stub. `404` while the job has no accepted upload yet (the wizard's "waiting for training data" state, not a fault).
+* **Endpoint**: `GET /api/evolution/candidates/{id}`
+* **Response**: One skill candidate record — the diff, proposed body, and pattern slugs the wizard's iteration cards render read-only.
+
+### Human loop controls (audited)
+Each is a `POST` with an optional JSON body (`{"checkpoint": "…"}` for pause, `{"reason": "…"}` for abort) and returns the updated job record. Each lands in the activity log (`source: "api"`, actions `pause` / `abort` / `approve`) via the story-07 audited wrappers, and each responds in well under 2 s.
+
+* **Endpoint**: `POST /api/evolution/jobs/{id}/pause` — requests a cooperative park at the next step boundary (immediately when nothing is driving). `409` on a terminal job.
+* **Endpoint**: `POST /api/evolution/jobs/{id}/abort` — cancels the run (the story-04 SIGTERM → 10 s grace → SIGKILL path), reconciling the loop records. The skill stays at its last accepted version.
+* **Endpoint**: `POST /api/evolution/jobs/{id}/approve` — approve-early: the newest pending candidate goes through the normal validation gate and the run finishes `completed` either way. An accept promotes (stamping the trained marker); a gate rejection leaves the skill byte-identical.
+
+Note on resuming: a paused run resumes by re-dispatching from the harness side (the process holding the job's token), not from the browser. The wizard's paused banner says so rather than offering a control that cannot work.
+
 ---
 
 ## 🚀 Practical Example: Creating a Git Skill

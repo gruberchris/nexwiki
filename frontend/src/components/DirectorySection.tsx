@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Article } from '../types';
+import type { Article, SkillTrainedState } from '../types';
 import { ChevronDown } from 'lucide-react';
 import { ArticleCard } from './ArticleCard';
 import { getAutocompleteSearchTerm, buildSuggestionsFromArticles } from '../filterUtils';
@@ -20,6 +20,10 @@ interface DirectorySectionProps {
   onNavigate: (slug: string) => void;
   statusTags: Set<string>;
   emptyContent: React.ReactNode;
+  /** Skill trained states by slug (story 08); only read on skill rows. */
+  trainedStates?: Map<string, SkillTrainedState>;
+  /** Opens the evolution wizard for a skill (the "Train" entry point). */
+  onTrainSkill?: (slug: string) => void;
 }
 
 export function DirectorySection({
@@ -37,6 +41,8 @@ export function DirectorySection({
   onNavigate,
   statusTags,
   emptyContent,
+  trainedStates,
+  onTrainSkill,
 }: DirectorySectionProps) {
   const accentText = secondary ? 'text-themeAccentSecondary' : 'text-themeAccent';
   const accentHover = secondary ? 'hover:text-themeAccentSecondary' : 'hover:text-themeAccent';
@@ -102,6 +108,8 @@ export function DirectorySection({
                 onNavigate={onNavigate}
                 secondary={secondary}
                 statusTags={statusTags}
+                trainedState={trainedStates?.get(art.slug) ?? null}
+                onTrain={onTrainSkill}
               />
             ))
           )}
