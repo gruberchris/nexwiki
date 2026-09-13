@@ -108,6 +108,11 @@ const (
 // SkillCandidate is a proposed skill evolution. It is a data record, never wiki content:
 // stored as JSON under data/skill_candidates, never indexed, never executed. The Diff and
 // ProposedBody are inert data — nothing in this flow passes wiki content to a shell.
+//
+// Story 11: the decided record also carries the validation context — the
+// scorer version that produced BestScore, the eval hash it scored against,
+// and the train-split fit indicator — so every gate decision is reproducible
+// from the stored candidate plus the stored eval set.
 type SkillCandidate struct {
 	ID            string    `json:"id"`
 	ParentSlug    string    `json:"parent_slug"`
@@ -120,7 +125,20 @@ type SkillCandidate struct {
 	Status        string    `json:"status"`
 	ResultVersion int       `json:"result_version,omitempty"`
 	BestScore     float64   `json:"best_score,omitempty"`
-	DecidedAt     time.Time `json:"decided_at,omitzero"`
+	// ValidationScorer is the derived scorer version (SkillAuditScorerVersion
+	// "v0" for the structural fallback, or the eval set's derived version);
+	// ValidationEvalHash names the eval set the score came from (empty when
+	// the structural scorer decided); ValidationTrainScore is the same body's
+	// train-split score, the fit indicator.
+	ValidationScorer     string  `json:"validation_scorer,omitempty"`
+	ValidationEvalHash   string  `json:"validation_eval_hash,omitempty"`
+	ValidationTrainScore float64 `json:"validation_train_score,omitempty"`
+	// validationScore is the in-memory validation score the caller resolved
+	// for this gate pass (eval-backed or structural); the gate compares it
+	// against R_best. Never serialized — the decided record carries the same
+	// number in BestScore.
+	validationScore float64
+	DecidedAt       time.Time `json:"decided_at,omitzero"`
 }
 
 // candidatePath validates a candidate ID and resolves its storage path. IDs are
@@ -273,11 +291,16 @@ func (s *Storage) ListSkillCandidates() ([]SkillCandidate, error) {
 
 // SkillGateRejection reports a candidate the story 03 validation gate refused
 // to promote: its score did not beat the running best. It carries both numbers
-// so the operator (and the audit record) can see the margin.
+// so the operator (and the audit record) can see the margin, plus the story-11
+// scorer context (per-split scores, scorer version, eval hash) so a rejection
+// is reproducible from stored data too.
 type SkillGateRejection struct {
-	CandidateID string
-	Score       float64
-	Best        float64
+	CandidateID   string
+	Score         float64
+	Best          float64
+	ScorerVersion string
+	EvalHash      string
+	TrainScore    float64
 }
 
 func (e *SkillGateRejection) Error() string {
@@ -289,12 +312,15 @@ func (e *SkillGateRejection) Error() string {
 // candidate promotes only when its validation score beats the running best
 // for the skill. A perfect score (1.0) accepts outright via the early-stop
 // hook — even against a perfect best — so a strictly-greater compare can
-// never deadlock the trail at the ceiling.
+// never deadlock the trail at the ceiling. Story 11 leaves the compare
+// untouched: the score handed in may come from the eval-backed scorer (the
+// skill's stored eval set) or, when no eval set exists, the structural
+// heuristic below.
 func ValidateSkillCandidateForPromote(c *SkillCandidate, parent *Article, rBestBefore float64) error {
 	if c.Status != SkillCandidatePending {
 		return fmt.Errorf("skill candidate '%s' is already decided (%s)", c.ID, c.Status)
 	}
-	score := RBestScore(c)
+	score := c.validationScore
 	if score >= 1.0 {
 		return nil
 	}
@@ -304,13 +330,55 @@ func ValidateSkillCandidateForPromote(c *SkillCandidate, parent *Article, rBestB
 	return nil
 }
 
+// validationScoreContext is the story-11 gate's scoring outcome: the score
+// the gate compares, the scorer version that produced it, the eval hash it
+// scored against (empty for the structural fallback), and the train-split
+// fit indicator.
+type validationScoreContext struct {
+	Score         float64
+	ScorerVersion string
+	EvalHash      string
+	TrainScore    float64
+}
+
+// resolveValidationScore computes a candidate's validation score and the
+// scoring context that produced it. Eval-backed when the skill has a stored
+// eval set: the proposed body's val-split score under the eval's sandboxed
+// scorers, with the train split as the fit indicator. Structural otherwise:
+// RBestScore under the v0 scorer. A body-less (diff-only) candidate falls
+// back to the structural scorer in both paths — there is nothing to score
+// against the cases, and promotion refuses diff-only candidates anyway.
+func (s *Storage) resolveValidationScore(c *SkillCandidate) (*validationScoreContext, error) {
+	gate, gerr := s.EvalGateForSkill(c.ParentSlug)
+	if gerr != nil {
+		return nil, gerr
+	}
+	if gate == nil || strings.TrimSpace(c.ProposedBody) == "" {
+		return &validationScoreContext{Score: RBestScore(c), ScorerVersion: SkillAuditScorerVersion}, nil
+	}
+	return &validationScoreContext{
+		Score:         gate.ValScore(c.ProposedBody),
+		ScorerVersion: gate.ScorerVersion,
+		EvalHash:      gate.EvalHash,
+		TrainScore:    gate.TrainScore(c.ProposedBody),
+	}, nil
+}
+
+// stampValidationContext copies the scoring context onto the candidate record
+// that carries the decision.
+func (c *SkillCandidate) stampValidationContext(scorerVersion, evalHash string, trainScore float64) {
+	c.ValidationScorer = scorerVersion
+	c.ValidationEvalHash = evalHash
+	c.ValidationTrainScore = trainScore
+}
+
 // RBestScore is the story 03 R_best scoring function: a minimal deterministic
 // heuristic over the candidate's own fields (full body, diff, motivating
 // patterns, body substance), rounded to 4 decimals and capped at 1.0 so
-// scores compare exactly. Full eval-store/scorer versioning is story 11,
-// which plugs in here and bumps SkillAuditScorerVersion — the gate compare
-// and the audit shape stay untouched.
-// TODO(story-11): versioned scorer + eval store.
+// scores compare exactly. Story 11 kept it as the fallback scorer (v0) for
+// skills with no stored eval set; with an eval set the eval-backed scorers in
+// skill_eval.go decide instead, and the derived scorer version stamps the
+// audit record.
 func RBestScore(c *SkillCandidate) float64 {
 	if c == nil {
 		return 0
@@ -380,7 +448,20 @@ func (s *Storage) PromoteSkillCandidate(id string) (*Article, error) {
 	// anything. The audit append comes first so a decision can never land
 	// without its record; a failed append aborts the promotion.
 	// TODO(story-04): run promotion through the job/lease/BYO-CLI runner instead of inline.
-	score := RBestScore(c)
+	//
+	// Story 11: the score itself is versioned. When the skill has a stored
+	// eval set, the candidate's proposed body is scored against the stored
+	// splits by the eval's own sandboxed scorers (val split for the gate
+	// compare, train split as the fit indicator) and the derived scorer
+	// version stamps the audit record; with no eval set the story-03
+	// structural heuristic (scorer v0) decides as before. Either way the
+	// decision is reproducible from the stored candidate plus stored eval.
+	scored, scoreErr := s.resolveValidationScore(c)
+	if scoreErr != nil {
+		return nil, fmt.Errorf("cannot promote candidate '%s': %w", c.ID, scoreErr)
+	}
+	score, scorerVersion, evalHash, trainScore := scored.Score, scored.ScorerVersion, scored.EvalHash, scored.TrainScore
+	c.validationScore = score
 	before, err := s.currentRBest(c.ParentSlug)
 	if err != nil {
 		return nil, fmt.Errorf("cannot promote candidate '%s': failed to read audit trail: %w", c.ID, err)
@@ -394,13 +475,19 @@ func (s *Storage) PromoteSkillCandidate(id string) (*Article, error) {
 			CandidateID: c.ID, SkillSlug: c.ParentSlug, ParentVersion: c.ParentVersion,
 			ContentHash: SkillCandidateContentHash(c), ValidationScore: score,
 			RBestBefore: before, RBestAfter: after, Outcome: outcome,
-			Decider: SkillAuditDeciderGate, ScorerVersion: SkillAuditScorerVersion,
+			Decider: SkillAuditDeciderGate, ScorerVersion: scorerVersion,
 			Timestamp: time.Now().UTC(),
 		}); auditErr != nil {
 			return nil, fmt.Errorf("validation gate refused candidate '%s' but the audit write failed: %v (gate: %v)", c.ID, auditErr, gateErr)
 		}
+		if rej, ok := gateErr.(*SkillGateRejection); ok {
+			rej.ScorerVersion = scorerVersion
+			rej.EvalHash = evalHash
+			rej.TrainScore = trainScore
+		}
 		c.Status = SkillCandidateRejected
 		c.DecidedAt = time.Now().UTC()
+		c.stampValidationContext(scorerVersion, evalHash, trainScore)
 		if err := s.writeCandidate(c); err != nil {
 			return nil, err
 		}
@@ -412,22 +499,27 @@ func (s *Storage) PromoteSkillCandidate(id string) (*Article, error) {
 		CandidateID: c.ID, SkillSlug: c.ParentSlug, ParentVersion: c.ParentVersion,
 		ContentHash: SkillCandidateContentHash(c), ValidationScore: score,
 		RBestBefore: before, RBestAfter: after, Outcome: outcome,
-		Decider: SkillAuditDeciderGate, ScorerVersion: SkillAuditScorerVersion,
+		Decider: SkillAuditDeciderGate, ScorerVersion: scorerVersion,
 		Timestamp: stampAt,
 	}); auditErr != nil {
 		return nil, fmt.Errorf("validation gate accepted candidate '%s' but the audit write failed: %v", c.ID, auditErr)
 	}
 	c.BestScore = score
+	c.stampValidationContext(scorerVersion, evalHash, trainScore)
 
 	// Story 06: the gate accept IS the training event. Stamp the trained marker
 	// (tag + trained_at/version/parent/candidate/val_score/eval_hash) in the same
 	// save that writes the promoted body, so the marker always names the version
 	// carrying it and re-training overwrites it. The eval hash is the skill's
-	// most recent accepted eval upload — the same baseline the staleness check
-	// later compares against — or empty when the skill has never had eval data.
-	evalHash, err := s.latestEvalHashForSkill(parent.Slug)
-	if err != nil {
-		return nil, fmt.Errorf("failed to promote skill candidate '%s': failed to read eval history: %w", c.ID, err)
+	// most recent accepted eval upload — identical to the hash this gate just
+	// scored against (story 11 resolves the same latest upload) — or empty when
+	// the skill has never had eval data.
+	trainedEvalHash := evalHash
+	if trainedEvalHash == "" {
+		trainedEvalHash, err = s.latestEvalHashForSkill(parent.Slug)
+		if err != nil {
+			return nil, fmt.Errorf("failed to promote skill candidate '%s': failed to read eval history: %w", c.ID, err)
+		}
 	}
 	summary := fmt.Sprintf("Promoted skill candidate %s (parent %s v%d, proposed by %s)",
 		c.ID, c.ParentSlug, c.ParentVersion, c.Proposer)
@@ -438,7 +530,7 @@ func (s *Storage) PromoteSkillCandidate(id string) (*Article, error) {
 				ParentVersion: c.ParentVersion,
 				CandidateID:   c.ID,
 				ValScore:      score,
-				EvalHash:      evalHash,
+				EvalHash:      trainedEvalHash,
 			},
 		})
 	if err != nil {
@@ -469,20 +561,28 @@ func (s *Storage) RejectSkillCandidate(id string) (*SkillCandidate, error) {
 	if c.Status != SkillCandidatePending {
 		return nil, fmt.Errorf("skill candidate '%s' is already decided (%s)", c.ID, c.Status)
 	}
-	score := RBestScore(c)
+	// Story 11: the recorded score is the same versioned one the gate uses —
+	// eval-backed when the skill has a stored eval set, structural otherwise —
+	// so the human rejection trail stays comparable with the gate's decisions.
+	scored, scoreErr := s.resolveValidationScore(c)
+	if scoreErr != nil {
+		return nil, fmt.Errorf("cannot reject candidate '%s': %w", c.ID, scoreErr)
+	}
 	before, err := s.currentRBest(c.ParentSlug)
 	if err != nil {
 		return nil, fmt.Errorf("cannot reject candidate '%s': failed to read audit trail: %w", c.ID, err)
 	}
 	if auditErr := s.appendSkillAuditRecord(SkillAuditRecord{
 		CandidateID: c.ID, SkillSlug: c.ParentSlug, ParentVersion: c.ParentVersion,
-		ContentHash: SkillCandidateContentHash(c), ValidationScore: score,
+		ContentHash: SkillCandidateContentHash(c), ValidationScore: scored.Score,
 		RBestBefore: before, RBestAfter: before, Outcome: SkillAuditRejected,
-		Decider: SkillAuditDeciderHuman, ScorerVersion: SkillAuditScorerVersion,
+		Decider: SkillAuditDeciderHuman, ScorerVersion: scored.ScorerVersion,
 		Timestamp: time.Now().UTC(),
 	}); auditErr != nil {
 		return nil, fmt.Errorf("cannot reject candidate '%s': audit write failed: %v", c.ID, auditErr)
 	}
+	c.BestScore = scored.Score
+	c.stampValidationContext(scored.ScorerVersion, scored.EvalHash, scored.TrainScore)
 	c.Status = SkillCandidateRejected
 	c.DecidedAt = time.Now().UTC()
 	if err := s.writeCandidate(c); err != nil {

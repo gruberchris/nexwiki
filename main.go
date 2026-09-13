@@ -307,6 +307,8 @@ func main() {
 	mux.HandleFunc("POST /api/evolution/jobs/{id}/pause", srv.HandlePauseEvolutionJob)
 	mux.HandleFunc("POST /api/evolution/jobs/{id}/abort", srv.HandleAbortEvolutionJob)
 	mux.HandleFunc("POST /api/evolution/jobs/{id}/approve", srv.HandleApproveEvolutionJob)
+	mux.HandleFunc("POST /api/evolution/jobs/{id}/simulate", srv.HandleRunEvolutionSimulation)
+	mux.HandleFunc("GET /api/evolution/jobs/{id}/simulations", srv.HandleListEvolutionSimulations)
 
 	// Create FS for React Frontend.
 	// We check if "frontend/dist" exists as a physical directory on disk for dev mode live-reloading.

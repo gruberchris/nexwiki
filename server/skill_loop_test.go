@@ -89,11 +89,16 @@ func loopStateOK(t *testing.T, s *Storage, jobID string) *LoopState {
 	return st
 }
 
+// evalSetUpload seeds a graded eval set: two train and three val cases with
+// disjoint expected token sets, every case scored by the same sandboxed
+// boolean overlap expression. A candidate body covering more of the expected
+// vocabulary passes more val cases, so its mean val score climbs (1/3, 2/3).
 func evalSetUpload(t *testing.T, s *Storage, job *EvolutionJob, token string) string {
 	t.Helper()
 	t.Setenv(EvalMinTrainEnv, "1")
 	t.Setenv(EvalMinValEnv, "1")
-	content := `{"train":[{"input":"train one","expected":"e1"},{"input":"train two","expected":"e2"}],"val":[{"input":"val one","expected":"e1"}]}`
+	const scorer = `overlap(expected, output) >= 0.5`
+	content := fmt.Sprintf(`{"train":[{"input":"train one","expected":"alpha","scorer":%[1]q},{"input":"train two","expected":"omega","scorer":%[1]q}],"val":[{"input":"val one","expected":"alpha","scorer":%[1]q},{"input":"val two","expected":"gamma","scorer":%[1]q},{"input":"val three","expected":"zeta","scorer":%[1]q}]}`, scorer)
 	res, err := s.UploadEvolutionEvalSet(job.ID, token, "eval.json", content)
 	if err != nil {
 		t.Fatalf("UploadEvolutionEvalSet failed: %v", err)
@@ -126,8 +131,9 @@ func TestLoopHappyPathTwoAcceptedIterations(t *testing.T) {
 	if res := step(t, r, job.ID, token, input); !res.Advanced || res.Phase != LoopPhaseProposing {
 		t.Fatalf("proposing step wrong: %+v", res)
 	}
-	// Body 314 chars + diff + one pattern: 0.4 + 0.2 + 0.1 + 0.00314 = 0.7031.
-	c1 := makeCandidate(t, s, skill.Slug, "# improved v1 "+strings.Repeat("a", 300), "--- a/x\n+++ b/x", []string{"p1"})
+	// Body covering one val case's expected vocabulary: the overlap scorer
+	// passes 1 of the 3 val cases, scoring 0.3333 against a zero R_best.
+	c1 := makeCandidate(t, s, skill.Slug, "# improved v1 alpha "+strings.Repeat("a", 300), "--- a/x\n+++ b/x", []string{"p1"})
 	if res := step(t, r, job.ID, token, input); !res.Advanced || res.Phase != LoopPhaseGating {
 		t.Fatalf("gating step wrong: %+v", res)
 	}
@@ -139,8 +145,22 @@ func TestLoopHappyPathTwoAcceptedIterations(t *testing.T) {
 	if rec1.Outcome != IterationOutcomeAccepted || rec1.CandidateID != c1.ID || rec1.ResultVersion != 2 {
 		t.Fatalf("iteration 1 record wrong: %+v", rec1)
 	}
-	if rec1.ValScore != 0.7031 || rec1.RBest != 0.7031 {
+	if rec1.ValScore != 0.3333 || rec1.RBest != 0.3333 {
 		t.Fatalf("iteration 1 scores wrong: %+v", rec1)
+	}
+	// Story 11: the record carries the scoring context — the eval set's
+	// derived scorer version, its hash, and the train-split fit indicator.
+	wantScorerVersion := EvalScorerVersionFor([]string{"overlap(expected, output) >= 0.5"})
+	if rec1.ScorerVersion != wantScorerVersion {
+		t.Fatalf("iteration 1 scorer version = %q, want %q", rec1.ScorerVersion, wantScorerVersion)
+	}
+	if rec1.EvalHash != evalHash {
+		t.Fatalf("iteration 1 eval hash = %q, want %q", rec1.EvalHash, evalHash)
+	}
+	if rec1.TrainScore != 0.5 {
+		// Both train cases carry "alpha"/"omega" disjoint sets; a body naming
+		// "alpha" passes one of the two train cases.
+		t.Fatalf("iteration 1 train fit = %v, want 0.5", rec1.TrainScore)
 	}
 	if len(rec1.PatternSlugs) != 1 || rec1.PatternSlugs[0] != "p1" {
 		t.Fatalf("iteration 1 patterns wrong: %v", rec1.PatternSlugs)
@@ -164,7 +184,9 @@ func TestLoopHappyPathTwoAcceptedIterations(t *testing.T) {
 			t.Fatalf("iteration 2 %s step wrong: %+v", phase, res)
 		}
 	}
-	c2 := makeCandidate(t, s, skill.Slug, "# improved v2 "+strings.Repeat("b", 300), "--- a/x\n+++ b/x", []string{"p1", "p2", "p3", "p4"})
+	// The body covers alpha and gamma: 2 of 3 val cases pass = 0.6667, past
+	// the new best — and short of 1.0, so the loop runs on to the budget stop.
+	c2 := makeCandidate(t, s, skill.Slug, "# improved v2 alpha gamma "+strings.Repeat("b", 300), "--- a/x\n+++ b/x", []string{"p1", "p2", "p3", "p4"})
 	if res := step(t, r, job.ID, token, input); !res.Advanced || res.Phase != LoopPhaseGating {
 		t.Fatalf("iteration 2 gating step wrong: %+v", res)
 	}
@@ -1353,4 +1375,128 @@ func TestLoopReconcileRequiresTerminalJob(t *testing.T) {
 			t.Fatalf("designed stop outcome not stamped: %+v", finished)
 		}
 	}
+}
+
+// Story 11 (B2): the gate decision must be reproducible from the stored eval
+// set plus the stored scores. The test re-runs the gate's own math offline —
+// stored splits, compiled scorers, candidate body — and requires the same
+// score and the same accept/reject the audit trail recorded.
+func TestGateDecisionReproducibleFromStoredData(t *testing.T) {
+	s := newLifecycleStorage(t)
+	job, token, skill := loopFixture(t, s, "Repro Skill", 2, 5)
+	evalHash := evalSetUpload(t, s, job, token)
+
+	binDir := fakeCLI(t, `{"type":"progress","progress":0.5}`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	r := testRunner(t, s, CLIProfile{Binary: "opencode"})
+	input := JobInput{Task: "evolve"}
+
+	for range loopPhaseOrder {
+		step(t, r, job.ID, token, input)
+	}
+	c1 := makeCandidate(t, s, skill.Slug, "# improved v1 alpha "+strings.Repeat("a", 300), "--- a/x\n+++ b/x", []string{"p1"})
+	step(t, r, job.ID, token, input)
+
+	rec, err := s.GetIterationRecord(job.ID, 1)
+	if err != nil || rec == nil {
+		t.Fatalf("iteration record missing: %v", err)
+	}
+	if rec.Outcome != IterationOutcomeAccepted || rec.ValScore != 0.3333 {
+		t.Fatalf("fixture iteration wrong: %+v", rec)
+	}
+
+	// Recompute, exactly as an auditor would: stored splits → compiled
+	// scorers → score the candidate's stored body → same number; the audit
+	// record's R_best before the compare → same decision.
+	train, val, _, err := s.ReadEvolutionEvalSet(job.ID)
+	if err != nil {
+		t.Fatalf("stored splits unreadable: %v", err)
+	}
+	combined := make([]EvalCase, 0, len(train)+len(val))
+	combined = append(combined, train...)
+	combined = append(combined, val...)
+	set, err := compileScorerSet(combined)
+	if err != nil {
+		t.Fatalf("stored scorers refused: %v", err)
+	}
+	recomputed := set.scoreEvalSplit(val, c1.ProposedBody)
+	if recomputed != rec.ValScore {
+		t.Fatalf("recomputed val score %v != recorded %v", recomputed, rec.ValScore)
+	}
+	if set.version() != rec.ScorerVersion {
+		t.Fatalf("recomputed scorer version %q != recorded %q", set.version(), rec.ScorerVersion)
+	}
+	if evalScorerVersionOfCases(train, val) != rec.ScorerVersion || rec.EvalHash != evalHash {
+		t.Fatalf("scorer context mismatch: %q/%q vs %q", evalScorerVersionOfCases(train, val), rec.ScorerVersion, rec.EvalHash)
+	}
+	audit, err := s.ListSkillAuditRecords()
+	if err != nil || len(audit) != 1 {
+		t.Fatalf("audit trail wrong: %d %v", len(audit), err)
+	}
+	if audit[0].ScorerVersion != rec.ScorerVersion {
+		t.Fatalf("the audit record must carry the same scorer version: %q vs %q", audit[0].ScorerVersion, rec.ScorerVersion)
+	}
+	derivedAccept := recomputed >= 1.0 || recomputed > audit[0].RBestBefore
+	if derivedAccept != (rec.Outcome == IterationOutcomeAccepted) {
+		t.Fatalf("recomputed decision (%v) disagrees with the recorded outcome %q", derivedAccept, rec.Outcome)
+	}
+
+	// A changed scorer set changes the eval hash: re-uploading the same cases
+	// under a different expression must move the eval hash (the hash covers
+	// the scoring function, not just the data).
+	t.Setenv(EvalMinTrainEnv, "1")
+	t.Setenv(EvalMinValEnv, "1")
+	job2, token2, _ := loopFixture(t, s, "Repro Skill Two", 2, 5)
+	const scorer = `overlap(expected, output) >= 0.5`
+	content := fmt.Sprintf(`{"train":[{"input":"t","expected":"alpha","scorer":%[1]q}],"val":[{"input":"v","expected":"alpha","scorer":%[1]q}]}`, scorer)
+	res, err := s.UploadEvolutionEvalSet(job2.ID, token2, "eval.json", content)
+	if err != nil {
+		t.Fatalf("re-upload failed: %v", err)
+	}
+	if res.Meta.ScorerVersion == EvalScorerVersionBase || res.Meta.EvalHash == "" {
+		t.Fatalf("custom set must derive its version and hash: %+v", res.Meta)
+	}
+	changed := EvalScorerVersionFor([]string{`overlap(expected, output) >= 0.9`})
+	if changed == res.Meta.ScorerVersion {
+		t.Error("a changed scorer expression must bump the derived version")
+	}
+}
+
+// Story 11 (B2): the report stamps the scorer version and the per-split
+// baseline the run was scored under.
+func TestReportStampsScorerVersionAndSplits(t *testing.T) {
+	s := newLifecycleStorage(t)
+	job, token, skill := loopFixture(t, s, "Stamp Skill", 1, 5)
+	evalHash := evalSetUpload(t, s, job, token)
+
+	binDir := fakeCLI(t, `{"type":"progress","progress":0.5}`)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	r := testRunner(t, s, CLIProfile{Binary: "opencode"})
+	input := JobInput{Task: "evolve"}
+	for range loopPhaseOrder {
+		step(t, r, job.ID, token, input)
+	}
+	c1 := makeCandidate(t, s, skill.Slug, "# stamped alpha "+strings.Repeat("a", 300), "--- a/x\n+++ b/x", []string{"p1"})
+	step(t, r, job.ID, token, input) // gating accepts (0.3333)
+	step(t, r, job.ID, token, input) // the budget stop lands on the next boundary
+
+	fresh, err := s.GetEvolutionJob(job.ID)
+	if err != nil || fresh.Status != EvolutionJobComplete {
+		t.Fatalf("job must be terminal: %+v %v", fresh, err)
+	}
+	art, err := s.GetArticle(fresh.ResultReportSlug)
+	if err != nil {
+		t.Fatalf("report missing: %v", err)
+	}
+	want := EvalScorerVersionFor([]string{"overlap(expected, output) >= 0.5"})
+	if !strings.Contains(art.Content, "| Scorer version | "+want+" |") {
+		t.Errorf("the report must stamp the derived scorer version %q:\n%s", want, art.Content)
+	}
+	if !strings.Contains(art.Content, evalHash[:12]) {
+		t.Errorf("the report must stamp the eval hash: %s", art.Content)
+	}
+	if !strings.Contains(art.Content, "| train | ") {
+		t.Errorf("the report must carry the train-fit row: %s", art.Content)
+	}
+	_ = c1
 }

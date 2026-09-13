@@ -125,10 +125,15 @@ func TestMarkerStampsCurrentEvalHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEvolutionJob failed: %v", err)
 	}
-	content := `{"input": "case one", "expected": "alpha beta"}
-{"input": "case two", "expected": "gamma delta"}
-{"input": "case three", "expected": "epsilon zeta"}
-{"input": "case four", "expected": "eta theta"}`
+	// The eval set carries a sandboxed overlap scorer; the promoted body
+	// includes the val split's answer vocabulary (the auto-split's last case),
+	// so the eval-backed gate can accept it (both expected tokens at the 0.5
+	// threshold beat a zero R_best).
+	scorer := "overlap(expected, output) >= 0.5"
+	content := `{"input": "case one", "expected": "alpha beta", "scorer": "` + scorer + `"}
+{"input": "case two", "expected": "gamma delta", "scorer": "` + scorer + `"}
+{"input": "case three", "expected": "epsilon zeta", "scorer": "` + scorer + `"}
+{"input": "case four", "expected": "eta theta", "scorer": "` + scorer + `"}`
 	if _, err := s.UploadEvolutionEvalSet(job.ID, token, "eval.jsonl", content); err != nil {
 		t.Fatalf("UploadEvolutionEvalSet failed: %v", err)
 	}
@@ -137,7 +142,7 @@ func TestMarkerStampsCurrentEvalHash(t *testing.T) {
 		t.Fatalf("eval hash must be resolvable after upload: %q %v", wantHash, err)
 	}
 
-	promoted, _ := promoteCandidate(t, s, skill, "# v2 trained on eval")
+	promoted, _ := promoteCandidate(t, s, skill, "# v2 trained on eval eta theta")
 	if promoted.TrainedEvalHash != wantHash {
 		t.Errorf("trained_eval_hash = %q, want the stored hash %.12s", promoted.TrainedEvalHash, wantHash)
 	}

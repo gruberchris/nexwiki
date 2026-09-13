@@ -286,6 +286,8 @@ func (s *Storage) ScanRawArtifactIntegrity() ([]RawIntegrityFinding, error) {
 		// Hash-verify the accepted eval splits.
 		if job.EvalHash != "" {
 			train, val, _, rerr := s.ReadEvolutionEvalSet(job.ID)
+			version := evalScorerVersionOfCases(train, val)
+			recomputed := evalSetHash(train, val, version)
 			switch {
 			case rerr != nil:
 				findings = append(findings, RawIntegrityFinding{
@@ -293,11 +295,11 @@ func (s *Storage) ScanRawArtifactIntegrity() ([]RawIntegrityFinding, error) {
 					Path:   dataRelPath(s.DataDir, filepath.Join(filesDir, "eval")),
 					Detail: fmt.Sprintf("eval data recorded (hash %.12s) but unreadable: %v — the training data of record is incomplete", job.EvalHash, rerr),
 				})
-			case evalSetHash(train, val) != job.EvalHash:
+			case recomputed != job.EvalHash:
 				findings = append(findings, RawIntegrityFinding{
 					Kind: "eval", ID: job.ID,
 					Path:   dataRelPath(s.DataDir, filepath.Join(filesDir, "eval")),
-					Detail: fmt.Sprintf("eval splits changed after upload: recorded hash %.12s, stored splits now hash to %.12s — every gate decision that compared against this set is suspect", job.EvalHash, evalSetHash(train, val)),
+					Detail: fmt.Sprintf("eval splits changed after upload: recorded hash %.12s, stored splits now hash to %.12s — every gate decision that compared against this set is suspect", job.EvalHash, recomputed),
 				})
 			}
 		}

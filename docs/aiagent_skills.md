@@ -112,6 +112,8 @@ over MCP, where the token was minted.
 * **Response**: One-poll body for the live view: `loop` (the stepper's current iteration/phase/status — `null` until first driven), `iterations` (every per-iteration record with its phase trail, candidate, `val_score` vs `r_best`, and outcome), `plateau_count`, `max_iterations`, and `plateau_limit`. The browser twin of the `get_evolution_iterations` MCP tool.
 * **Endpoint**: `GET /api/evolution/jobs/{id}/eval`
 * **Response**: The stored eval metadata — split summary, S0 baseline, the 5-sample dry run, and the cost-estimate stub. `404` while the job has no accepted upload yet (the wizard's "waiting for training data" state, not a fault).
+* **Endpoint**: `GET /api/evolution/jobs/{id}/eval`
+* **Response**: The stored eval metadata — split summary, S0 baseline under the eval's own scorers, the train-fit indicator, the 5-sample dry run with per-sample scores, and the cost-estimate stub. `404` while the job has no accepted upload yet (the wizard's "waiting for training data" state, not a fault). Eval cases carry an optional per-case `scorer`: the built-in `exact` match by default, or a sandboxed deterministic expression (no process spawn, no network, no filesystem); unknown or unsafe names are refused at upload. The derived scorer version is part of the eval hash and stamps every audit record and report, bumping itself when the scorer set changes.
 * **Endpoint**: `GET /api/evolution/candidates/{id}`
 * **Response**: One skill candidate record — the diff, proposed body, and pattern slugs the wizard's iteration cards render read-only.
 
@@ -138,6 +140,17 @@ The Review and Report steps read from the same seam: the skill's audited gate tr
 * **Response**: One run's Report-step view: `job_id`, `skill_slug`, `status`, `loop_outcome`, and `terminal`, plus `report` — the Trained Skill Result article the wiki generated for this run (absent until the run ends) — and `trained_state`, the skill's live derived trained state. Staleness is derived at serve time, never stored in the report: if the eval set is re-uploaded after the run, the skill is edited after training, or the marker is revoked, `trained_state` reports `stale` with the reason.
 
 The result report itself is written ONCE by the wiki (Go, from stored records — never a model call) when a run ends, whatever the ending: accepted, exhausted, plateaued, cancelled, or failed. It carries the `wikiskill-report` marker tag plus the `wikiskill-wiki` wiki-scope marker, and agents cannot edit, strip, or revert it (agent write tools refuse; deletion is refused twice over — it is both a report and wiki-scope content, which nothing ever auto-deletes), while a human may amend it through the editor by appending a dated note (the report's Amendments footer explains the convention). The report always reflects the run END — its outcome is the real terminal outcome with the end reason — and a no-promotion run touches the skill not at all: the report links the skill; the skill gains its backlink section only when the run promoted a candidate.
+
+### Pre-live simulation (story 11)
+Before an operator accepts a candidate, the wiki can validate it offline: the candidate's body is scored against the job's stored historical val cases with the gate's own sandboxed scorers — WITHOUT gating. No threshold compare, no audit record, no promotion.
+
+* **Endpoint**: `POST /api/evolution/jobs/{id}/simulate`
+* **Body**: optional `{"candidate_id": "…"}` — omit it to target the newest pending candidate for the job's skill.
+* **Response**: The simulation record: `job_id`, `skill_slug`, `simulation` (1-based sequence), `candidate_id`, `candidate_parent_version`, `candidate_content_hash`, `eval_hash`, `scorer_version`, `val_cases` (+ `val_cases_capped` at the 200-record cap), `resolution_rate` (mean per-case score, 4 decimals — the same number the gate math produces), `pass_count`, and one `cases` row per simulated case (`index`, quoted truncated `input_preview`/`expected_preview`, `scorer` when custom, `score`, and the `pass` flag at the 0.5 mark). Results append as new immutable records — re-running never rewrites, and every record carries a hash chain (`prev_hash` → the previous record's `result_hash`) mirroring the eval set's tamper evidence.
+* Statuses: `404` unknown job or candidate, `409` on an in-flight stepper (`claimed`/`running` — pause or finish it first), on a job without a stored eval set, or on a decided candidate; `500` otherwise.
+
+### Retrieval vs injection (story 11)
+A job's `injection_mode` config chooses how the stdin payload is filled: `all` (the default) keeps the story as-is — the loop sends exactly what the creating harness supplied — while `retrieve` asks the runner to rank the skill registry's name/description against the task's keywords with a small BM25 score and to quote only the top-K best matches into the payload, always plus the skill under evolution itself. This is a coarse pre-filter for the inference context, not a full retrieval system: the ranking sees names and descriptions only, and when nothing matches the subset degrades to the skill under evolution alone (the ranking trail in the iteration record says so). The default remains the default: `all`. Top-K is `NEXWIKI_JOB_RETRIEVAL_TOPK` (default 5).
 
 ---
 

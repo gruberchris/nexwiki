@@ -63,9 +63,12 @@ const (
 )
 
 // SkillAuditScorerVersion stamps the scoring function that produced the
-// validation score. The story 03 gate is a minimal deterministic heuristic;
-// full eval-store/scorer versioning is story 11, which bumps this version.
-// TODO(story-11): version the scorer and eval store; record the version here.
+// validation score when the decision has no eval data behind it: the story 03
+// structural heuristic. Story 11 added the real eval pipeline — when the
+// skill has a stored eval set, the audit record carries the eval set's
+// derived scorer version instead (EvalScorerVersionBase "v1", or
+// "v1-<hash12>" once custom scorers join; see skill_scorer.go), so the
+// version on a record names exactly the scoring function that produced it.
 const SkillAuditScorerVersion = "v0"
 
 // SkillAuditFilename is the append-only audit file inside the data directory.

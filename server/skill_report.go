@@ -520,25 +520,50 @@ func composeResultReport(job *EvolutionJob, skill *Article, iterations []Iterati
 	if eval == nil {
 		b.WriteString("No eval set was uploaded for this run — the format gate never accepted training data, so no baseline exists and every gate decision compared against a zero R_best.\n\n")
 	} else {
-		fmt.Fprintf(&b, "| Field | Value |\n|---|---|\n| Source file | %s |\n| Split mode | %s |\n| Train / val cases | %d / %d |\n| Eval hash | `%s` |\n| Scorer version | %s |\n| Uploaded | %s |\n\n",
+		scorersCell := "exact (built-in default)"
+		if len(eval.Scorers) > 0 {
+			quoted := make([]string, 0, len(eval.Scorers))
+			for _, s := range eval.Scorers {
+				quoted = append(quoted, "`"+truncateQuoted(s, 80)+"`")
+			}
+			scorersCell = strings.Join(quoted, ", ")
+		}
+		fmt.Fprintf(&b, "| Field | Value |\n|---|---|\n| Source file | %s |\n| Split mode | %s |\n| Train / val cases | %d / %d |\n| Eval hash | `%s` |\n| Scorer version | %s |\n| Custom scorers | %s |\n| Uploaded | %s |\n\n",
 			eval.Filename, eval.SplitMode, eval.TrainCount, eval.ValCount, eval.EvalHash, eval.ScorerVersion,
-			eval.UploadedAt.UTC().Format(time.RFC3339))
+			scorersCell, eval.UploadedAt.UTC().Format(time.RFC3339))
 	}
 
 	// Scores: baseline vs final.
 	b.WriteString("## Scores: baseline vs final\n\n")
 	s0Cell := "not scored (no eval set)"
+	s0TrainCell := "—"
 	finalCell := "not scored"
+	finalTrainCell := "—"
 	rBest, rBestSource := runFinalRBest(job, iterations, audit, trained)
 	if rBestSource != "" {
 		finalCell = fmt.Sprintf("%.2f%% (R_best via %s)", rBest*100, rBestSource)
 	}
+	// Story 11: the run's train-fit trail — the last resolved iteration's
+	// recorded train-split score, the indicator an overfit candidate would
+	// deviate from.
 	if eval != nil {
 		s0Cell = fmt.Sprintf("%.2f%% (S0, %s baseline scorer)", eval.BaselineS0*100, eval.ScorerVersion)
+		s0TrainCell = fmt.Sprintf("%.2f%% (train fit)", eval.BaselineTrain*100)
+		for i := len(iterations) - 1; i >= 0; i-- {
+			rec := iterations[i]
+			if rec.Outcome != IterationOutcomeAccepted && rec.Outcome != IterationOutcomeRejected {
+				continue
+			}
+			if rec.EvalHash != "" {
+				finalTrainCell = fmt.Sprintf("%.2f%% (train fit, iteration %d)", rec.TrainScore*100, rec.Iteration)
+			}
+			break
+		}
 	}
 	b.WriteString("| Split | Baseline (S0) | Final |\n|---|---|---|\n")
 	fmt.Fprintf(&b, "| val | %s | %s |\n", s0Cell, finalCell)
-	b.WriteString("| train | — (the v0 scorer scores the val split only) | — |\n\n")
+	fmt.Fprintf(&b, "| train | %s | %s |\n", s0TrainCell, finalTrainCell)
+	b.WriteString("\n")
 	if eval != nil && rBestSource != "" {
 		fmt.Fprintf(&b, "Δ vs baseline: %+.4f (S0 %.4f → R_best %.4f).\n\n", rBest-eval.BaselineS0, eval.BaselineS0, rBest)
 	}
@@ -606,8 +631,12 @@ func composeResultReport(job *EvolutionJob, skill *Article, iterations []Iterati
 
 	// Limitations.
 	b.WriteString("## Limitations\n\n")
-	fmt.Fprintf(&b, "- Patterns added: %d. The v0 evolution flow is additive — it never prunes, deduplicates, or rewrites existing wiki sections (layer pruning is a later plan item).\n", len(order))
-	fmt.Fprintf(&b, "- Scorer %s: the gate compares candidate structure, not model answers — scores are deterministic heuristics; versioned scorer and eval store are later stories.\n", SkillAuditScorerVersion)
+	fmt.Fprintf(&b, "- Patterns added: %d. The evolution flow is additive — it never prunes, deduplicates, or rewrites existing wiki sections (layer pruning is a later plan item).\n", len(order))
+	if eval != nil {
+		fmt.Fprintf(&b, "- Scorer %s: the gate scored candidates against the stored eval splits with sandboxed deterministic scorers (versioned; the eval hash above covers the scorer set) — no model calls, and scores over names/descriptions, not simulated answers.\n", eval.ScorerVersion)
+	} else {
+		fmt.Fprintf(&b, "- Scorer %s: no eval set was uploaded, so the gate compared candidate structure only (the v0 structural heuristic); scores are deterministic heuristics, not model answers.\n", SkillAuditScorerVersion)
+	}
 	b.WriteString("- Cost budgets are recorded but not enforced (Phase F3 owns enforcement).\n")
 	if n := countDecidedAgainst(iterations); n > 0 {
 		fmt.Fprintf(&b, "- %d iteration(s) ended rejected or interrupted and left the live skill byte-identical (auto-revert).\n", n)
@@ -623,7 +652,7 @@ func composeResultReport(job *EvolutionJob, skill *Article, iterations []Iterati
 	b.WriteString("## Reproduction\n\n")
 	fmt.Fprintf(&b, "- Gate decisions for this skill: appended to `data/skill_audit.jsonl` (records for `%s`).\n", job.SkillSlug)
 	fmt.Fprintf(&b, "- Run records: `data/skill_jobs/%s.json` plus `data/skill_jobs/%s.files/` (loop state, per-iteration records, eval splits + meta).\n", job.ID, job.ID)
-	b.WriteString("- To re-run: create a new evolution job over MCP (`create_evolution_job`), upload the same eval file (the hash above must match), and dispatch from the same profile — the gate math, records, and a fresh report regenerate from the new run.\n")
+	b.WriteString("- To re-run: create a new evolution job over MCP (`create_evolution_job`), upload the same eval file with the same scorers (the hash above — cases plus scorer set — must match), and dispatch from the same profile — the gate math, records, and a fresh report regenerate from the new run.\n")
 	if eval != nil {
 		fmt.Fprintf(&b, "- Eval source of record: %s (the hash above is over the stored, split-tagged cases).\n", eval.Filename)
 	}

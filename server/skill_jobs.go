@@ -146,10 +146,21 @@ type EvolutionJob struct {
 	LoopOutcome      string `json:"loop_outcome,omitempty"`
 	ApproveRequested bool   `json:"approve_requested,omitempty"`
 	PlateauLimit     int    `json:"plateau_limit,omitempty"`
-	Checkpoint       string `json:"checkpoint,omitempty"`
-	PauseRequested   bool   `json:"pause_requested,omitempty"`
-	CancelReason     string `json:"cancel_reason,omitempty"`
-	Error            string `json:"error,omitempty"`
+	// Story 11 (B3): the injection toggle. "all" (default) keeps the payload's
+	// data block exactly what the harness supplies; "retrieve" has the runner
+	// pre-filter the registry to the top-K skills matching the task keywords
+	// (BM25 over name/description, NEXWIKI_JOB_RETRIEVAL_TOPK), always plus the
+	// skill under evolution. A coarse pre-filter — full injection remains the
+	// paper's default.
+	InjectionMode string `json:"injection_mode,omitempty"`
+	// Story 11 (B4): the pre-live simulation trail kept alongside the job —
+	// how many immutable records exist and the chain head's result hash.
+	SimulationCount      int    `json:"simulation_count,omitempty"`
+	LatestSimulationHash string `json:"latest_simulation_hash,omitempty"`
+	Checkpoint           string `json:"checkpoint,omitempty"`
+	PauseRequested       bool   `json:"pause_requested,omitempty"`
+	CancelReason         string `json:"cancel_reason,omitempty"`
+	Error                string `json:"error,omitempty"`
 	// Story 09: the Trained Skill Result report article this run generated.
 	// Stamped once by EnsureSkillResultReport (skill_report.go) and is the
 	// pointer the wizard's Report step and the idempotency check follow.
@@ -313,10 +324,22 @@ func verifyJobToken(job *EvolutionJob, token string) bool {
 // CreateEvolutionJob records a queued evolution run for one skill and mints its
 // per-harness token. One run per skill: an active job on the same skill refuses
 // creation. The raw token is returned once — it is never stored and never
-// retrievable again.
+// retrievable again. Defaults to injection mode "all"; use
+// CreateEvolutionJobWithMode for the story-11 retrieval toggle.
 func (s *Storage) CreateEvolutionJob(skillSlug, candidateID, profile string) (*EvolutionJob, string, error) {
+	return s.CreateEvolutionJobWithMode(skillSlug, candidateID, profile, "")
+}
+
+// CreateEvolutionJobWithMode is CreateEvolutionJob plus the story-11
+// injection_mode config ("all" default, or "retrieve"). Anything else is a
+// refusal naming the choice — a typo must not silently flip the behavior.
+func (s *Storage) CreateEvolutionJobWithMode(skillSlug, candidateID, profile, injectionMode string) (*EvolutionJob, string, error) {
 	skillSlug = Slugify(skillSlug)
 	profile = strings.TrimSpace(profile)
+	mode, modeErr := normalizeInjectionMode(injectionMode)
+	if modeErr != nil {
+		return nil, "", modeErr
+	}
 	if skillSlug == "" {
 		return nil, "", fmt.Errorf("skill slug is required to create an evolution job")
 	}
@@ -361,6 +384,7 @@ func (s *Storage) CreateEvolutionJob(skillSlug, candidateID, profile string) (*E
 		Status:        EvolutionJobQueued,
 		MaxIterations: evolutionJobMaxIterations,
 		PlateauLimit:  evolutionPlateauDefault,
+		InjectionMode: mode,
 		TokenHash:     hash,
 		CreatedAt:     now,
 		UpdatedAt:     now,

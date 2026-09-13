@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,20 +15,30 @@ import (
 )
 
 // This file holds story 05 of the wikiskill evolution support plan: validated
-// training-data intake for evolution jobs (Phase C/C2 + E2).
+// training-data intake for evolution jobs (Phase C/C2 + E2), as extended by
+// story 11 (Phase B2): the real eval pipeline with versioned scorers.
 //
 // WHAT IT DOES: an operator (or a token-holding harness) uploads one eval file
 // (CSV, JSONL, JSON, text, or logs — the asset-upload extension conventions)
 // carrying task cases shaped {input, expected [, scorer]}. The format gate
 // parses, validates, and either stores deterministic train/val splits or
 // refuses with per-issue fix-it errors. On success it also records the S0
-// baseline (the current skill's score on val under the story 03 v0 scorer),
-// a SHA-256 eval hash, a 5-sample dry run, and a static cost-estimate stub
-// (fields only, for story F3 budgets — no enforcement here).
+// baseline (the current skill's score on val under the eval's own scorers),
+// the train-fit indicator, a SHA-256 eval hash that covers the scorer set,
+// a 5-sample dry run, and a static cost-estimate stub (fields only, for
+// story F3 budgets — no enforcement here).
 //
-// WHAT IT DOES NOT DO (later stories own these): scorer versioning (story 11
-// plugs into SkillAuditScorerVersion without touching this gate), the wizard
-// UI (story 08), and budget enforcement (F3).
+// STORY 11 IN THIS FILE: the per-case `scorer` field is resolved here against
+// the sandboxed registry in skill_scorer.go — built-in "exact" by default,
+// inline expressions otherwise, anything unknown or unsafe refused at upload
+// before anything is stored. The derived scorer version is mixed into the
+// eval hash, so a re-upload with a changed scorer set changes the hash, the
+// audit stamp, and the report stamp together; the gate (skill_evolution.go)
+// and the pre-live simulation (skill_simulation.go) recompute scores from
+// these stored splits, making every gate decision reproducible.
+//
+// WHAT IT DOES NOT DO (later stories own these): the wizard UI beyond the
+// story 08 REST seam, and budget enforcement (F3).
 //
 // UNTRUSTED-DATA BOUNDARY (E2): uploaded cases are data, never instructions.
 // They are stored as JSONL under the job's files directory, quoted (truncated)
@@ -85,9 +94,10 @@ var evalAllowedExts = map[string]bool{
 	".txt": true, ".log": true, ".md": true,
 }
 
-// EvalCase is one training case. Input and expected are required; scorer is an
-// optional per-case scorer hint carried through to the eval files (story 11
-// interprets it — this story only preserves it).
+// EvalCase is one training case. Input and expected are required; scorer is
+// an optional per-case scorer name (story 11): empty or "exact" means the
+// built-in exact-match scorer, anything else must be a sandboxed expression
+// from the registry in skill_scorer.go or the upload is refused.
 type EvalCase struct {
 	Input    string `json:"input"`
 	Expected string `json:"expected"`
@@ -249,12 +259,16 @@ type rawEvalCase struct {
 }
 
 // parsedEvalSet is the gate's working set: validated cases with their split
-// assignment and provenance.
+// assignment, provenance, and the compiled scorer set they score under.
 type parsedEvalSet struct {
 	train []EvalCase
 	val   []EvalCase
 	mode  string // "auto" or "user"
 	total int
+	// scorers is the sandboxed registry over the set's distinct scorer
+	// sources (story 11); it is what scores the S0 baseline, the train-fit
+	// indicator, the dry run, and later every gate decision.
+	scorers *scorerSet
 }
 
 // parseEvalContent routes one upload to its format parser by filename
@@ -714,6 +728,51 @@ func gateEvalSet(rows []rawEvalCase, minTrain, minVal int) (*parsedEvalSet, erro
 		issues = append(issues, fmt.Sprintf("...and %d more duplicate groups", dupGroups-10))
 	}
 
+	// Scorer registry (story 11): every distinct scorer source must resolve to
+	// a built-in or compile as a sandboxed expression BEFORE anything is
+	// stored. An unknown name, an unsafe construct, or a type mismatch refuses
+	// the upload with the specific error naming the scorer and the offset;
+	// reported once per distinct source, with the row range that uses it.
+	scorerRows := map[string][]int{}
+	for i, r := range rows {
+		src := strings.TrimSpace(r.Case.Scorer)
+		scorerRows[src] = append(scorerRows[src], i+1)
+	}
+	var scorers *scorerSet
+	scorerErr := map[string]error{}
+	for src := range scorerRows {
+		if _, cerr := resolveSkillScorer(src); cerr != nil {
+			scorerErr[src] = cerr
+		}
+	}
+	for src, rowList := range scorerRows {
+		refusal, refused := scorerErr[src]
+		if !refused {
+			continue
+		}
+		previewRows := rowList
+		more := ""
+		if len(rowList) > 5 {
+			previewRows = rowList[:5]
+			more = fmt.Sprintf(" (+%d more rows)", len(rowList)-5)
+		}
+		rowNums := make([]string, len(previewRows))
+		for i, n := range previewRows {
+			rowNums[i] = strconv.Itoa(n)
+		}
+		issues = append(issues, fmt.Sprintf("row %s: scorer %q refused — %v (a scorer is the built-in \"exact\" or a sandboxed expression over input/expected/output using only: %s)%s",
+			strings.Join(rowNums, ", "), src, refusal, strings.Join(scorerAllowlistNames, ", "), more))
+	}
+	if len(issues) == 0 {
+		// Compile once for the whole set: every source above resolved, so this
+		// cannot fail.
+		set, cerr := compileScorerSet(rowsToCases(rows))
+		if cerr != nil {
+			return nil, &EvalValidationError{Issues: []string{cerr.Error()}, Parsed: total}
+		}
+		scorers = set
+	}
+
 	// Split assignment.
 	var train, val []EvalCase
 	if mode == "user" {
@@ -781,14 +840,28 @@ func gateEvalSet(rows []rawEvalCase, minTrain, minVal int) (*parsedEvalSet, erro
 			TrainCount: len(train), ValCount: len(val), SplitMode: mode,
 		}
 	}
-	return &parsedEvalSet{train: train, val: val, mode: mode, total: total}, nil
+	return &parsedEvalSet{train: train, val: val, mode: mode, total: total, scorers: scorers}, nil
+}
+
+// rowsToCases drops the raw rows' provenance for the scorer compiler.
+func rowsToCases(rows []rawEvalCase) []EvalCase {
+	out := make([]EvalCase, len(rows))
+	for i, r := range rows {
+		out[i] = r.Case
+	}
+	return out
 }
 
 // evalSetHash is the canonical content hash over the stored splits (the
 // story-03 content-hash convention: SHA-256 hex). Split-tagged and
 // order-sensitive: reordering or moving a case across splits changes it.
-func evalSetHash(train, val []EvalCase) string {
+// Story 11 mixes the scorer version in: the hash covers the scoring function
+// as well as the data, so a re-upload with a changed scorer set (or a changed
+// expression behind the same source text) changes the eval hash — and with it
+// the trained marker, the audit stamps, and the report stamp.
+func evalSetHash(train, val []EvalCase, scorerVersion string) string {
 	h := sha256.New()
+	h.Write([]byte("scorers\x00" + scorerVersion + "\n"))
 	for _, c := range train {
 		h.Write([]byte("train\x00" + c.Input + "\x00" + c.Expected + "\x00" + c.Scorer + "\n"))
 	}
@@ -798,8 +871,29 @@ func evalSetHash(train, val []EvalCase) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// evalWordTokens folds text to a lowercase alphanumeric token set for the v0
-// baseline heuristic.
+// evalScorerVersionOfCases derives the scorer version from the stored cases'
+// scorer fields alone (no compilation): the distinct non-default sources,
+// hashed by EvalScorerVersionFor. The eval layer guard (skill_layers.go) and
+// the simulation reuse it so every hash recomputation agrees.
+func evalScorerVersionOfCases(cases ...[]EvalCase) string {
+	var custom []string
+	seen := map[string]bool{}
+	for _, split := range cases {
+		for _, c := range split {
+			src := strings.TrimSpace(c.Scorer)
+			if src == "" || strings.EqualFold(src, defaultScorerName) || seen[src] {
+				continue
+			}
+			seen[src] = true
+			custom = append(custom, src)
+		}
+	}
+	return EvalScorerVersionFor(custom)
+}
+
+// evalWordTokens folds text to a lowercase alphanumeric token set — the
+// tokenization the sandboxed overlap() function (skill_scorer.go) and the
+// story-11 retrieval ranking (skill_retrieval.go) share.
 func evalWordTokens(s string) map[string]bool {
 	out := map[string]bool{}
 	for _, tok := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
@@ -812,49 +906,17 @@ func evalWordTokens(s string) map[string]bool {
 	return out
 }
 
-// evalCasePasses is the v0 baseline rule: a val case "passes" when at least
-// half of its expected-answer tokens already appear in the current skill body.
-// Crude by design — it measures whether the skill as written covers the
-// answer vocabulary, deterministically, with no model calls. Story 11
-// replaces this with versioned scorers; the S0 shape (score in [0,1],
-// stamped SkillAuditScorerVersion) stays.
-func evalCasePasses(skillTokens map[string]bool, expected string) bool {
-	exp := evalWordTokens(expected)
-	if len(exp) == 0 {
-		return false
-	}
-	hit := 0
-	for tok := range exp {
-		if skillTokens[tok] {
-			hit++
-		}
-	}
-	return float64(hit)/float64(len(exp)) >= 0.5
-}
-
-// evalBaselineS0 scores the current skill body against every val case and
-// returns the mean pass rate in [0,1], rounded to 4 decimals like RBestScore.
-func evalBaselineS0(skillBody string, val []EvalCase) float64 {
-	if len(val) == 0 {
-		return 0
-	}
-	skillTokens := evalWordTokens(skillBody)
-	passes := 0
-	for _, c := range val {
-		if evalCasePasses(skillTokens, c.Expected) {
-			passes++
-		}
-	}
-	return math.Round(float64(passes)/float64(len(val))*10000) / 10000
-}
-
 // EvalDryRunSample is one of the 5-sample dry-run rows: quoted previews plus
-// the v0 pass/fail, so the operator can sanity-check the baseline by eye.
+// the case's score under the eval's own scorer, so the operator can
+// sanity-check the baseline by eye. Pass is the display rule "scores at least
+// half" — a coarse eyeball flag next to the exact score.
 type EvalDryRunSample struct {
-	Index           int    `json:"index"`
-	InputPreview    string `json:"input_preview"`
-	ExpectedPreview string `json:"expected_preview"`
-	Pass            bool   `json:"pass"`
+	Index           int     `json:"index"`
+	InputPreview    string  `json:"input_preview"`
+	ExpectedPreview string  `json:"expected_preview"`
+	Scorer          string  `json:"scorer,omitempty"`
+	Score           float64 `json:"score"`
+	Pass            bool    `json:"pass"`
 }
 
 // EvalCostEstimate is the static cost-estimate stub for story F3 budgets:
@@ -868,14 +930,21 @@ type EvalCostEstimate struct {
 
 // EvalMeta is the stored record for one accepted eval upload.
 type EvalMeta struct {
-	JobID         string             `json:"job_id"`
-	SkillSlug     string             `json:"skill_slug"`
-	Filename      string             `json:"filename"`
-	SplitMode     string             `json:"split_mode"`
-	TrainCount    int                `json:"train_count"`
-	ValCount      int                `json:"val_count"`
-	EvalHash      string             `json:"eval_hash"`
-	BaselineS0    float64            `json:"baseline_s0"`
+	JobID      string `json:"job_id"`
+	SkillSlug  string `json:"skill_slug"`
+	Filename   string `json:"filename"`
+	SplitMode  string `json:"split_mode"`
+	TrainCount int    `json:"train_count"`
+	ValCount   int    `json:"val_count"`
+	EvalHash   string `json:"eval_hash"`
+	// Story 11: the baseline under the eval's own scorers — S0 is the current
+	// skill's mean val score, BaselineTrain the mean train score (the fit
+	// indicator an overfit candidate would deviate from).
+	BaselineS0    float64 `json:"baseline_s0"`
+	BaselineTrain float64 `json:"baseline_train"`
+	// Scorers lists the distinct custom scorer sources (sorted); the derived
+	// version in ScorerVersion covers them and the built-in default.
+	Scorers       []string           `json:"scorers,omitempty"`
 	ScorerVersion string             `json:"scorer_version"`
 	DryRun        []EvalDryRunSample `json:"dry_run"`
 	Estimate      EvalCostEstimate   `json:"estimate"`
@@ -962,20 +1031,27 @@ func (s *Storage) UploadEvolutionEvalSet(jobID, token, filename, content string)
 		return nil, fmt.Errorf("cannot score eval baseline: '%s' is no longer a Custom AI Skill", job.SkillSlug)
 	}
 
-	hash := evalSetHash(set.train, set.val)
-	s0 := evalBaselineS0(skill.Content, set.val)
-	skillTokens := evalWordTokens(skill.Content)
+	// Story 11: the scorer version is part of the eval hash, and the baseline
+	// is scored by the eval's own scorers — the same compiled set the gate
+	// later uses, so S0 and candidate scores are always comparable.
+	scorerVersion := set.scorers.version()
+	hash := evalSetHash(set.train, set.val, scorerVersion)
+	s0 := set.scorers.scoreEvalSplit(set.val, skill.Content)
+	trainFit := set.scorers.scoreEvalSplit(set.train, skill.Content)
 	dryN := len(set.val)
 	if dryN > 5 {
 		dryN = 5
 	}
 	dry := make([]EvalDryRunSample, 0, dryN)
 	for i := 0; i < dryN; i++ {
+		score := set.scorers.forCase(set.val[i]).score(set.val[i].Input, set.val[i].Expected, skill.Content)
 		dry = append(dry, EvalDryRunSample{
 			Index:           i,
 			InputPreview:    truncateQuoted(set.val[i].Input, evalPreviewLen),
 			ExpectedPreview: truncateQuoted(set.val[i].Expected, evalPreviewLen),
-			Pass:            evalCasePasses(skillTokens, set.val[i].Expected),
+			Scorer:          strings.TrimSpace(set.val[i].Scorer),
+			Score:           score,
+			Pass:            score >= 0.5,
 		})
 	}
 
@@ -983,7 +1059,8 @@ func (s *Storage) UploadEvolutionEvalSet(jobID, token, filename, content string)
 	meta := EvalMeta{
 		JobID: job.ID, SkillSlug: job.SkillSlug, Filename: filepath.Base(filename),
 		SplitMode: set.mode, TrainCount: len(set.train), ValCount: len(set.val),
-		EvalHash: hash, BaselineS0: s0, ScorerVersion: SkillAuditScorerVersion,
+		EvalHash: hash, BaselineS0: s0, BaselineTrain: trainFit,
+		Scorers: set.scorers.customSources(), ScorerVersion: scorerVersion,
 		DryRun: dry,
 		Estimate: EvalCostEstimate{
 			EstimatedValCases: len(set.val), EstimatedCostUSD: 0, BudgetEnforced: false,
@@ -1022,13 +1099,13 @@ func (s *Storage) UploadEvolutionEvalSet(jobID, token, filename, content string)
 	job.EvalTrainCount = len(set.train)
 	job.EvalValCount = len(set.val)
 	job.BaselineS0 = s0
-	job.BaselineScorer = SkillAuditScorerVersion
+	job.BaselineScorer = scorerVersion
 	job.EvalUploadedAt = now
 	if err := s.writeEvolutionJob(job); err != nil {
 		return nil, err
 	}
-	logRunnerf("eval set uploaded for job %s: %d train / %d val (%s), hash %.12s, S0 %.4f (%s)",
-		job.ID, len(set.train), len(set.val), set.mode, hash, s0, SkillAuditScorerVersion)
+	logRunnerf("eval set uploaded for job %s: %d train / %d val (%s), hash %.12s, S0 %.4f (train fit %.4f, scorer %s)",
+		job.ID, len(set.train), len(set.val), set.mode, hash, s0, trainFit, scorerVersion)
 	return &EvalUploadResult{Meta: meta, TrainPath: trainPath, ValPath: valPath, MetaPath: metaPath}, nil
 }
 
@@ -1086,4 +1163,97 @@ func (s *Storage) ReadEvolutionEvalSet(jobID string) (train, val []EvalCase, met
 // messages without quoting case data.
 func evalSetPreview(train, val int, mode string) string {
 	return fmt.Sprintf("%d train / %d val (%s splits)", train, val, mode)
+}
+
+// SkillEvalGate is the eval-backed scoring context for one skill's validation
+// gate (story 11): the skill's latest stored eval upload with its splits,
+// derived scorer version, and compiled sandboxed scorer set. Every score the
+// gate or the pre-live simulation computes comes from here, so a gate
+// decision is always reproducible from the stored files.
+type SkillEvalGate struct {
+	JobID         string
+	EvalHash      string
+	ScorerVersion string
+	train         []EvalCase
+	val           []EvalCase
+	scorers       *scorerSet
+}
+
+// TrainScore scores a body against the train split (the fit indicator).
+func (g *SkillEvalGate) TrainScore(body string) float64 {
+	return g.scorers.scoreEvalSplit(g.train, body)
+}
+
+// ValScore scores a body against the val split — the gate's compare number.
+func (g *SkillEvalGate) ValScore(body string) float64 { return g.scorers.scoreEvalSplit(g.val, body) }
+
+// EvalGateForSkill resolves the latest eval upload for a skill: the newest
+// job record carrying a non-empty eval hash, with its stored splits read back
+// and fail-closed-verified (the stored hash must reproduce from the files,
+// and the compiled scorer set's version must match the recorded one — a
+// mismatch means corruption, and the gate aborts instead of scoring against
+// tampered data). Returns nil, nil when the skill has never had an accepted
+// eval upload: the caller falls back to the structural scorer.
+func (s *Storage) EvalGateForSkill(skillSlug string) (*SkillEvalGate, error) {
+	jobs, err := s.ListEvolutionJobs()
+	if err != nil {
+		return nil, err
+	}
+	var chosen *EvolutionJob
+	for i := range jobs {
+		j := &jobs[i]
+		if j.SkillSlug != skillSlug || j.EvalHash == "" {
+			continue
+		}
+		at := j.EvalUploadedAt
+		if at.IsZero() {
+			at = j.CreatedAt
+		}
+		if chosen == nil {
+			chosen = j
+			continue
+		}
+		chosenAt := chosen.EvalUploadedAt
+		if chosenAt.IsZero() {
+			chosenAt = chosen.CreatedAt
+		}
+		if at.After(chosenAt) {
+			chosen = j
+		}
+	}
+	if chosen == nil {
+		return nil, nil
+	}
+	train, val, meta, err := s.ReadEvolutionEvalSet(chosen.ID)
+	if err != nil {
+		return nil, fmt.Errorf("eval set for skill '%s' (job '%s') is recorded but unreadable: %w", skillSlug, chosen.ID, err)
+	}
+	// Fail-closed reproduction checks: the hash and scorer version recorded at
+	// upload must regenerate from the stored files, or nothing scores.
+	version := evalScorerVersionOfCases(train, val)
+	if version != meta.ScorerVersion {
+		return nil, fmt.Errorf("eval set for skill '%s' (job '%s') failed the scorer-version check: stored files derive %q, meta records %q", skillSlug, chosen.ID, version, meta.ScorerVersion)
+	}
+	recomputed := evalSetHash(train, val, version)
+	if recomputed != meta.EvalHash {
+		return nil, fmt.Errorf("eval set for skill '%s' (job '%s') failed the hash check: stored files hash to %.12s, meta records %.12s", skillSlug, chosen.ID, recomputed, meta.EvalHash)
+	}
+	if meta.EvalHash != chosen.EvalHash {
+		return nil, fmt.Errorf("eval set for skill '%s' (job '%s') disagrees with its job record: meta %.12s, job %.12s", skillSlug, chosen.ID, meta.EvalHash, chosen.EvalHash)
+	}
+	combined := make([]EvalCase, 0, len(train)+len(val))
+	combined = append(combined, train...)
+	combined = append(combined, val...)
+	set, err := compileScorerSet(combined)
+	if err != nil {
+		return nil, fmt.Errorf("eval set for skill '%s' (job '%s') has an unscorable scorer: %w", skillSlug, chosen.ID, err)
+	}
+	return &SkillEvalGate{
+		JobID:         chosen.ID,
+		EvalHash:      meta.EvalHash,
+		ScorerVersion: version,
+		train:         train,
+		val:           val,
+		scorers:       set,
+	}, nil
 }

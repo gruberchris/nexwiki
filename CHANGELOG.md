@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- **WikiSkill Evolution Story 11 — Eval splits, gate math, retrieval toggle, pre-live simulation**:
+  - Versioned sandboxed scorers: eval cases carry an optional per-case `scorer` — the built-in `exact` match by default, or an inline deterministic expression over `input`/`expected`/`output` using a fixed function allowlist (`overlap`, `contains`, `lower`, `trim`, `len`, `min`, `max`, `abs`). No process spawn, no network, no filesystem: anything else is refused at upload with a fix-it error naming the scorer and the offset.
+  - The derived scorer version is mixed into the eval hash and stamps every audit record and result report, bumping itself when the scorer set changes; with a stored eval set, the validation gate scores candidates' proposed bodies per split (train fit indicator + val score), recorded per iteration and reproducible from the stored data.
+  - Per-job `injection_mode` config (`all` default, or `retrieve`): a coarse server-side BM25 pre-filter over the registry's name/description front matter quotes only the top-K matching skills into the stdin payload, always plus the skill under evolution (top-K via `NEXWIKI_JOB_RETRIEVAL_TOPK`, default 5). Full injection remains the default.
+  - New pre-live simulation (internal API + `POST /api/evolution/jobs/{id}/simulate`, `GET /api/evolution/jobs/{id}/simulations`): a candidate is scored against the job's stored historical val cases without gating, returning the resolution rate plus per-case rows; results append as immutable, hash-linked records alongside the job, and in-flight runs are refused.
+
 ## [0.17.0] — 2026-09-11
 
 ### Added

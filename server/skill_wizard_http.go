@@ -69,54 +69,62 @@ type EvolutionJobView struct {
 	CancelReason     string            `json:"cancel_reason,omitempty"`
 	Error            string            `json:"error,omitempty"`
 	// Story 09: the Trained Skill Result report article this run generated.
-	ResultReportSlug string    `json:"result_report_slug,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
-	ClaimedAt        time.Time `json:"claimed_at,omitzero"`
-	LastHeartbeat    time.Time `json:"last_heartbeat,omitzero"`
-	LeaseExpiresAt   time.Time `json:"lease_expires_at,omitzero"`
-	RunDeadlineAt    time.Time `json:"run_deadline_at"`
-	CompletedAt      time.Time `json:"completed_at,omitzero"`
+	ResultReportSlug string `json:"result_report_slug,omitempty"`
+	// Story 11: the injection toggle config and the pre-live simulation trail
+	// the job carries (count + the chain head's result hash).
+	InjectionMode        string    `json:"injection_mode,omitempty"`
+	SimulationCount      int       `json:"simulation_count,omitempty"`
+	LatestSimulationHash string    `json:"latest_simulation_hash,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+	ClaimedAt            time.Time `json:"claimed_at,omitzero"`
+	LastHeartbeat        time.Time `json:"last_heartbeat,omitzero"`
+	LeaseExpiresAt       time.Time `json:"lease_expires_at,omitzero"`
+	RunDeadlineAt        time.Time `json:"run_deadline_at"`
+	CompletedAt          time.Time `json:"completed_at,omitzero"`
 }
 
 // viewOfJob projects a job record for REST responses: every field copied
 // explicitly, and the token hash simply has no destination in the view.
 func viewOfJob(job *EvolutionJob) EvolutionJobView {
 	return EvolutionJobView{
-		ID:               job.ID,
-		SkillSlug:        job.SkillSlug,
-		CandidateID:      job.CandidateID,
-		Profile:          job.Profile,
-		Status:           job.Status,
-		Iteration:        job.Iteration,
-		MaxIterations:    job.MaxIterations,
-		Runner:           job.Runner,
-		PID:              job.PID,
-		Progress:         job.Progress,
-		ProgressNote:     job.ProgressNote,
-		Artifacts:        job.Artifacts,
-		IdempotencyKeys:  job.IdempotencyKeys,
-		EvalHash:         job.EvalHash,
-		EvalTrainCount:   job.EvalTrainCount,
-		EvalValCount:     job.EvalValCount,
-		BaselineS0:       job.BaselineS0,
-		BaselineScorer:   job.BaselineScorer,
-		EvalUploadedAt:   job.EvalUploadedAt,
-		LoopOutcome:      job.LoopOutcome,
-		ApproveRequested: job.ApproveRequested,
-		PlateauLimit:     job.PlateauLimit,
-		Checkpoint:       job.Checkpoint,
-		PauseRequested:   job.PauseRequested,
-		CancelReason:     job.CancelReason,
-		Error:            job.Error,
-		ResultReportSlug: job.ResultReportSlug,
-		CreatedAt:        job.CreatedAt,
-		UpdatedAt:        job.UpdatedAt,
-		ClaimedAt:        job.ClaimedAt,
-		LastHeartbeat:    job.LastHeartbeat,
-		LeaseExpiresAt:   job.LeaseExpiresAt,
-		RunDeadlineAt:    job.RunDeadlineAt,
-		CompletedAt:      job.CompletedAt,
+		ID:                   job.ID,
+		SkillSlug:            job.SkillSlug,
+		CandidateID:          job.CandidateID,
+		Profile:              job.Profile,
+		Status:               job.Status,
+		Iteration:            job.Iteration,
+		MaxIterations:        job.MaxIterations,
+		Runner:               job.Runner,
+		PID:                  job.PID,
+		Progress:             job.Progress,
+		ProgressNote:         job.ProgressNote,
+		Artifacts:            job.Artifacts,
+		IdempotencyKeys:      job.IdempotencyKeys,
+		EvalHash:             job.EvalHash,
+		EvalTrainCount:       job.EvalTrainCount,
+		EvalValCount:         job.EvalValCount,
+		BaselineS0:           job.BaselineS0,
+		BaselineScorer:       job.BaselineScorer,
+		EvalUploadedAt:       job.EvalUploadedAt,
+		LoopOutcome:          job.LoopOutcome,
+		ApproveRequested:     job.ApproveRequested,
+		PlateauLimit:         job.PlateauLimit,
+		Checkpoint:           job.Checkpoint,
+		PauseRequested:       job.PauseRequested,
+		CancelReason:         job.CancelReason,
+		Error:                job.Error,
+		ResultReportSlug:     job.ResultReportSlug,
+		InjectionMode:        job.InjectionMode,
+		SimulationCount:      job.SimulationCount,
+		LatestSimulationHash: job.LatestSimulationHash,
+		CreatedAt:            job.CreatedAt,
+		UpdatedAt:            job.UpdatedAt,
+		ClaimedAt:            job.ClaimedAt,
+		LastHeartbeat:        job.LastHeartbeat,
+		LeaseExpiresAt:       job.LeaseExpiresAt,
+		RunDeadlineAt:        job.RunDeadlineAt,
+		CompletedAt:          job.CompletedAt,
 	}
 }
 
@@ -132,7 +140,15 @@ func wizardJobErrorStatus(err error) int {
 	case strings.Contains(msg, "already terminal"),
 		strings.Contains(msg, "only paused jobs resume"),
 		strings.Contains(msg, "status is"),
-		strings.Contains(msg, "cannot finalize"):
+		strings.Contains(msg, "cannot finalize"),
+		// Story 11 simulation refusals: missing preconditions on an existing
+		// job are conflicts, not faults.
+		strings.Contains(msg, "no eval set stored"),
+		strings.Contains(msg, "holds no val cases"),
+		strings.Contains(msg, "no pending candidate"),
+		strings.Contains(msg, "only pending candidates simulate"),
+		strings.Contains(msg, "diff-only candidates carry no body"),
+		strings.Contains(msg, "must run a candidate of this job's skill"):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
@@ -376,4 +392,57 @@ func (srv *Server) HandleApproveEvolutionJob(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, viewOfJob(job))
+}
+
+// simulateRequest is the optional body of a pre-live simulation POST: naming a
+// candidate_id runs that candidate; an empty body targets the newest pending
+// candidate for the job's skill.
+type simulateRequest struct {
+	CandidateID string `json:"candidate_id,omitempty"`
+}
+
+// HandleRunEvolutionSimulation runs the story-11 pre-live simulation: the
+// candidate is scored against the job's stored historical val cases WITHOUT
+// gating, and the immutable hash-linked result is returned. Pure
+// server-side math over stored data — responds in well under 2 s.
+func (srv *Server) HandleRunEvolutionSimulation(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "evolution job id is required")
+		return
+	}
+	var req simulateRequest
+	if r.Body != nil {
+		derr := json.NewDecoder(r.Body).Decode(&req)
+		if derr != nil && !errors.Is(derr, io.EOF) {
+			writeDecodeError(w, derr)
+			return
+		}
+	}
+	rec, err := srv.RunEvolutionSimulation(id, req.CandidateID)
+	if err != nil {
+		writeError(w, wizardJobErrorStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
+}
+
+// HandleListEvolutionSimulations serves a job's simulation history, oldest
+// first — the immutable, hash-linked trail the Review step renders.
+func (srv *Server) HandleListEvolutionSimulations(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "evolution job id is required")
+		return
+	}
+	if _, err := srv.Storage.GetEvolutionJob(id); err != nil {
+		writeError(w, wizardJobErrorStatus(err), err.Error())
+		return
+	}
+	recs, err := srv.Storage.ListSkillSimulations(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, recs)
 }
