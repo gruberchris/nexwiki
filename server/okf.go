@@ -317,6 +317,24 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 			at := art.LockedAt
 			overrides.LockedAt = &at
 		}
+		// The story-06 trained marker rides through the same way: a bundle carrying one
+		// adopts it exactly (the exported trained_version rides through via
+		// VersionOverride rather than being restamped), and a bundle without one leaves
+		// the live skill's marker untouched. saveArticleLocked still clears it on
+		// non-skill documents.
+		if !art.TrainedAt.IsZero() {
+			overrides.TrainedStamp = &TrainedStamp{
+				At:              art.TrainedAt,
+				ParentVersion:   art.TrainedParentVersion,
+				CandidateID:     art.TrainedCandidate,
+				ValScore:        art.TrainedValScore,
+				EvalHash:        art.TrainedEvalHash,
+				VersionOverride: art.TrainedVersion,
+			}
+			if !art.TrainedRevokedAt.IsZero() {
+				overrides.TrainedRevoke = &TrainedRevoke{At: art.TrainedRevokedAt, Reason: art.TrainedRevokedReason}
+			}
+		}
 		if len(art.Sources) > 0 {
 			overrides.Sources = &art.Sources
 		}

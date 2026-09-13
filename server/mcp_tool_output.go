@@ -71,6 +71,13 @@ type DocumentListOutput struct {
 	Documents []Article `json:"documents"`
 }
 
+// SkillTrainedStateListOutput is the get_skill_trained_state payload: the picker
+// rows, each carrying the skill's identity plus its derived trained state.
+type SkillTrainedStateListOutput struct {
+	Count  int                      `json:"count"`
+	Skills []SkillTrainedStateEntry `json:"skills"`
+}
+
 // BacklinksOutput is the `get_backlinks` payload.
 type BacklinksOutput struct {
 	Slug      string    `json:"slug"`
@@ -186,21 +193,29 @@ func schemaObject(properties map[string]interface{}, required ...string) map[str
 // /api/articles have identical keys — an agent that has seen one already knows the other.
 func articleSchema(withContent bool) map[string]interface{} {
 	props := map[string]interface{}{
-		"type":              schemaOf("string", "OKF document class: Wiki, AI-Agent-Memory, AI-Agent-Plan, or AI-Agent-Skill."),
-		"title":             schemaOf("string", "Human-readable document title."),
-		"slug":              schemaOf("string", "URL-safe identifier; the key every other tool takes."),
-		"created_at":        schemaOf("string", "RFC3339 creation time."),
-		"timestamp":         schemaOf("string", "RFC3339 last-modified time (OKF canonical modified time)."),
-		"description":       schemaOf("string", "One-line summary shown in indexes."),
-		"resource":          schemaOf("string", "OKF canonical URI of what the concept is."),
-		"source":            schemaOf("string", "Provenance: where the knowledge came from."),
-		"version":           schemaOf("integer", "Current revision number. Pass this as 'loaded_version' when editing."),
-		"edit_summary":      schemaOf("string", "Summary of the most recent edit."),
-		"tags":              schemaStringArray("Tags carried by the document, including status and memory-scope tags."),
-		"archived_at":       schemaOf("string", "RFC3339 archival time; absent unless the document is archived."),
-		"status":            schemaOf("string", "Lifecycle status. Plans and skills use a closed vocabulary (see get_status_tags); other documents may use any value or none."),
-		"status_changed_at": schemaOf("string", "RFC3339 time a plan last changed lifecycle status; drives the auto-archive/auto-delete timers. Only present on AI-Agent-Plan documents."),
-		"memory_kind":       schemaOf("string", "What sort of fact a memory holds: project, reference, user, or feedback. Only present on AI-Agent-Memory documents, and absent on memories written before the kind axis existed (wiki_health lists those as unkinded_memories). Independent of the memory-<scope> tag, which is reach rather than kind."),
+		"type":                   schemaOf("string", "OKF document class: Wiki, AI-Agent-Memory, AI-Agent-Plan, or AI-Agent-Skill."),
+		"title":                  schemaOf("string", "Human-readable document title."),
+		"slug":                   schemaOf("string", "URL-safe identifier; the key every other tool takes."),
+		"created_at":             schemaOf("string", "RFC3339 creation time."),
+		"timestamp":              schemaOf("string", "RFC3339 last-modified time (OKF canonical modified time)."),
+		"description":            schemaOf("string", "One-line summary shown in indexes."),
+		"resource":               schemaOf("string", "OKF canonical URI of what the concept is."),
+		"source":                 schemaOf("string", "Provenance: where the knowledge came from."),
+		"version":                schemaOf("integer", "Current revision number. Pass this as 'loaded_version' when editing."),
+		"edit_summary":           schemaOf("string", "Summary of the most recent edit."),
+		"tags":                   schemaStringArray("Tags carried by the document, including status and memory-scope tags."),
+		"archived_at":            schemaOf("string", "RFC3339 archival time; absent unless the document is archived."),
+		"status":                 schemaOf("string", "Lifecycle status. Plans and skills use a closed vocabulary (see get_status_tags); other documents may use any value or none."),
+		"status_changed_at":      schemaOf("string", "RFC3339 time a plan last changed lifecycle status; drives the auto-archive/auto-delete timers. Only present on AI-Agent-Plan documents."),
+		"memory_kind":            schemaOf("string", "What sort of fact a memory holds: project, reference, user, or feedback. Only present on AI-Agent-Memory documents, and absent on memories written before the kind axis existed (wiki_health lists those as unkinded_memories). Independent of the memory-<scope> tag, which is reach rather than kind."),
+		"trained_at":             schemaOf("string", "RFC3339 time the harness stamped the trained marker (a gate-accept promotion). Only present on AI-Agent-Skill documents."),
+		"trained_version":        schemaOf("integer", "The skill version the trained marker was stamped on. A current version that differs means the skill changed after training (get_skill_trained_state reports it stale)."),
+		"trained_parent_version": schemaOf("integer", "The pre-training version the promoted candidate was cut from; the rollback target."),
+		"trained_candidate":      schemaOf("string", "The candidate ID whose gate acceptance produced the marker."),
+		"trained_val_score":      schemaOf("number", "The validation score the gate accepted for this training."),
+		"trained_eval_hash":      schemaOf("string", "The eval-set hash the skill was trained against; compared against the current stored eval hash for staleness."),
+		"trained_revoked_at":     schemaOf("string", "RFC3339 time the marker was revoked (rollback) or cleared; absent on an active marker."),
+		"trained_revoked_reason": schemaOf("string", "Why the marker was revoked or unlocked."),
 		"generated": schemaObject(map[string]interface{}{
 			"by": schemaOf("string", "Agent or entity that generated the document."),
 			"at": schemaOf("string", "RFC3339 timestamp when the document was generated."),
@@ -294,6 +309,36 @@ func documentListOutputSchema(documentsDescription string) map[string]interface{
 		"count":     schemaOf("integer", "Number of documents returned."),
 		"documents": schemaArrayOf(articleSchema(false), documentsDescription),
 	}, "count", "documents")
+}
+
+// skillTrainedStateSchema describes one picker row (SkillTrainedStateEntry —
+// the embedded SkillTrainedState flattens into the same JSON object).
+func skillTrainedStateSchema() map[string]interface{} {
+	state := schemaOf("string", "Derived trained state: untrained (no marker), trained (active marker), or stale (flagged with a reason; still usable).")
+	state["enum"] = []string{TrainedStateUntrained, TrainedStateTrained, TrainedStateStale}
+	return schemaObject(map[string]interface{}{
+		"slug":                   schemaOf("string", "URL-safe slug of the skill."),
+		"title":                  schemaOf("string", "Human-readable skill title."),
+		"state":                  state,
+		"reason":                 schemaOf("string", "Why the state is stale (post-train skill edit, eval-set change, revocation, or a tampered marker). Absent when trained or untrained without incident."),
+		"trained_at":             schemaOf("string", "RFC3339 time the harness stamped the marker; absent when untrained."),
+		"trained_version":        schemaOf("integer", "Skill version the marker was stamped on; absent when untrained."),
+		"trained_parent_version": schemaOf("integer", "Pre-training version the candidate was cut from — the rollback target."),
+		"trained_candidate":      schemaOf("string", "Candidate ID whose gate acceptance produced the marker."),
+		"trained_val_score":      schemaOf("number", "Validation score the gate accepted for this training."),
+		"trained_eval_hash":      schemaOf("string", "Eval-set hash the skill was trained against."),
+		"revoked_at":             schemaOf("string", "RFC3339 time the marker was revoked (a rollback keeps the metadata and records this)."),
+		"revoked_reason":         schemaOf("string", "Recorded revocation or unlock reason."),
+		"current_version":        schemaOf("integer", "The skill's live version at comparison time."),
+		"current_eval_hash":      schemaOf("string", "The skill's current stored eval hash at comparison time; absent when no eval set was ever uploaded."),
+	}, "slug", "title", "state", "current_version")
+}
+
+func skillTrainedStateOutputSchema(skillsDescription string) map[string]interface{} {
+	return schemaObject(map[string]interface{}{
+		"count":  schemaOf("integer", "Number of skills returned."),
+		"skills": schemaArrayOf(skillTrainedStateSchema(), skillsDescription),
+	}, "count", "skills")
 }
 
 func backlinksOutputSchema() map[string]interface{} {

@@ -39,18 +39,19 @@ func seedStructuredFixture(t *testing.T) *Server {
 // TestEveryDeclaredOutputSchemaIsCovered, so adding an Output without a test is not possible.
 func structuredCalls() map[string]string {
 	return map[string]string{
-		"search_wiki":         `{"name":"search_wiki","arguments":{"query":"bleve"}}`,
-		"read_article":        `{"name":"read_article","arguments":{"slug":"search-design"}}`,
-		"list_articles":       `{"name":"list_articles","arguments":{}}`,
-		"list_agent_memories": `{"name":"list_agent_memories","arguments":{}}`,
-		"list_agent_plans":    `{"name":"list_agent_plans","arguments":{}}`,
-		"list_agent_skills":   `{"name":"list_agent_skills","arguments":{}}`,
-		"get_backlinks":       `{"name":"get_backlinks","arguments":{"slug":"search-design"}}`,
-		"get_article_history": `{"name":"get_article_history","arguments":{"slug":"search-design"}}`,
-		"get_wiki_statistics": `{"name":"get_wiki_statistics","arguments":{}}`,
-		"get_status_tags":     `{"name":"get_status_tags","arguments":{}}`,
-		"get_recent_activity": `{"name":"get_recent_activity","arguments":{}}`,
-		"wiki_health":         `{"name":"wiki_health","arguments":{}}`,
+		"search_wiki":             `{"name":"search_wiki","arguments":{"query":"bleve"}}`,
+		"read_article":            `{"name":"read_article","arguments":{"slug":"search-design"}}`,
+		"list_articles":           `{"name":"list_articles","arguments":{}}`,
+		"list_agent_memories":     `{"name":"list_agent_memories","arguments":{}}`,
+		"list_agent_plans":        `{"name":"list_agent_plans","arguments":{}}`,
+		"list_agent_skills":       `{"name":"list_agent_skills","arguments":{}}`,
+		"get_skill_trained_state": `{"name":"get_skill_trained_state","arguments":{}}`,
+		"get_backlinks":           `{"name":"get_backlinks","arguments":{"slug":"search-design"}}`,
+		"get_article_history":     `{"name":"get_article_history","arguments":{"slug":"search-design"}}`,
+		"get_wiki_statistics":     `{"name":"get_wiki_statistics","arguments":{}}`,
+		"get_status_tags":         `{"name":"get_status_tags","arguments":{}}`,
+		"get_recent_activity":     `{"name":"get_recent_activity","arguments":{}}`,
+		"wiki_health":             `{"name":"wiki_health","arguments":{}}`,
 	}
 }
 
@@ -326,12 +327,13 @@ func TestEmptyListingsSerializeAsArrays(t *testing.T) {
 	srv := newMCPServer(t) // untouched wiki: only the seeded home page exists
 
 	for name, call := range map[string]string{
-		"list_agent_memories": `{"name":"list_agent_memories","arguments":{}}`,
-		"list_agent_plans":    `{"name":"list_agent_plans","arguments":{}}`,
-		"list_agent_skills":   `{"name":"list_agent_skills","arguments":{}}`,
-		"list_articles":       `{"name":"list_articles","arguments":{}}`,
-		"get_wiki_statistics": `{"name":"get_wiki_statistics","arguments":{}}`,
-		"get_recent_activity": `{"name":"get_recent_activity","arguments":{}}`,
+		"list_agent_memories":     `{"name":"list_agent_memories","arguments":{}}`,
+		"list_agent_plans":        `{"name":"list_agent_plans","arguments":{}}`,
+		"list_agent_skills":       `{"name":"list_agent_skills","arguments":{}}`,
+		"get_skill_trained_state": `{"name":"get_skill_trained_state","arguments":{}}`,
+		"list_articles":           `{"name":"list_articles","arguments":{}}`,
+		"get_wiki_statistics":     `{"name":"get_wiki_statistics","arguments":{}}`,
+		"get_recent_activity":     `{"name":"get_recent_activity","arguments":{}}`,
 	} {
 		resp := toolCall(t, srv, call)
 		encoded, err := json.Marshal(resp.StructuredContent)

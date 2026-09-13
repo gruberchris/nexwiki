@@ -102,6 +102,7 @@ var mcpToolRegistry = []toolDef{
 	createAgentSkillTool,
 	editAgentSkillTool,
 	listAgentSkillsTool,
+	getSkillTrainedStateTool,
 	proposeSkillCandidateTool,
 	promoteSkillCandidateTool,
 	createEvolutionJobTool,

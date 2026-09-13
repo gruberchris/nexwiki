@@ -576,6 +576,25 @@ type Article struct {
 	LockedBy string    `json:"locked_by,omitempty"`
 	LockedAt time.Time `json:"locked_at,omitzero"`
 
+	// Trained-marker metadata (wikiskill evolution, story 06). Only ever set on
+	// AI-Agent-Skill documents, and only by the harness promote path
+	// (PromoteSkillCandidate): the gate accept that promotes a candidate stamps
+	// trained_at/version/parent_version/candidate/val_score/eval_hash at the same
+	// instant it writes the new skill version, so the marker can never name a
+	// version the body does not match. TrainedRevokedAt/Reason record an explicit
+	// rollback or human unlock — the metadata itself is history and is never
+	// silently deleted. The matching `trained-wikiskill` tag (TrainedMarkerTag,
+	// server/skill_trained.go) is the tool-managed marker agents cannot forge or
+	// strip; the front-matter fields carry the evidence.
+	TrainedAt            time.Time `json:"trained_at,omitzero"`
+	TrainedVersion       int       `json:"trained_version,omitempty"`
+	TrainedParentVersion int       `json:"trained_parent_version,omitempty"`
+	TrainedCandidate     string    `json:"trained_candidate,omitempty"`
+	TrainedValScore      float64   `json:"trained_val_score,omitempty"`
+	TrainedEvalHash      string    `json:"trained_eval_hash,omitempty"`
+	TrainedRevokedAt     time.Time `json:"trained_revoked_at,omitzero"`
+	TrainedRevokedReason string    `json:"trained_revoked_reason,omitempty"`
+
 	// OKF v0.2 core models: provenance, trust, and lifecycle (§5)
 	Generated   *OKFGenerated     `json:"generated,omitempty"`
 	Verified    []OKFVerification `json:"verified,omitempty"`
@@ -905,6 +924,22 @@ type ArticleOverrides struct {
 	// pass a pointer to "" to unlock. Only meaningful on AI-Agent-Skill documents.
 	LockedBy *string
 	LockedAt *time.Time
+	// TrainedStamp, TrainedRevoke, and TrainedUnlock drive the story-06 trained marker
+	// (server/skill_trained.go), again only on AI-Agent-Skill documents:
+	//
+	//   - TrainedStamp stamps a fresh marker (trained_at/version/parent/candidate/
+	//     val_score/eval_hash, revocation cleared) as part of the version this save
+	//     writes — the promote path and the bundle importer both use it. The stamp
+	//     also asserts the `trained-wikiskill` marker tag.
+	//   - TrainedRevoke records a revocation (rollback) against the metadata already
+	//     on the document; every other trained field is left untouched, so the
+	//     marker history survives the rollback.
+	//   - TrainedUnlock clears the marker entirely (tag plus all metadata). It is the
+	//     one write path allowed to remove the marker tag; the guard below refuses
+	//     every other path that tries to strip it.
+	TrainedStamp  *TrainedStamp
+	TrainedRevoke *TrainedRevoke
+	TrainedUnlock bool
 	// OKF v0.2 overrides
 	Sources     *[]OKFSource
 	StaleAfter  *time.Time
@@ -968,6 +1003,12 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	prevMemoryKind := ""                       // the memory kind before this save, preserved unless overridden
 	prevLockedBy := ""                         // the skill lock holder before this save, preserved unless overridden
 	var prevLockedAt time.Time
+	prevHadTrainedMarker := false // whether the on-disk skill carried the trained marker tag
+	prevTrainedAt, prevTrainedVersion := time.Time{}, 0
+	prevTrainedParentVersion := 0
+	prevTrainedCandidate, prevTrainedEvalHash, prevTrainedRevokedReason := "", "", ""
+	prevTrainedValScore := 0.0
+	var prevTrainedRevokedAt time.Time
 
 	// If updating an existing article
 	if oldSlug != "" {
@@ -986,6 +1027,15 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 				prevMemoryKind = existingArt.MemoryKind
 				prevLockedBy = existingArt.LockedBy
 				prevLockedAt = existingArt.LockedAt
+				prevHadTrainedMarker = hasTag(existingArt.Tags, TrainedMarkerTag)
+				prevTrainedAt = existingArt.TrainedAt
+				prevTrainedVersion = existingArt.TrainedVersion
+				prevTrainedParentVersion = existingArt.TrainedParentVersion
+				prevTrainedCandidate = existingArt.TrainedCandidate
+				prevTrainedValScore = existingArt.TrainedValScore
+				prevTrainedEvalHash = existingArt.TrainedEvalHash
+				prevTrainedRevokedAt = existingArt.TrainedRevokedAt
+				prevTrainedRevokedReason = existingArt.TrainedRevokedReason
 				art = &Article{
 					Type:            resolvedType,
 					Title:           title,
@@ -1199,6 +1249,69 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	art.MemoryKind = resolvedMemoryKind
 	art.LockedBy = resolvedLockedBy
 	art.LockedAt = resolvedLockedAt
+
+	// The trained marker resolves like the lock: preserved unless a stamp, revoke,
+	// or unlock override says otherwise, and meaningless anywhere but a skill. This
+	// runs after nextVersion is computed because a stamp always names the version
+	// this save writes — the marker can never point at a version that does not
+	// carry the stamped body.
+	art.TrainedAt = prevTrainedAt
+	art.TrainedVersion = prevTrainedVersion
+	art.TrainedParentVersion = prevTrainedParentVersion
+	art.TrainedCandidate = prevTrainedCandidate
+	art.TrainedValScore = prevTrainedValScore
+	art.TrainedEvalHash = prevTrainedEvalHash
+	art.TrainedRevokedAt = prevTrainedRevokedAt
+	art.TrainedRevokedReason = prevTrainedRevokedReason
+	if overrides.TrainedStamp != nil {
+		stamp := overrides.TrainedStamp
+		trainedVersion := stamp.VersionOverride
+		if trainedVersion == 0 {
+			trainedVersion = nextVersion
+		}
+		art.TrainedAt = stamp.At
+		art.TrainedVersion = trainedVersion
+		art.TrainedParentVersion = stamp.ParentVersion
+		art.TrainedCandidate = stamp.CandidateID
+		art.TrainedValScore = stamp.ValScore
+		art.TrainedEvalHash = stamp.EvalHash
+		// A stamp is a (re-)training: any earlier revocation is superseded, so the
+		// marker goes back to its active form.
+		art.TrainedRevokedAt = time.Time{}
+		art.TrainedRevokedReason = ""
+	}
+	if overrides.TrainedRevoke != nil {
+		// A revocation only writes the revocation fields: trained_at/version/score/
+		// eval_hash stay exactly as they were, which is the marker history a rollback
+		// must preserve.
+		art.TrainedRevokedAt = overrides.TrainedRevoke.At
+		art.TrainedRevokedReason = overrides.TrainedRevoke.Reason
+	}
+	if overrides.TrainedUnlock || resolvedType != ContentTypeSkill {
+		art.TrainedAt = time.Time{}
+		art.TrainedVersion = 0
+		art.TrainedParentVersion = 0
+		art.TrainedCandidate = ""
+		art.TrainedValScore = 0
+		art.TrainedEvalHash = ""
+		art.TrainedRevokedAt = time.Time{}
+		art.TrainedRevokedReason = ""
+	}
+	// The stamp asserts the marker tag alongside the metadata; every other write
+	// path keeps an existing marker (the tool-managed-tag rule), and only an
+	// explicit unlock may clear it.
+	if overrides.TrainedStamp != nil && resolvedType == ContentTypeSkill {
+		art.Tags = ensureTrainedMarkerTag(art.Tags)
+	}
+	if resolvedType == ContentTypeSkill && !overrides.TrainedUnlock && overrides.TrainedStamp == nil &&
+		prevHadTrainedMarker && !hasTag(art.Tags, TrainedMarkerTag) {
+		// Tool-managed marker: a write path that arrives without it (an agent tag
+		// edit that dropped it, a revert restoring pre-marker tags, an import of a
+		// bundle without it) cannot silently strip it. Re-assert it so the marker
+		// is removable only through TrainedUnlock — the explicit human path that
+		// appends its own audit record.
+		art.Tags = ensureTrainedMarkerTag(art.Tags)
+	}
 
 	if overrides.Sources != nil {
 		art.Sources = *overrides.Sources
@@ -1583,6 +1696,17 @@ type articleFrontMatter struct {
 	// namespaced custom keys, not OKF v0.2 core — never relabelled, never stripped.
 	LockedBy string `yaml:"locked_by,omitempty"`
 	LockedAt string `yaml:"locked_at,omitempty"`
+	// Trained-marker keys are NexWiki custom keys carried only by AI-Agent-Skill
+	// documents (wikiskill evolution, story 06). They are written only by the
+	// harness promote path and ride OKF export/import like locked_by.
+	TrainedAt            string  `yaml:"trained_at,omitempty"`
+	TrainedVersion       int     `yaml:"trained_version,omitempty"`
+	TrainedParentVersion int     `yaml:"trained_parent_version,omitempty"`
+	TrainedCandidate     string  `yaml:"trained_candidate,omitempty"`
+	TrainedValScore      float64 `yaml:"trained_val_score,omitempty"`
+	TrainedEvalHash      string  `yaml:"trained_eval_hash,omitempty"`
+	TrainedRevokedAt     string  `yaml:"trained_revoked_at,omitempty"`
+	TrainedRevokedReason string  `yaml:"trained_revoked_reason,omitempty"`
 }
 
 // extractCitationsFromBody parses a legacy v0.1 Markdown '# Citations' section (§13.1).
@@ -1741,6 +1865,22 @@ func parseArticleFile(fileContent []byte, loadContent bool) (*Article, error) {
 			}
 		}
 	}
+	if fm.TrainedAt != "" {
+		if t, err := parseISO8601(fm.TrainedAt); err == nil {
+			art.TrainedAt = t
+		}
+	}
+	art.TrainedVersion = fm.TrainedVersion
+	art.TrainedParentVersion = fm.TrainedParentVersion
+	art.TrainedCandidate = strings.TrimSpace(fm.TrainedCandidate)
+	art.TrainedValScore = fm.TrainedValScore
+	art.TrainedEvalHash = strings.ToLower(strings.TrimSpace(fm.TrainedEvalHash))
+	if fm.TrainedRevokedAt != "" {
+		if t, err := parseISO8601(fm.TrainedRevokedAt); err == nil {
+			art.TrainedRevokedAt = t
+		}
+	}
+	art.TrainedRevokedReason = strings.TrimSpace(fm.TrainedRevokedReason)
 
 	// `slug` derivation
 	if art.Slug == "" {
@@ -1855,6 +1995,18 @@ func serializeFrontMatter(art *Article) string {
 			fm.LockedAt = art.LockedAt.UTC().Format(time.RFC3339)
 		}
 	}
+	if !art.TrainedAt.IsZero() {
+		fm.TrainedAt = art.TrainedAt.UTC().Format(time.RFC3339)
+	}
+	fm.TrainedVersion = art.TrainedVersion
+	fm.TrainedParentVersion = art.TrainedParentVersion
+	fm.TrainedCandidate = art.TrainedCandidate
+	fm.TrainedValScore = art.TrainedValScore
+	fm.TrainedEvalHash = art.TrainedEvalHash
+	if !art.TrainedRevokedAt.IsZero() {
+		fm.TrainedRevokedAt = art.TrainedRevokedAt.UTC().Format(time.RFC3339)
+	}
+	fm.TrainedRevokedReason = art.TrainedRevokedReason
 
 	out, err := yaml.Marshal(&fm)
 	if err != nil {
@@ -2447,11 +2599,16 @@ func (s *Storage) CleanupArchivedArticles() error {
 }
 
 // DeleteTagGlobally removes a tag from all articles in the wiki.
-// Enforces validation: it returns an error if the tag is a tool-managed memory-scope tag.
+// Enforces validation: it returns an error if the tag is a tool-managed memory-scope tag,
+// or the tool-managed trained marker tag (story 06), whose removal belongs to the
+// explicit unlock path (UnlockTrainedMarker) with its audit record.
 func (s *Storage) DeleteTagGlobally(tag string) error {
 	tagLower := strings.ToLower(tag)
 	if strings.HasPrefix(tagLower, MemoryScopeTagPrefix) {
 		return fmt.Errorf("cannot delete protected memory-scope tag: %s", tag)
+	}
+	if tagLower == TrainedMarkerTag {
+		return fmt.Errorf("cannot delete the trained marker tag '%s': it is tool-managed — re-train the skill or use the explicit unlock path (UnlockTrainedMarker), which records the removal with an audit entry", tag)
 	}
 
 	// Held across the whole sweep so the operation is all-or-nothing with respect to other
