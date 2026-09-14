@@ -62,6 +62,35 @@ type Server struct {
 	// whole mechanism exists to prevent.
 	shuttingDown chan struct{}
 	shutdownOnce sync.Once
+
+	// Story 13 (the wizard owns the flow): the operator-run support state
+	// behind POST /api/skills/{slug}/train/start, POST /api/evolution/jobs/{id}/eval,
+	// and POST /api/evolution/jobs/{id}/dispatch (skill_wizard_operator_http.go).
+	//
+	// wizardJobTokens holds the raw per-harness tokens the wizard's own
+	// train/start minted, in memory only — nothing secret is ever persisted
+	// (the job record keeps its SHA-256 hash, exactly as story 04 built it) —
+	// so the server can dispatch and upload eval sets on the operator's
+	// behalf without the browser ever needing to handle the token. A server
+	// restart loses the cache by design; the operator's tab still holds the
+	// token the start response returned once and may supply it back in the
+	// request body.
+	//
+	// wizardDispatches tracks the jobs this server is currently driving
+	// through RunLoop goroutines, so a second dispatch is refused instead of
+	// double-driving the loop.
+	//
+	// wizardRunner is the lazily built headless runner (story 04
+	// configuration, validated at startup) those dispatches run through;
+	// wizardRunnerErr caches a construction failure so it reads the same on
+	// every attempt.
+	//
+	// wizardMu guards all four.
+	wizardMu         sync.Mutex
+	wizardJobTokens  map[string]string
+	wizardDispatches map[string]bool
+	wizardRunner     *Runner
+	wizardRunnerErr  error
 }
 
 // NewServer builds a new API controller.
@@ -76,6 +105,8 @@ func NewServer(storage *Storage, wikiName string, defaultTheme string, themeSche
 		Version:                version,
 		Port:                   port,
 		damper:                 newLookupDamper(),
+		wizardJobTokens:        map[string]string{},
+		wizardDispatches:       map[string]bool{},
 	}
 }
 

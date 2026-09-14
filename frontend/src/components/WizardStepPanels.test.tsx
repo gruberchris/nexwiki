@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   WizardStepSelect,
@@ -7,6 +7,8 @@ import {
   WizardStepBaseline,
   WizardStepReview,
   WizardStepReport,
+  WizardStepEvolveStart,
+  WizardNextBar,
 } from './WizardStepPanels';
 import type {
   EvalMeta,
@@ -16,6 +18,7 @@ import type {
   SkillRegistryEntry,
   SkillResultReportView,
   SkillTrainedState,
+  WizardEvalIssuesView,
 } from '../types';
 
 const skill: SkillRegistryEntry = {
@@ -96,24 +99,67 @@ describe('WizardStepSelect', () => {
 });
 
 describe('WizardStepData', () => {
-  it('renders the no-run guidance honestly', () => {
-    render(<WizardStepData job={null} evalMeta={null} />);
+  const startProps = { startBusy: false, startError: null, onStartRun: vi.fn(), uploadBusy: false, uploadIssues: null, uploadError: null, onUploadEval: vi.fn() };
+
+  it('renders the no-run guidance honestly, with the start-run button', () => {
+    render(<WizardStepData job={null} evalMeta={null} {...startProps} />);
     expect(screen.getByText('No evolution run yet')).toBeInTheDocument();
+    expect(screen.getByTestId('wizard-start-run-button')).toBeEnabled();
   });
 
-  it('renders the waiting state before the eval upload lands', () => {
-    render(<WizardStepData job={job} evalMeta={null} />);
-    expect(screen.getByText('No eval set uploaded yet')).toBeInTheDocument();
-    expect(screen.getByText(/upload_evolution_eval_set/)).toBeInTheDocument();
+  it('fires onStartRun from the start-run button', async () => {
+    const onStartRun = vi.fn();
+    render(<WizardStepData job={null} evalMeta={null} {...startProps} onStartRun={onStartRun} />);
+    await userEvent.click(screen.getByTestId('wizard-start-run-button'));
+    expect(onStartRun).toHaveBeenCalled();
+  });
+
+  it('shows the start-run error with its fix, and the busy spinner with text', () => {
+    render(<WizardStepData job={null} evalMeta={null} {...startProps} startBusy startError="cannot create evolution job: skill 'x' already has an active job 'job-1' (running) — one run per skill" />);
+    expect(screen.getByTestId('wizard-start-error')).toHaveTextContent('already has an active job');
+    expect(screen.getByTestId('wizard-start-run-button')).toHaveTextContent('Creating the run…');
+  });
+
+  it('renders the guided data-entry form before the eval upload lands', () => {
+    render(<WizardStepData job={job} evalMeta={null} {...startProps} />);
+    expect(screen.getByTestId('wizard-data-form')).toBeInTheDocument();
+    expect(screen.getByTestId('wizard-data-textarea')).toBeInTheDocument();
+    expect(screen.getByTestId('wizard-submit-data')).toBeDisabled();
+  });
+
+  it('submits pasted data through the gate and renders the fix-it list verbatim on refusal', async () => {
+    const onUploadEval = vi.fn();
+    const issues: WizardEvalIssuesView = {
+      error: 'refused',
+      issues: ['train row 1: field "expected" must not be empty', 'duplicate cases: rows 1, 2 are identical'],
+      parsed: 3,
+      train_count: 0,
+      val_count: 0,
+      split_mode: 'user',
+    };
+    const { rerender } = render(<WizardStepData job={job} evalMeta={null} {...startProps} onUploadEval={onUploadEval} />);
+    // fireEvent for typing: userEvent's keyboard parser reads { as a key key.
+    const textarea = screen.getByTestId('wizard-data-textarea');
+    fireEvent.change(textarea, { target: { value: '{"input":"one","expected":"alpha"}' } });
+    await userEvent.click(screen.getByTestId('wizard-submit-data'));
+    expect(onUploadEval).toHaveBeenCalledWith('cases.jsonl', expect.stringContaining('"input":"one"'));
+
+    rerender(<WizardStepData job={job} evalMeta={null} {...startProps} onUploadEval={onUploadEval} uploadIssues={issues} />);
+    expect(screen.getByTestId('wizard-data-issues')).toBeInTheDocument();
+    expect(screen.getAllByTestId('wizard-data-issue')[0]).toHaveTextContent('train row 1: field "expected" must not be empty');
+    expect(screen.getAllByTestId('wizard-data-issue')[1]).toHaveTextContent('duplicate cases: rows 1, 2 are identical');
   });
 
   it('renders the accepted upload summary from server state', () => {
-    render(<WizardStepData job={job} evalMeta={evalMeta} />);
+    render(<WizardStepData job={job} evalMeta={evalMeta} {...startProps} />);
+    expect(screen.getByTestId('wizard-data-accepted')).toBeInTheDocument();
     expect(screen.getByText('Train cases')).toBeInTheDocument();
     expect(screen.getByText('30')).toBeInTheDocument();
     expect(screen.getByText('10')).toBeInTheDocument();
     expect(screen.getByText('rounds.jsonl')).toBeInTheDocument();
     expect(screen.getAllByText(/eval hash/).length).toBeGreaterThan(0);
+    expect(screen.getByTestId('wizard-data-s0-preview')).toHaveTextContent(/S0/);
+    expect(screen.getByTestId('wizard-data-replace')).toBeInTheDocument();
   });
 });
 
@@ -518,5 +564,56 @@ describe('WizardStepReport', () => {
       expect(screen.getByText('The report could not be loaded')).toBeInTheDocument();
     });
     expect(screen.getByText(/storage locked/)).toBeInTheDocument();
+  });
+});
+
+describe('WizardStepEvolveStart', () => {
+  const queued: EvolutionJob = { ...job, status: 'queued', iteration: 0 };
+  const paused: EvolutionJob = { ...job, status: 'paused', checkpoint: 'paused at iteration 1' };
+
+  it('offers the start-the-loop button with the plain-language contract', () => {
+    render(<WizardStepEvolveStart job={queued} dispatchBusy={false} dispatchError={null} onStartLoop={vi.fn()} />);
+    expect(screen.getByTestId('wizard-evolve-start')).toBeInTheDocument();
+    expect(screen.getByText(/pause or cancel it at any moment/i)).toBeInTheDocument();
+    expect(screen.getByText(/90-minute cap/i)).toBeInTheDocument();
+    expect(screen.getByTestId('wizard-start-loop-button')).toHaveTextContent('Start the loop');
+  });
+
+  it('fires onStartLoop with the task line', async () => {
+    const onStartLoop = vi.fn();
+    render(<WizardStepEvolveStart job={queued} dispatchBusy={false} dispatchError={null} onStartLoop={onStartLoop} />);
+    await userEvent.click(screen.getByTestId('wizard-start-loop-button'));
+    expect(onStartLoop).toHaveBeenCalledWith('');
+  });
+
+  it('renders the resume shape for a parked run', () => {
+    render(<WizardStepEvolveStart job={paused} dispatchBusy={false} dispatchError={null} onStartLoop={vi.fn()} resuming />);
+    expect(screen.getByRole('heading', { name: 'Resume the run' })).toBeInTheDocument();
+    expect(screen.getByTestId('wizard-start-loop-button')).toHaveTextContent('Resume the run');
+    expect(screen.getByText(/re-queues it from the checkpoint/i)).toBeInTheDocument();
+  });
+
+  it('shows the busy text and the dispatch error with its fix', () => {
+    render(<WizardStepEvolveStart job={queued} dispatchBusy dispatchError="cannot dispatch: at capacity" onStartLoop={vi.fn()} />);
+    expect(screen.getByTestId('wizard-start-loop-button')).toHaveTextContent('Starting the loop…');
+    expect(screen.getByTestId('wizard-dispatch-error')).toHaveTextContent('cannot dispatch: at capacity');
+  });
+});
+
+describe('WizardNextBar', () => {
+  it('renders narration, the enabled Next, and its hint', async () => {
+    const onNext = vi.fn();
+    render(<WizardNextBar narration="Run job-1 created — the skill is locked." nextLabel="Next: Data" nextHint="Paste your cases." onNext={onNext} enabled />);
+    expect(screen.getByTestId('wizard-next-narration')).toHaveTextContent('Run job-1 created — the skill is locked.');
+    expect(screen.getByTestId('wizard-next-button')).toBeEnabled();
+    await userEvent.click(screen.getByTestId('wizard-next-button'));
+    expect(onNext).toHaveBeenCalled();
+    expect(screen.getByText('Paste your cases.')).toBeInTheDocument();
+  });
+
+  it('disables Next with the reason always visible', () => {
+    render(<WizardNextBar narration="No run yet." nextLabel="Next: Baseline" onNext={vi.fn()} enabled={false} disabledReason="Create the run first." />);
+    expect(screen.getByTestId('wizard-next-button')).toBeDisabled();
+    expect(screen.getByTestId('wizard-next-disabled-reason')).toHaveTextContent('Create the run first.');
   });
 });

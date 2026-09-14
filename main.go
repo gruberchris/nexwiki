@@ -310,6 +310,14 @@ func main() {
 	mux.HandleFunc("POST /api/evolution/jobs/{id}/simulate", srv.HandleRunEvolutionSimulation)
 	mux.HandleFunc("GET /api/evolution/jobs/{id}/simulations", srv.HandleListEvolutionSimulations)
 
+	// Register the story-13 operator-run endpoints: the wizard owns the flow,
+	// so the browser itself starts the run (minting the harness token server-
+	// side, in memory only), uploads the eval set through the real story-05
+	// gate, and dispatches the loop through the story-04/07 runner.
+	mux.HandleFunc("POST /api/skills/{slug}/train/start", srv.HandleStartSkillTraining)
+	mux.HandleFunc("POST /api/evolution/jobs/{id}/eval", srv.HandleUploadEvolutionEval)
+	mux.HandleFunc("POST /api/evolution/jobs/{id}/dispatch", srv.HandleDispatchEvolutionJob)
+
 	// Create FS for React Frontend.
 	// We check if "frontend/dist" exists as a physical directory on disk for dev mode live-reloading.
 	// If it doesn't exist, we fall back to the embedded binary filesystem.

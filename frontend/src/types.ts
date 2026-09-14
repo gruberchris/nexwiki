@@ -374,3 +374,45 @@ export interface SkillResultReportView {
   /** The skill's live derived trained state (staleness is derived at serve time). */
   trained_state?: SkillTrainedState;
 }
+
+// ---------------------------------------------------------------------------
+// Story 13: the wizard owns the flow. The operator-run endpoints mint the
+// run (train/start), validate training data through the real story-05 gate
+// (eval POST), and start the loop server-side (dispatch, answering the same
+// one-poll shape as EvolutionLoopResponse above).
+// ---------------------------------------------------------------------------
+
+/** POST /api/skills/{slug}/train/start — the new run plus its harness token,
+ * returned ONCE (the server keeps it in memory for its own dispatch calls;
+ * nothing is persisted or logged). */
+export interface WizardTrainStartView {
+  job: EvolutionJob;
+  token: string;
+}
+
+/** A 400 answer from the eval POST: the story-05 gate's per-issue fix-it
+ * list, verbatim. Nothing was stored. */
+export interface WizardEvalIssuesView {
+  error: string;
+  issues: string[];
+  parsed: number;
+  train_count: number;
+  val_count: number;
+  split_mode: string;
+}
+
+/** The guided data-entry format choices the Data step offers; each maps to
+ * the bare filename the format gate routes on. */
+export const WIZARD_DATA_FORMATS = [
+  { id: 'jsonl', label: 'JSON Lines — one {"input","expected"} object per line', ext: '.jsonl' },
+  { id: 'json', label: 'JSON — array of cases, or {"train":[…],"val":[…]}', ext: '.json' },
+  { id: 'csv', label: 'CSV — header row with input and expected columns', ext: '.csv' },
+  { id: 'text', label: 'Text — one case per line, "input ||| expected"', ext: '.txt' },
+] as const;
+
+export type WizardDataFormatId = (typeof WIZARD_DATA_FORMATS)[number]['id'];
+
+export function wizardFormatFilename(format: WizardDataFormatId): string {
+  const found = WIZARD_DATA_FORMATS.find((entry) => entry.id === format);
+  return found ? `cases${found.ext}` : 'cases.jsonl';
+}

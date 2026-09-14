@@ -82,8 +82,9 @@ export interface UseRouterResult {
   /** Pushes a URL. Accepts a path with or without a leading slash. */
   navigate: (fullUrl: string) => void;
   /**
-   * Navigates by intent rather than by URL: 'home', a bare article slug, or a 'new'/'search'
-   * path. Callers pass a slug without needing to know it lives under /articles/.
+   * Navigates by intent rather than by URL: 'home', a bare article slug, a 'new'/'search' path,
+   * or a full app path starting with '/' (passed through untouched — e.g. the wizard picker's
+   * /skills/<slug>/train). Callers pass a slug without needing to know it lives under /articles/.
    */
   navigateTo: (target: string) => void;
 }
@@ -124,10 +125,11 @@ export function useRouter(onRouteChange?: () => void): UseRouterResult {
     (target: string) => {
       if (target === 'home') {
         navigate('/');
-      } else if (
-        target.startsWith('new') || target.startsWith('/new') ||
-        target.startsWith('search') || target.startsWith('/search')
-      ) {
+      } else if (target.startsWith('/')) {
+        // A full app path (e.g. the wizard picker's /skills/<slug>/train): use as-is —
+        // prepending /articles/ would double-prefix into a slug no article has, a 404.
+        navigate(target);
+      } else if (target.startsWith('new') || target.startsWith('search')) {
         navigate(target);
       } else {
         navigate(`/articles/${target}`);

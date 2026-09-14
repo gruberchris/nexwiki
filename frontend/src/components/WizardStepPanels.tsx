@@ -8,8 +8,10 @@ import type {
   SkillResultReportView,
   SkillTrainedState,
   SkillTrainedStateEntry,
+  WizardDataFormatId,
+  WizardEvalIssuesView,
 } from '../types';
-import { isRealTimestamp } from '../types';
+import { isRealTimestamp, WIZARD_DATA_FORMATS, wizardFormatFilename } from '../types';
 import type { ToastFn } from './SkillTrainWizard';
 import {
   Database,
@@ -28,6 +30,9 @@ import {
   RefreshCw,
   ExternalLink,
   Hourglass,
+  Play,
+  Rocket,
+  ShieldQuestion,
 } from 'lucide-react';
 import { TrainedBadge } from './TrainedBadge';
 import {
@@ -138,9 +143,146 @@ export const WizardStepSelect: React.FC<WizardStepSelectProps> = ({ skills, sele
 interface WizardStepDataProps {
   job: EvolutionJob | null;
   evalMeta: EvalMeta | null;
+  /** True while POST /train/start is in flight. */
+  startBusy: boolean;
+  /** The start-run failure, already carrying the server's fix. */
+  startError: string | null;
+  /** Fires POST /api/skills/{slug}/train/start. */
+  onStartRun: () => void;
+  /** True while POST /eval is in flight. */
+  uploadBusy: boolean;
+  /** The story-05 gate's per-issue fix-it list for the last refused upload. */
+  uploadIssues: WizardEvalIssuesView | null;
+  /** Any other eval-upload failure (network, terminal job), with its fix. */
+  uploadError: string | null;
+  /** Fires POST /api/evolution/jobs/{id}/eval with filename + content. */
+  onUploadEval: (filename: string, content: string) => void;
 }
 
-export const WizardStepData: React.FC<WizardStepDataProps> = ({ job, evalMeta }) => {
+/**
+ * The guided data-entry form: paste (JSONL/JSON/CSV/text) or a file upload,
+ * both feeding the same filename+content payload the story-05 gate consumes.
+ * Local state only — a refused upload leaves the text on screen so the
+ * operator can fix the listed issues instead of retyping.
+ */
+const WizardDataForm: React.FC<{ uploadBusy: boolean; onSubmit: (filename: string, content: string) => void }> = ({ uploadBusy, onSubmit }) => {
+  const [format, setFormat] = useState<WizardDataFormatId>('jsonl');
+  const [content, setContent] = useState('');
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  const handleFile = useCallback(async (file: File | undefined) => {
+    if (!file) return;
+    setFileError(null);
+    if (file.size > 2 * 1024 * 1024) {
+      setFileError(`"${file.name}" is ${(file.size / (1024 * 1024)).toFixed(1)} MB — the format gate accepts at most 2 MB per upload; trim or split the set.`);
+      return;
+    }
+    try {
+      const text = await file.text();
+      setContent(text);
+      // The file's own extension decides the format: it is what the gate routes on.
+      const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase() || '.jsonl';
+      const match = WIZARD_DATA_FORMATS.find((entry) => entry.ext === ext);
+      if (match) setFormat(match.id);
+      else setFileError(`Accepted file types are ${WIZARD_DATA_FORMATS.map((entry) => entry.ext).join(', ')} — "${file.name}" will be refused.`);
+    } catch {
+      setFileError(`Could not read "${file.name}" — pick the file again.`);
+    }
+  }, []);
+
+  const canSubmit = content.trim().length > 0 && !uploadBusy;
+  return (
+    <div className="rounded-2xl border border-themeBorder bg-themeBgSecondary/60 p-4 space-y-3" data-testid="wizard-data-form">
+      <div className="flex flex-wrap gap-1.5">
+        {WIZARD_DATA_FORMATS.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            onClick={() => setFormat(entry.id)}
+            aria-pressed={format === entry.id}
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+              format === entry.id ? 'bg-themeAccentBg text-themeAccent border-themeAccent/50' : 'bg-themeBgPrimary text-themeTextMuted border-themeBorder hover:border-themeAccent/40'
+            }`}
+          >
+            {entry.ext}
+          </button>
+        ))}
+        <p className="text-[10px] text-themeTextMuted leading-relaxed min-w-0 flex-1 basis-full">{WIZARD_DATA_FORMATS.find((entry) => entry.id === format)?.label}</p>
+      </div>
+      <textarea
+        data-testid="wizard-data-textarea"
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        placeholder={format === 'text' ? 'How do I round a value? ||| Math.round(n)' : '{"input":"How do I round a value?","expected":"Math.round(n)"}'}
+        rows={8}
+        aria-label="Training cases"
+        className="w-full rounded-xl border border-themeBorder bg-themeBgPrimary px-3 py-2 text-xs text-themeTextPrimary font-mono placeholder:text-themeTextMuted/70 focus:outline-none focus:border-themeAccent/50"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-flex items-center gap-1.5 py-2 px-3 rounded-xl border border-themeBorder bg-themeBgPrimary text-themeTextMuted hover:text-themeAccent hover:border-themeAccent/40 font-semibold text-xs transition-colors cursor-pointer">
+          <UploadCloud size={12} />
+          <span>Upload a file</span>
+          <input
+            type="file"
+            className="hidden"
+            accept={WIZARD_DATA_FORMATS.map((entry) => entry.ext).join(',')}
+            onChange={(e) => {
+              void handleFile(e.target.files?.[0]);
+              e.target.value = '';
+            }}
+          />
+        </label>
+        <span className="text-[10px] text-themeTextMuted">or paste above — one case per line, {wizardFormatFilename(format).slice(6)} format</span>
+        <button
+          type="button"
+          onClick={() => onSubmit(wizardFormatFilename(format), content)}
+          disabled={!canSubmit}
+          data-testid="wizard-submit-data"
+          className="ml-auto inline-flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-themeAccent/40 bg-themeAccentBg text-themeAccent hover:border-themeAccent font-semibold text-xs shadow-xs hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer disabled:opacity-40 disabled:hover:scale-100"
+        >
+          {uploadBusy ? <Loader2 size={12} className="animate-spin" /> : <ShieldQuestion size={12} />}
+          <span>{uploadBusy ? 'Validating…' : 'Submit training data'}</span>
+        </button>
+      </div>
+      {uploadBusy && <p className="text-[10px] text-themeTextMuted">Running the format gate — parsing, split counts, dedupe, leakage, and the secret scan; nothing is stored unless it passes.</p>}
+      {fileError && <p data-testid="wizard-data-file-error" className="text-[10px] text-amber-600 dark:text-amber-400 leading-relaxed">{fileError}</p>}
+    </div>
+  );
+};
+
+// The gate refusal as a fix-it list: one line per issue, verbatim from the gate.
+const WizardIssueList: React.FC<{ issues: WizardEvalIssuesView }> = ({ issues }) => (
+  <div data-testid="wizard-data-issues" className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 space-y-2">
+    <h4 className="text-xs font-black text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
+      <XCircle size={12} />
+      The format gate refused this set — nothing was stored
+    </h4>
+    <p className="text-[10px] text-rose-600/80 dark:text-rose-400/80 leading-relaxed">
+      {issues.parsed} case{issues.parsed === 1 ? '' : 's'} parsed
+      {issues.split_mode ? ` · ${issues.split_mode} splits would hold ${issues.train_count} train / ${issues.val_count} val` : ''} · fix each issue below and submit again (your text is still on screen).
+    </p>
+    <ul className="space-y-1.5">
+      {issues.issues.map((issue, i) => (
+        <li key={i} data-testid="wizard-data-issue" className="text-[11px] text-rose-600 dark:text-rose-400 leading-relaxed flex gap-1.5">
+          <span className="shrink-0">›</span>
+          <span className="font-mono break-all">{issue}</span>
+        </li>
+      ))}
+    </ul>
+  </div>
+);
+
+export const WizardStepData: React.FC<WizardStepDataProps> = ({
+  job,
+  evalMeta,
+  startBusy,
+  startError,
+  onStartRun,
+  uploadBusy,
+  uploadIssues,
+  uploadError,
+  onUploadEval,
+}) => {
   if (!job) {
     return (
       <WizardPane title="2 · Training data" subtitle="The run's validated {input, expected} cases, stored under the job after the format gate accepts them.">
@@ -148,56 +290,104 @@ export const WizardStepData: React.FC<WizardStepDataProps> = ({ job, evalMeta })
           icon={<Database size={16} />}
           title="No evolution run yet"
           lines={[
-            'The wizard follows a run that already exists — dispatch one from your harness with create_evolution_job, then return here.',
-            'Once the run exists, upload the eval set through upload_evolution_eval_set (the harness or agent holds the job token).',
+            'Starting the run locks the skill until it ends — one run per skill, at most ~90 minutes.',
+            'Then paste or upload your training cases right here; the wizard walks the format gate with you.',
           ]}
         />
-      </WizardPane>
-    );
-  }
-  if (!evalMeta) {
-    return (
-      <WizardPane title="2 · Training data" subtitle="Waiting for the format gate to accept the run's training data.">
-        <HintCard
-          icon={<UploadCloud size={16} />}
-          title="No eval set uploaded yet"
-          lines={[
-            `Job ${job.id} has no accepted training-data upload yet.`,
-            'Upload it with upload_evolution_eval_set (CSV, JSONL, JSON, text, or logs carrying {input, expected} cases) — the browser never holds the job token, so the harness or an agent call does this.',
-            'The gate stores train/val splits, the eval hash, and refuses anything with secrets, dupes, or leakage — nothing is stored on a refusal.',
-          ]}
-        />
-      </WizardPane>
-    );
-  }
-  return (
-    <WizardPane title="2 · Training data" subtitle="What the format gate accepted and stored for this run.">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: 'Train cases', value: evalMeta.train_count },
-          { label: 'Val cases', value: evalMeta.val_count },
-          { label: 'Split mode', value: evalMeta.split_mode },
-          { label: 'Scorer', value: evalMeta.scorer_version },
-        ].map((stat) => (
-          <div key={stat.label} className="p-4 rounded-2xl border border-themeBorder bg-themeBgSecondary/60">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-themeTextMuted">{stat.label}</p>
-            <p className="mt-1 text-base font-black text-themeTextPrimary">{stat.value}</p>
+        <button
+          type="button"
+          onClick={onStartRun}
+          disabled={startBusy}
+          data-testid="wizard-start-run-button"
+          className="inline-flex items-center gap-1.5 py-2.5 px-4 rounded-xl border border-themeAccent/40 bg-themeAccentBg text-themeAccent hover:border-themeAccent font-bold text-xs shadow-xs hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer disabled:opacity-40 disabled:hover:scale-100"
+        >
+          {startBusy ? <Loader2 size={13} className="animate-spin" /> : <Rocket size={13} />}
+          <span>{startBusy ? 'Creating the run…' : 'Start training run'}</span>
+        </button>
+        {startBusy && <p className="text-[10px] text-themeTextMuted">Minting the run and locking the skill — the run ID appears here as soon as the server answers.</p>}
+        {startError && (
+          <div data-testid="wizard-start-error" className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 space-y-1.5">
+            <p className="text-[11px] text-rose-600 dark:text-rose-400 leading-relaxed">{startError}</p>
+            <p className="text-[10px] text-rose-600/80 dark:text-rose-400/80 leading-relaxed">If an active run already exists, open the Evolve step — the wizard follows it and its controls from there.</p>
           </div>
-        ))}
-      </div>
-      <div className="rounded-2xl border border-themeBorder bg-themeBgSecondary/60 p-4 space-y-2">
-        <p className="text-[11px] text-themeTextSecondary">
-          <span className="font-bold">{evalMeta.filename}</span> · uploaded{' '}
-          {new Date(evalMeta.uploaded_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-        </p>
-        <p className="text-[10px] text-themeTextMuted font-mono break-all">
-          eval hash {(evalMeta.eval_hash || '').slice(0, 24)}…
-        </p>
-        <p className="text-[10px] text-themeTextMuted leading-relaxed">
-          The eval hash is what the trained marker will be checked against later: re-uploading after
-          training is exactly what marks the skill stale.
-        </p>
-      </div>
+        )}
+      </WizardPane>
+    );
+  }
+
+  const accepted = !!evalMeta;
+  return (
+    <WizardPane
+      title="2 · Training data"
+      subtitle={accepted ? 'What the format gate accepted and stored for this run.' : 'Paste or upload the training cases — the format gate validates them before anything is stored.'}
+    >
+      {accepted && evalMeta && (
+        <div className="space-y-3" data-testid="wizard-data-accepted">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { label: 'Train cases', value: evalMeta.train_count },
+              { label: 'Val cases', value: evalMeta.val_count },
+              { label: 'Split mode', value: evalMeta.split_mode },
+              { label: 'Scorer', value: evalMeta.scorer_version },
+            ].map((stat) => (
+              <div key={stat.label} className="p-4 rounded-2xl border border-themeBorder bg-themeBgSecondary/60">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-themeTextMuted">{stat.label}</p>
+                <p className="mt-1 text-base font-black text-themeTextPrimary">{stat.value}</p>
+              </div>
+            ))}
+          </div>
+          <div className="rounded-2xl border border-themeBorder bg-themeBgSecondary/60 p-4 space-y-2">
+            <p className="text-[11px] text-themeTextSecondary">
+              <span className="font-bold">{evalMeta.filename}</span> · uploaded{' '}
+              {new Date(evalMeta.uploaded_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            </p>
+            <p className="text-[10px] text-themeTextMuted font-mono break-all">
+              eval hash {(evalMeta.eval_hash || '').slice(0, 24)}…
+            </p>
+            <p data-testid="wizard-data-s0-preview" className="text-[10px] text-themeTextMuted leading-relaxed">
+              Scored at upload: S0 {Math.round((evalMeta.baseline_s0 ?? 0) * 10000) / 100}% on the val split
+              {evalMeta.dry_run.length > 0 ? ` · dry run scored ${evalMeta.dry_run.length} sample${evalMeta.dry_run.length === 1 ? '' : 's'} (full preview on the Baseline step)` : ''}.
+            </p>
+            <p className="text-[10px] text-themeTextMuted leading-relaxed">
+              The eval hash is what the trained marker will be checked against later: re-uploading after
+              training is exactly what marks the skill stale.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {!accepted && (
+        <>
+          {uploadIssues && <WizardIssueList issues={uploadIssues} />}
+          {uploadError && (
+            <div data-testid="wizard-upload-error" className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 space-y-1.5">
+              <p className="text-[11px] text-rose-600 dark:text-rose-400 leading-relaxed">{uploadError}</p>
+              <p className="text-[10px] text-rose-600/80 dark:text-rose-400/80 leading-relaxed">If the run just ended, start a fresh run once the skill lock releases.</p>
+            </div>
+          )}
+          <WizardDataForm uploadBusy={uploadBusy} onSubmit={onUploadEval} />
+          <HintCard
+            icon={<Database size={16} />}
+            title="What the gate enforces (story 05, unchanged)"
+            lines={[
+              'Cases shaped {input, expected [, scorer]} — CSV, JSONL, JSON, or text lines "input ||| expected".',
+              'Refuses secrets/PII shapes, duplicate cases, and identical inputs across train/val (leakage) — with one fix-it line per issue.',
+              'A re-upload replaces the splits wholesale while the run is live.',
+            ]}
+          />
+        </>
+      )}
+
+      {accepted && (
+        <details data-testid="wizard-data-replace">
+          <summary className="text-[11px] font-bold text-themeAccent cursor-pointer">Replace the training data (re-uploads replace the splits)</summary>
+          <div className="mt-3 space-y-3">
+            {uploadIssues && <WizardIssueList issues={uploadIssues} />}
+            {uploadError && <p data-testid="wizard-upload-error" className="text-[10px] text-rose-600 dark:text-rose-400 leading-relaxed">{uploadError}</p>}
+            <WizardDataForm uploadBusy={uploadBusy} onSubmit={onUploadEval} />
+          </div>
+        </details>
+      )}
     </WizardPane>
   );
 };
@@ -235,7 +425,12 @@ export const WizardStepBaseline: React.FC<WizardStepBaselineProps> = ({ job, eva
   }
   const percent = Math.round(s0 * 10000) / 100;
   return (
-    <WizardPane title="3 · Baseline" subtitle="S0 — the live skill's score on the validation split under the v0 scorer. Every accepted iteration must beat R_best, which starts here.">
+    <WizardPane title="3 · Baseline" subtitle="S0 — the live skill's score on the validation split. Every accepted iteration must beat R_best, which starts here.">
+      <p data-testid="wizard-baseline-note" className="text-[11px] text-themeTextSecondary leading-relaxed rounded-2xl border border-dashed border-themeBorder bg-themeBgSecondary/40 p-4">
+        Already computed: the format gate scored this live skill against the val split the moment it accepted
+        your data (step 2) — the numbers below came with that upload, so there is nothing to rerun. Next
+        starts the evolution loop, which must beat R_best from here on.
+      </p>
       <div className="rounded-2xl border border-themeBorder bg-themeBgSecondary/60 p-5">
         <div className="flex items-baseline gap-2">
           <span className="text-3xl font-black text-themeAccent">{percent}%</span>
@@ -288,6 +483,108 @@ export const WizardStepBaseline: React.FC<WizardStepBaselineProps> = ({ job, eva
     </WizardPane>
   );
 };
+
+// --- Step 4: Evolve — the start-the-loop block (story 13) ----------------------------
+
+interface WizardStepEvolveStartProps {
+  job: EvolutionJob;
+  /** True while POST /dispatch is in flight. */
+  dispatchBusy: boolean;
+  /** The dispatch failure, already carrying the server's fix. */
+  dispatchError: string | null;
+  /** Fires POST /api/evolution/jobs/{id}/dispatch with the task line. */
+  onStartLoop: (task: string) => void;
+  /** True when the job is parked: the button resumes the run. */
+  resuming?: boolean;
+}
+
+/**
+ * The user-initiated start of the loop (story 13): one button, a plain-language
+ * line of exactly what will happen, and the optional task line the harness
+ * follows. Shown above the live view while the job is queued or parked; once
+ * the loop drives, the live view takes over.
+ */
+export const WizardStepEvolveStart: React.FC<WizardStepEvolveStartProps> = ({ job, dispatchBusy, dispatchError, onStartLoop, resuming = false }) => {
+  const [task, setTask] = useState('');
+  return (
+    <section data-testid="wizard-evolve-start" className="rounded-2xl border border-themeBorder bg-themeBgSecondary/60 p-5 space-y-3">
+      <h3 className="text-sm font-black text-themeTextPrimary">{resuming ? 'Resume the run' : 'Start the loop'}</h3>
+      <p className="text-[11px] text-themeTextMuted leading-relaxed">
+        {resuming ? (
+          <>The run is parked at its recorded step. Resuming re-queues it from the checkpoint — the loop continues exactly where it left off.</>
+        ) : (
+          <>The server drives the run headless, itself: up to {job.max_iterations || 12} iterations inside a ~90-minute cap, with a server-side gate deciding every proposal. You can pause or cancel it at any moment — the view below updates as each step lands, so you never wait blind.</>
+        )}
+      </p>
+      <input
+        type="text"
+        value={task}
+        onChange={(e) => setTask(e.target.value)}
+        placeholder="Instruction for the run (optional) — e.g. 'Use the eval set to improve the troubleshooting section'"
+        data-testid="wizard-dispatch-task"
+        aria-label="Instruction for the run"
+        className="w-full rounded-xl border border-themeBorder bg-themeBgPrimary px-3 py-2 text-xs text-themeTextPrimary placeholder:text-themeTextMuted/70 focus:outline-none focus:border-themeAccent/50"
+      />
+      <button
+        type="button"
+        onClick={() => onStartLoop(task)}
+        disabled={dispatchBusy}
+        data-testid="wizard-start-loop-button"
+        className="inline-flex items-center gap-1.5 py-2.5 px-4 rounded-xl border border-themeAccent/40 bg-themeAccentBg text-themeAccent hover:border-themeAccent font-bold text-xs shadow-xs hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer disabled:opacity-40 disabled:hover:scale-100"
+      >
+        {dispatchBusy ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+        <span>{dispatchBusy ? 'Starting the loop…' : resuming ? 'Resume the run' : 'Start the loop'}</span>
+      </button>
+      {dispatchBusy && <p className="text-[10px] text-themeTextMuted">Claiming the job and opening the loop — the live view below takes over within a couple of seconds.</p>}
+      {dispatchError && (
+        <div data-testid="wizard-dispatch-error" className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 space-y-1.5">
+          <p className="text-[11px] text-rose-600 dark:text-rose-400 leading-relaxed">{dispatchError}</p>
+          <p className="text-[10px] text-rose-600/80 dark:text-rose-400/80 leading-relaxed">If a harness on this machine already holds the job, the live view here follows it all the same.</p>
+        </div>
+      )}
+    </section>
+  );
+};
+
+// --- The shared Next bar (story 13) ---------------------------------------------------
+
+export interface WizardNextBarProps {
+  /** One-line narration of what the previous action did and what Next does. */
+  narration: string;
+  nextLabel: string;
+  nextHint?: string;
+  onNext: () => void;
+  enabled: boolean;
+  /** Disabled-state explanation — always better than a mute button. */
+  disabledReason?: string;
+}
+
+/**
+ * The user-driven walk (story 13): every step ends with one line of narration
+ * and the Next action. Next is enabled exactly when the step's work is done;
+ * a disabled Next always says why, so no step is ever a dead end.
+ */
+export const WizardNextBar: React.FC<WizardNextBarProps> = ({ narration, nextLabel, nextHint, onNext, enabled, disabledReason }) => (
+  <div className="rounded-2xl border border-themeBorder bg-themeBgSecondary/60 p-4 space-y-2" data-testid="wizard-next-bar">
+    <p data-testid="wizard-next-narration" className="text-[11px] text-themeTextSecondary leading-relaxed">
+      {narration}
+    </p>
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={onNext}
+        disabled={!enabled}
+        data-testid="wizard-next-button"
+        className="inline-flex items-center gap-1.5 py-2 px-3.5 rounded-xl border border-themeAccent/40 bg-themeAccentBg text-themeAccent hover:border-themeAccent font-bold text-xs shadow-xs hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer disabled:opacity-40 disabled:hover:scale-100"
+      >
+        <ArrowRight size={12} />
+        <span>{nextLabel}</span>
+      </button>
+      {enabled && nextHint && <span className="text-[10px] text-themeTextMuted leading-relaxed">{nextHint}</span>}
+      {!enabled && disabledReason && <span data-testid="wizard-next-disabled-reason" className="text-[10px] text-amber-600 dark:text-amber-400 leading-relaxed">{disabledReason}</span>}
+    </div>
+  </div>
+);
 
 // --- Steps 5 & 6: Review + Result report (story 09) ----------------------------------
 
@@ -406,7 +703,7 @@ export const WizardStepReview: React.FC<WizardStepReviewProps> = ({
         <HintCard
           icon={<ClipboardList size={16} />}
           title="No evolution run yet"
-          lines={['The review reads a run: dispatch one from your harness with create_evolution_job, then return here.']}
+          lines={['The review reads a run: go back to Step 2 and press Start training run, then return here.']}
         />
         <button
           type="button"
@@ -731,7 +1028,7 @@ export const WizardStepReport: React.FC<WizardStepReportProps> = ({ jobId, onBac
         <HintCard
           icon={<FileText size={16} />}
           title="No evolution run yet"
-          lines={['The report belongs to a run: dispatch one from your harness with create_evolution_job, then return here.']}
+          lines={['The report belongs to a run: press Start training run from Step 2 and Start the loop from Step 4, then return here.']}
         />
         <button
           type="button"

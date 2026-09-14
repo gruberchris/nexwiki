@@ -129,18 +129,25 @@ func viewOfJob(job *EvolutionJob) EvolutionJobView {
 }
 
 // wizardJobErrorStatus maps a job operation error onto a REST status code: an
-// unknown job is 404, an illegal transition on an existing one is 409, and
-// everything else is a server fault. Message matching follows the same
-// contains-pattern the article handlers use.
+// unknown job is 404, an illegal transition on an existing one is 409, a
+// refused credential is 403, and everything else is a server fault. Message
+// matching follows the same contains-pattern the article handlers use.
 func wizardJobErrorStatus(err error) int {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "not found"):
 		return http.StatusNotFound
+	case strings.Contains(msg, "access denied"):
+		// The per-harness token refused (JobAuthError) — a real authorization
+		// failure, not a fault.
+		return http.StatusForbidden
 	case strings.Contains(msg, "already terminal"),
 		strings.Contains(msg, "only paused jobs resume"),
 		strings.Contains(msg, "status is"),
 		strings.Contains(msg, "cannot finalize"),
+		// Story 13 train/start: the one-run-per-skill lock refusal on an
+		// existing job is a conflict, not a fault.
+		strings.Contains(msg, "already has an active job"),
 		// Story 11 simulation refusals: missing preconditions on an existing
 		// job are conflicts, not faults.
 		strings.Contains(msg, "no eval set stored"),
@@ -150,6 +157,11 @@ func wizardJobErrorStatus(err error) int {
 		strings.Contains(msg, "diff-only candidates carry no body"),
 		strings.Contains(msg, "must run a candidate of this job's skill"):
 		return http.StatusConflict
+	case strings.Contains(msg, "not a Custom AI Skill"):
+		// A slug that is not a skill reads 404, like a missing one.
+		return http.StatusNotFound
+	case strings.Contains(msg, "invalid injection_mode"):
+		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
 	}
@@ -236,36 +248,49 @@ func (srv *Server) HandleGetEvolutionLoop(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "evolution job id is required")
 		return
 	}
+	resp, err := srv.evolutionLoopSnapshot(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// evolutionLoopSnapshot builds the wizard's one-poll body for a job: the loop
+// stepper's current position plus every iteration record and the derived
+// plateau count. Shared by the live-view GET (story 08) and the dispatch POST
+// (story 13), which returns the same shape.
+func (srv *Server) evolutionLoopSnapshot(id string) (EvolutionLoopResponse, error) {
 	job, err := srv.Storage.GetEvolutionJob(id)
 	if err != nil {
-		writeError(w, wizardJobErrorStatus(err), err.Error())
-		return
+		return EvolutionLoopResponse{}, err
 	}
 	st, err := srv.Storage.GetLoopState(job.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return EvolutionLoopResponse{}, err
 	}
 	recs, err := srv.Storage.ListIterationRecords(job.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return EvolutionLoopResponse{}, err
 	}
 	plateau, err := srv.Storage.computePlateauCount(job.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return EvolutionLoopResponse{}, err
 	}
 	if recs == nil {
 		recs = []IterationRecord{}
 	}
-	writeJSON(w, http.StatusOK, EvolutionLoopResponse{
+	return EvolutionLoopResponse{
 		Loop:          st,
 		Iterations:    recs,
 		PlateauCount:  plateau,
 		MaxIterations: maxIterationsFor(job),
 		PlateauLimit:  plateauLimitFor(job),
-	})
+	}, nil
 }
 
 // HandleGetEvolutionEval serves the stored eval metadata for one job: the
