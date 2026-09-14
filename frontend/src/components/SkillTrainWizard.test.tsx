@@ -268,6 +268,23 @@ describe('SkillTrainWizard', () => {
     expect(screen.getAllByText(/No run yet/).length).toBeGreaterThan(0);
   });
 
+  it('navigates a picker selection to the other skill\'s train route exactly once', async () => {
+    const secondSkill: SkillRegistryEntry = { ...skill, name: 'docker-cleanup', title: 'Docker Cleanup' };
+    vi.stubGlobal('fetch', setupFetch({ jobs: [] }));
+    const onNavigate = vi.fn();
+    render(<SkillTrainWizard {...baseProps} skills={[skill, secondSkill]} onNavigate={onNavigate} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-picker-docker-cleanup')).toBeInTheDocument();
+    });
+    // onNavigate is the app router's navigateTo, which passes '/'-prefixed targets
+    // through untouched — so the picker hands over the full /skills/<slug>/train
+    // path. A bare slug here would land on /articles/<slug> (the wrong page), and
+    // the router must never see a doubled /articles//skills/... prefix.
+    await userEvent.click(screen.getByTestId('wizard-picker-docker-cleanup'));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onNavigate).toHaveBeenCalledWith('/skills/docker-cleanup/train');
+  });
+
   it('renders the skill-not-found panel for a slug outside the registry', async () => {
     vi.stubGlobal('fetch', setupFetch());
     render(<SkillTrainWizard {...baseProps} slug="ghost-skill" />);
@@ -410,5 +427,258 @@ describe('SkillTrainWizard', () => {
     expect(screen.getByText('Completed')).toBeInTheDocument();
     await userEvent.click(screen.getByTestId('wizard-report-link'));
     expect(onNavigate).toHaveBeenCalledWith('trained-skill-result-stability-protocol-run-job-1');
+  });
+});
+
+describe('SkillTrainWizard — the wizard owns the flow (story 13)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, advanceTimeDelta: 25 });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const baseProps = {
+    slug: 'stability-protocol',
+    skills: [skill],
+    onSkillsRefresh: vi.fn().mockResolvedValue(undefined),
+    onNavigate: vi.fn(),
+    onAlert: vi.fn(),
+  };
+
+  const queuedJob: EvolutionJob = {
+    ...job,
+    status: 'queued',
+    iteration: 0,
+    // The base fixture above carries a score'd eval; a fresh run has none.
+    eval_hash: undefined,
+    eval_train_count: undefined,
+    eval_val_count: undefined,
+    baseline_s0: undefined,
+    baseline_scorer: undefined,
+    eval_uploaded_at: undefined,
+  };
+
+  /** The job record as the server would move it through the journey: queued →
+   * accepted (the eval gate stamps the record) → dispatched (claimed/running). */
+  function journeyJobNow(state: { dispatched: boolean; dataAccepted: boolean }): EvolutionJob {
+    if (state.dispatched) return job;
+    if (state.dataAccepted) {
+      return {
+        ...queuedJob,
+        eval_hash: evalMeta.eval_hash,
+        eval_train_count: evalMeta.train_count,
+        eval_val_count: evalMeta.val_count,
+        baseline_s0: evalMeta.baseline_s0,
+        baseline_scorer: evalMeta.scorer_version,
+        eval_uploaded_at: evalMeta.uploaded_at,
+      };
+    }
+    return queuedJob;
+  }
+
+  /**
+   * A stateful mock of the operator-run seam: the test mutates `state` the way
+   * the real server's records move, and every poll reflects it.
+   */
+  function setupJourneyFetch(initial: { withRun: boolean }) {
+    const state = {
+      started: initial.withRun,
+      badData: false,
+      dataAccepted: false,
+      dispatched: false,
+      token: 'c'.repeat(64),
+    };
+    const mock = vi.fn((url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (url.includes('/api/evolution/jobs?skill=')) {
+        return Promise.resolve(jsonResponse(state.started ? [journeyJobNow(state)] : []));
+      }
+      if (url.endsWith('/train/start') && method === 'POST') {
+        state.started = true;
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ job: queuedJob, token: state.token }) } as Response);
+      }
+      if (url.endsWith('/eval') && method === 'POST') {
+        if (state.badData) {
+          return Promise.resolve({
+            ok: false,
+            status: 400,
+            json: async () => ({
+              error: 'evolution eval set refused (2 issues, 2 parsed cases, user splits 0 train / 0 val)',
+              issues: ['row 1: missing required field "expected" (each case needs {input, expected [, scorer]})', 'duplicate cases: rows 1, 2 are identical (input "one") — dedupe the file and re-upload'],
+              parsed: 2,
+              train_count: 0,
+              val_count: 0,
+              split_mode: 'user',
+            }),
+          } as Response);
+        }
+        state.dataAccepted = true;
+        return Promise.resolve({ ok: true, status: 200, json: async () => evalMeta } as Response);
+      }
+      if (url.endsWith('/dispatch') && method === 'POST') {
+        state.dispatched = true;
+        return Promise.resolve({ ok: true, status: 200, json: async () => loopBody } as Response);
+      }
+      // Follow the moving records.
+      const jobNow = journeyJobNow(state);
+      if (url.endsWith(`/api/evolution/jobs/${jobNow.id}/eval`)) {
+        return Promise.resolve(jsonResponse(evalMeta));
+      }
+      if (url.endsWith('/pause') || url.endsWith('/abort') || url.endsWith('/approve')) {
+        return Promise.resolve(jsonResponse(jobNow));
+      }
+      if (url.includes('/api/evolution/candidates/')) {
+        return Promise.resolve(jsonResponse(candidate));
+      }
+      if (url.endsWith('/api/skills/stability-protocol/audit')) {
+        return Promise.resolve(jsonResponse(auditBody));
+      }
+      if (url.endsWith(`/api/evolution/jobs/${jobNow.id}/report`)) {
+        return Promise.resolve(jsonResponse(reportView));
+      }
+      if (url.endsWith(`/api/evolution/jobs/${jobNow.id}/loop`)) {
+        const loopBodyNow = state.dispatched ? loopBody : { loop: null, iterations: [], plateau_count: 0, max_iterations: 12, plateau_limit: 3 };
+        return Promise.resolve(jsonResponse(loopBodyNow));
+      }
+      if (url.endsWith(`/api/evolution/jobs/${jobNow.id}`)) {
+        return Promise.resolve(jsonResponse(jobNow));
+      }
+      return Promise.resolve(jsonResponse({}, false));
+    });
+    return { mock, state };
+  }
+
+  it('walks the whole journey with an action and an explanation at every step', async () => {
+    const { mock, state } = setupJourneyFetch({ withRun: false });
+    vi.stubGlobal('fetch', mock);
+
+    render(<SkillTrainWizard {...baseProps} />);
+
+    // Step 1: arriving via Train marks the skill selected, and Next is always
+    // enabled with the one-line narration.
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-next-button')).toBeEnabled();
+    });
+    expect(screen.getByTestId('wizard-next-narration')).toHaveTextContent('Training Stability Protocol');
+
+    // Step 2: guided data entry, no run yet — the primary button starts it.
+    await userEvent.click(screen.getByTestId('wizard-next-button'));
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-start-run-button')).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByTestId('wizard-start-run-button'));
+    await waitFor(() => {
+      const posted = mock.mock.calls.find(([u, i]) => String(u).endsWith('/train/start') && (i as RequestInit | undefined)?.method === 'POST');
+      expect(posted).toBeTruthy();
+    });
+    // The created run ID is visible immediately.
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-next-narration')).toHaveTextContent('Run job-1 created');
+    });
+    // The once-only token is held in memory, never shown uninvited.
+    expect(mock.mock.calls.every(([u]) => !String(u).includes('c'.repeat(64)))).toBe(true);
+
+    // Bad data: the gate's per-issue errors render as a fix-it list.
+    state.badData = true;
+    const textarea = screen.getByTestId('wizard-data-textarea');
+    fireEvent.change(textarea, { target: { value: '{"input":"one"}\n{"input":"one","expected":"alpha"}' } });
+    await userEvent.click(screen.getByTestId('wizard-submit-data'));
+    await waitFor(() => {
+      expect(screen.getAllByTestId('wizard-data-issue').length).toBe(2);
+    });
+    expect(screen.getByTestId('wizard-data-issues')).toHaveTextContent('nothing was stored');
+    // Next stays locked until the work is done — and says why.
+    expect(screen.getByTestId('wizard-next-button')).toBeDisabled();
+    expect(screen.getByTestId('wizard-next-disabled-reason')).toHaveTextContent('Get training data accepted first');
+
+    // Valid data: accepted, dry-run + S0 preview visible, Next unlocked.
+    state.badData = false;
+    fireEvent.change(textarea, { target: { value: '{"input":"one","expected":"alpha"}\n{"input":"two","expected":"beta"}' } });
+    await userEvent.click(screen.getByTestId('wizard-submit-data'));
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-data-accepted')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('wizard-data-s0-preview')).toHaveTextContent(/S0/);
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-next-button')).toBeEnabled();
+    });
+
+    // Step 3: the baseline computed at upload is displayed with the note.
+    await userEvent.click(screen.getByTestId('wizard-next-button'));
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-baseline-note')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('wizard-baseline-bar')).toBeInTheDocument();
+
+    // Step 4: start the loop — user-initiated, with the plain-language line.
+    await userEvent.click(screen.getByTestId('wizard-next-button'));
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-evolve-start')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/pause or cancel it at any moment/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('wizard-start-loop-button'));
+    await waitFor(() => {
+      const posted = mock.mock.calls.find(([u, i]) => String(u).endsWith('/dispatch') && (i as RequestInit | undefined)?.method === 'POST');
+      expect(posted).toBeTruthy();
+    });
+    // The existing live view takes over with the audited controls visible.
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-pause-button')).toBeInTheDocument();
+      expect(screen.getByTestId('wizard-abort-button')).toBeInTheDocument();
+      expect(screen.getByTestId('wizard-approve-button')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('wizard-run-header')).toBeInTheDocument();
+    // No step left the user without an action: the Next bar is present here too.
+    expect(screen.getByTestId('wizard-next-bar')).toBeInTheDocument();
+  });
+
+  it('auto-jumps only for runs the wizard did not start, and offers Resume for parked ones', async () => {
+    const { mock, state } = setupJourneyFetch({ withRun: true });
+    state.dispatched = true;
+    vi.stubGlobal('fetch', mock);
+    render(<SkillTrainWizard {...baseProps} />);
+    // An existing live run drags the operator to Evolve (story 08 behavior).
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-run-header')).toBeInTheDocument();
+    });
+
+    // Park it: the paused banner points at the wizard's own Resume control.
+    state.dispatched = true;
+    vi.stubGlobal('fetch', mock);
+    const pausedBody: EvolutionJob = { ...job, status: 'paused', checkpoint: 'paused at iteration 1' };
+    mock.mockImplementation((url: string) => {
+      if (String(url).endsWith('/pause')) {
+        return Promise.resolve(jsonResponse(pausedBody));
+      }
+      if (String(url).includes('/api/evolution/jobs?skill=')) return Promise.resolve(jsonResponse([pausedBody]));
+      if (String(url).endsWith('/api/evolution/jobs/job-1')) return Promise.resolve(jsonResponse(pausedBody));
+      if (String(url).endsWith('/api/evolution/jobs/job-1/eval')) return Promise.resolve(jsonResponse(evalMeta));
+      if (String(url).includes('/api/evolution/candidates/')) return Promise.resolve(jsonResponse(candidate));
+      return Promise.resolve(jsonResponse({ loop: { job_id: 'job-1', skill_slug: 'stability-protocol', status: 'paused', current_iteration: 1, current_phase: 'maintaining', phase_status: 'interrupted', started_at: '2026-09-13T10:00:00Z', updated_at: '2026-09-13T10:01:00Z' }, iterations: [], plateau_count: 0, max_iterations: 12, plateau_limit: 3 }));
+    });
+    await userEvent.click(screen.getByTestId('wizard-pause-button'));
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-run-waiting')).toHaveTextContent(/Resume control above this header/);
+    });
+  });
+
+  it('navigates "Back to skill" by bare slug so navigateTo rebuilds the viewer URL', async () => {
+    const { mock } = setupJourneyFetch({ withRun: true });
+    vi.stubGlobal('fetch', mock);
+    const onNavigate = vi.fn();
+    render(<SkillTrainWizard {...baseProps} onNavigate={onNavigate} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-run-header')).toBeInTheDocument();
+    });
+    // The viewer the Train button left lives at /articles/stability-protocol.
+    // onNavigate is the app router's navigateTo, which prepends /articles/ to a
+    // bare slug — so the wizard must pass the SLUG. A full path would
+    // double-prefix into /articles//articles/<slug>, which parses as an
+    // article route for a slug no article has, and App shows 404.
+    await userEvent.click(screen.getByText('Back to skill'));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onNavigate).toHaveBeenCalledWith('stability-protocol');
   });
 });

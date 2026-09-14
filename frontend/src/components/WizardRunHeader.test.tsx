@@ -106,6 +106,7 @@ describe('WizardRunHeader', () => {
       <WizardRunHeader {...baseProps} job={null} loop={null} skillVersion={undefined} />,
     );
     expect(screen.getByTestId('wizard-pause-button')).toBeDisabled();
-    expect(screen.getByTestId('wizard-run-waiting').textContent).toContain('create_evolution_job');
+    // Story 13: a run starts from the Data step now, not from the harness.
+    expect(screen.getByTestId('wizard-run-waiting').textContent).toContain('Start one from the Data step');
   });
 });

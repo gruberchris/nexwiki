@@ -10,9 +10,9 @@ import { jobStatusChipClass, loopOutcomeChipClass, outcomeLabel } from './wizard
  * version, run id, elapsed time, the stop rules the job actually carries — and
  * the three human controls wired to the audited story-07 REST endpoints.
  *
- * Resume-after-pause is deliberately not a button: the harness process holds
- * the per-job token, so resuming means re-dispatching from the harness side.
- * The paused banner says so instead of offering a control that cannot work.
+ * Resume-after-pause is the wizard's own dispatch endpoint (story 13), offered
+ * by the Evolve step's Resume control above this header; the paused banner
+ * points there instead of sending the operator to a harness.
  */
 
 export type WizardControl = 'pause' | 'abort' | 'approve';
@@ -191,22 +191,20 @@ export const WizardRunHeader: React.FC<WizardRunHeaderProps> = ({
       )}
       {isPaused && (
         <p data-testid="wizard-run-waiting" className="mt-3 text-[11px] text-amber-600 dark:text-amber-400 leading-relaxed">
-          Paused{job?.checkpoint ? ` — ${job.checkpoint}` : ''}. To resume, re-dispatch the job from your
-          harness (it holds the run token); the loop continues from its recorded step.
+          Paused{job?.checkpoint ? ` — ${job.checkpoint}` : ''}. Use the Resume control above this header —
+          the loop continues from its recorded step, never re-running completed work.
         </p>
       )}
       {terminal && job && (
         <p data-testid="wizard-run-waiting" className="mt-3 text-[11px] text-themeTextMuted leading-relaxed">
           Run {job.status}
           {loop?.outcome_reason ? `: ${loop.outcome_reason}` : job.cancel_reason ? `: ${job.cancel_reason}` : job.error ? `: ${job.error}` : '.'}
-          {' '}The skill stays at its last accepted version; start a new run from your harness to retrain.
+          {' '}The skill stays at its last accepted version; start a new run from the Data step to retrain.
         </p>
       )}
       {!job && (
         <p data-testid="wizard-run-waiting" className="mt-3 text-[11px] text-themeTextMuted leading-relaxed">
-          No evolution run yet. Dispatch one from your harness with{' '}
-          <code className="font-mono text-themeAccent">create_evolution_job</code> — this view starts
-          following it as soon as the run exists.
+          No evolution run yet. Start one from the Data step — or follow the run from there once it exists.
         </p>
       )}
     </section>

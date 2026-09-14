@@ -94,14 +94,16 @@ NexWiki registers three lightweight REST API endpoints, allowing any AI agent, C
 
 ---
 
-## 🔁 Evolution Wizard REST API (stories 08–09)
+## 🔁 Evolution Wizard REST API (stories 08–09, 13)
 
 The WikiSkill evolution wizard (the browser UI at `/skills/<slug>/train`) reads and drives runs
 through the endpoints below. Everything rides under `/api`, so it is gated by the same
-origin-allow-list policy as the rest of the REST API. The browser is the operator: these
-endpoints never accept (or expose) a per-harness job token — `token_hash` is withheld from every
-job response, and job creation, dispatch, resume-after-pause, and eval upload stay harness-side
-over MCP, where the token was minted.
+origin-allow-list policy as the rest of the REST API. The browser is the operator. Since story 13
+(the wizard owns the flow) the operator-run steps happen here too: the browser itself starts the
+run, validates its training data through the real story-05 gate, and dispatches the loop — no
+operator step waits on an unseen process. The raw per-harness token is minted in memory by
+`train/start`, handed once to the wizard's tab (for operators who prefer their own CLI), and never
+logged; the harness-side MCP tools over the per-job token keep working unchanged.
 
 ### Run reads
 * **Endpoint**: `GET /api/evolution/jobs?skill=<slug>`
@@ -117,6 +119,29 @@ over MCP, where the token was minted.
 * **Endpoint**: `GET /api/evolution/candidates/{id}`
 * **Response**: One skill candidate record — the diff, proposed body, and pattern slugs the wizard's iteration cards render read-only.
 
+### Operator-run (story 13 — the wizard owns the flow)
+Each is a `POST` and returns what the wizard needs to walk the operator through
+Data → Baseline → Evolve → Review → Report. All three are thin orchestrations
+of the existing storage/runner functions — the story-05 gate math and the
+story-04/07 lifecycle are unchanged, and there is deliberately no bypass.
+
+* **Endpoint**: `POST /api/skills/{slug}/train/start`
+* **Body**: optional JSON `{"profile": "…", "injection_mode": "all|retrieve"}` — everything defaults.
+* **Response**: `{"job": <job view>, "token": "<per-harness token>"}` — the job is queued (skill lock included); the token is returned ONCE and never retrievable again. The server keeps the raw token in memory only (nothing secret is persisted), so its own eval-upload and dispatch calls can present it. It never appears in logs.
+* **Errors**: `404` for a missing slug or one that is not a Custom AI Skill; `409` when the skill already has an active job (one run per skill, the response names it); `400` for an invalid `injection_mode`.
+
+* **Endpoint**: `POST /api/evolution/jobs/{id}/eval`
+* **Body**: the SAME payloads the MCP `upload_evolution_eval_set` takes — `{"filename": "cases.jsonl", "content": "…"}` — plus an optional `job_token` for the after-a-server-restart path.
+* **Response**: The stored eval metadata — split summary, S0 baseline (scored at upload by the eval's own scorers), the train-fit indicator, the 5-sample dry run with per-sample scores, and the cost-estimate stub. `400` on a gate refusal carries every issue found in one pass, verbatim, as an `issues` array (plus `parsed`, `train_count`, `val_count`, `split_mode`), and nothing is stored.
+* **Errors**: `404` unknown job; `409` already terminal; `403` when neither a cached token nor a supplied `job_token` verifies.
+
+* **Endpoint**: `POST /api/evolution/jobs/{id}/dispatch`
+* **Body**: optional JSON `{"job_token": "…"}` and the operator's task line `{"task": "…"}` — the ONLY instructions the harness may follow (the quoted-as-data boundary).
+* **Response**: The same one-poll body the live view uses (`wizard-dispatch` snapshot of the loop stepper): `{"loop": …, "iterations": […]}`. The loop drives in a background goroutine, so the call returns immediately.
+* **Behavior**: the story-04 sweep runs first (expired leases requeue, past-deadline jobs time out), a paused run resumes from its checkpoint, a queued job is claimed, and the dispatch is recorded in the activity log (`source: "api"`, action `dispatch`) like the pause/abort/approve controls. A second dispatch — from the wizard or an external harness claim — is refused with `409`.
+
+Note on resuming: a paused run resumes through this same dispatch endpoint (it is the wizard's Resume control), continuing from the recorded step.
+
 ### Human loop controls (audited)
 Each is a `POST` with an optional JSON body (`{"checkpoint": "…"}` for pause, `{"reason": "…"}` for abort) and returns the updated job record. Each lands in the activity log (`source: "api"`, actions `pause` / `abort` / `approve`) via the story-07 audited wrappers, and each responds in well under 2 s.
 
@@ -124,7 +149,7 @@ Each is a `POST` with an optional JSON body (`{"checkpoint": "…"}` for pause, 
 * **Endpoint**: `POST /api/evolution/jobs/{id}/abort` — cancels the run (the story-04 SIGTERM → 10 s grace → SIGKILL path), reconciling the loop records. The skill stays at its last accepted version.
 * **Endpoint**: `POST /api/evolution/jobs/{id}/approve` — approve-early: the newest pending candidate goes through the normal validation gate and the run finishes `completed` either way. An accept promotes (stamping the trained marker); a gate rejection leaves the skill byte-identical.
 
-Note on resuming: a paused run resumes by re-dispatching from the harness side (the process holding the job's token), not from the browser. The wizard's paused banner says so rather than offering a control that cannot work.
+Note on resuming: a paused run resumes through the story-13 dispatch endpoint above (the wizard's Resume control), continuing from the recorded step.
 
 ### Review + result report (story 09)
 The Review and Report steps read from the same seam: the skill's audited gate trail, the human rollback control, and the run's auto-generated result report.
@@ -226,7 +251,7 @@ The harness holds the job token and drives the loop with the runner's `RunLoop` 
 
 ### Step 5 — Monitor the iterations
 
-MCP: `get_evolution_iterations` with the job's `id` and `job_token` — current iteration, phase, plateau count, and every recorded iteration with its score vs R_best. Browser: the wizard's live view at `GET /api/evolution/jobs/{id}/loop` (the wizard never holds the harness token). A healthy S0 run reads: an early iteration accepted on a partial fix, a rejected iteration (preserved — that is the gate working), then an accept at 1.0 that stops the loop `completed` via the perfect-score early stop.
+MCP: `get_evolution_iterations` with the job's `id` and `job_token` — current iteration, phase, plateau count, and every recorded iteration with its score vs R_best. Browser: the wizard's live view at `GET /api/evolution/jobs/{id}/loop` (the live-view reads need no token; since story 13 the operator-run dispatches present the token the server holds in memory). A healthy S0 run reads: an early iteration accepted on a partial fix, a rejected iteration (preserved — that is the gate working), then an accept at 1.0 that stops the loop `completed` via the perfect-score early stop.
 
 ### Step 6 — Verify the success bar (mechanical)
 

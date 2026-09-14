@@ -90,6 +90,16 @@ describe('useRouter', () => {
 
     act(() => result.current.navigateTo('search?q=y'));
     expect(result.current.currentPath).toBe('/search');
+
+    // A '/'-prefixed target is a full app path (e.g. the wizard picker's route) and
+    // passes through untouched — prefixing would double-prefix into /articles//skills/...,
+    // which parses as an article slug no article has, and App shows 404.
+    act(() => result.current.navigateTo('/skills/go/train'));
+    expect(result.current.currentPath).toBe('/skills/go/train');
+
+    // Already-prefixed article paths are likewise left alone.
+    act(() => result.current.navigateTo('/articles/go'));
+    expect(result.current.currentPath).toBe('/articles/go');
   });
 
   it('fires onRouteChange for pushState navigation AND browser back', () => {
