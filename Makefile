@@ -11,7 +11,7 @@ FRONTEND_DIR=frontend
 DIST_DIR=frontend/dist
 BUILD_DIR=bin
 
-.PHONY: all build-frontend build-backend clean docker-build docker-up docker-down \
+.PHONY: all build-frontend build-backend run dev clean docker-build docker-up docker-down \
         build-windows-amd64 build-linux-amd64 build-linux-arm64 build-macos-arm64 build-all-platforms
 
 # Default target: builds both frontend and host backend binary
@@ -38,7 +38,30 @@ build-backend: build-frontend
 	@echo "✅ Host compilation complete: ./$(BINARY_NAME)"
 
 # ------------------------------------------------------------------------------------
-# 3. Docker Helpers
+# 3. Local Launch
+# ------------------------------------------------------------------------------------
+# run: rebuild the embedded frontend, rebuild the Go binary, and launch the server.
+# This is the correct way to launch locally: the frontend has no server of its
+# own; npm run build writes static files that go:embed bakes into the binary,
+# so a stale dist means a stale UI.
+PORT ?= 5808
+DATA_DIR ?= ./data
+NAME ?= NexWiki Local Dev
+
+run: build-backend
+	@echo "🚀 Launching NexWiki on http://localhost:$(PORT)"
+	./$(BINARY_NAME) -port=$(PORT) -data=$(DATA_DIR) -name="$(NAME)"
+
+# dev: Go backend + Vite hot-reload frontend for frontend development only.
+# Browse http://localhost:5173 (CORS already permits it); the backend API is
+# on :5808. Do not use for a real launch.
+dev:
+	@echo "🧪 Starting backend (:5808) and Vite dev server (:5173)..."
+	@go run main.go -port=$(PORT) -data=$(DATA_DIR) -name="$(NAME)" & \
+	cd $(FRONTEND_DIR) && npm install && npm run dev
+
+# ------------------------------------------------------------------------------------
+# 4. Docker Helpers
 # ------------------------------------------------------------------------------------
 docker-build:
 	@echo "🐳 Building Docker image..."
@@ -56,7 +79,7 @@ docker-down:
 	@echo "🛑 Container cluster stopped."
 
 # ------------------------------------------------------------------------------------
-# 4. Multi-Platform Cross-Compilation
+# 5. Multi-Platform Cross-Compilation
 # Note: All cross-compilation builds depend on 'build-frontend' since Go's embed
 # package will throw compilation errors if 'frontend/dist' is empty or missing.
 # ------------------------------------------------------------------------------------
@@ -86,7 +109,7 @@ build-all-platforms: build-windows-amd64 build-linux-amd64 build-linux-arm64 bui
 	@echo "🎉 All target binaries successfully generated inside the ./$(BUILD_DIR)/ directory!"
 
 # ------------------------------------------------------------------------------------
-# 5. Cleanup
+# 6. Cleanup
 # ------------------------------------------------------------------------------------
 clean:
 	@echo "🧹 Cleaning up build artifacts..."
