@@ -126,11 +126,13 @@ func (srv *Server) completeResourceArgument(req completionRequest) ([]string, *J
 }
 
 // isArticleURITemplate reports whether a ref/resource URI addresses this server's article
-// template. Both the template itself and a partially-filled concrete URI are accepted, since a host
-// completing a URI in place sends whatever the user has typed so far.
+// template.
+//
+// The prefix is the whole test, which covers both the template as advertised
+// (nexwiki://article/{slug}) and a partially-filled concrete URI — a host completing a URI in place
+// sends whatever the user has typed so far, so anything past the prefix is the fragment to match on.
 func isArticleURITemplate(uri string) bool {
-	return uri == resourceURIPrefix+"{"+resourceTemplateSlugArgument+"}" ||
-		strings.HasPrefix(uri, resourceURIPrefix)
+	return strings.HasPrefix(uri, resourceURIPrefix)
 }
 
 // completePromptArgument suggests values for a prompt's arguments.
