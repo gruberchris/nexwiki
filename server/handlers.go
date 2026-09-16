@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +39,18 @@ type Server struct {
 	// stdioClient holds the identity from a legacy `initialize` on the stdio connection, which is
 	// the only transport where a handshake can be attributed for the life of a connection.
 	stdioClient agentIdentity
+
+	// stdioOut is the serialized stdout channel for the stdio transport, set by StartMCPServer.
+	// Subscription goroutines and the request loop both write through it so their lines cannot
+	// interleave. Nil when no stdio loop is running — a subscription then closes immediately
+	// rather than streaming into nothing.
+	stdioOut *syncLineWriter
+
+	// stdioSubs maps a live stdio subscription's request id to the func that ends it, so a
+	// notifications/cancelled can stop the right stream. HTTP needs no equivalent: closing the
+	// response stream is itself the cancellation signal there.
+	stdioSubs   map[string]context.CancelFunc
+	stdioSubsMu sync.Mutex
 
 	// damper notices an agent repeating the same lookup and says so in the result. Advisory only;
 	// see lookup_damper.go. Nil is safe — every method tolerates a nil receiver — so a Server

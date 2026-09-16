@@ -52,10 +52,13 @@ type requestMeta struct {
 // paramsEnvelope is the subset of any request's params needed for era detection, header
 // validation, and metadata extraction. Tool arguments are decoded separately by each handler.
 type paramsEnvelope struct {
-	Meta *requestMeta    `json:"_meta"`
-	Name string          `json:"name"`
-	URI  string          `json:"uri"`
-	Raw  json.RawMessage `json:"-"`
+	Meta *requestMeta `json:"_meta"`
+	Name string       `json:"name"`
+	URI  string       `json:"uri"`
+	// Cursor is the pagination position on the four list methods. Decoded here rather than in each
+	// handler because it is protocol-level, exactly like Name and URI.
+	Cursor string          `json:"cursor"`
+	Raw    json.RawMessage `json:"-"`
 }
 
 // parseParamsEnvelope decodes the protocol-level fields of a request's params. Malformed params
@@ -70,11 +73,24 @@ func parseParamsEnvelope(params json.RawMessage) paramsEnvelope {
 	return env
 }
 
-// isModernRequest reports whether a request opted into the per-request-metadata era. Presence of
-// `_meta["io.modelcontextprotocol/protocolVersion"]` is the discriminator: legacy clients never
-// send it, and modern clients MUST send it on every request.
-func isModernRequest(env paramsEnvelope) bool {
-	return env.Meta != nil && env.Meta.ProtocolVersion != ""
+// isModernRequest reports whether a request opted into the per-request-metadata era.
+//
+// Two signals, because either one alone leaves a hole. The body's
+// `_meta["io.modelcontextprotocol/protocolVersion"]` is the canonical discriminator and the only
+// one stdio has. Over HTTP the `MCP-Protocol-Version` header MUST name the same revision, so a
+// request whose header claims a modern version is a modern request even when its body omits the
+// metadata.
+//
+// That second signal is what closes the hole. Such a request used to fall through to the legacy
+// switch and be served under legacy semantics — a modern client with a mis-built body got a
+// plausible-looking legacy answer and no indication anything was wrong. The specification is
+// explicit that a request missing a required `_meta` field is malformed and MUST be rejected with
+// -32602, so recognising the era first is what lets us say so.
+func isModernRequest(headers http.Header, env paramsEnvelope) bool {
+	if env.Meta != nil && env.Meta.ProtocolVersion != "" {
+		return true
+	}
+	return headers != nil && supportsModernVersion(headers.Get("MCP-Protocol-Version"))
 }
 
 // supportsModernVersion reports whether NexWiki implements the requested revision.
@@ -91,6 +107,14 @@ func supportsModernVersion(version string) bool {
 // a revision we implement; clientCapabilities must be present so the server never relies on a
 // capability the client did not declare.
 func validateModernMeta(env paramsEnvelope) *JSONRPCError {
+	// Reachable when the era was decided by the MCP-Protocol-Version header alone: the request is
+	// modern, but its body never carried the field the header mirrors.
+	if env.Meta == nil || env.Meta.ProtocolVersion == "" {
+		return &JSONRPCError{
+			Code:    errCodeInvalidParams,
+			Message: "Missing required _meta field: " + metaProtocolVersion,
+		}
+	}
 	if !supportsModernVersion(env.Meta.ProtocolVersion) {
 		return &JSONRPCError{
 			Code:    errCodeUnsupportedProtocolVersion,
@@ -170,6 +194,15 @@ func validateModernHeaders(headers http.Header, method string, env paramsEnvelop
 
 	if extract, needsName := methodsWithNameHeader[method]; needsName {
 		bodyName := extract(env)
+		// A body with no name to mirror is a malformed request, not a header failure. Reporting it
+		// as -32020 sent the client looking for a header problem it could not fix, because the
+		// header it was told to add has no value to carry.
+		if bodyName == "" {
+			return &JSONRPCError{
+				Code:    errCodeInvalidParams,
+				Message: fmt.Sprintf("Missing or invalid name in params for %s", method),
+			}
+		}
 		headerName := decodeHeaderValue(headers.Get("Mcp-Name"))
 		if headerName == "" {
 			return mismatch("Missing required header: Mcp-Name")
@@ -273,14 +306,36 @@ func (srv *Server) implementation() map[string]interface{} {
 	}
 }
 
-// serverCapabilities lists what NexWiki implements. A capability is advertised only when it is
-// genuinely served: `resources` claims listChanged and subscribe because articles really are
-// created, deleted, and edited, and the EventBus really does report it.
-func serverCapabilities() map[string]interface{} {
+// Capabilities are declared per era, because the same word promises a different method in each.
+//
+// `resources.subscribe` is the reason this is split. In the 2026-07-28 revision it means the server
+// honours `resourceSubscriptions` on a subscriptions/listen stream, which NexWiki does. In the
+// initialize-based revisions it means the server implements the `resources/subscribe` RPC, which
+// NexWiki does not and deliberately will not — that RPC was replaced by subscriptions/listen.
+// Advertising one capability set to both eras therefore told legacy clients about a method that
+// answers -32601. A capability is a promise, so each era is told only what is true for it.
+//
+// `tools` and `prompts` stay bare in both: the registry is compiled into the binary and cannot
+// change while the process runs, so claiming listChanged would promise a notification that can
+// never arrive.
+
+// modernServerCapabilities is what server/discover reports.
+func modernServerCapabilities() map[string]interface{} {
 	return map[string]interface{}{
-		"tools":     map[string]interface{}{},
-		"prompts":   map[string]interface{}{},
-		"resources": resourceCapability(),
+		"tools":       map[string]interface{}{},
+		"prompts":     map[string]interface{}{},
+		"completions": map[string]interface{}{},
+		"resources":   modernResourceCapability(),
+	}
+}
+
+// legacyServerCapabilities is what the initialize result reports.
+func legacyServerCapabilities() map[string]interface{} {
+	return map[string]interface{}{
+		"tools":       map[string]interface{}{},
+		"prompts":     map[string]interface{}{},
+		"completions": map[string]interface{}{},
+		"resources":   legacyResourceCapability(),
 	}
 }
 
@@ -304,12 +359,12 @@ func (srv *Server) handleModernMethod(method string, env paramsEnvelope) (interf
 		// capabilities, and identity in one request before sending anything else.
 		return map[string]interface{}{
 			"supportedVersions": modernProtocolVersions,
-			"capabilities":      serverCapabilities(),
+			"capabilities":      modernServerCapabilities(),
 			"instructions":      agentInstructions(),
 		}, nil
 
 	case "tools/list":
-		return map[string]interface{}{"tools": toolSchemas()}, nil
+		return listTools(env.Cursor)
 
 	case "tools/call":
 		// The modern era carries clientInfo in _meta on every request, so attribution needs no
@@ -317,19 +372,22 @@ func (srv *Server) handleModernMethod(method string, env paramsEnvelope) (interf
 		return srv.executeToolCall(env.Raw, srv.resolveAgent(env))
 
 	case "prompts/list":
-		return map[string]interface{}{"prompts": promptDefinitions()}, nil
+		return listPrompts(env.Cursor)
 
 	case "prompts/get":
 		return srv.getPrompt(env.Raw)
 
 	case "resources/list":
-		return srv.listResources()
+		return srv.listResources(env.Cursor)
 
 	case "resources/templates/list":
-		return srv.listResourceTemplates()
+		return srv.listResourceTemplates(env.Cursor)
 
 	case "resources/read":
 		return srv.readResource(env.Raw)
+
+	case "completion/complete":
+		return srv.complete(env.Raw)
 
 	default:
 		return nil, &JSONRPCError{

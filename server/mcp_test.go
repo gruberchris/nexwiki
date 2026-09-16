@@ -1398,12 +1398,17 @@ func TestStdioAcceptsLinesOverBufioDefault(t *testing.T) {
 	}
 }
 
-// TestModernSubscriptionsListenOnStdio covers an era inversion.
+// TestModernSubscriptionsListenOnStdio covers an era inversion and, since the stdio transport grew
+// real subscriptions, the request/response contract underneath it.
 //
 // subscriptions/listen was introduced by the 2026-07-28 revision, but handleModernMethod has no
 // case for it — the HTTP transport lifts the method out of dispatch before the era branch, and
 // stdio did not. So a modern client, the only kind that knows the method exists, was answered
 // "Method not found", while a legacy client got the graceful acknowledgment.
+//
+// The acknowledgment alone was not enough, though: it is a *notification* and carries no id, so a
+// client was left waiting on a response to the long-lived request that never came. Every stdio
+// exit path now writes the closure response, which is what ends the wait.
 func TestModernSubscriptionsListenOnStdio(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -1419,18 +1424,53 @@ func TestModernSubscriptionsListenOnStdio(t *testing.T) {
 				Params: json.RawMessage(tc.params)}
 			srv.handleRequest(&out, &req)
 
-			var resp map[string]interface{}
-			if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
-				t.Fatalf("response is not JSON: %q", out.String())
+			messages := decodeJSONLines(t, out.Bytes())
+			if len(messages) < 2 {
+				t.Fatalf("want an acknowledgment and a response, got %d message(s): %q", len(messages), out.String())
 			}
-			if _, isErr := resp["error"]; isErr {
+
+			ack := messages[0]
+			if _, isErr := ack["error"]; isErr {
 				t.Fatalf("subscriptions/listen returned an error: %s", out.String())
 			}
-			if resp["method"] != "notifications/subscriptions/acknowledged" {
-				t.Errorf("method = %v, want the acknowledgment", resp["method"])
+			if ack["method"] != "notifications/subscriptions/acknowledged" {
+				t.Errorf("first message method = %v, want the acknowledgment", ack["method"])
+			}
+
+			// The long-lived request must be answered, or the client blocks until it times out.
+			closure := messages[len(messages)-1]
+			if closure["id"] != float64(7) {
+				t.Errorf("closure id = %v, want the subscriptions/listen request id 7", closure["id"])
+			}
+			result, ok := closure["result"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("closure carried no result: %#v", closure)
+			}
+			if result["resultType"] != "complete" {
+				t.Errorf("closure resultType = %v, want \"complete\"", result["resultType"])
 			}
 		})
 	}
+}
+
+// decodeJSONLines splits a stdio transcript into its newline-delimited JSON-RPC messages. The
+// transport's whole contract is one message per line, so a test that decodes only the first message
+// cannot see whether anything followed it.
+func decodeJSONLines(t *testing.T, raw []byte) []map[string]interface{} {
+	t.Helper()
+
+	var messages []map[string]interface{}
+	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var message map[string]interface{}
+		if err := json.Unmarshal(line, &message); err != nil {
+			t.Fatalf("stdio line is not JSON: %q", line)
+		}
+		messages = append(messages, message)
+	}
+	return messages
 }
 
 // TestUpdateArticleTagsVersionConflict covers the fifth optimistic-locking site, which had no

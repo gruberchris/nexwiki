@@ -80,7 +80,10 @@ func (srv *Server) StartMCPServer() {
 	// the app looked healthy while its MCP channel was permanently dead — and the agent that sent
 	// the article got no response at all, not even an error, and the article was never written.
 	scanner.Buffer(make([]byte, 0, 64*1024), MaxStdioLineBytes)
-	writer := os.Stdout
+	// Every write to stdout goes through one lock, because subscription goroutines write here too.
+	// See syncLineWriter.
+	writer := newSyncLineWriter(os.Stdout)
+	srv.stdioOut = writer
 
 	_, _ = fmt.Fprintf(os.Stderr, "Always-on stdio MCP server loop successfully started in background!\n")
 
@@ -158,8 +161,13 @@ func negotiateProtocolVersion(params json.RawMessage) string {
 // initialize-based revisions. Both eras share the tool registry and prompt definitions — only the
 // envelope, the required metadata, and the HTTP status mapping differ.
 func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
-	// Notifications (requests without an ID) can be ignored or logged to stderr
+	// Notifications (requests without an ID) carry no response. Only one of them means anything to
+	// this server: on stdio there is no per-request stream to close, so notifications/cancelled is
+	// the sole way a client can end a subscription it opened.
 	if req.ID == nil {
+		if req.Method == "notifications/cancelled" {
+			srv.cancelStdioSubscription(req.Params)
+		}
 		return http.StatusAccepted
 	}
 
@@ -179,7 +187,8 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 	if req.Method == "subscriptions/listen" {
 		// Modern metadata is still validated first, so a malformed request fails the same way it
 		// would on any other method, and the same way it does over HTTP.
-		if isModernRequest(env) {
+		if isModernRequest(req.Headers, env) {
+			req.IsModern = true
 			if rpcErr := validateModernMeta(env); rpcErr != nil {
 				return srv.writeResponse(w, req, nil, rpcErr)
 			}
@@ -188,12 +197,18 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 		return http.StatusOK
 	}
 
-	if isModernRequest(env) {
+	if isModernRequest(req.Headers, env) {
+		req.IsModern = true
 		result, rpcErr = srv.dispatchModern(req, env)
 		return srv.writeResponse(w, req, result, rpcErr)
 	}
 
 	switch req.Method {
+	case "ping":
+		// A utility of the initialize-based revisions, used by clients as a liveness probe. It was
+		// removed in 2026-07-28, so it stays out of the modern dispatcher and answers only here.
+		result = map[string]interface{}{}
+
 	case "initialize":
 		// Capture who is connecting, so their writes are attributable. Only on stdio — see
 		// JSONRPCRequest.FromStdio.
@@ -202,7 +217,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 		}
 		result = map[string]interface{}{
 			"protocolVersion": negotiateProtocolVersion(req.Params),
-			"capabilities":    serverCapabilities(),
+			"capabilities":    legacyServerCapabilities(),
 			"serverInfo":      srv.implementation(),
 			// Connect-time hint surfaced by MCP clients as a system-prompt-style nudge, so
 			// the agent reaches for NexWiki as a second brain without explicit prompting.
@@ -210,29 +225,28 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 		}
 
 	case "tools/list":
-		result = map[string]interface{}{
-			"tools": toolSchemas(),
-		}
+		result, rpcErr = listTools(env.Cursor)
 
 	case "tools/call":
 		result, rpcErr = srv.executeToolCall(req.Params, srv.resolveAgent(env))
 
 	case "prompts/list":
-		result = map[string]interface{}{
-			"prompts": promptDefinitions(),
-		}
+		result, rpcErr = listPrompts(env.Cursor)
 
 	case "prompts/get":
 		result, rpcErr = srv.getPrompt(req.Params)
 
 	case "resources/list":
-		result, rpcErr = srv.listResources()
+		result, rpcErr = srv.listResources(env.Cursor)
 
 	case "resources/templates/list":
-		result, rpcErr = srv.listResourceTemplates()
+		result, rpcErr = srv.listResourceTemplates(env.Cursor)
 
 	case "resources/read":
 		result, rpcErr = srv.readResource(req.Params)
+
+	case "completion/complete":
+		result, rpcErr = srv.complete(req.Params)
 
 	default:
 		rpcErr = &JSONRPCError{
@@ -503,6 +517,18 @@ func sendError(w io.Writer, code int, msg string, id interface{}) {
 	}
 }
 
+// mcpAllowedRequestHeaders is the Access-Control-Allow-Headers value for the MCP endpoint.
+//
+// Mcp-Method and Mcp-Name are not optional extras: the 2026-07-28 revision requires a modern client
+// to send them on every POST, and a browser will not send a header the preflight did not allow. So
+// omitting them here rejected browser-hosted modern clients at the preflight, before a single
+// JSON-RPC message was exchanged — the request never reached the handler that would have validated
+// them. Mcp-Session-Id and Last-Event-ID remain for the initialize-based revisions, which still
+// define them; this server ignores both, but ignoring a header a client sends is not the same as
+// refusing the request that carries it.
+const mcpAllowedRequestHeaders = "Content-Type, Accept, Authorization, MCP-Protocol-Version, " +
+	"Mcp-Method, Mcp-Name, Mcp-Session-Id, Last-Event-ID"
+
 // HandleStreamableHTTP implements the Streamable HTTP transport (2025 Spec)
 // supporting GET (initiating SSE stream) and POST (synchronous JSON-RPC).
 func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) {
@@ -512,11 +538,11 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 	applySecurityHeaders(w)
 	allowOrigin, originOK := originAllowed(r.Header.Get("Origin"), r.Host)
 	if !originOK {
-		applyCORSHeaders(w, "", "GET, POST, OPTIONS", "Content-Type, MCP-Protocol-Version, MCP-Session-Id")
+		applyCORSHeaders(w, "", "GET, POST, OPTIONS", mcpAllowedRequestHeaders)
 		http.Error(w, "origin not allowed; set "+AllowedOriginsEnv+" to permit it", http.StatusForbidden)
 		return
 	}
-	applyCORSHeaders(w, allowOrigin, "GET, POST, OPTIONS", "Content-Type, MCP-Protocol-Version, MCP-Session-Id")
+	applyCORSHeaders(w, allowOrigin, "GET, POST, OPTIONS", mcpAllowedRequestHeaders)
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
@@ -549,6 +575,18 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 		_, _ = fmt.Fprint(w, ": keepalive\n\n")
 		flusher.Flush()
 
+		// This is the standalone stream the initialize-based revisions define for server-initiated
+		// messages, and it is where a legacy client listens for notifications/resources/list_changed.
+		// It used to carry nothing but keep-alives, which made the listChanged capability those
+		// clients are told about a promise with no delivery channel behind it. The 2026-07-28
+		// revision replaced this stream with subscriptions/listen, so nothing modern is served here
+		// — note the absence of a subscriptionId, which is a modern-era field.
+		var updates chan WikiUpdate
+		if srv.EventBus != nil {
+			updates = srv.EventBus.SubscribeWikiUpdates()
+			defer srv.EventBus.UnsubscribeWikiUpdates(updates)
+		}
+
 		// Keep stream open with periodic keepalives
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
@@ -560,6 +598,26 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 				return
 			case <-srv.shutdownSignal():
 				return // let the process shut down instead of holding the connection open
+			case update, ok := <-updates:
+				if !ok {
+					return
+				}
+				// An edit changes a document's contents; only a create or delete changes which
+				// documents exist, and the list is what this notification is about.
+				if update.Type != "article-added" && update.Type != "article-removed" {
+					continue
+				}
+				payload, err := json.Marshal(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"method":  "notifications/resources/list_changed",
+				})
+				if err != nil {
+					continue
+				}
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
+					return
+				}
+				flusher.Flush()
 			case <-ticker.C:
 				_, _ = fmt.Fprint(w, ": keepalive\n\n")
 				flusher.Flush()
@@ -592,7 +650,7 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 		// HTTP headers against the body, and reports protocol failures as HTTP status codes.
 		req.Headers = r.Header
 		env := parseParamsEnvelope(req.Params)
-		req.IsModern = isModernRequest(env)
+		req.IsModern = isModernRequest(req.Headers, env)
 
 		// subscriptions/listen is intercepted before dispatch because its response *is* a stream:
 		// it stays open delivering notifications rather than producing one buffered body. Modern

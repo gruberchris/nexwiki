@@ -6,7 +6,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- **MCP Pagination on Every List Method**:
+  - `tools/list`, `prompts/list`, `resources/list`, and `resources/templates/list` now accept a `cursor` and return a `nextCursor` while results remain, in both protocol eras.
+  - `resources/list` used to project **every** document into one response. On stdio that response must fit on a single 8 MB line, so a large enough knowledge base stopped being listable at all.
+  - Cursors are opaque; one this server did not issue — or one left over from a list that has since shrunk — is rejected with `-32602` telling the client to restart without a cursor. A finished list omits `nextCursor` rather than sending an empty one, which a conformant client would read as "there is more" and loop on.
+- **MCP Argument Completion (`completion/complete`)**:
+  - Completes the `{slug}` of the `nexwiki://article/{slug}` resource template, so a client discovers a page to `@`-mention instead of paging the whole resource list. Also completes prompt arguments: `title` from existing article titles, and `project` from project contexts already used by plans, so an agent reuses a project instead of coining a near-duplicate and splitting its plan history.
+  - Prefix matches rank above substring matches and each band is sorted, so the list is stable and cacheable. Capped at the spec's 100 values with `total` and `hasMore` reporting the remainder.
+  - An argument with nothing to suggest returns an empty list, not an error — a user typing into a free-text field should never see a failure. An unknown prompt name is `-32602`.
+- **Live Subscriptions on stdio**:
+  - `subscriptions/listen` now streams real notifications over stdio, not just an acknowledgment. The specification defines `io.modelcontextprotocol/subscriptionId` precisely because stdio multiplexes every subscription onto one channel; NexWiki serializes stdout behind a single lock and runs each subscription in its own goroutine.
+  - `notifications/cancelled` naming the `subscriptions/listen` request id ends a stdio subscription, which is the only cancellation signal that transport has — there is no per-request stream to close.
+- **Legacy `ping`**: answered again for `initialize`-based clients that use it as a liveness probe. It stays absent from the modern era, which removed it.
+- **MCP Conformance Test Suite** (`server/mcp_conformance_test.go`): one assertion per normative requirement of the `2026-07-28` revision, each subtest named for the specification section it comes from, so a failure names the rule that broke rather than the symptom.
+
 ### Fixed
+- **`subscriptions/listen` Never Answered Its Request on stdio**:
+  - The acknowledgment was sent and nothing followed. The acknowledgment is a *notification* and carries no `id`, so the client waited on a response to the long-lived request that was never coming and only a timeout ended it. Every stdio exit path now writes the closure result.
+- **CORS Preflight Rejected Modern Browser Clients**:
+  - `Access-Control-Allow-Headers` omitted `Mcp-Method` and `Mcp-Name`, which the `2026-07-28` revision *requires* a client to send on every POST. A browser will not send a header the preflight did not allow, so browser-hosted modern clients were refused before a single JSON-RPC message was exchanged — the request never reached the handler that would have validated them. `Accept` and `Authorization` are allowed too; `Mcp-Session-Id` and `Last-Event-ID` remain for legacy clients.
+- **A Modern Request With a Malformed Body Was Served as Legacy**:
+  - Era detection looked only at `params._meta`. A request whose `MCP-Protocol-Version` header named `2026-07-28` but whose body omitted the mirrored `_meta` fell through to the legacy switch and got a plausible-looking legacy answer with no indication anything was wrong. The header is now an era signal in its own right, and such a request is rejected with `-32602` / HTTP 400 naming the missing field, as the specification requires.
+- **Legacy Clients Were Advertised a Capability With No Method Behind It**:
+  - Both eras shared one capability set, so `initialize` clients were told `resources.subscribe: true`. In those revisions that promises the `resources/subscribe` RPC — which the `2026-07-28` revision replaced with `subscriptions/listen` and NexWiki does not implement, so the call answered `-32601`. Capabilities are now declared per era: modern keeps `subscribe`, legacy does not.
+  - The legacy standalone `GET` SSE stream carried nothing but keep-alives, leaving `listChanged` equally unbacked for those clients. It now delivers `notifications/resources/list_changed` when a document is created or deleted, which is the channel those revisions define for it.
+- **`prompts/get` Reported an Unknown Prompt as a Missing Method**:
+  - An unrecognized prompt name returned `-32601`, which the modern era is required to surface as HTTP `404` — so a typo'd prompt name made the MCP endpoint itself look like it had disappeared. It is now `-32602`, per the prompts specification, and missing required arguments are validated and named rather than silently interpolated as empty strings.
+- **A Missing `Mcp-Name` Blamed the Header When the Body Was at Fault**:
+  - A `tools/call` with no `params.name` returned `-32020 Missing required header: Mcp-Name`, sending the client to fix a header that had no value to carry. An empty body value is now `-32602`, and `-32020` is reserved for a genuine header/body disagreement.
+- **Subscription Results Omitted `serverInfo`**:
+  - The acknowledgment and graceful-closure results were built by hand rather than through the shared result envelope, so they were the only modern results that identified no server.
 - **Modern-Era MCP Results Were Missing Mandatory Caching Hints**:
   - The `2026-07-28` revision requires `ttlMs` and `cacheScope` on every `resultType: "complete"` result for `server/discover`, `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`, and `resources/read`. NexWiki returned `resultType: "complete"` without them.
   - Conformant clients validate these results against a schema in which both fields are required, so the omission rejected the **entire** response. Claude Code 2.1.273 negotiated `2026-07-28`, reported the server connected and healthy, and then exposed **zero** of the 29 tools — failing with `Invalid result for tools/list`.

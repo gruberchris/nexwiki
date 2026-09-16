@@ -28,8 +28,9 @@ import (
 // stdout. One process owns the wiki; the sidecar is a pipe.
 //
 // A useful consequence: because the primary answers subscriptions/listen with an SSE stream, the
-// proxy can relay those notifications to stdout as they arrive — so a stdio client gets live
-// subscriptions, which a standalone stdio server cannot offer.
+// proxy can relay those notifications to stdout as they arrive. A standalone stdio server serves
+// subscriptions from its own EventBus, but a sidecar has no EventBus to serve from — the primary
+// owns the data directory — so relaying is how a sidecar's client gets them.
 
 // proxyRequestTimeout bounds a single forwarded request. Long enough for a slow OKF bundle import,
 // short enough that a wedged primary does not hang the client forever. Streaming responses
@@ -147,8 +148,10 @@ func (p *MCPProxy) newRequest(payload []byte) (*http.Request, error) {
 		return req, nil // let the primary report the parse error
 	}
 
+	// nil headers: the message arrived on stdio, so the body is the only era signal there is. The
+	// headers this function is about to synthesize are the ones the primary will check.
 	env := parseParamsEnvelope(parsed.Params)
-	if !isModernRequest(env) {
+	if !isModernRequest(nil, env) {
 		return req, nil // legacy era: no mirrored headers required
 	}
 
