@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+- **Modern-Era MCP Results Were Missing Mandatory Caching Hints**:
+  - The `2026-07-28` revision requires `ttlMs` and `cacheScope` on every `resultType: "complete"` result for `server/discover`, `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`, and `resources/read`. NexWiki returned `resultType: "complete"` without them.
+  - Conformant clients validate these results against a schema in which both fields are required, so the omission rejected the **entire** response. Claude Code 2.1.273 negotiated `2026-07-28`, reported the server connected and healthy, and then exposed **zero** of the 29 tools — failing with `Invalid result for tools/list`.
+  - Static results (`server/discover`, `tools/list`, `prompts/list`, `resources/templates/list`) now declare a 1-hour TTL with `cacheScope: "public"`; they are compiled into the binary and hold no user data.
+  - Article results (`resources/list`, `resources/read`) declare a 30-second TTL with `cacheScope: "private"`, so one caller's cache entry is never reused across authorization contexts. Existing `listChanged` notifications still invalidate them immediately.
+  - `tools/call` and `prompts/get` deliberately carry no hints — the spec does not list them as cacheable.
+  - Legacy-era (`initialize`-based) results are unchanged and correctly carry neither field.
+
 ## [0.18.0] — 2026-09-11
 
 ### Added

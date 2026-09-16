@@ -30,7 +30,7 @@ NexWiki's MCP implementation is lightweight, robust, and supports two primary tr
 ### 🕰️ Dual-Era Protocol Support
 The MCP specification changed shape in revision **`2026-07-28`**: no `initialize` handshake, no sessions, protocol version and client capabilities carried in `_meta` on every request, and results wrapped with a `resultType`. NexWiki serves **both that revision and the older initialize-based revisions on the same endpoint**, choosing per request — a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is modern, anything else is legacy. Both eras share the same tools and prompts.
 
-Modern-era specifics (required `_meta` fields, the `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` header contract, `server/discover`, and the `-32020` / `-32022` error codes) are documented in [docs/mcp_server.md](./docs/mcp_server.md#-protocol-revisions-nexwiki-is-dual-era).
+Modern-era specifics (required `_meta` fields, the `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` header contract, `server/discover`, the mandatory `ttlMs` / `cacheScope` caching hints, and the `-32020` / `-32022` error codes) are documented in [docs/mcp_server.md](./docs/mcp_server.md#-protocol-revisions-nexwiki-is-dual-era).
 
 ```mermaid
 graph TD

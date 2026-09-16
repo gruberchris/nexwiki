@@ -245,7 +245,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 }
 
 // dispatchModern validates a per-request-metadata request and runs it, wrapping a successful
-// payload in the modern result envelope (resultType plus server identity).
+// payload in the modern result envelope (resultType, server identity, and caching hints).
 func (srv *Server) dispatchModern(req *JSONRPCRequest, env paramsEnvelope) (interface{}, *JSONRPCError) {
 	if rpcErr := validateModernMeta(env); rpcErr != nil {
 		return nil, rpcErr
@@ -258,7 +258,7 @@ func (srv *Server) dispatchModern(req *JSONRPCRequest, env paramsEnvelope) (inte
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	return srv.completeResult(payload), nil
+	return srv.completeResult(req.Method, payload), nil
 }
 
 // writeResponse marshals the JSON-RPC envelope and reports the HTTP status it should carry.

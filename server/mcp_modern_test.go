@@ -395,3 +395,121 @@ func TestStreamableHTTPPropagatesModernStatus(t *testing.T) {
 		t.Errorf("expected an UnsupportedProtocolVersion body, got %s", w.Body.String())
 	}
 }
+
+// TestCacheableResultsCarryCachingHints pins the 2026-07-28 caching contract: every
+// `resultType: "complete"` result for a cacheable method MUST carry both ttlMs and cacheScope.
+//
+// This is the regression that made NexWiki look healthy and empty at the same time. A conformant
+// client validates list results against a schema in which both fields are required, so omitting
+// them rejected the whole tools/list payload — the client connected, reported the server up, and
+// then showed zero of the twenty-nine tools.
+func TestCacheableResultsCarryCachingHints(t *testing.T) {
+	srv := newMCPServer(t)
+	if _, err := srv.Storage.SaveArticle("", "Cache Me", "# Body\n\ncontent here", "", "", "",
+		"seed", nil, ""); err != nil {
+		t.Fatalf("SaveArticle failed: %v", err)
+	}
+
+	cases := []struct {
+		method    string
+		extra     map[string]interface{}
+		wantTTL   float64
+		wantScope string
+	}{
+		{"server/discover", nil, staticResultTTLMs, cacheScopePublic},
+		{"tools/list", nil, staticResultTTLMs, cacheScopePublic},
+		{"prompts/list", nil, staticResultTTLMs, cacheScopePublic},
+		{"resources/templates/list", nil, staticResultTTLMs, cacheScopePublic},
+		{"resources/list", nil, articleResultTTLMs, cacheScopePrivate},
+		{"resources/read", map[string]interface{}{"uri": resourceURIPrefix + "cache-me"},
+			articleResultTTLMs, cacheScopePrivate},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.method, func(t *testing.T) {
+			envelope, status := callModern(t, srv, tc.method,
+				modernParams(t, ModernProtocolVersion, tc.extra), nil)
+			if status != http.StatusOK {
+				t.Fatalf("expected 200, got %d (%v)", status, envelope)
+			}
+			result, ok := envelope["result"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("expected a result, got %v", envelope)
+			}
+
+			ttl, ok := result["ttlMs"].(float64)
+			if !ok {
+				t.Fatalf("%s must carry a numeric ttlMs, got %v", tc.method, result["ttlMs"])
+			}
+			if ttl != tc.wantTTL {
+				t.Errorf("%s ttlMs = %v, want %v", tc.method, ttl, tc.wantTTL)
+			}
+			// The spec allows 0 but never a negative TTL.
+			if ttl < 0 {
+				t.Errorf("%s ttlMs must be >= 0, got %v", tc.method, ttl)
+			}
+			if got := result["cacheScope"]; got != tc.wantScope {
+				t.Errorf("%s cacheScope = %v, want %q", tc.method, got, tc.wantScope)
+			}
+		})
+	}
+}
+
+// TestNonCacheableResultsOmitCachingHints is the other half of the contract. The spec lists
+// exactly six cacheable methods; a tool call is not a repeatable read, and handing a client
+// permission to cache one would let it serve a stale write back as a fresh result.
+func TestNonCacheableResultsOmitCachingHints(t *testing.T) {
+	srv := newMCPServer(t)
+
+	cases := []struct {
+		method string
+		extra  map[string]interface{}
+	}{
+		{"tools/call", map[string]interface{}{
+			"name": "get_status_tags", "arguments": map[string]interface{}{},
+		}},
+		{"prompts/get", map[string]interface{}{
+			"name":      "article_creation_workflow",
+			"arguments": map[string]interface{}{"title": "Caching"},
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.method, func(t *testing.T) {
+			envelope, status := callModern(t, srv, tc.method,
+				modernParams(t, ModernProtocolVersion, tc.extra), nil)
+			if status != http.StatusOK {
+				t.Fatalf("expected 200, got %d (%v)", status, envelope)
+			}
+			result := envelope["result"].(map[string]interface{})
+			// Still a complete result — it just is not cacheable.
+			if result["resultType"] != "complete" {
+				t.Errorf("expected resultType complete, got %v", result["resultType"])
+			}
+			if _, present := result["ttlMs"]; present {
+				t.Errorf("%s must not carry ttlMs, got %v", tc.method, result["ttlMs"])
+			}
+			if _, present := result["cacheScope"]; present {
+				t.Errorf("%s must not carry cacheScope, got %v", tc.method, result["cacheScope"])
+			}
+		})
+	}
+}
+
+// TestLegacyResultsOmitCachingHints keeps the dual-era guarantee. Caching hints arrived with
+// 2026-07-28; an initialize-era client never asked for them and must not suddenly receive them.
+func TestLegacyResultsOmitCachingHints(t *testing.T) {
+	srv := newMCPServer(t)
+
+	envelope, status := callModern(t, srv, "tools/list", nil, nil)
+	if status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+	result := envelope["result"].(map[string]interface{})
+	if _, present := result["ttlMs"]; present {
+		t.Error("legacy results must not carry ttlMs")
+	}
+	if _, present := result["cacheScope"]; present {
+		t.Error("legacy results must not carry cacheScope")
+	}
+}
