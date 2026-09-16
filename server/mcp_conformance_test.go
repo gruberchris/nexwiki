@@ -757,15 +757,26 @@ func mcpHeaderAnnotations(schema map[string]interface{}) map[string]string {
 
 // postMCP issues a real HTTP request against the MCP endpoint, for the assertions that are about
 // the transport rather than the JSON-RPC body.
+//
+// It goes through the **same middleware chain main.go builds**, not straight into the handler. That
+// distinction is load-bearing: EnableCORS answers every preflight itself and returns before the mux
+// runs, so a test that calls HandleStreamableHTTP directly never exercises the code path a browser
+// actually reaches. Calling the handler directly is precisely how the preflight defect this suite
+// is meant to catch stayed green while the wired server still refused modern browser clients.
 func postMCP(t *testing.T, srv *Server, method string, body string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, "/api/mcp", strings.NewReader(body))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(MCPEndpointPath, srv.HandleStreamableHTTP)
+	handler := EnableCORS(LimitRequestBodies(mux))
+
+	req := httptest.NewRequest(method, MCPEndpointPath, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	for name, value := range headers {
 		req.Header.Set(name, value)
 	}
 	w := httptest.NewRecorder()
-	srv.HandleStreamableHTTP(w, req)
+	handler.ServeHTTP(w, req)
 	return w
 }
 

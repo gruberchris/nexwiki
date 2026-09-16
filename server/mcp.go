@@ -517,6 +517,11 @@ func sendError(w io.Writer, code int, msg string, id interface{}) {
 	}
 }
 
+// MCPEndpointPath is where the Streamable HTTP transport is served. Exported because main.go
+// registers the route and EnableCORS has to recognize the path to advertise the right headers on a
+// preflight it answers before the mux ever runs.
+const MCPEndpointPath = "/api/mcp"
+
 // mcpAllowedRequestHeaders is the Access-Control-Allow-Headers value for the MCP endpoint.
 //
 // Mcp-Method and Mcp-Name are not optional extras: the 2026-07-28 revision requires a modern client
