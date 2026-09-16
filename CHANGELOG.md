@@ -36,6 +36,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   - An unrecognized prompt name returned `-32601`, which the modern era is required to surface as HTTP `404` — so a typo'd prompt name made the MCP endpoint itself look like it had disappeared. It is now `-32602`, per the prompts specification, and missing required arguments are validated and named rather than silently interpolated as empty strings.
 - **A Missing `Mcp-Name` Blamed the Header When the Body Was at Fault**:
   - A `tools/call` with no `params.name` returned `-32020 Missing required header: Mcp-Name`, sending the client to fix a header that had no value to carry. An empty body value is now `-32602`, and `-32020` is reserved for a genuine header/body disagreement.
+- **CI Skipped Stacked Pull Requests Entirely**:
+  - `.github/workflows/ci.yml` filtered `pull_request` to `branches: [main]`, so a PR opened against another feature branch — the normal shape when a fix is in review and follow-up work stacks on it — ran no tests at all. Only DCO reported.
+  - The gap is silent in the worst way: a PR with no checks looks identical to one whose checks have not started, and the tests only appear once the base branch merges and GitHub retargets the PR. The filter is removed; every pull request is tested regardless of its base.
 - **Subscription Results Omitted `serverInfo`**:
   - The acknowledgment and graceful-closure results were built by hand rather than through the shared result envelope, so they were the only modern results that identified no server.
 - **Modern-Era MCP Results Were Missing Mandatory Caching Hints**:
