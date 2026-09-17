@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"nexwiki/server"
 	"os"
@@ -149,7 +150,11 @@ func main() {
 		primaryDetected bool
 	)
 	if mcpOnlyMode {
-		primaryHost, primaryDetected = findPrimary(primaryProbeHosts(bindHost), *port, primaryProbeTimeout)
+		var hint string
+		primaryHost, primaryDetected, hint = findPrimary(primaryProbeHosts(bindHost), *port, primaryProbeTimeout)
+		if hint != "" {
+			log.Print(hint)
+		}
 	}
 
 	// Proxy mode: forward stdio to the running primary instead of opening the data directory.
@@ -835,7 +840,11 @@ func primaryProbeHosts(bindHost string) []string {
 // answers is taken as soon as every host before it has failed, or once the budget runs out while one
 // is still in flight, like a primary that has bound its port but is still opening storage. It
 // connects directly, as the proxy then does, whatever HTTP_PROXY says.
-func findPrimary(hosts []string, port string, timeout time.Duration) (host string, found bool) {
+//
+// When no host is found but one did answer, with a status other than 200, hint explains in one line
+// why it was not used (see probeHint). It is built from the answers already in hand, so it costs the
+// search no time.
+func findPrimary(hosts []string, port string, timeout time.Duration) (host string, found bool, hint string) {
 	if port == "" {
 		port = "5808"
 	}
@@ -850,50 +859,78 @@ func findPrimary(hosts []string, port string, timeout time.Duration) (host strin
 		client.CloseIdleConnections()
 	}()
 
-	answered := make([]chan bool, len(hosts))
+	answered := make([]chan int, len(hosts))
 	for i, h := range hosts {
-		answered[i] = make(chan bool, 1)
+		answered[i] = make(chan int, 1)
 		probes.Add(1)
 		go func() {
 			defer probes.Done()
-			answered[i] <- primaryAnswers(ctx, client, h, port)
+			answered[i] <- primaryStatus(ctx, client, h, port)
 		}()
 	}
+	// statuses holds each host's answer as it is taken, 0 for none yet, for the hint.
+	statuses := make([]int, len(hosts))
 	for i := range hosts {
 		select {
-		case ok := <-answered[i]:
-			if ok {
-				return hosts[i], true
+		case statuses[i] = <-answered[i]:
+			if statuses[i] == http.StatusOK {
+				return hosts[i], true, ""
 			}
 		case <-ctx.Done():
 			// Out of time for the hosts still in flight: take the first later one that has answered.
 			for j := i; j < len(hosts); j++ {
 				select {
-				case ok := <-answered[j]:
-					if ok {
-						return hosts[j], true
+				case statuses[j] = <-answered[j]:
+					if statuses[j] == http.StatusOK {
+						return hosts[j], true, ""
 					}
 				default:
 				}
 			}
-			return "", false
+			return "", false, probeHint(hosts, port, statuses)
 		}
 	}
-	return "", false
+	return "", false, probeHint(hosts, port, statuses)
 }
 
-// primaryAnswers reports whether GET /api/config on host and port answers 200 before ctx ends.
-func primaryAnswers(ctx context.Context, client *http.Client, host, port string) bool {
+// primaryStatus returns the status GET /api/config on host and port answers with before ctx ends, or
+// 0 when there is no answer: the connection is refused or fails, or the server stays silent.
+func primaryStatus(ctx context.Context, client *http.Client, host, port string) int {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, httpURL(host, port, "/api/config"), nil)
 	if err != nil {
-		return false
+		return 0
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false
+		return 0
 	}
 	_ = resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	return resp.StatusCode
+}
+
+// probeHint explains why a server that answered the probe was not used, naming the first host, in
+// probe order, that answered with a status other than 200, or returns "" when none did. Without it a
+// sidecar that reaches a web server it cannot use runs standalone in silence, and its stdio client
+// sees only the index-lock failure that follows, which says nothing about the probe.
+//
+// A 403 gets advice when the host is a name: the web server refuses a Host it does not trust, and an
+// IP address is always trusted, so for a name that is the likely cause. It happens when this process
+// is given a DNS name as -bind that the web server was not bound to.
+func probeHint(hosts []string, port string, statuses []int) string {
+	for i, status := range statuses {
+		if status == 0 || status == http.StatusOK {
+			continue
+		}
+		base := httpURL(hosts[i], port, "")
+		hint := fmt.Sprintf("-mcp-only: %s answered GET /api/config with %s, not 200, so it is not used as a web server.",
+			base, strings.TrimSpace(fmt.Sprintf("%d %s", status, http.StatusText(status))))
+		if _, err := netip.ParseAddr(hosts[i]); status == http.StatusForbidden && err != nil {
+			hint += fmt.Sprintf(" A NexWiki web server refuses host names it does not trust: give this process the same "+
+				"-bind (or NEXWIKI_BIND) as the web server, or add %s to %s on the web server.", base, server.AllowedOriginsEnv)
+		}
+		return hint
+	}
+	return ""
 }
 
 // SPAFrontendHandler serves static files from the React build directory,

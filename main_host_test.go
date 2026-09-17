@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -137,4 +138,40 @@ func TestWebServerChecksTheHost(t *testing.T) {
 			t.Errorf("GET /api/okf/export with Host evil.example: got %d, want 403: %.200s", status, body)
 		}
 	})
+}
+
+// TestSidecarExplainsARefusedHostName pins what a sidecar given a -bind name the web server doesn't
+// trust logs. Its probe of that name is refused with 403 by the Host check, so it runs standalone;
+// it used to do so without a word, and failed on the index lock 15 seconds later with nothing to
+// connect that to the probe. It now says which server refused it and how to fix the configuration.
+// The sidecar is given its own data directory, so it runs standalone rather than waiting on the lock.
+func TestSidecarExplainsARefusedHostName(t *testing.T) {
+	// localhost. resolves to loopback, but the web server trusts it only as its own bind hostname.
+	const sidecarBind = "localhost."
+	if addrs, err := net.LookupHost(sidecarBind); err != nil || !slices.Contains(addrs, "127.0.0.1") {
+		t.Skipf("%s does not resolve to 127.0.0.1 here: %v %v", sidecarBind, addrs, err)
+	}
+	port := freePort(t)
+	startWebServer(t, "127.0.0.1", port)
+
+	home := t.TempDir()
+	run := startMain(t, home, nil, "-mcp-only", "-bind", sidecarBind, "-port", port, "-data", filepath.Join(home, "wiki"))
+	if code := run.wait(t, time.Minute); code != 0 {
+		t.Fatalf("exit code %d, want 0 at stdin EOF; stderr:\n%s", code, run.stderr.String())
+	}
+
+	stderr := run.stderr.String()
+	if strings.Contains(stderr, "running as a proxy") {
+		t.Fatalf("the sidecar proxied to a web server that refused it; stderr:\n%s", stderr)
+	}
+	hintAt := strings.Index(stderr, "http://localhost.:"+port+" answered GET /api/config with 403 Forbidden")
+	standaloneAt := strings.Index(stderr, "running standalone")
+	if hintAt < 0 || standaloneAt < 0 || hintAt > standaloneAt {
+		t.Fatalf("the sidecar did not explain the 403 before running standalone; stderr:\n%s", stderr)
+	}
+	for _, want := range []string{"-bind (or NEXWIKI_BIND)", server.AllowedOriginsEnv} {
+		if !strings.Contains(stderr[hintAt:standaloneAt], want) {
+			t.Errorf("the hint does not mention %s; stderr:\n%s", want, stderr)
+		}
+	}
 }

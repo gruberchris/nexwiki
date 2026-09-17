@@ -398,7 +398,8 @@ func TestPrimaryProbeTimeoutFitsItsBudget(t *testing.T) {
 // finds one on IPv4 loopback from a wildcard or default bind.
 func TestFindPrimary(t *testing.T) {
 	find := func(bind, port string) (string, bool) {
-		return findPrimary(primaryProbeHosts(bind), port, primaryProbeTimeout)
+		host, found, _ := findPrimary(primaryProbeHosts(bind), port, primaryProbeTimeout)
+		return host, found
 	}
 
 	t.Run("wildcard and default binds find IPv4 loopback", func(t *testing.T) {
@@ -498,6 +499,135 @@ func TestFindPrimary(t *testing.T) {
 			t.Errorf("findPrimary took %s, want about its %s budget", elapsed, primaryProbeTimeout)
 		}
 	})
+}
+
+// TestFindPrimaryExplainsAServerItCannotUse pins the hint a sidecar logs when something answers the
+// probe with a status other than 200: it names the host and the status, so a sidecar that falls back
+// to running standalone says why. The search itself is unchanged: a later host that answers 200 is
+// still found, with no hint, and a hint costs no time.
+func TestFindPrimaryExplainsAServerItCannotUse(t *testing.T) {
+	refusing := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"error":"host not allowed"}`)
+	})
+
+	t.Run("a 403 is named", func(t *testing.T) {
+		port := serveOn(t, "127.0.0.1", "0", refusing)
+		host, ok, hint := findPrimary([]string{"127.0.0.1"}, port, primaryProbeTimeout)
+		if ok {
+			t.Fatalf("findPrimary took %q, which answered 403, as a web server", host)
+		}
+		if want := "-mcp-only: http://127.0.0.1:" + port + " answered GET /api/config with 403 Forbidden"; !strings.Contains(hint, want) {
+			t.Errorf("hint %q does not contain %q", hint, want)
+		}
+		// An IP address is never refused by the Host check, so the advice about names would mislead.
+		if strings.Contains(hint, "NEXWIKI_BIND") {
+			t.Errorf("hint for an IP address gives advice about host names: %q", hint)
+		}
+	})
+
+	t.Run("a later host that answers 200 is still found", func(t *testing.T) {
+		port := serveOn(t, "127.0.0.1", "0", http.NotFoundHandler())
+		serveOn(t, "::1", port, primaryStub("::1", &atomic.Int32{}))
+		if host, ok, hint := findPrimary(primaryProbeHosts(""), port, primaryProbeTimeout); !ok || host != "::1" || hint != "" {
+			t.Errorf("findPrimary = (%q, %t, %q), want (\"::1\", true, \"\")", host, ok, hint)
+		}
+	})
+
+	t.Run("a host that never answers does not hold the hint back", func(t *testing.T) {
+		port := serveOn(t, "127.0.0.1", "0", refusing)
+		silent, err := net.Listen("tcp", net.JoinHostPort("::1", port))
+		if err != nil {
+			t.Skipf("cannot listen on [::1]:%s: %v", port, err)
+		}
+		defer func() { _ = silent.Close() }()
+
+		start := time.Now()
+		_, ok, hint := findPrimary(primaryProbeHosts(""), port, primaryProbeTimeout)
+		if elapsed := time.Since(start); elapsed > primaryProbeTimeout+500*time.Millisecond {
+			t.Errorf("findPrimary took %s, want no more than its %s budget", elapsed, primaryProbeTimeout)
+		}
+		if ok || !strings.Contains(hint, "403 Forbidden") {
+			t.Errorf("findPrimary = (%t, %q), want no primary and a hint naming the 403", ok, hint)
+		}
+	})
+
+	t.Run("no hint when nothing answers", func(t *testing.T) {
+		closed, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, port, _ := net.SplitHostPort(closed.Addr().String())
+		_ = closed.Close()
+		if _, _, hint := findPrimary(primaryProbeHosts(""), port, primaryProbeTimeout); hint != "" {
+			t.Errorf("findPrimary gave a hint with nothing listening: %q", hint)
+		}
+	})
+}
+
+// TestProbeHint pins the hint's wording for each kind of answer: advice for a name refused with 403,
+// which is how the web server's Host check answers a sidecar given a -bind name it does not trust,
+// and only the host and status otherwise.
+func TestProbeHint(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		hosts    []string
+		statuses []int
+		want     []string
+		notWant  []string
+	}{
+		{
+			name:     "403 for a name",
+			hosts:    []string{"wiki.example.lan"},
+			statuses: []int{http.StatusForbidden},
+			want: []string{
+				"http://wiki.example.lan:5808 answered GET /api/config with 403 Forbidden",
+				"the same -bind (or NEXWIKI_BIND) as the web server",
+				"add http://wiki.example.lan:5808 to " + server.AllowedOriginsEnv,
+			},
+		},
+		{
+			name:     "403 for an IPv6 address",
+			hosts:    []string{"::1"},
+			statuses: []int{http.StatusForbidden},
+			want:     []string{"http://[::1]:5808 answered GET /api/config with 403 Forbidden"},
+			notWant:  []string{"NEXWIKI_BIND"},
+		},
+		{
+			name:     "another status for a name",
+			hosts:    []string{"wiki.example.lan"},
+			statuses: []int{http.StatusServiceUnavailable},
+			want:     []string{"http://wiki.example.lan:5808 answered GET /api/config with 503 Service Unavailable"},
+			notWant:  []string{"NEXWIKI_BIND"},
+		},
+		{
+			name:     "the first host in probe order that answered",
+			hosts:    []string{"127.0.0.1", "::1"},
+			statuses: []int{0, http.StatusNotFound},
+			want:     []string{"http://[::1]:5808 answered GET /api/config with 404 Not Found"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hint := probeHint(tc.hosts, "5808", tc.statuses)
+			if strings.Contains(hint, "\n") {
+				t.Errorf("hint spans lines: %q", hint)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(hint, want) {
+					t.Errorf("hint %q does not contain %q", hint, want)
+				}
+			}
+			for _, notWant := range tc.notWant {
+				if strings.Contains(hint, notWant) {
+					t.Errorf("hint %q contains %q", hint, notWant)
+				}
+			}
+		})
+	}
+	if hint := probeHint([]string{"127.0.0.1", "::1"}, "5808", []int{0, 0}); hint != "" {
+		t.Errorf("hint with no answers = %q, want none", hint)
+	}
 }
 
 func TestWaitForServer_Healthy(t *testing.T) {
