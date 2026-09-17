@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"nexwiki/server"
 	"os"
 	"os/exec"
@@ -93,7 +94,7 @@ func main() {
 	themeScheduling := flag.Bool("theme-scheduling", false, "Enable opt-in seasonal theme scheduling auto-swaps")
 	mcpOnly := flag.Bool("mcp-only", false, "Run as a pure stdio MCP server (skip the web port bind entirely)")
 	launchBrowser := flag.Bool("launch-in-browser", false, "Open the wiki URL in the system default web browser on startup")
-	bindAddr := flag.String("bind", "", "Network interface to bind (default: 127.0.0.1 for native local security; all interfaces in containers). Set to 0.0.0.0 or NEXWIKI_BIND to bind all interfaces")
+	bindAddr := flag.String("bind", "", "Network interface to bind, also set by NEXWIKI_BIND (default: 127.0.0.1 for native local security; all interfaces in containers). Use 0.0.0.0 or :: to bind all interfaces. With -mcp-only, the address to look for a running web server on when it is bound to a specific address")
 	agentName := flag.String("agent-name", "", "Fallback name credited in the activity log for MCP calls whose client is not identified")
 	flag.Parse()
 
@@ -132,10 +133,24 @@ func main() {
 	log.Printf("Default Theme: %s", defaultTheme)
 	log.Printf("Theme Scheduling Enabled: %t", themeSchedulingEnabled)
 
+	// Bind host resolution: native desktop execution defaults to binding loopback (127.0.0.1)
+	// to avoid accidental exposure on shared LAN/Wi-Fi networks. In containerized environments,
+	// it defaults to all interfaces ("") so container port mapping functions properly.
+	// Users can explicitly configure binding via -bind flag or NEXWIKI_BIND environment variable.
+	//
+	// Resolved in -mcp-only mode too, which binds nothing but uses the host to find a web primary.
+	bindHost := resolveBindHost(*bindAddr, os.Getenv("NEXWIKI_BIND"), isRunningInContainer())
+
 	// Probe for a running web primary before opening storage. Only one process can own a wiki —
 	// the Bleve index holds an exclusive lock — so a sidecar pointed at a running instance must
 	// not try to open it at all.
-	primaryDetected := mcpOnlyMode && probeForPrimary(*port)
+	var (
+		primaryHost     string
+		primaryDetected bool
+	)
+	if mcpOnlyMode {
+		primaryHost, primaryDetected = findPrimary(primaryProbeHosts(bindHost), *port, primaryProbeTimeout)
+	}
 
 	// Proxy mode: forward stdio to the running primary instead of opening the data directory.
 	//
@@ -144,16 +159,18 @@ func main() {
 	// but still left the setup unusable. Now the sidecar is a pipe: the primary owns the wiki and
 	// answers every call, including subscription streams relayed back as stdio notifications.
 	if primaryDetected {
-		log.Printf("-mcp-only: web server detected on port %s; running as a proxy to it. "+
-			"The primary owns the data directory; this process forwards MCP traffic to it.", *port)
-		server.NewMCPProxy(*port, server.ResolveConfiguredAgentName(*agentName), os.Stdout).Run(os.Stdin)
+		log.Printf("-mcp-only: web server detected at %s; running as a proxy to it. "+
+			"The primary owns the data directory; this process forwards MCP traffic to it.", httpURL(primaryHost, *port, ""))
+		// Proxied to the host that answered the probe, which is where the primary is listening.
+		server.NewMCPProxy(httpURL(primaryHost, *port, "/api/mcp"), server.ResolveConfiguredAgentName(*agentName), os.Stdout).Run(os.Stdin)
 		return
 	}
 
 	// From here this process opens the data directory itself, so SIGINT and SIGTERM are caught before
 	// it does. NewStorage cannot be interrupted, and the default action would kill it partway through
-	// its migration or first index build with the search index open. A signal that arrives meanwhile
-	// waits in the buffer and is acted on as soon as NewStorage returns.
+	// its migration or first index build with the search index open. A signal that arrives before
+	// NewStorage starts ends the launch without opening storage; one that arrives while it runs is
+	// acknowledged at once and acted on as soon as it returns.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
@@ -171,7 +188,6 @@ func main() {
 	var (
 		frontendFS  fs.FS
 		webListener net.Listener
-		bindHost    string
 		addr        string
 	)
 	if !mcpOnlyMode {
@@ -180,12 +196,7 @@ func main() {
 			log.Fatalf("Fatal: failed to open embedded files: %v", err)
 		}
 
-		// Bind host resolution: native desktop execution defaults to binding loopback (127.0.0.1)
-		// to avoid accidental exposure on shared LAN/Wi-Fi networks. In containerized environments,
-		// it defaults to all interfaces ("") so container port mapping functions properly.
-		// Users can explicitly configure binding via -bind flag or NEXWIKI_BIND environment variable.
-		bindHost = resolveBindHost(*bindAddr, os.Getenv("NEXWIKI_BIND"), isRunningInContainer())
-		addr = fmt.Sprintf("%s:%s", bindHost, *port)
+		addr = listenAddr(bindHost, *port)
 
 		// Bind-or-halt: a normal launch IS the web server. If the port is already in use or
 		// misconfigured, it halts rather than silently falling back. To run a stdio MCP server
@@ -194,12 +205,53 @@ func main() {
 		// Listening is not serving: until httpServer.Serve runs, after storage is open and seeded,
 		// connections only wait in the kernel's listen backlog and no request is read. A client that
 		// connects meanwhile is answered once storage is ready; one that gives up first, like
-		// probeForPrimary with its short timeout, concludes what a refused connection told it
-		// before: no server yet.
+		// findPrimary with its short timeout, concludes what a refused connection told it before:
+		// no server yet.
 		if webListener, err = net.Listen("tcp", addr); err != nil {
 			log.Fatalf("Fatal: could not bind web server to %s: %v\nIf you intended to run a stdio MCP server alongside an existing web server, relaunch with the -mcp-only flag (or NEXWIKI_MCP_ONLY=true).", addr, err)
 		}
 	}
+
+	beforeOpenStorage(sigCh) // a no-op outside tests
+
+	// A signal that arrived while the frontend loaded or the port was bound ends the launch here, so
+	// it leaves the data directory as it found it, uncreated if it did not exist.
+	select {
+	case sig := <-sigCh:
+		log.Printf("Received %s before opening storage: exiting without opening it.", sig)
+		if webListener != nil {
+			_ = webListener.Close()
+		}
+		return
+	default:
+	}
+
+	// NewStorage can run for a while: up to IndexOpenTimeout waiting for the index lock, and longer
+	// for a migration or first index build. So a signal meanwhile is acknowledged as it arrives rather
+	// than looking ignored, and the first is kept for handling once storage is open. A repeat cannot
+	// kill the process, since signal.Notify has replaced the default action; it is only logged.
+	var (
+		openSignal   os.Signal
+		openSignalAt time.Time
+	)
+	opened := make(chan struct{})
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		for {
+			select {
+			case sig := <-sigCh:
+				if openSignal != nil {
+					log.Printf("Received %s while opening storage; shutdown is already pending and begins as soon as it finishes opening.", sig)
+					continue
+				}
+				openSignal, openSignalAt = sig, time.Now()
+				log.Printf("Received %s while opening storage; will shut down as soon as it finishes opening.", sig)
+			case <-opened:
+				return
+			}
+		}
+	}()
 
 	// Ensure storage is initialized.
 	//
@@ -207,7 +259,14 @@ func main() {
 	// one step that can block forever. It used to wrap this whole call, which put seeding, the
 	// one-time migration, and the boot index sync on the same 15-second budget — a migration that
 	// legitimately took longer was killed and reported as a lock conflict.
+	//
+	// Logged first so a long lock wait or first index build reads as in progress, not as a hang.
+	log.Printf("Opening storage...")
 	storage, err := server.NewStorage(*dataDir)
+	close(opened)
+	// Once the watcher has returned, openSignal is safe to read, and a later signal waits in sigCh
+	// for the mode's own shutdown path below.
+	<-watchDone
 	if err != nil {
 		// Release the port before exiting: this process will never serve it.
 		if webListener != nil {
@@ -226,22 +285,14 @@ func main() {
 	}
 
 	// A signal that arrived while storage was opening is acted on now, before anything else starts or
-	// writes, so storage is all there is to close, under the same deadline as any shutdown. A signal
-	// from here on waits in the buffer for the mode's own shutdown path below.
-	select {
-	case sig := <-sigCh:
-		log.Printf("Received %s while opening storage: shutting down gracefully...", sig)
+	// writes, so storage is all there is to close. Its deadline counts from the signal, as the stop
+	// grace of whatever sent it does, not from the open finishing; see openSignalClose.
+	if openSignal != nil {
 		if webListener != nil {
 			_ = webListener.Close()
 		}
-		_, closeCtx, cancel := shutdownContexts()
-		defer cancel()
-		if err := storage.CloseContext(closeCtx); err != nil {
-			log.Printf("Warning: failed to close storage: %v", err)
-		}
-		log.Print(shutdownSummary(false, closeCtx.Err() != nil))
+		log.Print(closeAfterOpenSignal(storage.CloseContext, openSignalAt, time.Now()))
 		return
-	default:
 	}
 
 	// Initialize EventBus for real-time pub-sub sync
@@ -478,14 +529,11 @@ func main() {
 		shutdown()
 	}()
 
-	// The banner has to name a host someone can paste into a browser. addr is "host:port", so
-	// concatenating it onto "http://localhost" only reads correctly when -bind is unset and the
-	// host half is empty: with -bind 127.0.0.1 it printed "http://localhost127.0.0.1:8137".
-	displayHost := bindHost
-	if displayHost == "" || displayHost == "0.0.0.0" {
-		displayHost = "localhost" // all interfaces: localhost is the address that works locally
-	}
-	log.Printf("NexWiki web server is running on http://%s:%s", displayHost, *port)
+	// The banner has to name a URL someone can paste into a browser, which formatting it by hand got
+	// wrong: with -bind 127.0.0.1 it printed "http://localhost127.0.0.1:8137", and an IPv6 host needs
+	// brackets. See displayHost and buildAppURL.
+	appURL := buildAppURL(displayHost(bindHost), *port)
+	log.Printf("NexWiki web server is running on %s", appURL)
 
 	// Open the wiki in the user's browser when requested. Storage is ready by now, but requests are
 	// only read once Serve below starts accepting, so the opener runs in a goroutine that waits until
@@ -493,7 +541,7 @@ func main() {
 	// fails. Never fatal: a headless box simply logs a warning. -mcp-only never reaches here (it
 	// returns above), so there is no need to guard against the headless stdio mode.
 	if launchInBrowser {
-		go waitForServerAndOpenBrowser(probeHost(bindHost), *port, buildAppURL(displayHost, *port))
+		go waitForServerAndOpenBrowser(probeHost(bindHost), *port, appURL)
 	}
 
 	// The port was bound before storage opened, so this is where accepting begins, and an error here
@@ -507,7 +555,7 @@ func main() {
 	}
 
 	<-shutdownDone // the shutdown goroutine closes resources before it finishes
-	log.Print(shutdownSummary(writersOverran, closeOverran))
+	log.Print(shutdownSummary(writersOverran, closeOverran, false))
 }
 
 // shutdownTimeout bounds graceful shutdown, from the signal to the search index closing.
@@ -533,13 +581,70 @@ func shutdownContexts() (stopCtx, closeCtx context.Context, cancel context.Cance
 	}
 }
 
+// closeAfterOpenSignal closes storage that finished opening at openedAt after a signal received at
+// receivedAt, under the deadline openSignalClose gives, and returns the shutdown summary to log last.
+func closeAfterOpenSignal(closeStorage func(context.Context) error, receivedAt, openedAt time.Time) string {
+	deadline, deadlinePassed, logLine := openSignalClose(receivedAt, openedAt)
+	log.Print(logLine)
+	closeCtx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	if err := closeStorage(closeCtx); err != nil {
+		log.Printf("Warning: failed to close storage: %v", err)
+	}
+	return shutdownSummary(false, closeCtx.Err() != nil, deadlinePassed)
+}
+
+// openSignalClose returns the deadline for closing storage that finished opening at openedAt after a
+// signal received at receivedAt, whether the shutdown deadline had already passed by then, and the
+// line to log about it, which says when the minimum below replaced the usual deadline and why.
+//
+// It is shutdownTimeout from the signal, like any shutdown's deadline, because a container runtime
+// counts its stop grace (10s by default) from sending the signal, however long the open kept the
+// process from acting on it. But the close always gets at least storageCloseReserve, the least any
+// shutdown leaves storage: an open that ran past the budget would otherwise get a deadline already
+// passed, and close the index without waiting at all for the temp file sweep NewStorage just
+// started. That is a limit, not a delay, since the close returns as soon as the sweep stops, which
+// it does between directories. One second keeps even a close that needs all of it inside the stop
+// grace for an open that finished within 9s of the signal. A longer minimum would only hold the index
+// close back behind a sweep stuck on a slow directory, closer to the SIGKILL that ends the grace.
+func openSignalClose(receivedAt, openedAt time.Time) (deadline time.Time, deadlinePassed bool, logLine string) {
+	deadline = receivedAt.Add(shutdownTimeout)
+	minimum := openedAt.Add(storageCloseReserve)
+	if !deadline.Before(minimum) {
+		return deadline, false, "Storage finished opening: shutting down gracefully..."
+	}
+	// Decided from the exact times. The figure shown is rounded up to the millisecond, which keeps it
+	// on the same side of both boundaries, whole seconds, as the time it stands for: an open 3ms past
+	// the deadline reads "5.003s", never "5s after the signal, past the 5s shutdown deadline".
+	took := openedAt.Sub(receivedAt)
+	if shown := took.Truncate(time.Millisecond); shown < took {
+		took = shown + time.Millisecond
+	}
+	if openedAt.After(deadline) {
+		return minimum, true, fmt.Sprintf("Storage finished opening %s after the signal, past the %s shutdown deadline: allowing up to %s to close it...",
+			took, shutdownTimeout, storageCloseReserve)
+	}
+	return minimum, false, fmt.Sprintf("Storage finished opening %s after the signal, less than %s before the %s shutdown deadline: allowing up to %s to close it...",
+		took, storageCloseReserve, shutdownTimeout, storageCloseReserve)
+}
+
+// beforeOpenStorage runs just before main checks sigCh and opens storage. It does nothing outside
+// tests, which use it to hold startup until a signal is waiting in sigCh.
+var beforeOpenStorage = func(chan os.Signal) {}
+
 // shutdownSummary is the last line a web server shutdown logs, as is any shutdown that begins while
 // storage is opening. writersOverran means the writers' deadline passed before they all stopped,
-// which each overrunning writer logs a warning about. closeOverran means the overall deadline had
+// which each overrunning writer logs a warning about. closeOverran means the close's deadline had
 // passed once storage and the activity log were closed; that includes a slow search index close,
-// which logs no warning of its own.
-func shutdownSummary(writersOverran, closeOverran bool) string {
+// which logs no warning of its own. That deadline is the overall shutdown deadline, except when
+// deadlinePassedBeforeClose: storage finished opening after a signal only once the shutdown deadline
+// had passed, so closing it got storageCloseReserve instead (see openSignalClose), and what ran out is
+// that allowance.
+func shutdownSummary(writersOverran, closeOverran, deadlinePassedBeforeClose bool) string {
 	switch {
+	case closeOverran && deadlinePassedBeforeClose:
+		return fmt.Sprintf("NexWiki shut down after the %s allowed for closing storage ran out; its %s shutdown deadline had already passed while storage was opening. See any warnings above.",
+			storageCloseReserve, shutdownTimeout)
 	case closeOverran:
 		return fmt.Sprintf("NexWiki shut down after its %s shutdown deadline passed while closing storage; see any warnings above.",
 			shutdownTimeout)
@@ -562,17 +667,49 @@ func loadFrontendFS() (fs.FS, error) {
 	return fs.Sub(embeddedFrontend, "frontend/dist")
 }
 
+// listenAddr is the address the web server listens on. net.JoinHostPort brackets an IPv6 host,
+// which formatting "host:port" by hand does not: -bind :: made ":::5808", which net.Listen rejects.
+// An empty host still listens on all interfaces.
+func listenAddr(bindHost, port string) string {
+	return net.JoinHostPort(bindHost, port)
+}
+
+// isWildcardHost reports whether bindHost listens on all interfaces: empty, 0.0.0.0, or ::.
+func isWildcardHost(bindHost string) bool {
+	if bindHost == "" {
+		return true
+	}
+	ip := net.ParseIP(bindHost)
+	return ip != nil && ip.IsUnspecified()
+}
+
+// displayHost is the host the startup banner and -launch-in-browser name: the bind interface, or
+// "localhost" when bound to all interfaces, since localhost is the address that works locally.
+func displayHost(bindHost string) string {
+	if isWildcardHost(bindHost) {
+		return "localhost"
+	}
+	return bindHost
+}
+
 // buildAppURL assembles the pasteable/openable wiki URL from the display
-// host (bind interface, or "localhost" when bound to all interfaces) and port.
-func buildAppURL(displayHost, port string) string {
-	return fmt.Sprintf("http://%s:%s", displayHost, port)
+// host (see displayHost) and port.
+func buildAppURL(host, port string) string {
+	return httpURL(host, port, "")
+}
+
+// httpURL returns the http URL for path on host and port. The host goes through net.JoinHostPort
+// so an IPv6 literal is bracketed ("http://[::1]:5808"), and through url.URL so a zone in one is
+// escaped as URLs require.
+func httpURL(host, port, path string) string {
+	return (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: path}).String()
 }
 
 // probeHost picks the address waitForServerAndOpenBrowser polls. The server
 // may be bound to a specific interface, so probe that interface — except the
 // wildcard binds, which are not dialable and fall back to loopback.
 func probeHost(bindHost string) string {
-	if bindHost == "" || bindHost == "0.0.0.0" || bindHost == "::" {
+	if isWildcardHost(bindHost) {
 		return "127.0.0.1"
 	}
 	return bindHost
@@ -590,11 +727,15 @@ func waitForServerAndOpenBrowser(host, port, appURL string) {
 
 // waitForServer polls http://host:port/api/config until it answers 200 or
 // timeout elapses. Pure polling, no side effects — safe to unit test.
+//
+// It connects directly, whatever HTTP_PROXY says: the server is this process, and a proxy would
+// not reach it at a LAN bind address, leaving the poll to fail until timeout.
 func waitForServer(host, port string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	client := &http.Client{Timeout: 750 * time.Millisecond}
+	client := &http.Client{Transport: server.NewDirectTransport(), Timeout: 750 * time.Millisecond}
+	defer client.CloseIdleConnections()
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(fmt.Sprintf("http://%s:%s/api/config", host, port))
+		resp, err := client.Get(httpURL(host, port, "/api/config"))
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -650,27 +791,104 @@ func openBrowser(url string) error {
 // resolveBindHost determines the host interface to bind to. Native desktop execution
 // defaults to loopback (127.0.0.1) for security, while containerized environments
 // default to all interfaces ("") to allow container port mapping.
+//
+// The host is returned bare: an IPv6 literal bracketed as in a URL, "[::1]", worked while the listen
+// address was formatted by hand, and net.JoinHostPort would bracket it a second time.
 func resolveBindHost(flagBind string, envBind string, inContainer bool) string {
-	if flagBind != "" {
-		return flagBind
+	host := flagBind
+	if host == "" {
+		host = envBind
 	}
-	if envBind != "" {
-		return envBind
+	if host == "" {
+		if inContainer {
+			return ""
+		}
+		return "127.0.0.1"
 	}
-	if inContainer {
-		return ""
+	if len(host) > 2 && strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		return host[1 : len(host)-1]
 	}
-	return "127.0.0.1"
+	return host
 }
 
-// probeForPrimary reports whether a NexWiki web server is already running on the given port,
-// by issuing a short GET /api/config against the loopback interface.
-func probeForPrimary(port string) bool {
+// primaryProbeTimeout bounds the whole search for a running web primary, however many hosts it
+// tries: a stdio client waits on it before this process answers anything.
+const primaryProbeTimeout = 750 * time.Millisecond
+
+// primaryProbeHosts lists, in order, where an -mcp-only process looks for a web primary, given its
+// own resolved bind host. A primary bound to a specific address, such as -bind 192.168.1.50 or
+// -bind 127.0.0.2, listens only there, so a sidecar given that address looks only there. A wildcard
+// names no address, as with the container default a `docker exec` sidecar inherits, so the sidecar
+// looks on loopback, as it does for the native default of 127.0.0.1: IPv4, preferred, and ::1, so a
+// primary started with -bind ::1 is found even by a sidecar given no -bind.
+func primaryProbeHosts(bindHost string) []string {
+	if isWildcardHost(bindHost) || bindHost == "127.0.0.1" {
+		return []string{"127.0.0.1", "::1"}
+	}
+	return []string{bindHost}
+}
+
+// findPrimary reports where a NexWiki web server answers GET /api/config on port: the first of
+// hosts, in order, that answers within timeout. The hosts are probed at once, not in turn, because
+// the time a closed port takes to refuse varies by platform: Windows takes about two seconds on
+// loopback, which would spend the whole budget on 127.0.0.1 before ::1 was tried. A host that
+// answers is taken as soon as every host before it has failed, or once the budget runs out while one
+// is still in flight, like a primary that has bound its port but is still opening storage. It
+// connects directly, as the proxy then does, whatever HTTP_PROXY says.
+func findPrimary(hosts []string, port string, timeout time.Duration) (host string, found bool) {
 	if port == "" {
 		port = "5808"
 	}
-	client := &http.Client{Timeout: 750 * time.Millisecond}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%s/api/config", port))
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	client := &http.Client{Transport: server.NewDirectTransport()}
+	var probes sync.WaitGroup
+	defer func() {
+		// Cancelled first, so the probes still in flight end at once rather than at their own pace,
+		// and waited for, so their connections are closed with the rest instead of lingering idle.
+		cancel()
+		probes.Wait()
+		client.CloseIdleConnections()
+	}()
+
+	answered := make([]chan bool, len(hosts))
+	for i, h := range hosts {
+		answered[i] = make(chan bool, 1)
+		probes.Add(1)
+		go func() {
+			defer probes.Done()
+			answered[i] <- primaryAnswers(ctx, client, h, port)
+		}()
+	}
+	for i := range hosts {
+		select {
+		case ok := <-answered[i]:
+			if ok {
+				return hosts[i], true
+			}
+		case <-ctx.Done():
+			// Out of time for the hosts still in flight: take the first later one that has answered.
+			for j := i; j < len(hosts); j++ {
+				select {
+				case ok := <-answered[j]:
+					if ok {
+						return hosts[j], true
+					}
+				default:
+				}
+			}
+			return "", false
+		}
+	}
+	return "", false
+}
+
+// primaryAnswers reports whether GET /api/config on host and port answers 200 before ctx ends.
+func primaryAnswers(ctx context.Context, client *http.Client, host, port string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, httpURL(host, port, "/api/config"), nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}

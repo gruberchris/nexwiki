@@ -73,17 +73,34 @@ type MCPProxy struct {
 	stdioClient agentIdentity
 }
 
-// NewMCPProxy builds a proxy targeting the primary's MCP endpoint on the given port. agentName is
-// this process's configured attribution fallback, and may be empty. One that sanitizes to nothing
-// is kept empty too, so the proxy forwards no name for it and the primary's own fallback applies
-// rather than a blank agent.
-func NewMCPProxy(port, agentName string, out io.Writer) *MCPProxy {
+// NewDirectTransport returns the HTTP transport a sidecar uses to reach its primary: the default
+// transport's dial, keep-alive, and handshake settings, but never a proxy from HTTP_PROXY or
+// HTTPS_PROXY. The primary runs on this machine or its network, and the default transport exempts
+// only loopback from those variables, so a primary bound to a LAN address would otherwise be probed
+// and proxied through, say, a corporate proxy that cannot reach it. It sets no response timeout,
+// which would cut subscription streams.
+func NewDirectTransport() *http.Transport {
+	t := &http.Transport{}
+	if def, ok := http.DefaultTransport.(*http.Transport); ok {
+		t = def.Clone()
+	}
+	t.Proxy = nil
+	return t
+}
+
+// NewMCPProxy builds a proxy targeting the primary's MCP endpoint, a full URL such as
+// "http://127.0.0.1:5808/api/mcp". The caller supplies the URL because it chooses the host: the
+// primary may be bound to a specific address rather than IPv4 loopback, and the caller is where
+// that address was probed. agentName is this process's configured attribution fallback, and may be
+// empty. One that sanitizes to nothing is kept empty too, so the proxy forwards no name for it and
+// the primary's own fallback applies rather than a blank agent.
+func NewMCPProxy(endpoint, agentName string, out io.Writer) *MCPProxy {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &MCPProxy{
-		endpoint: fmt.Sprintf("http://127.0.0.1:%s/api/mcp", port),
+		endpoint: endpoint,
 		// No overall client timeout: subscription streams are long-lived by design. Per-request
 		// deadlines are applied to non-streaming calls instead.
-		client:    &http.Client{},
+		client:    &http.Client{Transport: NewDirectTransport()},
 		out:       out,
 		shutdown:  ctx,
 		stop:      cancel,

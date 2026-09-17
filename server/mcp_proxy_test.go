@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -87,6 +88,77 @@ func TestProxyForwardsLegacyCalls(t *testing.T) {
 	}
 	if msgs[0]["id"].(float64) != 1 || msgs[1]["id"].(float64) != 2 {
 		t.Error("responses must preserve their request ids and order")
+	}
+}
+
+// TestNewMCPProxyForwardsToTheGivenEndpoint pins that the proxy talks to exactly the endpoint its
+// caller chose. main picks the host where it found the primary, which can be IPv6 loopback or another
+// specific address rather than the 127.0.0.1 the endpoint was once hardcoded to (#174).
+func TestNewMCPProxyForwardsToTheGivenEndpoint(t *testing.T) {
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		t.Run(host, func(t *testing.T) {
+			ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+			if err != nil {
+				t.Skipf("cannot listen on %s: %v", host, err)
+			}
+			primary := resourceServer(t)
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/mcp", primary.HandleStreamableHTTP)
+			httpSrv := httptest.NewUnstartedServer(mux)
+			_ = httpSrv.Listener.Close()
+			httpSrv.Listener = ln
+			httpSrv.Start()
+			t.Cleanup(httpSrv.Close)
+
+			out := &syncBuffer{}
+			endpoint := "http://" + ln.Addr().String() + "/api/mcp" // Addr brackets an IPv6 host
+			NewMCPProxy(endpoint, "", out).Run(strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}` + "\n"))
+
+			msgs := out.messages(t)
+			if len(msgs) != 1 {
+				t.Fatalf("expected 1 response from the primary at %s, got %d:\n%s", endpoint, len(msgs), out.String())
+			}
+			result, _ := msgs[0]["result"].(map[string]interface{})
+			if _, ok := result["tools"]; !ok {
+				t.Errorf("the proxied tools/list did not reach the primary at %s: %s", endpoint, out.String())
+			}
+		})
+	}
+}
+
+// TestNewDirectTransportIgnoresProxyVariables pins the transport the sidecar reaches its primary
+// with, both for main's probe and the proxy's forwarding: no proxy, whatever HTTP_PROXY says, the
+// default transport's connection settings otherwise, and no response timeout to cut subscription
+// streams. net/http reads the variables once per process, so the main package's child-process test
+// covers the behavior end to end; this pins the configuration.
+func TestNewDirectTransportIgnoresProxyVariables(t *testing.T) {
+	def, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Skip("http.DefaultTransport has been replaced")
+	}
+	check := func(label string, rt http.RoundTripper) {
+		t.Helper()
+		tr, ok := rt.(*http.Transport)
+		if !ok {
+			t.Fatalf("%s: transport is %T, want *http.Transport", label, rt)
+		}
+		if tr.Proxy != nil {
+			t.Errorf("%s: transport has a Proxy function, so HTTP_PROXY can route traffic to the primary", label)
+		}
+		if tr.DialContext == nil || tr.IdleConnTimeout != def.IdleConnTimeout || tr.TLSHandshakeTimeout != def.TLSHandshakeTimeout ||
+			tr.MaxIdleConns != def.MaxIdleConns || tr.ForceAttemptHTTP2 != def.ForceAttemptHTTP2 {
+			t.Errorf("%s: transport does not keep the default transport's connection settings", label)
+		}
+		if tr.ResponseHeaderTimeout != 0 {
+			t.Errorf("%s: ResponseHeaderTimeout %s would cut subscription streams", label, tr.ResponseHeaderTimeout)
+		}
+	}
+	check("NewDirectTransport", NewDirectTransport())
+
+	proxy := NewMCPProxy("http://127.0.0.1:1/api/mcp", "", io.Discard)
+	check("NewMCPProxy", proxy.client.Transport)
+	if proxy.client.Timeout != 0 {
+		t.Errorf("the proxy client has a %s timeout, which would cut subscription streams", proxy.client.Timeout)
 	}
 }
 
@@ -422,7 +494,7 @@ func TestInvisibleConfiguredAgentNameIsTreatedAsUnset(t *testing.T) {
 	const invisible = "\x01\x1b\u200b\u200e\ufeff"
 	const listCall = `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_articles","arguments":{}}}`
 
-	built := NewMCPProxy("1", invisible, io.Discard)
+	built := NewMCPProxy("http://127.0.0.1:1/api/mcp", invisible, io.Discard)
 	defer built.stop()
 	req, err := built.newRequest([]byte(listCall))
 	if err != nil {

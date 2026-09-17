@@ -6,10 +6,10 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -29,12 +30,49 @@ import (
 // exits included, in a child process.
 const runMainEnv = "NEXWIKI_TEST_RUN_MAIN"
 
+// pauseBeforeStorageEnv, set to "1" as well, holds the child just before it checks for a signal and
+// opens storage, logging pausedBeforeStorage, until a signal is waiting for that check. A signal sent
+// once the line is logged is certain to arrive before NewStorage starts.
+const (
+	pauseBeforeStorageEnv = "NEXWIKI_TEST_PAUSE_BEFORE_STORAGE"
+	pausedBeforeStorage   = "test hook: paused before opening storage"
+)
+
+// waitForServerEnv, set to "host:port", makes this test binary run only waitForServer against that
+// address, exiting 0 if the server answered within waitForServerTimeout and 1 otherwise. It takes
+// precedence over runMainEnv.
+const (
+	waitForServerEnv     = "NEXWIKI_TEST_WAIT_FOR_SERVER"
+	waitForServerTimeout = 5 * time.Second
+)
+
 func TestMain(m *testing.M) {
+	if addr := os.Getenv(waitForServerEnv); addr != "" {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil || !waitForServer(host, port, waitForServerTimeout) {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if os.Getenv(runMainEnv) == "1" {
+		if os.Getenv(pauseBeforeStorageEnv) == "1" {
+			beforeOpenStorage = holdUntilSignalled
+		}
 		main()
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// holdUntilSignalled returns once a signal is waiting in sigCh. It takes the signal to see it arrive
+// and puts it back for main's own check, unless another signal already refilled the buffer.
+func holdUntilSignalled(sigCh chan os.Signal) {
+	log.Print(pausedBeforeStorage)
+	sig := <-sigCh
+	select {
+	case sigCh <- sig:
+	default:
+	}
 }
 
 // syncBuffer collects a child's output and is safe to read while the child is still writing it.
@@ -68,6 +106,13 @@ type mainRun struct {
 // default data directory resolves under home instead of the real one. A nil stdin reads as EOF.
 func startMain(t *testing.T, home string, stdin io.Reader, args ...string) *mainRun {
 	t.Helper()
+	return startMainWithEnv(t, home, stdin, nil, args...)
+}
+
+// startMainWithEnv is startMain with extraEnv ("KEY=value") added to the child's environment, after
+// the NEXWIKI_ variables are removed, so it can set the test hooks.
+func startMainWithEnv(t *testing.T, home string, stdin io.Reader, extraEnv []string, args ...string) *mainRun {
+	t.Helper()
 	var env []string
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, "NEXWIKI_") {
@@ -77,6 +122,7 @@ func startMain(t *testing.T, home string, stdin io.Reader, args ...string) *main
 	config := filepath.Join(home, ".config")
 	// exec uses the last value of a repeated key, so these replace any inherited ones.
 	env = append(env, runMainEnv+"=1", "HOME="+home, "USERPROFILE="+home, "XDG_CONFIG_HOME="+config, "APPDATA="+config)
+	env = append(env, extraEnv...)
 
 	r := &mainRun{cmd: exec.Command(os.Args[0], args...), done: make(chan struct{})}
 	r.cmd.Env = env
@@ -123,13 +169,13 @@ func (r *mainRun) wait(t *testing.T, timeout time.Duration) int {
 	}
 }
 
-// waitForLog waits until the child has logged want, failing if it exits or a minute passes first.
-func (r *mainRun) waitForLog(t *testing.T, want string) {
+// waitForLog waits until the child has logged want, failing if it exits or timeout passes first.
+func (r *mainRun) waitForLog(t *testing.T, want string, timeout time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(time.Minute)
+	deadline := time.Now().Add(timeout)
 	for !strings.Contains(r.stderr.String(), want) {
 		if time.Now().After(deadline) {
-			t.Fatalf("main did not log %q within a minute; stderr:\n%s", want, r.stderr.String())
+			t.Fatalf("main did not log %q within %s; stderr:\n%s", want, timeout, r.stderr.String())
 		}
 		select {
 		case <-r.done:
@@ -279,30 +325,150 @@ func TestStandaloneMCPOnlySeedsTheAgentGuidelines(t *testing.T) {
 
 // TestProxyModeNeverOpensStorage pins that a -mcp-only process which finds a web server on its port
 // only forwards to it: the data directory belongs to that server, so this process never creates it.
+// It finds the server on loopback from the native and container defaults, and at a specific address
+// given as its own -bind (#174), and forwards the stdio request to the host it found.
 func TestProxyModeNeverOpensStorage(t *testing.T) {
-	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/config" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer primary.Close()
-	u, err := url.Parse(primary.URL)
-	if err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name        string
+		primaryHost string
+		args, env   []string
+	}{
+		{"native default", "127.0.0.1", nil, nil},
+		{"container NEXWIKI_BIND=0.0.0.0", "127.0.0.1", nil, []string{"NEXWIKI_BIND=0.0.0.0"}},
+		{"-bind ::1", "::1", []string{"-bind", "::1"}, nil},
+		{"-bind 127.0.0.2", "127.0.0.2", []string{"-bind", "127.0.0.2"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			port, mcpCalls := startPrimaryStub(t, tc.primaryHost)
+			request := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}` + "\n"
+
+			home := t.TempDir()
+			dataDir := filepath.Join(home, "wiki")
+			args := append(append([]string{"-mcp-only"}, tc.args...), "-port", port, "-data", dataDir)
+			run := startMainWithEnv(t, home, strings.NewReader(request), tc.env, args...)
+			if code := run.wait(t, time.Minute); code != 0 {
+				t.Errorf("exit code %d, want 0 at stdin EOF; stderr:\n%s", code, run.stderr.String())
+			}
+			if stderr := run.stderr.String(); !strings.Contains(stderr, "running as a proxy") {
+				t.Fatalf("the process did not run as a proxy; stderr:\n%s", stderr)
+			}
+			if got := mcpCalls.Load(); got != 1 {
+				t.Errorf("the primary on %s received %d MCP requests, want 1", tc.primaryHost, got)
+			}
+			if want := `"answeredOn":"` + tc.primaryHost + `"`; !strings.Contains(run.stdout.String(), want) {
+				t.Errorf("stdout does not carry the primary's answer %s:\n%s", want, run.stdout.String())
+			}
+			assertNotExist(t, dataDir)
+		})
 	}
+}
+
+// nonLoopbackAddress returns an address of this machine outside loopback that a test server can
+// listen on, IPv4 preferred, skipping the test when there is none. The default transport exempts all
+// of loopback, 127.0.0.2 included, from the proxy variables, so only such an address shows whether a
+// client honors them.
+func nonLoopbackAddress(t *testing.T) string {
+	t.Helper()
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Skipf("cannot list interface addresses: %v", err)
+	}
+	var v4, v6 []string
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		// Global unicast includes private LAN ranges, and leaves out loopback and link-local, whose
+		// IPv6 form would need a zone.
+		if !ok || !ipnet.IP.IsGlobalUnicast() {
+			continue
+		}
+		if ipnet.IP.To4() != nil {
+			v4 = append(v4, ipnet.IP.String())
+		} else {
+			v6 = append(v6, ipnet.IP.String())
+		}
+	}
+	for _, host := range append(v4, v6...) {
+		if ln, err := net.Listen("tcp", net.JoinHostPort(host, "0")); err == nil {
+			_ = ln.Close()
+			return host
+		}
+	}
+	t.Skip("no non-loopback address to listen on")
+	return ""
+}
+
+// TestProxyModeConnectsDirectlyDespiteProxyVariables pins that a sidecar's traffic to its primary
+// never goes through HTTP_PROXY: a primary bound to a non-loopback address, which the default
+// transport would reach through the proxy, is found and forwarded to directly, and the recording
+// proxy receives nothing. The variables go to a child process because net/http reads them once per
+// process, so setting them in this one could come too late to have any effect.
+func TestProxyModeConnectsDirectlyDespiteProxyVariables(t *testing.T) {
+	host := nonLoopbackAddress(t)
+	port, mcpCalls := startPrimaryStub(t, host)
+
+	var proxied atomic.Int32
+	recordingProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxied.Add(1)
+		http.Error(w, "the recording proxy forwards nothing", http.StatusBadGateway)
+	}))
+	defer recordingProxy.Close()
+	env := proxyVariables(recordingProxy.URL)
 
 	home := t.TempDir()
 	dataDir := filepath.Join(home, "wiki")
-	run := startMain(t, home, nil, "-mcp-only", "-port", u.Port(), "-data", dataDir)
+	request := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}` + "\n"
+	run := startMainWithEnv(t, home, strings.NewReader(request), env, "-mcp-only", "-bind", host, "-port", port, "-data", dataDir)
 	if code := run.wait(t, time.Minute); code != 0 {
-		t.Errorf("exit code %d, want 0 at stdin EOF", code)
+		t.Errorf("exit code %d, want 0 at stdin EOF; stderr:\n%s", code, run.stderr.String())
 	}
 	if stderr := run.stderr.String(); !strings.Contains(stderr, "running as a proxy") {
-		t.Errorf("the process did not run as a proxy; stderr:\n%s", stderr)
+		t.Fatalf("the primary on %s was not detected (the proxy received %d requests); stderr:\n%s", host, proxied.Load(), stderr)
+	}
+	if got := mcpCalls.Load(); got != 1 {
+		t.Errorf("the primary on %s received %d MCP requests, want 1", host, got)
+	}
+	if want := `"answeredOn":"` + host + `"`; !strings.Contains(run.stdout.String(), want) {
+		t.Errorf("stdout does not carry the primary's answer %s:\n%s", want, run.stdout.String())
+	}
+	if got := proxied.Load(); got != 0 {
+		t.Errorf("%d requests went through HTTP_PROXY, want none", got)
 	}
 	assertNotExist(t, dataDir)
+}
+
+// proxyVariables points every proxy environment variable at proxyURL, and empties NO_PROXY so the
+// developer's own exemptions cannot make a test pass.
+func proxyVariables(proxyURL string) []string {
+	env := []string{"NO_PROXY=", "no_proxy="}
+	for _, key := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"} {
+		env = append(env, key+"="+proxyURL)
+	}
+	return env
+}
+
+// TestWaitForServerConnectsDirectlyDespiteProxyVariables pins that the -launch-in-browser
+// readiness poll reaches a server bound to a non-loopback address directly, not through
+// HTTP_PROXY, which would fail it until its timeout. It runs in a child process for the same reason
+// as TestProxyModeConnectsDirectlyDespiteProxyVariables.
+func TestWaitForServerConnectsDirectlyDespiteProxyVariables(t *testing.T) {
+	host := nonLoopbackAddress(t)
+	port, _ := startPrimaryStub(t, host)
+
+	var proxied atomic.Int32
+	recordingProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxied.Add(1)
+		http.Error(w, "the recording proxy forwards nothing", http.StatusBadGateway)
+	}))
+	defer recordingProxy.Close()
+
+	env := append(proxyVariables(recordingProxy.URL), waitForServerEnv+"="+net.JoinHostPort(host, port))
+	run := startMainWithEnv(t, t.TempDir(), nil, env)
+	if code := run.wait(t, waitForServerTimeout+time.Minute); code != 0 {
+		t.Errorf("waitForServer did not reach the server on %s (exit code %d; the proxy received %d requests)", host, code, proxied.Load())
+	}
+	if got := proxied.Load(); got != 0 {
+		t.Errorf("%d requests went through HTTP_PROXY, want none", got)
+	}
 }
 
 // TestNormalLaunchServesOnlyOnceSeededAndShutsDownOnSignal guards the bind moving ahead of storage:
@@ -352,9 +518,10 @@ func TestNormalLaunchServesOnlyOnceSeededAndShutsDownOnSignal(t *testing.T) {
 }
 
 // TestSignalWhileStorageOpensIsHandledOnceItOpens pins that a process opening its data directory
-// catches SIGTERM from before NewStorage, which cannot be interrupted: the signal does not kill it
-// mid-open, and as soon as storage is open it closes it and exits 0, before seeding or starting
-// anything. Another storage instance holds the index lock, so the signal lands during the lock wait.
+// catches SIGTERM from before NewStorage, which cannot be interrupted: the signal is acknowledged at
+// once, neither it nor a second one kills the process mid-open, and as soon as storage is open it
+// closes it and exits 0, before seeding or starting anything. Another storage instance holds the
+// index lock, so the signals land during the lock wait.
 func TestSignalWhileStorageOpensIsHandledOnceItOpens(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("a child process cannot be sent SIGTERM on Windows")
@@ -362,11 +529,9 @@ func TestSignalWhileStorageOpensIsHandledOnceItOpens(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
-		// ready is logged once the signal handler is registered, before storage starts opening.
-		ready string
 	}{
-		{"web server", []string{"-bind", "127.0.0.1"}, "Serving frontend assets"},
-		{"standalone -mcp-only", []string{"-mcp-only"}, "running standalone"},
+		{"web server", []string{"-bind", "127.0.0.1"}},
+		{"standalone -mcp-only", []string{"-mcp-only"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -393,13 +558,23 @@ func TestSignalWhileStorageOpensIsHandledOnceItOpens(t *testing.T) {
 
 			args := append(append([]string{}, tc.args...), "-port", freePort(t), "-data", dataDir)
 			run := startMain(t, home, stdin, args...)
-			run.waitForLog(t, tc.ready)
+			// Logged after the check for a signal that arrived earlier and just before NewStorage
+			// starts, so a signal sent from here lands during the open.
+			run.waitForLog(t, "Opening storage...", time.Minute)
 			if err := run.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 				t.Fatalf("sending SIGTERM: %v", err)
 			}
+			// Well inside IndexOpenTimeout, so the acknowledgement comes while the lock is still held,
+			// not once NewStorage gives up or returns.
+			run.waitForLog(t, "Received terminated while opening storage; will shut down as soon as it finishes opening", 5*time.Second)
+
+			if err := run.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				t.Fatalf("sending the second SIGTERM: %v", err)
+			}
+			run.waitForLog(t, "Received terminated while opening storage; shutdown is already pending", 5*time.Second)
 			select {
 			case <-run.done:
-				t.Fatalf("SIGTERM ended main while it waited for the index lock (%v); stderr:\n%s", run.err, run.stderr.String())
+				t.Fatalf("a SIGTERM ended main while it waited for the index lock (%v); stderr:\n%s", run.err, run.stderr.String())
 			case <-time.After(500 * time.Millisecond):
 			}
 
@@ -411,7 +586,7 @@ func TestSignalWhileStorageOpensIsHandledOnceItOpens(t *testing.T) {
 				t.Fatalf("exit code %d, want 0; stderr:\n%s", code, run.stderr.String())
 			}
 			stderr := run.stderr.String()
-			for _, want := range []string{"Received terminated while opening storage", "NexWiki shut down cleanly."} {
+			for _, want := range []string{"Storage finished opening", "NexWiki shut down cleanly."} {
 				if !strings.Contains(stderr, want) {
 					t.Errorf("stderr does not say %q:\n%s", want, stderr)
 				}
@@ -431,5 +606,94 @@ func TestSignalWhileStorageOpensIsHandledOnceItOpens(t *testing.T) {
 				t.Errorf("closing the reopened storage: %v", err)
 			}
 		})
+	}
+}
+
+// TestSignalBeforeStorageOpensLeavesTheDataDirectoryUncreated pins that a signal arriving before
+// NewStorage starts, while the frontend loads or the port is bound, ends the launch there: it exits
+// 0 without creating the data directory or starting anything. A test hook holds startup until the
+// signal is waiting, so it certainly arrives before the open.
+func TestSignalBeforeStorageOpensLeavesTheDataDirectoryUncreated(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a child process cannot be sent SIGTERM on Windows")
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"web server", []string{"-bind", "127.0.0.1"}},
+		{"standalone -mcp-only", []string{"-mcp-only"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			dataDir := filepath.Join(home, "wiki")
+			args := append(append([]string{}, tc.args...), "-port", freePort(t), "-data", dataDir)
+			run := startMainWithEnv(t, home, nil, []string{pauseBeforeStorageEnv + "=1"}, args...)
+			run.waitForLog(t, pausedBeforeStorage, time.Minute)
+			if err := run.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				t.Fatalf("sending SIGTERM: %v", err)
+			}
+			if code := run.wait(t, 10*time.Second); code != 0 {
+				t.Fatalf("exit code %d, want 0; stderr:\n%s", code, run.stderr.String())
+			}
+			stderr := run.stderr.String()
+			if want := "Received terminated before opening storage"; !strings.Contains(stderr, want) {
+				t.Errorf("stderr does not say %q:\n%s", want, stderr)
+			}
+			if strings.Contains(stderr, "Opening storage") {
+				t.Errorf("main went on to open storage despite the signal; stderr:\n%s", stderr)
+			}
+			assertNotExist(t, dataDir)
+			assertNothingStarted(t, stderr)
+		})
+	}
+}
+
+// TestNormalLaunchBindsIPv6Loopback pins that -bind takes an IPv6 literal. The listen address was
+// once formatted as "::1:port", which net.Listen rejects with "too many colons"; now the server
+// answers on [::1], and the banner prints a URL with the host bracketed.
+func TestNormalLaunchBindsIPv6Loopback(t *testing.T) {
+	ln, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback is unavailable: %v", err)
+	}
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	_ = ln.Close()
+
+	home := t.TempDir()
+	run := startMain(t, home, nil, "-bind", "::1", "-port", port, "-data", filepath.Join(home, "wiki"))
+	run.waitForLog(t, "NexWiki web server is running on http://[::1]:"+port+"\n", time.Minute)
+
+	client := &http.Client{Timeout: time.Second}
+	defer client.CloseIdleConnections()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		resp, err := client.Get("http://[::1]:" + port + "/api/config")
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("GET /api/config over [::1] got %d, want 200", resp.StatusCode)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the web server did not answer on [::1] within a minute: %v; stderr:\n%s", err, run.stderr.String())
+		}
+		select {
+		case <-run.done:
+			t.Fatalf("main exited before serving (%v); stderr:\n%s", run.err, run.stderr.String())
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	client.CloseIdleConnections()
+
+	if runtime.GOOS == "windows" {
+		return // a child process cannot be sent SIGTERM on Windows; the cleanup kills it
+	}
+	if err := run.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("sending SIGTERM: %v", err)
+	}
+	if code := run.wait(t, time.Minute); code != 0 {
+		t.Errorf("exit code %d after SIGTERM, want 0; stderr:\n%s", code, run.stderr.String())
 	}
 }

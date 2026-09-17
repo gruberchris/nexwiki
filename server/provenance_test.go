@@ -403,7 +403,7 @@ func TestAgentNameSanitizingTimeIsBounded(t *testing.T) {
 		within(t, label("-agent-name"), func() string {
 			return (&Server{AgentName: name}).resolveAgent(&JSONRPCRequest{}, paramsEnvelope{})
 		})
-		within(t, label("sidecar -agent-name"), func() string { return NewMCPProxy("1", name, io.Discard).agentName })
+		within(t, label("sidecar -agent-name"), func() string { return NewMCPProxy("http://127.0.0.1:1/api/mcp", name, io.Discard).agentName })
 	}
 }
 
@@ -448,7 +448,7 @@ func TestResolveConfiguredAgentNameIgnoresAnEnvValueThatSanitizesToNothing(t *te
 			if agent := srv.resolveAgent(&JSONRPCRequest{}, paramsEnvelope{}); agent != "From Flag" {
 				t.Errorf("resolveAgent = %q, want the flag's name", agent)
 			}
-			if proxied := NewMCPProxy("1", got, io.Discard).agentName; proxied != "From Flag" {
+			if proxied := NewMCPProxy("http://127.0.0.1:1/api/mcp", got, io.Discard).agentName; proxied != "From Flag" {
 				t.Errorf("sidecar agent name = %q, want the flag's name", proxied)
 			}
 		})
