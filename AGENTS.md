@@ -32,6 +32,8 @@ The MCP specification changed shape in revision **`2026-07-28`**: no `initialize
 
 Modern-era specifics (required `_meta` fields, the `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` header contract, `server/discover`, the mandatory `ttlMs` / `cacheScope` caching hints, and the `-32020` / `-32022` error codes) are documented in [docs/mcp_server.md](./docs/mcp_server.md#-protocol-revisions-nexwiki-is-dual-era).
 
+**Capabilities are declared per era**, because the same word promises a different method in each: `resources.subscribe` means `subscriptions/listen` in the modern revision and the `resources/subscribe` RPC in the older ones, so only modern clients are told about it. Both eras serve cursor **pagination** on the four list methods and **`completion/complete`** for prompt arguments and article slugs; `ping` answers only in the legacy era, having been removed by the 2026-07-28 revision.
+
 ```mermaid
 graph TD
     subgraph AI Client / Agent
@@ -67,7 +69,7 @@ To run a **stdio MCP server next to an already-running web primary** — which i
 
 > ⚠️ **Every stdio client config below must pass `-mcp-only`.** Without it, the spawned process tries to bind the web port, collides with your running instance, and exits with `Fatal: could not bind web server`.
 
-> **A sidecar beside a running web server now proxies to it.** Only one process can own the data directory (the search index holds an exclusive lock), so the sidecar forwards MCP traffic to the primary instead of opening storage — which also gives stdio clients live subscription streams.
+> **A sidecar beside a running web server now proxies to it.** Only one process can own the data directory (the search index holds an exclusive lock), so the sidecar forwards MCP traffic to the primary instead of opening storage — and relays the primary's subscription stream, which is how its client gets live notifications when it has no `EventBus` of its own. A standalone stdio server serves subscriptions directly.
 
 ---
 
@@ -75,7 +77,7 @@ To run a **stdio MCP server next to an already-running web primary** — which i
 
 The NexWiki MCP server registers and exposes **twenty-nine** semantic tools for AI agents, covering search and reads, article writes with optimistic locking, revision history and reverts, tag management, AI memory lifecycle, collaborative plans, the custom skills registry, progressive-disclosure orientation, backlink traversal, activity history, and OKF bundle import/export.
 
-NexWiki also exposes **Resources** (`nexwiki://article/{slug}`) so a user can `@`-mention a wiki page directly, and **`subscriptions/listen`** so an agent is notified the moment a document is edited or the document set changes — see [docs/mcp_server.md](./docs/mcp_server.md#-resources---mention-a-wiki-page).
+NexWiki also exposes **Resources** (`nexwiki://article/{slug}`) so a user can `@`-mention a wiki page directly, and **`subscriptions/listen`** so an agent is notified the moment a document is edited or the document set changes — on **both** Streamable HTTP and stdio. `completion/complete` autocompletes the `{slug}`, so a client discovers a page to mention instead of paging the whole resource list. See [docs/mcp_server.md](./docs/mcp_server.md#-resources---mention-a-wiki-page).
 
 Every tool carries MCP **annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`) so clients can auto-approve safe reads and confirm destructive writes. `openWorldHint` is `false` on all 29 — the entire surface is local. See [docs/mcp_server.md](./docs/mcp_server.md#-tool-annotations--fewer-approval-prompts).
 

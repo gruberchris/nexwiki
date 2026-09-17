@@ -81,6 +81,8 @@ On first launch, NexWiki automatically creates its data directory (`articles/`, 
 
 NexWiki contains an always-on Model Context Protocol (MCP) server exposing **29 built-in tools** for search, content retrieval, memory management, and agent planning.
 
+It implements the current **`2026-07-28`** MCP revision and the older `initialize`-based revisions on the same endpoint, so new and old clients work side by side with no configuration. Alongside tools it serves **resources** you can `@`-mention, **prompts**, **live subscriptions** over both transports, **cursor pagination**, and **argument completion** — type a few characters and your client completes the wiki page you meant. See [docs/mcp_server.md](./docs/mcp_server.md).
+
 ### Streamable HTTP (Recommended)
 Reuses your running web server at `http://localhost:5808/api/mcp` and sidesteps search index locks:
 

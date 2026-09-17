@@ -40,7 +40,7 @@ func callModern(t *testing.T, srv *Server, method string, params json.RawMessage
 		Params:   params,
 		ID:       1,
 		Headers:  headers,
-		IsModern: isModernRequest(parseParamsEnvelope(params)),
+		IsModern: isModernRequest(headers, parseParamsEnvelope(params)),
 	}
 	var buf bytes.Buffer
 	status := srv.handleRequest(&buf, req)
@@ -67,21 +67,37 @@ func errorCode(t *testing.T, envelope map[string]interface{}) int {
 	return int(code)
 }
 
-// TestModernRequestsAreDetectedByMeta pins the era discriminator: presence of the per-request
-// protocolVersion in `_meta`. Legacy clients never send it, so the two eras cannot be confused.
+// TestModernRequestsAreDetectedByMeta pins the era discriminator: the per-request protocolVersion
+// in `_meta`, or — over HTTP, where it is mirrored and required — the MCP-Protocol-Version header.
+// Legacy clients send neither, so the two eras cannot be confused.
 func TestModernRequestsAreDetectedByMeta(t *testing.T) {
+	modernHeader := http.Header{"Mcp-Protocol-Version": []string{ModernProtocolVersion}}
+
 	modern := parseParamsEnvelope(modernParams(t, ModernProtocolVersion, nil))
-	if !isModernRequest(modern) {
+	if !isModernRequest(nil, modern) {
 		t.Error("a request carrying _meta protocolVersion must be treated as modern")
 	}
 
 	legacy := parseParamsEnvelope(json.RawMessage(`{"protocolVersion":"2025-06-18"}`))
-	if isModernRequest(legacy) {
+	if isModernRequest(nil, legacy) {
 		t.Error("an initialize-style request must not be treated as modern")
 	}
 
-	if isModernRequest(parseParamsEnvelope(nil)) {
+	if isModernRequest(nil, parseParamsEnvelope(nil)) {
 		t.Error("a request with no params must not be treated as modern")
+	}
+
+	// The header alone is enough. A modern client that mis-builds its body must be recognized as
+	// modern and rejected as malformed, not silently served a legacy answer.
+	if !isModernRequest(modernHeader, parseParamsEnvelope(nil)) {
+		t.Error("an MCP-Protocol-Version header naming a modern revision must select the modern era")
+	}
+
+	// A version we do not implement is not a modern-era signal on its own — the legacy revisions
+	// send this header too, and a legacy value must keep selecting the legacy path.
+	legacyHeader := http.Header{"Mcp-Protocol-Version": []string{"2025-06-18"}}
+	if isModernRequest(legacyHeader, parseParamsEnvelope(nil)) {
+		t.Error("a legacy MCP-Protocol-Version must not select the modern era")
 	}
 }
 
@@ -157,13 +173,16 @@ func TestServerDiscover(t *testing.T) {
 	if !ok {
 		t.Fatalf("discover must report capabilities, got %v", result["capabilities"])
 	}
-	for _, want := range []string{"tools", "prompts", "resources"} {
+	// completions joined this list when completion/complete was implemented. The rule has not
+	// changed — a capability is advertised only when it is genuinely served — but what is served
+	// has, and the assertion moved with it rather than being relaxed.
+	for _, want := range []string{"tools", "prompts", "resources", "completions"} {
 		if _, ok := caps[want]; !ok {
 			t.Errorf("capabilities should advertise %q", want)
 		}
 	}
 	// The resources sub-features are claimed only because they are genuinely served: articles
-	// are created and deleted (listChanged) and edited (subscribe).
+	// are created and deleted (listChanged) and edited (subscribe, via subscriptions/listen).
 	resources, ok := caps["resources"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("resources capability should be an object, got %T", caps["resources"])
@@ -171,9 +190,12 @@ func TestServerDiscover(t *testing.T) {
 	if resources["listChanged"] != true || resources["subscribe"] != true {
 		t.Errorf("resources capability should claim listChanged and subscribe, got %v", resources)
 	}
-	// A capability NexWiki does not serve must not be advertised.
-	if _, ok := caps["completions"]; ok {
-		t.Error("capabilities must not advertise unimplemented completions")
+	// Nothing unserved may be advertised. logging is the live example: 2026-07-28 deprecated it,
+	// and NexWiki logs to stderr instead, so it must never appear here.
+	for _, absent := range []string{"logging", "experimental"} {
+		if _, ok := caps[absent]; ok {
+			t.Errorf("capabilities must not advertise unimplemented %q", absent)
+		}
 	}
 	if _, ok := result["instructions"].(string); !ok {
 		t.Error("discover should carry instructions for the agent")

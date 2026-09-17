@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // MCP Prompts — interactive workflow templates that walk an agent through a multistep task.
@@ -47,6 +48,16 @@ func promptDefinitions() []map[string]interface{} {
 	}
 }
 
+// listPrompts builds the prompts/list payload for a cursor. Like the tool list it is compiled in
+// and fits one page; it shares the helper so cursor handling cannot differ between list methods.
+func listPrompts(cursor string) (interface{}, *JSONRPCError) {
+	page, nextCursor, rpcErr := paginate(promptDefinitions(), cursor, listPageSize)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	return listResult("prompts", page, nextCursor), nil
+}
+
 // getPrompt renders a named prompt with its arguments interpolated, for prompts/get.
 func (srv *Server) getPrompt(params json.RawMessage) (interface{}, *JSONRPCError) {
 	type GetPromptArgs struct {
@@ -60,8 +71,11 @@ func (srv *Server) getPrompt(params json.RawMessage) (interface{}, *JSONRPCError
 
 	switch promptArgs.Name {
 	case "article_creation_workflow":
-		title := promptArgs.Arguments["title"]
+		title := strings.TrimSpace(promptArgs.Arguments["title"])
 		desc := promptArgs.Arguments["description"]
+		if title == "" {
+			return nil, missingPromptArgument("article_creation_workflow", "title")
+		}
 
 		promptText := fmt.Sprintf(`You are an AI assistant tasked with creating a new article titled "%s" in the user's NexWiki knowledge base.
 
@@ -99,8 +113,14 @@ Before you begin writing the article, you MUST follow these steps to ensure form
 		}, nil
 
 	case "project_planning_workflow":
-		title := promptArgs.Arguments["title"]
-		project := promptArgs.Arguments["project"]
+		title := strings.TrimSpace(promptArgs.Arguments["title"])
+		project := strings.TrimSpace(promptArgs.Arguments["project"])
+		if title == "" {
+			return nil, missingPromptArgument("project_planning_workflow", "title")
+		}
+		if project == "" {
+			return nil, missingPromptArgument("project_planning_workflow", "project")
+		}
 
 		promptText := fmt.Sprintf(`You are an AI assistant tasked with creating a new Collaborative AI Plan for the project "%s" titled "%s".
 
@@ -129,9 +149,23 @@ IMPORTANT: The reserved AI-Agent-Plan type must NEVER be relabelled unless expli
 		}, nil
 
 	default:
+		// -32602, not -32601. A name that does not match a prompt is a bad *argument*; the method
+		// itself exists and was found. The distinction is not academic over HTTP in the modern era,
+		// where -32601 is required to surface as 404 — so a typo'd prompt name used to look to the
+		// client like the MCP endpoint had disappeared.
 		return nil, &JSONRPCError{
-			Code:    -32601,
+			Code:    -32602,
 			Message: fmt.Sprintf("Prompt not found: %s", promptArgs.Name),
 		}
+	}
+}
+
+// missingPromptArgument reports an absent required argument. The specification asks for -32602
+// here, and naming the argument is what lets a client fix the call rather than re-reading
+// prompts/list to guess which one it left out.
+func missingPromptArgument(prompt, argument string) *JSONRPCError {
+	return &JSONRPCError{
+		Code:    -32602,
+		Message: fmt.Sprintf("Missing required argument %q for prompt %q", argument, prompt),
 	}
 }

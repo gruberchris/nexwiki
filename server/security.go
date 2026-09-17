@@ -127,6 +127,23 @@ func applyCORSHeaders(w http.ResponseWriter, allowOrigin, methods, headers strin
 	w.Header().Set("Access-Control-Allow-Headers", headers)
 }
 
+// restAllowedRequestHeaders is the Access-Control-Allow-Headers value for the REST API.
+const restAllowedRequestHeaders = "Content-Type, Authorization"
+
+// allowedRequestHeadersFor picks the Access-Control-Allow-Headers value for a request path.
+//
+// This middleware answers every preflight itself and returns before the mux runs, so the MCP
+// handler's own CORS headers never reach a browser's OPTIONS request — the endpoint has to be
+// recognized here or its requirements are invisible. That is not a theoretical gap: a modern MCP
+// client MUST send Mcp-Method and Mcp-Name on every POST, and a browser will not send a header the
+// preflight did not allow, so advertising only the REST set refused those clients outright.
+func allowedRequestHeadersFor(path string) string {
+	if path == MCPEndpointPath {
+		return mcpAllowedRequestHeaders
+	}
+	return restAllowedRequestHeaders
+}
+
 // EnableCORS validates the browser Origin against originAllowed, echoing back only origins that
 // pass, and applies the baseline security headers. Rejected origins get 403 before reaching any
 // handler — including reads, since with no authentication a cross-site read is exfiltration.
@@ -134,17 +151,19 @@ func EnableCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		applySecurityHeaders(w)
 
+		allowedHeaders := allowedRequestHeadersFor(r.URL.Path)
+
 		origin := r.Header.Get("Origin")
 		allowOrigin, ok := originAllowed(origin, r.Host)
 		if !ok {
-			applyCORSHeaders(w, "", "GET, POST, PUT, DELETE, OPTIONS", "Content-Type, Authorization")
+			applyCORSHeaders(w, "", "GET, POST, PUT, DELETE, OPTIONS", allowedHeaders)
 			writeError(w, http.StatusForbidden,
 				"origin not allowed: "+origin+". NexWiki is unauthenticated and only accepts same-origin "+
 					"and loopback browser requests by default. Set "+AllowedOriginsEnv+" to permit this origin.")
 			return
 		}
 
-		applyCORSHeaders(w, allowOrigin, "GET, POST, PUT, DELETE, OPTIONS", "Content-Type, Authorization")
+		applyCORSHeaders(w, allowOrigin, "GET, POST, PUT, DELETE, OPTIONS", allowedHeaders)
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)

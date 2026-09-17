@@ -203,8 +203,23 @@ var listedTools = func() []map[string]interface{} {
 }()
 
 // toolSchemas projects the registry into the tools/list payload.
+//
+// The slice is returned as-is, in registry order, on every call. Determinism is not incidental: the
+// specification asks for a stable ordering so clients can cache the list, and a tool list that
+// reshuffles between calls also breaks LLM prompt caching for everything downstream of it.
 func toolSchemas() []map[string]interface{} {
 	return listedTools
+}
+
+// listTools builds the tools/list payload for a cursor. The registry is compiled in and smaller
+// than a page, so it never actually splits — the helper is here so an invalid cursor is rejected on
+// this method exactly as it is on resources/list.
+func listTools(cursor string) (interface{}, *JSONRPCError) {
+	page, nextCursor, rpcErr := paginate(toolSchemas(), cursor, listPageSize)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	return listResult("tools", page, nextCursor), nil
 }
 
 // decodeToolArgs unmarshals a tool's "arguments" object, reporting a malformed payload as its own

@@ -178,38 +178,55 @@ func TestLargeCorpusSanity(t *testing.T) {
 		n, boot.Round(time.Millisecond), counts, linked, len(graph.Broken))
 }
 
-// TestResourcesListPayloadSize measures the serialized `resources/list` response and reports how
-// large a wiki would have to be for it to stop fitting on a stdio line.
+// TestResourcesListPayloadSize measures one page of `resources/list` and confirms the response is
+// bounded no matter how large the wiki grows.
 //
-// listResources has no cursor and no limit: it projects *every* document, including home, into one
-// response. On stdio that response has to be one line, and MaxStdioLineBytes caps a line at 8 MB
-// (§3.10). This test does not assert a corpus size — it records bytes-per-document so the ceiling
-// is a known number rather than a surprise, and fails only if the projection grows enough per
-// document to move that ceiling materially.
+// This test used to record how many documents it would take for the response to overrun the 8 MB
+// stdio line cap, because listResources projected *every* document into one response and the only
+// defence was knowing where the cliff was. Pagination removed the cliff: the corpus here is three
+// pages deep, so the assertion is now that the page is capped and a cursor is offered, and the
+// per-document measurement survives only as a guard on the projection's cost.
 func TestResourcesListPayloadSize(t *testing.T) {
 	const n = 300
 	srv, _ := largeCorpusServer(t, n)
 
-	result, rpcErr := srv.listResources()
+	result, rpcErr := srv.listResources("")
 	if rpcErr != nil {
 		t.Fatalf("listResources failed: %v", rpcErr)
 	}
+	page, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("resources/list result is %T, want a map", result)
+	}
+	entries, ok := page["resources"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("resources/list carried no resources array: %#v", page)
+	}
+
+	// The corpus is larger than a page, so the response MUST be truncated and MUST offer a cursor.
+	if len(entries) != listPageSize {
+		t.Errorf("first page holds %d resources, want %d — the response is no longer bounded",
+			len(entries), listPageSize)
+	}
+	if page["nextCursor"] == nil {
+		t.Errorf("a corpus of %d documents produced no nextCursor, so %d of them are unreachable",
+			n, n-len(entries))
+	}
+
 	encoded, err := json.Marshal(JSONRPCResponse{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: result})
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
 	}
+	perDoc := float64(len(encoded)) / float64(len(entries))
+	t.Logf("resources/list page at n=%d: %d bytes for %d documents (%.0f bytes/document); the %d-byte stdio line cap allows ≈%.0f per page",
+		n, len(encoded), len(entries), perDoc, MaxStdioLineBytes, float64(MaxStdioLineBytes)/perDoc)
 
-	perDoc := float64(len(encoded)) / float64(n)
-	docsToCap := float64(MaxStdioLineBytes) / perDoc
-	t.Logf("resources/list at n=%d: %d bytes (%.0f bytes/document); the %d-byte stdio line cap is reached at ≈%.0f documents",
-		n, len(encoded), perDoc, MaxStdioLineBytes, docsToCap)
-
-	// A guard rather than a target. If a future change to the resource projection doubles the
-	// per-document cost, the ceiling halves, and that should be a deliberate decision rather than
-	// something discovered by a user whose wiki stopped answering resources/list.
+	// A guard rather than a target. Pagination bounds the count, not the cost per entry, so a
+	// projection that grew enough could still push a full page toward the line cap.
 	if perDoc > 1200 {
-		t.Errorf("resources/list costs %.0f bytes/document, which brings the 8 MB stdio line cap "+
-			"down to ≈%.0f documents; the projection grew and pagination is now overdue", perDoc, docsToCap)
+		t.Errorf("resources/list costs %.0f bytes/document; at %d per page that is %.0f bytes, "+
+			"approaching the %d-byte stdio line cap — the projection grew and listPageSize should come down",
+			perDoc, listPageSize, perDoc*float64(listPageSize), MaxStdioLineBytes)
 	}
 }
 
@@ -499,7 +516,7 @@ func BenchmarkLargeCorpusListResources(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if _, err := srv.listResources(); err != nil {
+				if _, err := srv.listResources(""); err != nil {
 					b.Fatalf("listResources failed: %v", err)
 				}
 			}
@@ -507,8 +524,9 @@ func BenchmarkLargeCorpusListResources(b *testing.B) {
 
 			// Report the serialized size alongside the latency: for this endpoint the payload is
 			// the risk, not the time. Reported after the loop — ResetTimer discards metrics
-			// recorded before it, which silently swallowed these on the first attempt.
-			result, _ := srv.listResources()
+			// recorded before it, which silently swallowed these on the first attempt. This is one
+			// page now, so the size stops growing with n once n passes listPageSize.
+			result, _ := srv.listResources("")
 			encoded, _ := json.Marshal(JSONRPCResponse{JSONRPC: "2.0", ID: json.RawMessage("1"), Result: result})
 			b.ReportMetric(float64(len(encoded)), "payload-bytes")
 			b.ReportMetric(float64(len(encoded))/float64(MaxStdioLineBytes)*100, "pct-of-stdio-cap")
