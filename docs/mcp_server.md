@@ -24,6 +24,7 @@ The MCP specification changed shape in revision **`2026-07-28`**. NexWiki implem
 | Sessions | None (`Mcp-Session-Id` ignored) | connection-scoped |
 | Discovery | `server/discover` | `initialize` result |
 | Results | carry `resultType: "complete"` | bare result object |
+| Result caching | `ttlMs` + `cacheScope` on cacheable results | not available |
 | Protocol errors | real HTTP status (`400`/`404`) | `200` with an error body |
 
 **How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 29 tools and the same 2 prompts — only the envelope differs.
@@ -79,6 +80,28 @@ curl -X POST http://localhost:5808/api/mcp \
 ```
 
 > **Capabilities** advertise `tools`, `prompts`, and `resources` (with `listChanged` and `subscribe`) — each only because it is genuinely served. The standalone `GET` SSE stream and `Mcp-Session-Id` were removed by the 2026-07-28 revision; NexWiki ignores `Mcp-Session-Id` and keeps the `GET` stream only for legacy-era clients that open one.
+
+#### Result caching (modern era only)
+
+The `2026-07-28` revision lets a server tell clients how long a result stays fresh, so an agent stops re-fetching a tool list that cannot change. NexWiki attaches two fields to every cacheable `resultType: "complete"` result:
+
+* **`ttlMs`** — how many milliseconds the client may treat the result as fresh. Analogous to HTTP `Cache-Control: max-age`.
+* **`cacheScope`** — `"public"` when the result holds no user data and a shared proxy may serve one copy to anyone, `"private"` when it must never cross an authorization boundary.
+
+| Method | `ttlMs` | `cacheScope` | Why |
+|---|---|---|---|
+| `server/discover` | `3600000` (1h) | `public` | identity and capabilities are compiled in |
+| `tools/list` | `3600000` (1h) | `public` | the 29 tools are compiled in and identical for every caller |
+| `prompts/list` | `3600000` (1h) | `public` | the 2 prompts are compiled in |
+| `resources/templates/list` | `3600000` (1h) | `public` | a single static URI template |
+| `resources/list` | `30000` (30s) | `private` | your article slugs and titles |
+| `resources/read` | `30000` (30s) | `private` | your article content |
+
+`tools/call` and `prompts/get` carry **no** caching hints — the spec does not list them as cacheable, and a tool call is not a repeatable read.
+
+Caching and notifications are complementary. NexWiki advertises `listChanged` and `subscribe`, so a client holding a [`subscriptions/listen`](#-resources---mention-a-wiki-page) stream is told the moment an article changes, which invalidates a cached entry long before its 30-second TTL runs out. A client that does not subscribe still stays correct — it just re-fetches on the TTL instead.
+
+> ⚠️ **These fields are mandatory, not advisory.** A conformant client validates a list result against a schema in which `ttlMs` and `cacheScope` are **required**, so omitting them rejects the entire response. The failure looks confusing from the outside: the client connects, reports the server healthy, and then lists zero tools. Legacy-era results correctly carry neither field.
 
 ### 🏷️ Tool Annotations — fewer approval prompts
 

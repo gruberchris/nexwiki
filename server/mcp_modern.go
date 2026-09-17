@@ -183,9 +183,54 @@ func validateModernHeaders(headers http.Header, method string, env paramsEnvelop
 	return nil
 }
 
+// Cacheable-result TTLs. The tool, prompt, and resource-template lists are compiled into the
+// binary and cannot change while the process runs, so they stay fresh for an hour. Article data is
+// the user's own content and changes the moment a page is edited, so it gets a short TTL — and
+// clients holding a subscriptions/listen stream are told immediately, which invalidates the entry
+// well before it expires.
+const (
+	staticResultTTLMs  = 3600000 // 1 hour
+	articleResultTTLMs = 30000   // 30 seconds
+)
+
+// The two cache scopes the specification defines, mirroring HTTP Cache-Control.
+const (
+	cacheScopePublic  = "public"
+	cacheScopePrivate = "private"
+)
+
+// cachingHints returns the caching metadata a complete result MUST carry for the given method,
+// and whether that method is cacheable at all.
+//
+// The 2026-07-28 revision requires ttlMs and cacheScope on every `resultType: "complete"` result
+// for the six methods below (spec: Server Utilities -> Caching, SEP-2549). Omitting them is not a
+// soft failure. A conformant client validates the result against a schema in which both fields
+// are required, so a missing ttlMs rejects the entire response: the client reports the server
+// connected and healthy, then lists zero tools.
+//
+// tools/call and prompts/get are deliberately absent. The spec does not list them as cacheable,
+// and a tool call is by definition not a repeatable read.
+func cachingHints(method string) (ttlMs int, scope string, cacheable bool) {
+	switch method {
+	case "server/discover", "tools/list", "prompts/list", "resources/templates/list":
+		// Identical for every caller and free of user data, so a shared gateway may serve one
+		// cached copy to anyone.
+		return staticResultTTLMs, cacheScopePublic, true
+
+	case "resources/list", "resources/read":
+		// Article slugs, titles, and bodies are the user's knowledge base. Never reuse one
+		// caller's cache entry for another authorization context.
+		return articleResultTTLMs, cacheScopePrivate, true
+
+	default:
+		return 0, "", false
+	}
+}
+
 // completeResult wraps a handler's payload in the modern result envelope. Every modern result
-// MUST carry a resultType, and servers SHOULD identify themselves in the result's `_meta`.
-func (srv *Server) completeResult(payload interface{}) map[string]interface{} {
+// MUST carry a resultType, servers SHOULD identify themselves in the result's `_meta`, and a
+// cacheable method's result MUST carry the caching hints cachingHints supplies for it.
+func (srv *Server) completeResult(method string, payload interface{}) map[string]interface{} {
 	result := map[string]interface{}{}
 
 	// Merge the handler's own fields in, so callers keep returning plain maps/structs.
@@ -210,6 +255,10 @@ func (srv *Server) completeResult(payload interface{}) map[string]interface{} {
 	}
 
 	result["resultType"] = "complete"
+	if ttlMs, scope, cacheable := cachingHints(method); cacheable {
+		result["ttlMs"] = ttlMs
+		result["cacheScope"] = scope
+	}
 	result["_meta"] = map[string]interface{}{
 		metaServerInfo: srv.implementation(),
 	}
