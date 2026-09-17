@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"os"
@@ -189,24 +190,48 @@ func (s *Storage) skipUnreadable(path string, info fs.FileInfo, err error) (Unre
 // skipWalkError is the per-entry error handling the article walks share for an entry they could
 // not get as far as reading: a directory WalkDir could not list, or a file DirEntry.Info could not
 // stat. Call it with the WalkDir callback's path and entry, and return what it returns: nil to
-// skip a file, fs.SkipDir to skip a directory's subtree, or the error itself for the article root.
+// skip a file, fs.SkipDir to skip a directory's subtree, or an error to fail the scan.
 //
-// The root fails the scan because an unreadable or missing data directory is broken, and listing
-// it as an empty wiki would hide that. Anything below it is skipped, so one bad entry never fails
-// a scan. An entry that no longer exists is skipped silently: a delete or rename racing the walk
-// leaves it gone, not broken. Anything else is warned about once while it lasts, like
-// skipUnreadable, and passed to report, when that is not nil, with a directory's path ending in /.
+// A missing or unreadable article root fails the scan, because listing a broken data directory as
+// an empty wiki hides that, and callers act on the listing: SyncSearchIndex would drop every index
+// entry as an orphan. So does a root that can be listed but not searched (read permission without
+// execute), which lists every entry and then cannot stat or open any of them. That shows as a
+// permission error stat'ing an entry directly under the root, which the entry's own permissions
+// never cause: a file's error here already is that stat, and a directory that cannot be listed is
+// stat'd to tell. Any other stat failure there, such as an I/O error or a stale network handle, may
+// be that one entry's, and failing every scan for it would keep the server from even starting.
+//
+// Anything else is skipped, so one bad entry never fails a scan. A file in a subdirectory that
+// cannot be searched is skipped and reported on its own, like any other file, rather than as the
+// subdirectory: the scan loses the same articles either way, and the report names each of them.
+// An entry that no longer exists is skipped silently: a delete or rename racing the walk leaves it
+// gone, not broken. Any other failure is warned about once while it lasts, like skipUnreadable, and
+// passed to report, when that is not nil, with a directory's path ending in /.
 func (s *Storage) skipWalkError(path string, d fs.DirEntry, err error, report func(UnreadableFile)) error {
 	if path == s.ArticleDir {
 		return err
 	}
-	isDir := d != nil && d.IsDir()
-	skip := error(nil)
+	// WalkDir passes a nil entry only for the root, so d is set from here on.
+	isDir := d.IsDir()
+	var skip error
 	if isDir {
 		skip = fs.SkipDir
 	}
 	if errors.Is(err, fs.ErrNotExist) {
 		return skip
+	}
+	if filepath.Dir(path) == filepath.Clean(s.ArticleDir) {
+		statErr := err
+		if isDir {
+			_, statErr = os.Lstat(path)
+			if errors.Is(statErr, fs.ErrNotExist) {
+				return skip
+			}
+		}
+		if errors.Is(statErr, fs.ErrPermission) {
+			// The stat error names an entry, but the entry is not what needs fixing.
+			return fmt.Errorf("article directory is not searchable: %w", statErr)
+		}
 	}
 	rel, kind := s.articleRelPath(path), "file"
 	if isDir {

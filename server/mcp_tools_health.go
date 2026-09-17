@@ -72,8 +72,9 @@ type HealthOutput struct {
 	Truncated      bool `json:"truncated"`
 
 	// UnreadableFileCount and UnreadableFiles report article files the scan could not read or
-	// parse. Such a file is missing from total_documents and from every other category, so without
-	// this a document with broken front matter would not exist as far as the report could tell.
+	// parse, and directories it could not list. Such a file, or every article in such a directory,
+	// is missing from total_documents and from every other category, so without this a document
+	// with broken front matter would not exist as far as the report could tell.
 	UnreadableFileCount int              `json:"unreadable_file_count"`
 	UnreadableFiles     []UnreadableFile `json:"unreadable_files"`
 
@@ -161,8 +162,8 @@ func healthOutputSchema() map[string]interface{} {
 	}, "slug", "title", "other_slug", "detail")
 
 	unreadable := schemaObject(map[string]interface{}{
-		"path":  schemaOf("string", "File path relative to the article directory, slash-separated."),
-		"error": schemaOf("string", "Why the file could not be read or parsed."),
+		"path":  schemaOf("string", "Path relative to the article directory, slash-separated. A directory that could not be listed appears with a trailing /, standing for every article in it."),
+		"error": schemaOf("string", "Why the file could not be read or parsed, or the directory could not be listed."),
 	}, "path", "error")
 
 	return schemaObject(map[string]interface{}{
@@ -170,8 +171,8 @@ func healthOutputSchema() map[string]interface{} {
 		"stale_days":                 schemaOf("integer", "Age threshold applied to in-flight plans."),
 		"limit":                      schemaOf("integer", "Maximum items returned per category."),
 		"truncated":                  schemaOf("boolean", "True when a category hit the limit and its list is shorter than its count."),
-		"unreadable_file_count":      schemaOf("integer", "Article files that could not be read or parsed. They are missing from total_documents and from every other check."),
-		"unreadable_files":           schemaArrayOf(unreadable, "Unreadable article files, sorted by path, up to the limit."),
+		"unreadable_file_count":      schemaOf("integer", "Entries in unreadable_files: article files that could not be read or parsed, plus directories that could not be listed, each directory counted once however many articles it holds. None of them are in total_documents or any other check."),
+		"unreadable_files":           schemaArrayOf(unreadable, "Unreadable article files and unlistable directories (path ending in /), sorted by path, up to the limit."),
 		"orphan_count":               schemaOf("integer", "Documents no other document links to."),
 		"orphans":                    schemaArrayOf(finding, "Orphaned documents, up to the limit."),
 		"broken_link_count":          schemaOf("integer", "Internal links with no destination, in either link form."),
@@ -212,7 +213,7 @@ func healthOutputSchema() map[string]interface{} {
 var wikiHealthTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "wiki_health",
-		"description": "Audit the knowledge base for maintenance work: article files that cannot be read or parsed (such as malformed front matter), orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source' or without a 'memory_kind', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
+		"description": "Audit the knowledge base for maintenance work: article files that cannot be read or parsed (such as malformed front matter) and article folders that cannot be listed, orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source' or without a 'memory_kind', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -617,7 +618,7 @@ func pathEndsAt(text string, i int) bool {
 func renderHealthReport(out HealthOutput) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "NexWiki Health Report (%d documents scanned)\n\n", out.TotalDocuments)
-	fmt.Fprintf(&b, "- Unreadable article files (skipped by every check): %d\n", out.UnreadableFileCount)
+	fmt.Fprintf(&b, "- Unreadable article files and folders (skipped by every check): %d\n", out.UnreadableFileCount)
 	fmt.Fprintf(&b, "- Orphan pages: %d\n", out.OrphanCount)
 	fmt.Fprintf(&b, "- Broken internal links: %d\n", out.BrokenLinkCount)
 	fmt.Fprintf(&b, "- Memories with no source: %d\n", out.UnsourcedCount)
@@ -678,13 +679,19 @@ func renderHealthReport(out HealthOutput) string {
 	// Unreadable files come first: every other category is blind to them, so fixing one can change
 	// what the rest of the report says.
 	if out.UnreadableFileCount > 0 {
-		fmt.Fprintf(&b, "\n== Unreadable article files (%d) ==\n", out.UnreadableFileCount)
+		fmt.Fprintf(&b, "\n== Unreadable article files and folders (%d) ==\n", out.UnreadableFileCount)
 		for _, f := range out.UnreadableFiles {
+			remedy := "Fix its front matter or file permissions, or delete the file."
+			if strings.HasSuffix(f.Path, "/") {
+				// A directory that could not be listed has no front matter, and deleting it would take
+				// the articles inside with it; access is what keeps them out of the scan.
+				remedy = "Fix the directory's permissions so the articles in it are scanned."
+			}
 			// YAML errors can span lines; flattened so each file stays one list item. A closing period
 			// is dropped because the sentence adds its own, and Windows ends OS errors with one
 			// ("Access is denied.").
-			fmt.Fprintf(&b, "- %s — %s. Fix its front matter or file permissions, or delete the file.\n",
-				f.Path, strings.TrimRight(strings.Join(strings.Fields(f.Error), " "), ". "))
+			fmt.Fprintf(&b, "- %s — %s. %s\n",
+				f.Path, strings.TrimRight(strings.Join(strings.Fields(f.Error), " "), ". "), remedy)
 		}
 		if len(out.UnreadableFiles) < out.UnreadableFileCount {
 			fmt.Fprintf(&b, "  ... and %d more; raise 'limit' to see them.\n", out.UnreadableFileCount-len(out.UnreadableFiles))

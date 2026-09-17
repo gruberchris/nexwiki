@@ -16,7 +16,7 @@ import (
 var getWikiStatisticsTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_wiki_statistics",
-		"description": "Retrieve high-level wiki statistics, including total articles, storage footprint, a count of article files that cannot be read or parsed, and a list of dead or broken internal links — both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links.",
+		"description": "Retrieve high-level wiki statistics, including total articles, storage footprint, a count of article files that cannot be read or parsed and article folders that cannot be listed, and a list of dead or broken internal links — both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links.",
 		"inputSchema": map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -36,8 +36,8 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	}
 
 	// One cached pass replaces the read-every-file-in-full loop this used to run: the graph is
-	// built from mtime-validated metadata and link caches, and wiki_health shares it rather than
-	// traversing the wiki a second time.
+	// built from mtime-validated metadata and link caches. wiki_health runs its own ScanLinkGraph;
+	// what the two tools share is those per-file caches, so neither rereads unchanged files.
 	graph, err := srv.Storage.ScanLinkGraph()
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning WikiLinks: " + errorForClient(srv.Storage.ArticleDir, err)}}}, nil
@@ -46,13 +46,13 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	var respText string
 	respText = "NexWiki Knowledge Base Statistics:\n"
 	respText += fmt.Sprintf("- Total Articles: %d\n", len(articles))
-	respText += fmt.Sprintf("- Unreadable Article Files: %d\n", len(graph.Unreadable))
+	respText += fmt.Sprintf("- Unreadable Article Files and Folders: %d\n", len(graph.Unreadable))
 	respText += fmt.Sprintf("- Total Internal Links Scanned: %d\n", graph.TotalLinks)
 	respText += fmt.Sprintf("- Total Broken/Dead Internal Links: %d\n\n", len(graph.Broken))
 
 	if len(graph.Unreadable) > 0 {
-		// Only the count is reported here; wiki_health owns the per-file list and the remedy.
-		respText += "Some article files could not be read or parsed. They are left out of the counts above, and links to them show as broken. Run wiki_health to see which files and why.\n\n"
+		// Only the count is reported here; wiki_health owns the list and the remedies.
+		respText += "Some article files could not be read or parsed, or folders could not be listed. Those articles are left out of the counts above, and links to them show as broken. Run wiki_health to see which and why.\n\n"
 	}
 
 	if len(graph.Broken) == 0 {

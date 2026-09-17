@@ -129,9 +129,10 @@ func (b BrokenLinkRef) Display() string {
 // StatisticsOutput is the `get_wiki_statistics` payload.
 type StatisticsOutput struct {
 	TotalArticles int `json:"total_articles"`
-	// UnreadableFileCount is how many article files the scan could not read or parse. None of the
-	// other numbers include them, so without it a wiki with broken files just looks smaller.
-	// wiki_health lists the files, found by its own call to the same ScanLinkGraph.
+	// UnreadableFileCount is how many article files the scan could not read or parse, plus
+	// directories it could not list, each counted once. None of the other numbers include them, so
+	// without it a wiki with broken files just looks smaller. wiki_health lists them, found by its
+	// own call to the same ScanLinkGraph.
 	UnreadableFileCount int             `json:"unreadable_file_count"`
 	TotalLinks          int             `json:"total_links"`
 	BrokenLinkCount     int             `json:"broken_link_count"`
@@ -341,7 +342,7 @@ func brokenLinkSchema() map[string]interface{} {
 func statisticsOutputSchema() map[string]interface{} {
 	return schemaObject(map[string]interface{}{
 		"total_articles":        schemaOf("integer", "Number of documents in the knowledge base."),
-		"unreadable_file_count": schemaOf("integer", "Article files that could not be read or parsed, and so are not counted anywhere else. wiki_health lists them."),
+		"unreadable_file_count": schemaOf("integer", "Article files that could not be read or parsed, plus directories that could not be listed, each directory counted once however many articles it holds. None are counted anywhere else; wiki_health lists them."),
 		"total_links":           schemaOf("integer", "Number of internal links scanned, in either link form."),
 		"broken_link_count":     schemaOf("integer", "Number of internal links with no destination."),
 		"broken_links":          schemaArrayOf(brokenLinkSchema(), "Every internal link whose target does not exist."),

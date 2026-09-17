@@ -717,8 +717,8 @@ func TestWikiHealthReportsUnreadableFiles(t *testing.T) {
 
 	text := resp.Content[0].Text
 	for _, want := range []string{
-		"- Unreadable article files (skipped by every check): 1\n",
-		"== Unreadable article files (1) ==",
+		"- Unreadable article files and folders (skipped by every check): 1\n",
+		"== Unreadable article files and folders (1) ==",
 		"- notes/broken.md — invalid format: front matter is not valid YAML",
 		"Fix its front matter or file permissions, or delete the file.",
 	} {
@@ -828,7 +828,7 @@ func TestWikiStatisticsCountsUnreadableFiles(t *testing.T) {
 	}
 
 	clean, resp := stats()
-	if clean.UnreadableFileCount != 0 || !strings.Contains(resp.Content[0].Text, "- Unreadable Article Files: 0\n") {
+	if clean.UnreadableFileCount != 0 || !strings.Contains(resp.Content[0].Text, "- Unreadable Article Files and Folders: 0\n") {
 		t.Errorf("a clean wiki should report 0 unreadable files, got %d:\n%s", clean.UnreadableFileCount, resp.Content[0].Text)
 	}
 	if strings.Contains(resp.Content[0].Text, "Run wiki_health") {
@@ -844,7 +844,7 @@ func TestWikiStatisticsCountsUnreadableFiles(t *testing.T) {
 		t.Errorf("get_wiki_statistics reports %d unreadable files, wiki_health %d; want 2 from both",
 			got.UnreadableFileCount, health.UnreadableFileCount)
 	}
-	for _, want := range []string{"- Unreadable Article Files: 2\n", "Run wiki_health to see which files and why."} {
+	for _, want := range []string{"- Unreadable Article Files and Folders: 2\n", "Run wiki_health to see which and why."} {
 		if !strings.Contains(resp.Content[0].Text, want) {
 			t.Errorf("prose is missing %q:\n%s", want, resp.Content[0].Text)
 		}
@@ -1029,6 +1029,67 @@ func TestWikiHealthUnreadableErrorHidesArticleDir(t *testing.T) {
 	}
 }
 
+// TestWikiHealthReportsUnreadableDirectory pins how a folder the scan cannot list reaches a client:
+// one entry whose path ends in /, an error naming it without the server's path, a remedy that fits
+// a directory rather than a file, and a place in get_wiki_statistics' count.
+func TestWikiHealthReportsUnreadableDirectory(t *testing.T) {
+	srv := newMCPServer(t)
+	captureLog(t)
+
+	writeBrokenArticle(t, srv, "broken.md")
+	locked := filepath.Join(srv.Storage.ArticleDir, "locked")
+	if err := os.MkdirAll(locked, 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "hidden.md"), []byte("---\ntitle: Hidden\nslug: hidden\n---\nbody\n"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	lockDir(t, locked)
+
+	resp := toolCall(t, srv, `{"name":"wiki_health","arguments":{}}`)
+	var out HealthOutput
+	decodeStructured(t, resp, &out)
+
+	if out.UnreadableFileCount != 2 || len(out.UnreadableFiles) != 2 || out.UnreadableFiles[1].Path != "locked/" {
+		t.Fatalf("expected broken.md and locked/ to be reported, got count %d and %+v", out.UnreadableFileCount, out.UnreadableFiles)
+	}
+	if got, want := out.UnreadableFiles[1].Error, "open locked/: permission denied"; got != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+	encoded, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if strings.Contains(string(encoded), srv.Storage.DataDir) {
+		t.Errorf("the response reveals the server's data directory %q:\n%s", srv.Storage.DataDir, encoded)
+	}
+
+	text := resp.Content[0].Text
+	for _, want := range []string{
+		"- locked/ — open locked/: permission denied. Fix the directory's permissions so the articles in it are scanned.\n",
+		"- broken.md — invalid format: front matter is not valid YAML",
+		"Fix its front matter or file permissions, or delete the file.\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("prose is missing %q:\n%s", want, text)
+		}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "- locked/ ") && strings.Contains(line, "front matter") {
+			t.Errorf("a directory has no front matter to fix: %q", line)
+		}
+	}
+	assertMatchesOutputSchema(t, resp, wikiHealthTool.Output)
+
+	statsResp := toolCall(t, srv, `{"name":"get_wiki_statistics","arguments":{}}`)
+	var stats StatisticsOutput
+	decodeStructured(t, statsResp, &stats)
+	if stats.UnreadableFileCount != out.UnreadableFileCount {
+		t.Errorf("get_wiki_statistics reports %d unreadable entries, wiki_health %d; the directory must count in both",
+			stats.UnreadableFileCount, out.UnreadableFileCount)
+	}
+}
+
 // TestErrorForClientHidesArticleDir pins the sanitizing of an error that stopped a whole scan, which
 // is about no one file: walking the article directory fails with the OS naming the directory or a
 // subdirectory by absolute path.
@@ -1073,42 +1134,51 @@ func TestErrorForClientHidesArticleDir(t *testing.T) {
 }
 
 // TestScanErrorsHideArticleDir is the end-to-end case for errorForClient: when the article directory
-// cannot be read at all, both tools that scan it fail, and neither error may reveal where it is.
+// cannot be read or searched, both tools that scan it fail, and neither error may reveal where it is.
 func TestScanErrorsHideArticleDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("mode 0 does not stop reads on Windows")
+		t.Skip("directory modes do not stop reads on Windows")
 	}
 	if os.Geteuid() == 0 {
 		t.Skip("root reads directories whatever their mode")
 	}
-	srv := newMCPServer(t)
-	captureLog(t)
 
-	dir := srv.Storage.ArticleDir
-	info, err := os.Stat(dir)
-	if err != nil {
-		t.Fatalf("Stat failed: %v", err)
-	}
-	if err := os.Chmod(dir, 0); err != nil {
-		t.Fatalf("Chmod failed: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, info.Mode().Perm()) })
-
-	for _, tc := range []struct{ tool, want string }{
-		{tool: "wiki_health", want: "Error scanning the wiki: open .: permission denied"},
-		// ListArticles runs before the link scan here, so its error is the one returned.
-		{tool: "get_wiki_statistics", want: "failed to list articles: open .: permission denied"},
+	for _, lock := range []struct {
+		name  string
+		apply func(*testing.T, string)
+		// cause is the sanitized error both tools report after their own prefix.
+		cause string
+	}{
+		{name: "unreadable", apply: lockDir, cause: "open .: permission denied"},
+		// The walk lists the directory and fails on the first article it stats, which in a fresh
+		// wiki is the seeded home page. The error has to say the directory is what needs fixing.
+		{name: "not searchable", apply: lockSearch, cause: "article directory is not searchable: lstat home.md: permission denied"},
 	} {
-		resp := toolCall(t, srv, `{"name":"`+tc.tool+`","arguments":{}}`)
-		if !resp.IsError || len(resp.Content) != 1 || resp.Content[0].Text != tc.want {
-			t.Errorf("%s: got %+v, want an error reading %q", tc.tool, resp, tc.want)
-		}
-		encoded, err := json.Marshal(resp)
-		if err != nil {
-			t.Fatalf("marshal failed: %v", err)
-		}
-		if strings.Contains(string(encoded), srv.Storage.DataDir) {
-			t.Errorf("%s reveals the server's data directory %q:\n%s", tc.tool, srv.Storage.DataDir, encoded)
-		}
+		t.Run(lock.name, func(t *testing.T) {
+			srv := newMCPServer(t)
+			captureLog(t)
+			if entries, err := os.ReadDir(srv.Storage.ArticleDir); err != nil || len(entries) != 1 || entries[0].Name() != "home.md" {
+				t.Fatalf("expected a fresh wiki holding only home.md, got %v (%v)", entries, err)
+			}
+			lock.apply(t, srv.Storage.ArticleDir)
+
+			for _, tc := range []struct{ tool, want string }{
+				{tool: "wiki_health", want: "Error scanning the wiki: " + lock.cause},
+				// ListArticles runs before the link scan here, so its error is the one returned.
+				{tool: "get_wiki_statistics", want: "failed to list articles: " + lock.cause},
+			} {
+				resp := toolCall(t, srv, `{"name":"`+tc.tool+`","arguments":{}}`)
+				if !resp.IsError || len(resp.Content) != 1 || resp.Content[0].Text != tc.want {
+					t.Errorf("%s: got %+v, want an error reading %q", tc.tool, resp, tc.want)
+				}
+				encoded, err := json.Marshal(resp)
+				if err != nil {
+					t.Fatalf("marshal failed: %v", err)
+				}
+				if strings.Contains(string(encoded), srv.Storage.DataDir) {
+					t.Errorf("%s reveals the server's data directory %q:\n%s", tc.tool, srv.Storage.DataDir, encoded)
+				}
+			}
+		})
 	}
 }

@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -448,6 +450,27 @@ func lockDir(t *testing.T, dir string) {
 	}
 }
 
+// lockSearch leaves a directory listable but not searchable for the rest of the test: read
+// permission without execute, so its entries are listed and then cannot be stat'd. The test is
+// skipped where that is not what happens. The directory must hold at least one entry to check.
+func lockSearch(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.Chmod(dir, 0600); err != nil {
+		t.Skipf("cannot chmod on this platform: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0755) })
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Skipf("a directory without search permission cannot be listed here: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatalf("lockSearch needs an entry in %s to check that stats fail", dir)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, entries[0].Name())); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("removing search permission does not stop a stat here (running as root?): %v", err)
+	}
+}
+
 // unreadablePaths returns the paths a link graph reports as unreadable, failing the test for any
 // entry that carries no error.
 func unreadablePaths(t *testing.T, graph *LinkGraph) []string {
@@ -564,9 +587,10 @@ func TestUnreadableSubdirectoryIsSkipped(t *testing.T) {
 
 // TestUnstattableArticleFileIsSkipped pins the other per-entry walk error: a file its directory
 // lists but that cannot then be stat'd, which a directory granting read but not search permission
-// produces. The file is skipped and warned about once. Its cached parse still matches the file,
-// so the failure has to be forgotten some other way once the file is reachable again; this pins
-// that it is, and that losing access again warns again.
+// produces. In a subdirectory the file is skipped and warned about once; an article root in that
+// state fails the scan instead (see TestUnreadableArticleRootFailsScans). Its cached parse still
+// matches the file, so the failure has to be forgotten some other way once the file is reachable
+// again; this pins that it is, and that losing access again warns again.
 func TestUnstattableArticleFileIsSkipped(t *testing.T) {
 	storage, _ := newUnreadableFixture(t)
 	buf := captureLog(t)
@@ -592,16 +616,7 @@ func TestUnstattableArticleFileIsSkipped(t *testing.T) {
 		t.Fatalf("the file should be listed while it is reachable")
 	}
 
-	if err := os.Chmod(dir, 0600); err != nil {
-		t.Skipf("cannot chmod on this platform: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0755) })
-	if _, err := os.ReadDir(dir); err != nil {
-		t.Skipf("a directory without search permission cannot be listed here: %v", err)
-	}
-	if _, err := os.Lstat(file); err == nil || errors.Is(err, fs.ErrNotExist) {
-		t.Skipf("removing search permission does not stop a stat here (running as root?): %v", err)
-	}
+	lockSearch(t, dir)
 
 	for i := 0; i < 3; i++ {
 		if listed() {
@@ -644,9 +659,9 @@ func TestUnstattableArticleFileIsSkipped(t *testing.T) {
 	}
 }
 
-// TestUnreadableArticleRootFailsScans pins the one walk error that must still fail a scan. A data
-// directory that is missing or cannot be read is broken, and reporting it as an empty wiki would
-// hide that.
+// TestUnreadableArticleRootFailsScans pins the walk errors that must still fail a scan. A data
+// directory that is missing, cannot be read, or can be listed but not searched is broken, and
+// reporting it as an empty wiki would hide that.
 func TestUnreadableArticleRootFailsScans(t *testing.T) {
 	scans := []struct {
 		name string
@@ -657,11 +672,14 @@ func TestUnreadableArticleRootFailsScans(t *testing.T) {
 		{"GetBacklinks", func(s *Storage) error { _, err := s.GetBacklinks("good-one"); return err }},
 		{"findAssetReferrers", func(s *Storage) error { _, err := s.findAssetReferrers("good-one"); return err }},
 	}
-	expectFailures := func(t *testing.T, storage *Storage) {
+	// expectFailures checks every scan fails, and when want is not empty that its error says so.
+	expectFailures := func(t *testing.T, storage *Storage, want string) {
 		t.Helper()
 		for _, scan := range scans {
 			if err := scan.run(storage); err == nil {
 				t.Errorf("%s: expected an error", scan.name)
+			} else if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: error %q should contain %q", scan.name, err, want)
 			}
 		}
 	}
@@ -672,14 +690,63 @@ func TestUnreadableArticleRootFailsScans(t *testing.T) {
 		if err := os.RemoveAll(storage.ArticleDir); err != nil {
 			t.Fatalf("RemoveAll failed: %v", err)
 		}
-		expectFailures(t, storage)
+		expectFailures(t, storage, "")
 	})
 
 	t.Run("unreadable", func(t *testing.T) {
 		storage, _ := newUnreadableFixture(t)
 		captureLog(t)
 		lockDir(t, storage.ArticleDir)
-		expectFailures(t, storage)
+		expectFailures(t, storage, "")
+	})
+
+	// Every entry of such a root fails on its own, so skipping each one would list an empty wiki,
+	// and boot reconciliation would then drop every search index entry as an orphan.
+	t.Run("listable but not searchable", func(t *testing.T) {
+		storage, _ := newUnreadableFixture(t)
+		buf := captureLog(t)
+		lockSearch(t, storage.ArticleDir)
+		expectFailures(t, storage, "article directory is not searchable: lstat ")
+
+		if err := storage.SyncSearchIndex(); err == nil {
+			t.Error("SyncSearchIndex: expected an error")
+		}
+		if !inSearchIndex(t, storage, "good-one") {
+			t.Error("a failed listing must leave the search index alone")
+		}
+		if strings.Contains(buf.String(), "skipping unreadable") {
+			t.Errorf("the root's failure must not be reported as its entries':\n%s", buf)
+		}
+	})
+
+	// With no article file at the top level, only a subdirectory's failed listing shows the root
+	// cannot be searched, and it must not pass for that subdirectory being unreadable itself.
+	t.Run("listable but not searchable, holding only subdirectories", func(t *testing.T) {
+		storage, _ := newUnreadableFixture(t)
+		buf := captureLog(t)
+		writeWithMtime(t, filepath.Join(storage.ArticleDir, "notes", "nested.md"),
+			[]byte("---\ntitle: Nested\nslug: nested\n---\n[[Good One]]\n"), time.Now().Add(-time.Hour))
+		topLevel, err := filepath.Glob(filepath.Join(storage.ArticleDir, "*.md"))
+		if err != nil {
+			t.Fatalf("Glob failed: %v", err)
+		}
+		for _, path := range topLevel {
+			if err := os.Remove(path); err != nil {
+				t.Fatalf("Remove failed: %v", err)
+			}
+		}
+		lockSearch(t, storage.ArticleDir)
+		expectFailures(t, storage, "article directory is not searchable: lstat ")
+
+		if err := storage.SyncSearchIndex(); err == nil {
+			t.Error("SyncSearchIndex: expected an error")
+		}
+		if !inSearchIndex(t, storage, "good-one") {
+			t.Error("a failed listing must leave the search index alone")
+		}
+		if strings.Contains(buf.String(), "skipping unreadable") {
+			t.Errorf("the root's failure must not be reported as its subdirectory's:\n%s", buf)
+		}
 	})
 }
 
@@ -687,7 +754,8 @@ func TestUnreadableArticleRootFailsScans(t *testing.T) {
 // An entry deleted or renamed between the directory read and its stat or listing is a race no
 // test can trigger on demand, so the classification is checked directly: it is gone, not broken,
 // and is skipped with no warning and no report. Any other error below the root is reported once,
-// and the root itself fails the scan either way.
+// except a permission error stat'ing an entry directly under the root, which like the root itself
+// fails the scan. The errors are simulated too, so this runs where permissions are not enforced.
 func TestSkipWalkErrorClassification(t *testing.T) {
 	storage, broken := newUnreadableFixture(t)
 	buf := captureLog(t)
@@ -716,6 +784,11 @@ func TestSkipWalkErrorClassification(t *testing.T) {
 	if ret := storage.skipWalkError(goneFile, fileEntry, pathErr(goneFile, fs.ErrNotExist), report); ret != nil {
 		t.Errorf("a vanished file should be skipped with nil, got %v", ret)
 	}
+	// A top-level directory whose listing failed some other way, but which is gone by the time it
+	// is stat'd to check whether the root is to blame, has vanished too.
+	if ret := storage.skipWalkError(goneDir, dirEntry, pathErr(goneDir, fs.ErrPermission), report); ret != fs.SkipDir {
+		t.Errorf("a directory that vanished after its listing failed should skip its subtree, got %v", ret)
+	}
 	if len(reported) != 0 {
 		t.Errorf("vanished entries must not be reported, got %+v", reported)
 	}
@@ -723,16 +796,80 @@ func TestSkipWalkErrorClassification(t *testing.T) {
 		t.Errorf("vanished entries must not be logged, got %q", warnings)
 	}
 
+	// The directory exists, so it can be stat'd and its failed listing is its own, not the root's.
+	lockedDir := filepath.Join(storage.ArticleDir, "locked-dir")
+	if err := os.Mkdir(lockedDir, 0755); err != nil {
+		t.Fatalf("Mkdir failed: %v", err)
+	}
 	for i := 0; i < 2; i++ {
-		if ret := storage.skipWalkError(goneDir, dirEntry, pathErr(goneDir, fs.ErrPermission), report); ret != fs.SkipDir {
+		if ret := storage.skipWalkError(lockedDir, dirEntry, pathErr(lockedDir, fs.ErrPermission), report); ret != fs.SkipDir {
 			t.Errorf("an unreadable directory should skip its subtree, got %v", ret)
 		}
 	}
-	if len(reported) != 2 || reported[0].Path != "gone-dir/" {
+	if len(reported) != 2 || reported[0].Path != "locked-dir/" {
 		t.Errorf("an unreadable directory should be reported on each scan with a trailing slash, got %+v", reported)
 	}
-	if warnings := unreadableWarnings(t, buf, "gone-dir/"); len(warnings) != 1 {
+	if warnings := unreadableWarnings(t, buf, "locked-dir/"); len(warnings) != 1 {
 		t.Errorf("an unreadable directory should warn once, got %q", warnings)
+	}
+
+	// A file in a subdirectory that cannot be stat'd costs only that file.
+	reported = nil
+	nested := filepath.Join(storage.ArticleDir, "notes", "nested.md")
+	for i := 0; i < 2; i++ {
+		if ret := storage.skipWalkError(nested, fileEntry, pathErr(nested, fs.ErrPermission), report); ret != nil {
+			t.Errorf("a file in a subdirectory that cannot be stat'd should be skipped with nil, got %v", ret)
+		}
+	}
+	if len(reported) != 2 || reported[0].Path != "notes/nested.md" {
+		t.Errorf("a file that cannot be stat'd should be reported on each scan, got %+v", reported)
+	}
+	if warnings := unreadableWarnings(t, buf, "notes/nested.md"); len(warnings) != 1 {
+		t.Errorf("a file that cannot be stat'd should warn once, got %q", warnings)
+	}
+
+	// A file directly under the root that cannot be stat'd means the root cannot be searched.
+	reported = nil
+	topLevel := filepath.Join(storage.ArticleDir, "top.md")
+	topErr := pathErr(topLevel, fs.ErrPermission)
+	ret := storage.skipWalkError(topLevel, fileEntry, topErr, report)
+	if !errors.Is(ret, topErr) || !strings.HasPrefix(fmt.Sprint(ret), "article directory is not searchable: ") {
+		t.Errorf("a file directly under the root that cannot be stat'd must fail the scan, blaming the directory and wrapping the stat error, got %v", ret)
+	}
+	if len(reported) != 0 {
+		t.Errorf("a failure that fails the scan must not also be reported, got %+v", reported)
+	}
+	if warnings := unreadableWarnings(t, buf, "top.md"); len(warnings) != 0 {
+		t.Errorf("a failure that fails the scan must not also be logged, got %q", warnings)
+	}
+
+	// Only a permission error blames the root. Any other failure directly under it, such as an I/O
+	// error, may be that one entry's, so it is skipped and reported like one.
+	reported = nil
+	eioFile := filepath.Join(storage.ArticleDir, "eio.md")
+	eioDir := filepath.Join(storage.ArticleDir, "eio-dir")
+	if err := os.Mkdir(eioDir, 0755); err != nil {
+		t.Fatalf("Mkdir failed: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if ret := storage.skipWalkError(eioFile, fileEntry, pathErr(eioFile, syscall.EIO), report); ret != nil {
+			t.Errorf("a top-level file with an I/O error should be skipped with nil, got %v", ret)
+		}
+		if ret := storage.skipWalkError(eioDir, dirEntry, pathErr(eioDir, syscall.EIO), report); ret != fs.SkipDir {
+			t.Errorf("a top-level directory with an I/O error should skip its subtree, got %v", ret)
+		}
+	}
+	var eioPaths []string
+	for _, f := range reported {
+		eioPaths = append(eioPaths, f.Path)
+	}
+	if want := []string{"eio.md", "eio-dir/", "eio.md", "eio-dir/"}; !reflect.DeepEqual(eioPaths, want) {
+		t.Errorf("top-level entries with I/O errors should be reported on each scan, got %v, want %v", eioPaths, want)
+	}
+	for _, rel := range []string{"eio.md", "eio-dir/"} {
+		if warnings := unreadableWarnings(t, buf, rel); len(warnings) != 1 {
+			t.Errorf("%s should warn once, got %q", rel, warnings)
+		}
 	}
 
 	for _, rootErr := range []error{pathErr(storage.ArticleDir, fs.ErrNotExist), pathErr(storage.ArticleDir, fs.ErrPermission)} {

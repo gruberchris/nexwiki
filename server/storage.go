@@ -1866,9 +1866,10 @@ func (s *Storage) SyncSearchIndex() error {
 	}
 
 	// load reads one document in full for indexing. One that will not load is skipped rather than
-	// failing boot. It is still listed, so any index entry it already has is kept, but that entry is
-	// not refreshed, and a document with none stays out of search. The skip is reported like any
-	// other unreadable file so neither happens without a trace.
+	// failing boot. Its slug still counts as valid (home's always does, and any other document's
+	// because it was listed), so any index entry it already has is kept, but that entry is not
+	// refreshed, and a document with none stays out of search. The skip is reported like any other
+	// unreadable file so neither happens without a trace.
 	load := func(slug string) (*Article, bool) {
 		art, err := s.GetArticle(slug)
 		if err == nil {

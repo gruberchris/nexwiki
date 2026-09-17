@@ -220,9 +220,9 @@ type LinkGraph struct {
 	// Collecting mentions at all costs ScanLinkGraph ~10% on the 1k/5k/10k benchmarks
 	// (10000 docs: 127ms → 139ms), from retaining the per-document slices and one extra map
 	// insert per file. Extraction itself is free, riding the body read cachedBodyRefs already
-	// performs and caches by mtime. get_backlinks and get_wiki_statistics share this scan and pay
-	// that overhead without reading the field; the absolute cost was judged small enough to
-	// prefer one scan over two.
+	// performs and caches by mtime. Only wiki_health reads the field; get_wiki_statistics calls this
+	// scan too and pays that overhead anyway, a cost judged small enough not to maintain a second
+	// scan without it. (get_backlinks does not use this scan: GetBacklinks walks on its own.)
 	Mentions map[string][]string
 	// Unreadable lists the files the scan skipped because they could not be read or parsed, and the
 	// directories it skipped because they could not be listed, sorted by path. A skipped file is
@@ -521,7 +521,8 @@ func AssetReferencePrefix(slug string) string {
 
 // findAssetReferrers returns the slugs of every document whose body embeds an asset owned by
 // oldSlug, including oldSlug's own successor if it is already on disk. Entries it cannot read are
-// skipped, so the error is only for an article directory that cannot be read at all.
+// skipped, so the error is only for an article directory that cannot be read or searched. See
+// skipWalkError.
 //
 // This exists because GetBacklinks cannot answer the question: it reports documents that *link* to
 // a slug, and an embedded image is not a link. A page that only shows another page's diagram has no
