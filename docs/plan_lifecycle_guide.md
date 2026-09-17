@@ -94,7 +94,7 @@ The deletion stage has no human in the loop, so it carries three guards:
 
 1. **Dry-run mode** (above) for inspecting intended transitions.
 2. **A full audit trail**: every transition is written to the durable activity log and to stderr, and broadcast over SSE so open browsers update live. A deletion logs `PERMANENTLY DELETED` with the slug.
-3. **The backlink guard**: a plan that other documents still link to is **never auto-deleted**. The worker logs a refusal (visible in the activity log) and leaves it for a human decision — silently deleting a referenced document is exactly the class of unattended damage the worker must not cause.
+3. **The backlink guard**: a plan that other documents still link to is **never auto-deleted**. The worker logs a refusal and leaves it for a human decision — silently deleting a referenced document is exactly the class of unattended damage the worker must not cause. The refusal goes to stderr and, outside dry-run mode, to the activity log as a `delete-refused` event. It refuses the same way when the backlink scan was incomplete: if the scan skipped any article file it could not read or parse, or any folder it could not list, one of those may be the document that links to the plan. The refusal says how many entries were skipped, and the worker checks again on each later sweep, deleting the plan only once a complete scan finds no backlinks. `wiki_health` lists the entries to fix.
 
 > ⚠️ Deletion is unrecoverable without a backup. Set `NEXWIKI_PLAN_DELETE_AFTER_DAYS=0` to keep archived plans forever.
 

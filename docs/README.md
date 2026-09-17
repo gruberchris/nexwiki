@@ -135,6 +135,7 @@ A production deployment manual covering security boundaries, persistent storage,
 * **Browser Origin Validation**: Permitting remote domain origins via `NEXWIKI_ALLOWED_ORIGINS`.
 * **Caddy Reverse Proxy**: Automatic TLS certificate management and HTTP Basic Authentication with `basic_auth`.
 * **Nginx Reverse Proxy**: Complete Nginx configuration with essential unbuffered proxy directives for Streamable HTTP MCP (`/api/mcp`) and live SSE activity feeds (`/api/activity/stream`).
+* **Production Storage**: Filesystem compatibility, network filesystems, backup strategy, and article files on disk (atomic saves, sync clients, and stderr warnings for unreadable files).
 * **Production Compose & Systemd**: Turnkey Docker Compose stacks and Linux systemd service configurations.
 
 ### 19. [NexWiki Developer Setup & Build Automation Guide](./developer_guide.md)
