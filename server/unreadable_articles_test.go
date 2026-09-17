@@ -471,6 +471,20 @@ func lockSearch(t *testing.T, dir string) {
 	}
 }
 
+// stubWalkLstat routes skipWalkError's stats through fail for the rest of the test. fail gets the
+// path and returns the error to deny the stat with, or nil to pass the call through.
+func stubWalkLstat(t *testing.T, fail func(path string) error) {
+	t.Helper()
+	prev := walkLstat
+	walkLstat = func(path string) (fs.FileInfo, error) {
+		if err := fail(path); err != nil {
+			return nil, &os.PathError{Op: "lstat", Path: path, Err: err}
+		}
+		return prev(path)
+	}
+	t.Cleanup(func() { walkLstat = prev })
+}
+
 // unreadablePaths returns the paths a link graph reports as unreadable, failing the test for any
 // entry that carries no error.
 func unreadablePaths(t *testing.T, graph *LinkGraph) []string {
@@ -659,6 +673,88 @@ func TestUnstattableArticleFileIsSkipped(t *testing.T) {
 	}
 }
 
+// TestUnstattableTopLevelDirectoryUnderSearchableRoot pins the case the root probe exists for: a
+// folder directly under the article directory that this user can neither list nor stat, as an
+// SELinux label, a macOS ACL, or a FUSE mount another user owns can leave one, while the article
+// directory itself is searchable. That costs only the folder: every scan and the boot index sync
+// still succeed, and the folder is reported like any other that cannot be listed. The folder's
+// listing fails for real; its stat is simulated, since permissions alone cannot deny it here. The
+// probe itself is real, and must not run at all on a scan that hits no denied stat.
+func TestUnstattableTopLevelDirectoryUnderSearchableRoot(t *testing.T) {
+	storage, _ := newUnreadableFixture(t)
+	buf := captureLog(t)
+
+	labelled := filepath.Join(storage.ArticleDir, "labelled")
+	writeWithMtime(t, filepath.Join(labelled, "hidden.md"),
+		[]byte("---\ntitle: Hidden\nslug: hidden\n---\n![diagram](/api/assets/good-one/diagram.png) [[Good One]]\n"), time.Now().Add(-time.Hour))
+	probe := filepath.Join(storage.ArticleDir, articleDirSearchProbe)
+	probes := 0
+	stubWalkLstat(t, func(path string) error {
+		switch path {
+		case probe:
+			probes++
+		case labelled:
+			return fs.ErrPermission
+		}
+		return nil
+	})
+
+	// scanAll runs every walk, checking each succeeds, and returns the link graph's unreadable paths
+	// and the slugs listed.
+	scanAll := func() (unreadable, listed []string) {
+		t.Helper()
+		articles, err := storage.ListArticles()
+		if err != nil {
+			t.Fatalf("ListArticles failed: %v", err)
+		}
+		for _, a := range articles {
+			listed = append(listed, a.Slug)
+		}
+		sort.Strings(listed)
+		graph, err := storage.ScanLinkGraph()
+		if err != nil {
+			t.Fatalf("ScanLinkGraph failed: %v", err)
+		}
+		if _, err := storage.GetBacklinks("good-one"); err != nil {
+			t.Fatalf("GetBacklinks failed: %v", err)
+		}
+		if _, err := storage.findAssetReferrers("good-one"); err != nil {
+			t.Fatalf("findAssetReferrers failed: %v", err)
+		}
+		return unreadablePaths(t, graph), listed
+	}
+
+	if _, listed := scanAll(); !contains(listed, "hidden") {
+		t.Fatalf("the folder's article should be listed while the folder is reachable, got %v", listed)
+	}
+	if probes != 0 {
+		t.Fatalf("scans that hit no denied stat probed the article directory %d times", probes)
+	}
+
+	lockDir(t, labelled)
+	for i := 0; i < 3; i++ {
+		unreadable, listed := scanAll()
+		if want := []string{"good-one", "good-two"}; !reflect.DeepEqual(listed, want) {
+			t.Errorf("ListArticles = %v, want %v", listed, want)
+		}
+		if want := []string{"broken.md", "labelled/"}; !reflect.DeepEqual(unreadable, want) {
+			t.Errorf("Unreadable paths = %v, want %v", unreadable, want)
+		}
+	}
+	if probes == 0 {
+		t.Errorf("a denied top-level stat must probe the article directory before blaming it")
+	}
+	if err := storage.SyncSearchIndex(); err != nil {
+		t.Fatalf("one denied folder must not fail the boot index sync: %v", err)
+	}
+	if !inSearchIndex(t, storage, "good-one") {
+		t.Error("the boot index sync must keep articles outside the denied folder")
+	}
+	if warnings := unreadableWarnings(t, buf, "labelled/"); len(warnings) != 1 {
+		t.Errorf("expected exactly one warning across repeated scans, got %d: %q", len(warnings), warnings)
+	}
+}
+
 // TestUnreadableArticleRootFailsScans pins the walk errors that must still fail a scan. A data
 // directory that is missing, cannot be read, or can be listed but not searched is broken, and
 // reporting it as an empty wiki would hide that.
@@ -754,8 +850,9 @@ func TestUnreadableArticleRootFailsScans(t *testing.T) {
 // An entry deleted or renamed between the directory read and its stat or listing is a race no
 // test can trigger on demand, so the classification is checked directly: it is gone, not broken,
 // and is skipped with no warning and no report. Any other error below the root is reported once,
-// except a permission error stat'ing an entry directly under the root, which like the root itself
-// fails the scan. The errors are simulated too, so this runs where permissions are not enforced.
+// except a permission error stat'ing an entry directly under a root that denies the probe's stat
+// too, which like the root itself fails the scan. The errors are simulated too, so this runs where
+// permissions are not enforced.
 func TestSkipWalkErrorClassification(t *testing.T) {
 	storage, broken := newUnreadableFixture(t)
 	buf := captureLog(t)
@@ -828,20 +925,94 @@ func TestSkipWalkErrorClassification(t *testing.T) {
 		t.Errorf("a file that cannot be stat'd should warn once, got %q", warnings)
 	}
 
-	// A file directly under the root that cannot be stat'd means the root cannot be searched.
+	// A stat denied directly under the root blames the root only if the root also denies a stat of
+	// the probe, a name that is not there. The directory's stat is simulated, since permissions
+	// alone cannot deny it under a searchable root, and so is the probe's answer where one is set.
+	probe := filepath.Join(storage.ArticleDir, articleDirSearchProbe)
+	var probeErr error
+	stubWalkLstat(t, func(path string) error {
+		switch path {
+		case probe:
+			return probeErr
+		case filepath.Join(storage.ArticleDir, "denied-dir"), filepath.Join(storage.ArticleDir, "unsearchable-dir"):
+			return fs.ErrPermission
+		}
+		return nil
+	})
+	topPaths := func() []string {
+		var paths []string
+		for _, f := range reported {
+			paths = append(paths, f.Path)
+		}
+		return paths
+	}
+
+	// The real probe finds nothing, so the root is searchable and each denial is the entry's own,
+	// such as an SELinux label or a FUSE mount another user owns: it costs only that entry.
 	reported = nil
-	topLevel := filepath.Join(storage.ArticleDir, "top.md")
-	topErr := pathErr(topLevel, fs.ErrPermission)
-	ret := storage.skipWalkError(topLevel, fileEntry, topErr, report)
+	deniedFile := filepath.Join(storage.ArticleDir, "denied.md")
+	deniedDir := filepath.Join(storage.ArticleDir, "denied-dir")
+	for i := 0; i < 2; i++ {
+		if ret := storage.skipWalkError(deniedFile, fileEntry, pathErr(deniedFile, fs.ErrPermission), report); ret != nil {
+			t.Errorf("a top-level file whose own stat is denied should be skipped with nil, got %v", ret)
+		}
+		if ret := storage.skipWalkError(deniedDir, dirEntry, pathErr(deniedDir, fs.ErrPermission), report); ret != fs.SkipDir {
+			t.Errorf("a top-level directory whose own stat is denied should skip its subtree, got %v", ret)
+		}
+	}
+	if got, want := topPaths(), []string{"denied.md", "denied-dir/", "denied.md", "denied-dir/"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("top-level entries whose own stat is denied should be reported on each scan, got %v, want %v", got, want)
+	}
+	for _, rel := range []string{"denied.md", "denied-dir/"} {
+		if warnings := unreadableWarnings(t, buf, rel); len(warnings) != 1 {
+			t.Errorf("%s should warn once, got %q", rel, warnings)
+		}
+	}
+
+	// Neither a probe that finds the name after all nor one that fails some other way is evidence
+	// against the root.
+	if err := os.WriteFile(probe, nil, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{{"a probe that exists", nil}, {"a probe with an I/O error", syscall.EIO}} {
+		reported, probeErr = nil, tc.err
+		if ret := storage.skipWalkError(deniedFile, fileEntry, pathErr(deniedFile, fs.ErrPermission), report); ret != nil {
+			t.Errorf("%s: a top-level file whose stat is denied should be skipped with nil, got %v", tc.name, ret)
+		}
+		if ret := storage.skipWalkError(deniedDir, dirEntry, pathErr(deniedDir, fs.ErrPermission), report); ret != fs.SkipDir {
+			t.Errorf("%s: a top-level directory whose stat is denied should skip its subtree, got %v", tc.name, ret)
+		}
+		if got, want := topPaths(), []string{"denied.md", "denied-dir/"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: got reports %v, want %v", tc.name, got, want)
+		}
+	}
+
+	// A root that denies the probe too cannot be searched, and whichever entry showed it fails the
+	// scan with the directory blamed and the entry's stat error wrapped.
+	reported, probeErr = nil, fs.ErrPermission
+	topFile := filepath.Join(storage.ArticleDir, "unsearchable.md")
+	topErr := pathErr(topFile, fs.ErrPermission)
+	ret := storage.skipWalkError(topFile, fileEntry, topErr, report)
 	if !errors.Is(ret, topErr) || !strings.HasPrefix(fmt.Sprint(ret), "article directory is not searchable: ") {
-		t.Errorf("a file directly under the root that cannot be stat'd must fail the scan, blaming the directory and wrapping the stat error, got %v", ret)
+		t.Errorf("a file directly under an unsearchable root must fail the scan, blaming the directory and wrapping the stat error, got %v", ret)
+	}
+	topDir := filepath.Join(storage.ArticleDir, "unsearchable-dir")
+	ret = storage.skipWalkError(topDir, dirEntry, pathErr(topDir, fs.ErrPermission), report)
+	if !errors.Is(ret, fs.ErrPermission) || !strings.HasPrefix(fmt.Sprint(ret), "article directory is not searchable: lstat "+topDir+":") {
+		t.Errorf("a directory directly under an unsearchable root must fail the scan, blaming the directory and wrapping its stat error, got %v", ret)
 	}
 	if len(reported) != 0 {
 		t.Errorf("a failure that fails the scan must not also be reported, got %+v", reported)
 	}
-	if warnings := unreadableWarnings(t, buf, "top.md"); len(warnings) != 0 {
-		t.Errorf("a failure that fails the scan must not also be logged, got %q", warnings)
+	for _, rel := range []string{"unsearchable.md", "unsearchable-dir/"} {
+		if warnings := unreadableWarnings(t, buf, rel); len(warnings) != 0 {
+			t.Errorf("a failure that fails the scan must not also be logged, got %q", warnings)
+		}
 	}
+	probeErr = nil
 
 	// Only a permission error blames the root. Any other failure directly under it, such as an I/O
 	// error, may be that one entry's, so it is skipped and reported like one.

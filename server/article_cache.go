@@ -196,10 +196,12 @@ func (s *Storage) skipUnreadable(path string, info fs.FileInfo, err error) (Unre
 // an empty wiki hides that, and callers act on the listing: SyncSearchIndex would drop every index
 // entry as an orphan. So does a root that can be listed but not searched (read permission without
 // execute), which lists every entry and then cannot stat or open any of them. That shows as a
-// permission error stat'ing an entry directly under the root, which the entry's own permissions
-// never cause: a file's error here already is that stat, and a directory that cannot be listed is
-// stat'd to tell. Any other stat failure there, such as an I/O error or a stale network handle, may
-// be that one entry's, and failing every scan for it would keep the server from even starting.
+// permission error stat'ing an entry directly under the root: a file's error here already is that
+// stat, and a directory that cannot be listed is stat'd to tell. But one entry's stat can also be
+// denied on its own, by an SELinux label, a macOS ACL, or a FUSE mount another user owns, and
+// failing every scan for that would keep the server from even starting while blaming the wrong
+// directory. So the root is blamed only when articleDirSearchable finds it at fault. Any other stat
+// failure there, such as an I/O error or a stale network handle, may be that one entry's too.
 //
 // Anything else is skipped, so one bad entry never fails a scan. A file in a subdirectory that
 // cannot be searched is skipped and reported on its own, like any other file, rather than as the
@@ -223,12 +225,14 @@ func (s *Storage) skipWalkError(path string, d fs.DirEntry, err error, report fu
 	if filepath.Dir(path) == filepath.Clean(s.ArticleDir) {
 		statErr := err
 		if isDir {
-			_, statErr = os.Lstat(path)
+			// Stat'd, not just probed: a directory whose listing failed (on a stale network handle,
+			// say) and that is gone now was deleted, not broken, and is skipped silently like any other.
+			_, statErr = walkLstat(path)
 			if errors.Is(statErr, fs.ErrNotExist) {
 				return skip
 			}
 		}
-		if errors.Is(statErr, fs.ErrPermission) {
+		if errors.Is(statErr, fs.ErrPermission) && !s.articleDirSearchable() {
 			// The stat error names an entry, but the entry is not what needs fixing.
 			return fmt.Errorf("article directory is not searchable: %w", statErr)
 		}
@@ -244,6 +248,28 @@ func (s *Storage) skipWalkError(path string, d fs.DirEntry, err error, report fu
 		report(UnreadableFile{Path: rel, Error: err.Error()})
 	}
 	return skip
+}
+
+// articleDirSearchProbe is the name articleDirSearchable stats directly under the article
+// directory. Nothing creates it: it is neither an article (.md) nor an atomic write's temp file.
+const articleDirSearchProbe = ".nexwiki-search-probe"
+
+// walkLstat is os.Lstat as skipWalkError calls it, held in a variable only so tests can fail the
+// call: a stat denied while the article directory is still searchable cannot be set up with
+// permissions alone.
+var walkLstat = os.Lstat
+
+// articleDirSearchable reports whether the article directory can be searched, for skipWalkError to
+// tell a root that denies every stat under it from one entry whose stat was denied. It stats a name
+// that is not there, which a searchable root answers with not-exist, so only a permission error
+// convicts the root. Any other error, or finding the name after all, is no evidence against it,
+// and failing every scan on a guess would keep the server from starting.
+//
+// It costs a stat, possibly on a slow network mount, so it runs only once a stat has already been
+// denied, and never under the cache lock.
+func (s *Storage) articleDirSearchable() bool {
+	_, err := walkLstat(filepath.Join(s.ArticleDir, articleDirSearchProbe))
+	return !errors.Is(err, fs.ErrPermission)
 }
 
 // articleRelPath names a path under the article directory the way warnings and reports do:

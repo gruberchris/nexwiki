@@ -877,6 +877,27 @@ func TestUnreadableForClientHidesArticleDir(t *testing.T) {
 			want: "open notes/x.md: permission denied",
 		},
 		{
+			name: "a directory that could not be listed is named as reported",
+			dir:  abs,
+			path: "notes/",
+			err:  "open " + filepath.Join(abs, "notes") + ": permission denied",
+			want: "open notes/: permission denied",
+		},
+		{
+			name: "a path inside a reported directory keeps single separators",
+			dir:  abs,
+			path: "notes/",
+			err:  "lstat " + filepath.Join(abs, "notes", "x.md") + ": input/output error",
+			want: "lstat notes/x.md: input/output error",
+		},
+		{
+			name: "a sibling of a reported directory is not joined to it",
+			dir:  abs,
+			path: "notes/",
+			err:  "open " + filepath.Join(abs, "notes-old", "x.md") + ": permission denied",
+			want: "open " + filepath.Join("notes-old", "x.md") + ": permission denied",
+		},
+		{
 			name: "a trailing separator on the configured directory",
 			dir:  abs + sep,
 			path: "x.md",
@@ -1066,7 +1087,7 @@ func TestWikiHealthReportsUnreadableDirectory(t *testing.T) {
 
 	text := resp.Content[0].Text
 	for _, want := range []string{
-		"- locked/ — open locked/: permission denied. Fix the directory's permissions so the articles in it are scanned.\n",
+		"- locked/ — open locked/: permission denied. Fix what keeps the directory from being listed (usually its permissions) so the articles in it are scanned.\n",
 		"- broken.md — invalid format: front matter is not valid YAML",
 		"Fix its front matter or file permissions, or delete the file.\n",
 	} {

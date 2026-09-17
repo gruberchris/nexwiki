@@ -556,14 +556,24 @@ func newArticleDirHider(articleDir string) articleDirHider {
 }
 
 // hide returns text with the article directory hidden. relPath, when not empty, is the
-// slash-separated path of the file the text is about.
+// slash-separated path of the file the text is about, or of the directory when it ends in /.
 func (h articleDirHider) hide(text, relPath string) string {
 	// Where several replacements match at one position the earliest wins, so the file's full path
-	// goes before the directory it sits in, and the directory with its separator before the bare one.
+	// goes before the directory it sits in, and a directory with its separator before the bare one.
 	var reps []pathReplacement
 	if relPath != "" {
 		for _, dir := range h.dirs {
-			reps = append(reps, pathReplacement{old: filepath.Join(dir, filepath.FromSlash(relPath)), new: relPath})
+			full := filepath.Join(dir, filepath.FromSlash(relPath))
+			if !strings.HasSuffix(relPath, "/") {
+				reps = append(reps, pathReplacement{old: full, new: relPath})
+				continue
+			}
+			// A directory's relPath brings its own trailing separator, which Join dropped, so a path
+			// inside the directory has its separator replaced rather than doubled (dir//x.md). The
+			// bare directory must end where its name does, or a sibling would become dir/-old.
+			reps = append(reps,
+				pathReplacement{old: full + string(filepath.Separator), new: relPath},
+				pathReplacement{old: full, new: relPath, bounded: true})
 		}
 	}
 	// Any other mention of the directory goes too, but only in absolute form: a short relative
@@ -684,8 +694,9 @@ func renderHealthReport(out HealthOutput) string {
 			remedy := "Fix its front matter or file permissions, or delete the file."
 			if strings.HasSuffix(f.Path, "/") {
 				// A directory that could not be listed has no front matter, and deleting it would take
-				// the articles inside with it; access is what keeps them out of the scan.
-				remedy = "Fix the directory's permissions so the articles in it are scanned."
+				// the articles inside with it. Permissions are the usual cause but not the only one: an
+				// I/O error or a stale or disconnected network mount fails the listing too.
+				remedy = "Fix what keeps the directory from being listed (usually its permissions) so the articles in it are scanned."
 			}
 			// YAML errors can span lines; flattened so each file stays one list item. A closing period
 			// is dropped because the sentence adds its own, and Windows ends OS errors with one
