@@ -132,6 +132,13 @@ func TestProxyHeaderSynthesisPerMethod(t *testing.T) {
 		{"prompts/get mirrors the prompt name", `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"article_creation_workflow",` + meta + `}}`, "article_creation_workflow"},
 		{"resources/read mirrors the uri", `{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"nexwiki://article/go",` + meta + `}}`, "nexwiki://article/go"},
 		{"tools/list needs no name header", `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{` + meta + `}}`, ""},
+		// completion/complete names its target inside `ref`, not in `params.name`, so the
+		// specification does not mirror it into Mcp-Name. A proxy that guessed otherwise would
+		// synthesize a header the primary then rejects as a mismatch.
+		{"completion/complete needs no name header",
+			`{"jsonrpc":"2.0","id":1,"method":"completion/complete","params":{` +
+				`"ref":{"type":"ref/resource","uri":"nexwiki://article/{slug}"},` +
+				`"argument":{"name":"slug","value":"go"},` + meta + `}}`, ""},
 	}
 
 	for _, tc := range tests {
@@ -173,8 +180,11 @@ func TestHeaderValueEncodingRoundTrip(t *testing.T) {
 	}
 }
 
-// TestProxyRelaysSubscriptionStream is the payoff: a stdio client gets live notifications, which a
-// standalone stdio server cannot deliver at all.
+// TestProxyRelaysSubscriptionStream covers the sidecar's half of subscriptions: notifications
+// originate in the primary, which owns the data directory, and the proxy relays each SSE frame to
+// stdout as its own JSON-RPC line. A standalone stdio server now serves subscriptions from its own
+// EventBus instead (see TestConformanceStdioSubscriptionStreams); the relay is what a sidecar needs,
+// because only one process may hold the search index lock.
 func TestProxyRelaysSubscriptionStream(t *testing.T) {
 	primary, proxy, out := proxyAgainstPrimary(t)
 

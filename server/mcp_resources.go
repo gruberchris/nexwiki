@@ -42,13 +42,27 @@ func slugFromResourceURI(uri string) (string, bool) {
 	return slug, true
 }
 
-// resourceCapability describes the resources feature NexWiki implements. Both sub-features are
-// genuinely supported: the article set changes as documents are created and deleted, and
-// individual articles change as they are edited.
-func resourceCapability() map[string]interface{} {
+// modernResourceCapability describes the resources feature to a 2026-07-28 client. Both
+// sub-features are genuinely supported there: the article set changes as documents are created and
+// deleted, and individual articles change as they are edited — and a subscriptions/listen stream
+// delivers both, honouring resourceSubscriptions for the second.
+func modernResourceCapability() map[string]interface{} {
 	return map[string]interface{}{
 		"listChanged": true,
 		"subscribe":   true,
+	}
+}
+
+// legacyResourceCapability describes the same feature to an initialize-based client, which reads
+// the words differently.
+//
+// listChanged holds: notifications/resources/list_changed is delivered on the standalone GET SSE
+// stream those revisions define. subscribe does not, because in those revisions it promises the
+// resources/subscribe RPC — a method the 2026-07-28 revision replaced with subscriptions/listen and
+// that NexWiki therefore does not implement. Claiming it sent legacy clients to a -32601.
+func legacyResourceCapability() map[string]interface{} {
+	return map[string]interface{}{
+		"listChanged": true,
 	}
 }
 
@@ -57,13 +71,20 @@ func resourceCapability() map[string]interface{} {
 // "home" is included here even though ListArticles excludes it: the dashboard exclusion exists so
 // the sidebar does not show it as an ordinary page, but as a resource a user may well want to
 // @-mention it.
-func (srv *Server) listResources() (interface{}, *JSONRPCError) {
+func (srv *Server) listResources(cursor string) (interface{}, *JSONRPCError) {
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
 		return nil, &JSONRPCError{Code: errCodeInternal, Message: "failed to list articles: " + err.Error()}
 	}
 	if home, err := srv.Storage.GetArticle("home"); err == nil {
 		articles = append([]Article{*home}, articles...)
+	}
+
+	// Paginated because a knowledge base is unbounded: a wiki with tens of thousands of documents
+	// used to be projected into one response, which is the case pagination exists for.
+	articles, nextCursor, rpcErr := paginate(articles, cursor, listPageSize)
+	if rpcErr != nil {
+		return nil, rpcErr
 	}
 
 	resources := make([]map[string]interface{}, 0, len(articles))
@@ -87,23 +108,29 @@ func (srv *Server) listResources() (interface{}, *JSONRPCError) {
 		resources = append(resources, entry)
 	}
 
-	return map[string]interface{}{"resources": resources}, nil
+	return listResult("resources", resources, nextCursor), nil
 }
 
 // listResourceTemplates advertises the URI shape, so a client can construct a resource URI for a
 // slug it already knows rather than paging the whole list to find it.
-func (srv *Server) listResourceTemplates() (interface{}, *JSONRPCError) {
-	return map[string]interface{}{
-		"resourceTemplates": []map[string]interface{}{
-			{
-				"uriTemplate": resourceURIPrefix + "{slug}",
-				"name":        "wiki-article",
-				"title":       "NexWiki Article",
-				"description": "Any NexWiki document by its URL-safe slug — wiki articles, agent memories, plans, and skills.",
-				"mimeType":    "text/markdown",
-			},
+func (srv *Server) listResourceTemplates(cursor string) (interface{}, *JSONRPCError) {
+	templates := []map[string]interface{}{
+		{
+			"uriTemplate": resourceURIPrefix + "{slug}",
+			"name":        "wiki-article",
+			"title":       "NexWiki Article",
+			"description": "Any NexWiki document by its URL-safe slug — wiki articles, agent memories, plans, and skills.",
+			"mimeType":    "text/markdown",
 		},
-	}, nil
+	}
+
+	// One template will never fill a page. It still goes through paginate so that an invalid cursor
+	// is rejected here exactly as it is on resources/list.
+	page, nextCursor, rpcErr := paginate(templates, cursor, listPageSize)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	return listResult("resourceTemplates", page, nextCursor), nil
 }
 
 // readResource returns an article's Markdown body.

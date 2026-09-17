@@ -3,8 +3,12 @@ name: CI Tests
 on:
   push:
     branches: [main]
+  # Every pull request, not only those targeting main. Restricting this to `branches: [main]`
+  # meant a stacked PR — one opened against another feature branch while the first is in review —
+  # got no test run at all: DCO reported, nothing else did. The gap is silent in the worst way,
+  # because a PR with no checks looks the same as one whose checks have not started yet, and the
+  # tests only appear once the base branch merges and GitHub retargets the PR.
   pull_request:
-    branches: [main]
 
 jobs:
   test:
@@ -17,7 +21,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 

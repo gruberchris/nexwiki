@@ -24,9 +24,19 @@ The MCP specification changed shape in revision **`2026-07-28`**. NexWiki implem
 | Sessions | None (`Mcp-Session-Id` ignored) | connection-scoped |
 | Discovery | `server/discover` | `initialize` result |
 | Results | carry `resultType: "complete"` | bare result object |
+| Result caching | `ttlMs` + `cacheScope` on cacheable results | not available |
 | Protocol errors | real HTTP status (`400`/`404`) | `200` with an error body |
+| Change notifications | `subscriptions/listen` stream | standalone `GET` SSE stream |
+| `resources.subscribe` capability | ✅ advertised | ❌ not advertised — see below |
+| `ping` | ❌ removed by the revision | ✅ answered |
+| Pagination | ✅ `cursor` / `nextCursor` | ✅ `cursor` / `nextCursor` |
+| Completion | ✅ `completion/complete` | ✅ `completion/complete` |
 
-**How NexWiki decides:** a request whose `params._meta` carries `io.modelcontextprotocol/protocolVersion` is served under the modern revision; anything else takes the legacy path. Both eras share the same 29 tools and the same 2 prompts — only the envelope differs.
+**How NexWiki decides:** a request is modern if its `params._meta` carries `io.modelcontextprotocol/protocolVersion`, **or** — over HTTP, where the field is mirrored and required — if the `MCP-Protocol-Version` header names a revision NexWiki implements as modern. Anything else takes the legacy path.
+
+That second signal matters. A modern client whose body is missing the required `_meta` used to fall through to the legacy switch and get a plausible-looking legacy answer with no hint that anything was wrong. It is now recognised as modern and rejected as malformed (`-32602`), which is what the specification requires.
+
+Both eras share the same 29 tools and the same 2 prompts — only the envelope differs.
 
 #### Modern-era requirements
 
@@ -61,8 +71,10 @@ Over HTTP it must also mirror those fields into headers, which NexWiki validates
 |---|---|---|---|
 | `-32020` | `HeaderMismatch` | `400` | a mirrored header disagrees with the body, or is missing |
 | `-32022` | `UnsupportedProtocolVersion` | `400` | the requested revision is not implemented; `data.supported` lists what is |
-| `-32602` | `InvalidParams` | `400` | a required `_meta` field is missing |
+| `-32602` | `InvalidParams` | `400` | a required `_meta` field is missing, a prompt name or argument is wrong, a resource does not exist, or a pagination cursor is not one this server issued |
 | `-32601` | `MethodNotFound` | `404` | unknown method (the `404` is how a dual-era client tells a modern server from a legacy one) |
+
+> **`-32602`, not `-32601`, for an unknown prompt or resource.** The method exists and was found; it is the *name* that is wrong. The distinction is not academic here: `-32601` is required to surface as HTTP `404`, so returning it for a typo'd prompt name made the MCP endpoint itself look like it had disappeared.
 
 #### `server/discover`
 
@@ -78,7 +90,88 @@ curl -X POST http://localhost:5808/api/mcp \
         "io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 
-> **Capabilities** advertise `tools`, `prompts`, and `resources` (with `listChanged` and `subscribe`) — each only because it is genuinely served. The standalone `GET` SSE stream and `Mcp-Session-Id` were removed by the 2026-07-28 revision; NexWiki ignores `Mcp-Session-Id` and keeps the `GET` stream only for legacy-era clients that open one.
+**Capabilities are declared per era, because the same word promises a different method in each.**
+
+| Capability | Modern (`server/discover`) | Legacy (`initialize`) |
+|---|---|---|
+| `tools` | `{}` | `{}` |
+| `prompts` | `{}` | `{}` |
+| `completions` | `{}` | `{}` |
+| `resources.listChanged` | ✅ | ✅ |
+| `resources.subscribe` | ✅ | ❌ |
+
+`resources.subscribe` is the reason for the split. In the modern revision it means the server honours `resourceSubscriptions` on a `subscriptions/listen` stream, which NexWiki does. In the initialize-based revisions it means the server implements the `resources/subscribe` **RPC** — a method the 2026-07-28 revision replaced and that NexWiki deliberately does not implement. Advertising one capability set to both eras therefore pointed legacy clients at a method that answers `-32601`. A capability is a promise, so each era is told only what is true for it.
+
+`tools` and `prompts` stay bare in both: the registry is compiled into the binary and cannot change while the process runs, so claiming `listChanged` would promise a notification that can never arrive.
+
+> The `Mcp-Session-Id` header was removed by the 2026-07-28 revision; NexWiki ignores it and never mints one. The standalone `GET` SSE stream is kept for legacy-era clients, and is where they receive `notifications/resources/list_changed`.
+
+#### Result caching (modern era only)
+
+The `2026-07-28` revision lets a server tell clients how long a result stays fresh, so an agent stops re-fetching a tool list that cannot change. NexWiki attaches two fields to every cacheable `resultType: "complete"` result:
+
+* **`ttlMs`** — how many milliseconds the client may treat the result as fresh. Analogous to HTTP `Cache-Control: max-age`.
+* **`cacheScope`** — `"public"` when the result holds no user data and a shared proxy may serve one copy to anyone, `"private"` when it must never cross an authorization boundary.
+
+| Method | `ttlMs` | `cacheScope` | Why |
+|---|---|---|---|
+| `server/discover` | `3600000` (1h) | `public` | identity and capabilities are compiled in |
+| `tools/list` | `3600000` (1h) | `public` | the 29 tools are compiled in and identical for every caller |
+| `prompts/list` | `3600000` (1h) | `public` | the 2 prompts are compiled in |
+| `resources/templates/list` | `3600000` (1h) | `public` | a single static URI template |
+| `resources/list` | `30000` (30s) | `private` | your article slugs and titles |
+| `resources/read` | `30000` (30s) | `private` | your article content |
+
+`tools/call` and `prompts/get` carry **no** caching hints — the spec does not list them as cacheable, and a tool call is not a repeatable read.
+
+Caching and notifications are complementary. NexWiki advertises `listChanged` and `subscribe`, so a client holding a [`subscriptions/listen`](#-resources---mention-a-wiki-page) stream is told the moment an article changes, which invalidates a cached entry long before its 30-second TTL runs out. A client that does not subscribe still stays correct — it just re-fetches on the TTL instead.
+
+> ⚠️ **These fields are mandatory, not advisory.** A conformant client validates a list result against a schema in which `ttlMs` and `cacheScope` are **required**, so omitting them rejects the entire response. The failure looks confusing from the outside: the client connects, reports the server healthy, and then lists zero tools. Legacy-era results correctly carry neither field.
+
+#### Pagination
+
+The four list operations the specification paginates — `tools/list`, `prompts/list`, `resources/list`, and `resources/templates/list` — accept a `cursor` and return a `nextCursor` when more results remain. Both eras support it.
+
+```bash
+# first page
+curl -s -X POST http://localhost:5808/api/mcp -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{}}' | jq '.result.nextCursor'
+
+# follow it
+curl -s -X POST http://localhost:5808/api/mcp -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"resources/list","params":{"cursor":"bmV4d2lraToxMDA"}}'
+```
+
+Only `resources/list` realistically pages: the tool, prompt, and template sets are compiled in and fit one page, while a knowledge base is unbounded. That last point is why this exists — `resources/list` used to project **every** document into a single response, and on stdio that response has to fit on one 8 MB line.
+
+* The cursor is **opaque**. Do not parse it, and treat any non-null value — including an empty string — as "there is more".
+* A missing `nextCursor` means the end of the list. NexWiki omits the field rather than sending an empty one, which would loop a conformant client forever.
+* A cursor NexWiki did not issue, or one left over from a list that has since shrunk, is rejected with `-32602`. Re-request without a cursor to start over.
+* Each page is cached independently and carries its own `ttlMs`, but every page of one list shares the same `cacheScope`.
+
+#### Argument completion
+
+`completion/complete` suggests values as a user fills in an argument, the way an IDE completes code. NexWiki advertises the `completions` capability in both eras.
+
+**This is what makes `@`-mentioning a page practical.** The `nexwiki://article/{slug}` template lets a client build a URI for a slug it already knows — completion is how it *discovers* one without paging the whole resource list.
+
+```bash
+curl -s -X POST http://localhost:5808/api/mcp -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"completion/complete","params":{
+        "ref":{"type":"ref/resource","uri":"nexwiki://article/{slug}"},
+        "argument":{"name":"slug","value":"blev"}}}' | jq .result.completion
+# → { "values": ["bleve-decision", ...], "total": 2, "hasMore": false }
+```
+
+| Reference | Argument | Completes from |
+|---|---|---|
+| `ref/resource` (`nexwiki://article/{slug}`) | `slug` | every document's slug |
+| `ref/prompt` (`article_creation_workflow`) | `title` | existing article titles |
+| `ref/prompt` (`project_planning_workflow`) | `project` | project contexts already used by plans |
+
+Prefix matches rank above substring matches, and each band is sorted alphabetically so the list is stable and cacheable. Responses are capped at 100 values, with `total` and `hasMore` reporting what was cut. An argument with nothing to suggest — a free-text `description`, say — returns an **empty list, not an error**: a user typing into a free-form field should never see a failure. A prompt name that does not exist *is* an error (`-32602`).
+
+> **Why complete `project` from existing plans:** so an agent reuses the project context that is already there instead of coining a near-duplicate and splitting one project's plan history across two names.
 
 ### 🏷️ Tool Annotations — fewer approval prompts
 
@@ -203,9 +296,25 @@ notifications/resources/list_changed         sub=77
 
 **Why the last two are declined rather than accepted silently:** NexWiki's tool and prompt sets are compiled into the binary and cannot change while the process runs. Acknowledging them would promise a notification that can never arrive. The acknowledgment reports only what the server will actually deliver, so a client knows immediately rather than waiting on silence. A subscription that asks *only* for those is closed gracefully with the spec's empty result instead of holding an idle socket open.
 
-Every message carries `io.modelcontextprotocol/subscriptionId` in `_meta` so concurrent subscriptions can be demultiplexed. Cancellation is closing the stream.
+Every message carries `io.modelcontextprotocol/subscriptionId` in `_meta` so concurrent subscriptions can be demultiplexed.
 
-> **Transport:** a *standalone* stdio server cannot hold subscriptions open — its loop is strictly request/response on one channel — so it acknowledges and closes gracefully. A stdio **sidecar next to a running web server does** get live subscriptions, because it proxies to the primary and relays the stream. See [Sidecar proxy mode](#-sidecar-proxy-mode) below.
+**Subscriptions work on stdio too.** The specification defines `subscriptionId` precisely because stdio multiplexes every subscription onto one channel, so the shape is supported by design — NexWiki serialises stdout behind a single lock and runs each subscription in its own goroutine, exactly as the sidecar proxy already did.
+
+| Transport | Cancel a subscription with |
+|---|---|
+| Streamable HTTP | close the response stream |
+| stdio | `notifications/cancelled` naming the `subscriptions/listen` request id |
+
+Either way the server answers the long-lived request with a `resultType: "complete"` result carrying the subscription id, so a client can tell a deliberate close from a dropped transport. **A stream that ends without that response was a disconnect, and the client should re-subscribe.**
+
+```bash
+# on stdio, end subscription 77
+{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":77}}
+```
+
+> Earlier versions stubbed this out on stdio: the acknowledgment was sent and nothing followed. That was worse than it sounds — the acknowledgment is a *notification* and carries no id, so the client sat waiting on a response to the long-lived request that was never coming, and only a timeout ended it.
+
+A stdio **sidecar next to a running web server** gets subscriptions the same way it always has, by proxying to the primary and relaying the stream. See [Sidecar proxy mode](#-sidecar-proxy-mode) below.
 
 ## 🔀 Sidecar proxy mode
 
@@ -232,7 +341,7 @@ That is exactly the documented Claude Desktop stdio configuration. It used to ha
 **What this buys you beyond "it starts":**
 
 - **Writes land in the live wiki.** The call executes *inside* the primary, so the browser sees the change immediately and the activity log records it once, in the process that did the work.
-- **stdio gets live subscriptions.** The primary answers `subscriptions/listen` with an SSE stream, and the proxy relays each notification to stdout as its own JSON-RPC line. A standalone stdio server cannot offer this at all.
+- **A sidecar's client still gets live subscriptions.** The primary answers `subscriptions/listen` with an SSE stream, and the proxy relays each notification to stdout as its own JSON-RPC line. A *standalone* stdio server serves subscriptions from its own `EventBus`; a sidecar has none to serve from, because the primary owns the data directory — so relaying is how its client gets them.
 - **No second index, no lock contention, no divergence.** There is one owner of the data directory, always.
 
 The proxy synthesizes the modern era's mirrored headers (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`) from the body it forwards, since stdio carries no headers and the primary validates them. If the primary is unreachable, the proxy answers with a JSON-RPC error carrying the original request id, so the failure is attributable to the call that caused it.
