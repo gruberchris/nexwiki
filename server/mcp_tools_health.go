@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -62,10 +63,17 @@ type HealthFinding struct {
 // HealthOutput is the wiki_health payload. Counts are reported separately from the item lists
 // because the lists are capped: a wiki with 400 orphans should say so without returning 400 items.
 type HealthOutput struct {
-	TotalDocuments  int             `json:"total_documents"`
-	StaleDays       int             `json:"stale_days"`
-	Limit           int             `json:"limit"`
-	Truncated       bool            `json:"truncated"`
+	TotalDocuments int  `json:"total_documents"`
+	StaleDays      int  `json:"stale_days"`
+	Limit          int  `json:"limit"`
+	Truncated      bool `json:"truncated"`
+
+	// UnreadableFileCount and UnreadableFiles report article files the scan could not read or
+	// parse. Such a file is missing from total_documents and from every other category, so without
+	// this a document with broken front matter would not exist as far as the report could tell.
+	UnreadableFileCount int              `json:"unreadable_file_count"`
+	UnreadableFiles     []UnreadableFile `json:"unreadable_files"`
+
 	OrphanCount     int             `json:"orphan_count"`
 	Orphans         []HealthFinding `json:"orphans"`
 	BrokenLinkCount int             `json:"broken_link_count"`
@@ -149,11 +157,18 @@ func healthOutputSchema() map[string]interface{} {
 		"detail":     schemaOf("string", "What to do about it."),
 	}, "slug", "title", "other_slug", "detail")
 
+	unreadable := schemaObject(map[string]interface{}{
+		"path":  schemaOf("string", "File path relative to the article directory, slash-separated."),
+		"error": schemaOf("string", "Why the file could not be read or parsed."),
+	}, "path", "error")
+
 	return schemaObject(map[string]interface{}{
 		"total_documents":            schemaOf("integer", "Documents scanned, including the home dashboard."),
 		"stale_days":                 schemaOf("integer", "Age threshold applied to in-flight plans."),
 		"limit":                      schemaOf("integer", "Maximum items returned per category."),
 		"truncated":                  schemaOf("boolean", "True when a category hit the limit and its list is shorter than its count."),
+		"unreadable_file_count":      schemaOf("integer", "Article files that could not be read or parsed. They are missing from total_documents and from every other check."),
+		"unreadable_files":           schemaArrayOf(unreadable, "Unreadable article files, sorted by path, up to the limit."),
 		"orphan_count":               schemaOf("integer", "Documents no other document links to."),
 		"orphans":                    schemaArrayOf(finding, "Orphaned documents, up to the limit."),
 		"broken_link_count":          schemaOf("integer", "Internal links with no destination, in either link form."),
@@ -180,6 +195,7 @@ func healthOutputSchema() map[string]interface{} {
 		"parked_plan_count":          schemaOf("integer", "Plans deliberately set aside; reported as a count only, since they need no action."),
 		"plan_status_census":         planStatusCensusSchema(),
 	}, "total_documents", "stale_days", "limit", "truncated",
+		"unreadable_file_count", "unreadable_files",
 		"orphan_count", "orphans", "broken_link_count", "broken_links",
 		"unsourced_memory_count", "unsourced_memories",
 		"unkinded_memory_count", "unkinded_memories",
@@ -193,7 +209,7 @@ func healthOutputSchema() map[string]interface{} {
 var wikiHealthTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "wiki_health",
-		"description": "Audit the knowledge base for maintenance work: orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source' or without a 'memory_kind', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
+		"description": "Audit the knowledge base for maintenance work: article files that cannot be read or parsed (such as malformed front matter), orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source' or without a 'memory_kind', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -397,6 +413,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		TotalDocuments:         len(graph.Meta),
 		StaleDays:              staleDays,
 		Limit:                  limit,
+		UnreadableFileCount:    len(graph.Unreadable),
 		UnreferencedSkillCount: len(unreferencedSkills),
 		OrphanCount:            len(orphans),
 		BrokenLinkCount:        len(graph.Broken),
@@ -437,6 +454,12 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		out.BrokenLinks = out.BrokenLinks[:limit]
 		out.Truncated = true
 	}
+	out.UnreadableFiles = graph.Unreadable
+	if len(out.UnreadableFiles) > limit {
+		out.UnreadableFiles = out.UnreadableFiles[:limit]
+		out.Truncated = true
+	}
+	out.UnreadableFiles = unreadableForClient(srv.Storage.ArticleDir, out.UnreadableFiles)
 
 	return ToolResponse{
 		Content:           []ToolContent{{Type: "text", Text: renderHealthReport(out)}},
@@ -485,12 +508,46 @@ func capFindings(findings []HealthFinding, limit int, truncated bool) ([]HealthF
 	return findings, truncated
 }
 
+// unreadableForClient returns a copy of a scan's unreadable files whose errors no longer reveal
+// where the wiki lives on the server. An OS read error embeds the path the scan opened, which sits
+// under the article directory, and that absolute path is the server's business, not an MCP
+// client's. Each error names the file by the relative path its entry already carries instead.
+func unreadableForClient(articleDir string, files []UnreadableFile) []UnreadableFile {
+	// The scan opens paths joined onto ArticleDir as configured, which may be relative, so both
+	// that form and the absolute one are scrubbed.
+	dirs := []string{filepath.Clean(articleDir)}
+	if abs, err := filepath.Abs(articleDir); err == nil && abs != dirs[0] {
+		dirs = append(dirs, abs)
+	}
+
+	out := make([]UnreadableFile, 0, len(files))
+	for _, f := range files {
+		// A Replacer makes one left-to-right pass and never rescans what it replaced. Where several
+		// pairs match at one position the earliest argument wins, so the file's full path goes
+		// before the directory it sits in, and the directory with its separator before the bare one.
+		var pairs []string
+		for _, dir := range dirs {
+			pairs = append(pairs, filepath.Join(dir, filepath.FromSlash(f.Path)), f.Path)
+		}
+		// Any other mention of the directory goes too, but only in absolute form: a short
+		// relative directory such as "articles" could match ordinary error text.
+		for _, dir := range dirs {
+			if filepath.IsAbs(dir) {
+				pairs = append(pairs, dir+string(filepath.Separator), "", dir, ".")
+			}
+		}
+		out = append(out, UnreadableFile{Path: f.Path, Error: strings.NewReplacer(pairs...).Replace(f.Error)})
+	}
+	return out
+}
+
 // renderHealthReport writes the prose from the same value the structured payload carries, so the
 // two halves cannot disagree. Clean categories are still listed: "0 broken links" is information,
 // and omitting it makes an agent wonder whether the check ran.
 func renderHealthReport(out HealthOutput) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "NexWiki Health Report (%d documents scanned)\n\n", out.TotalDocuments)
+	fmt.Fprintf(&b, "- Unreadable article files (skipped by every check): %d\n", out.UnreadableFileCount)
 	fmt.Fprintf(&b, "- Orphan pages: %d\n", out.OrphanCount)
 	fmt.Fprintf(&b, "- Broken internal links: %d\n", out.BrokenLinkCount)
 	fmt.Fprintf(&b, "- Memories with no source: %d\n", out.UnsourcedCount)
@@ -528,7 +585,7 @@ func renderHealthReport(out HealthOutput) string {
 		b.WriteString("\n")
 	}
 
-	needsAttention := out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount + out.UnkindedCount + out.ContestedCount +
+	needsAttention := out.UnreadableFileCount + out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount + out.UnkindedCount + out.ContestedCount +
 		out.StalePlanCount + out.StaleConceptCount + out.ColdMemoryCount + out.DuplicateCount + out.UnreferencedSkillCount
 	if needsAttention == 0 {
 		b.WriteString("\nNothing needs attention — the wiki is healthy. 🎉\n")
@@ -545,6 +602,20 @@ func renderHealthReport(out HealthOutput) string {
 		}
 		if len(findings) < count {
 			fmt.Fprintf(&b, "  ... and %d more; raise 'limit' to see them.\n", count-len(findings))
+		}
+	}
+
+	// Unreadable files come first: every other category is blind to them, so fixing one can change
+	// what the rest of the report says.
+	if out.UnreadableFileCount > 0 {
+		fmt.Fprintf(&b, "\n== Unreadable article files (%d) ==\n", out.UnreadableFileCount)
+		for _, f := range out.UnreadableFiles {
+			// YAML errors can span lines; flattened so each file stays one list item.
+			fmt.Fprintf(&b, "- %s — %s. Fix its front matter or file permissions, or delete the file.\n",
+				f.Path, strings.Join(strings.Fields(f.Error), " "))
+		}
+		if len(out.UnreadableFiles) < out.UnreadableFileCount {
+			fmt.Fprintf(&b, "  ... and %d more; raise 'limit' to see them.\n", out.UnreadableFileCount-len(out.UnreadableFiles))
 		}
 	}
 

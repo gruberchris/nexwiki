@@ -332,6 +332,7 @@ func TestEmptyListingsSerializeAsArrays(t *testing.T) {
 		"list_articles":       `{"name":"list_articles","arguments":{}}`,
 		"get_wiki_statistics": `{"name":"get_wiki_statistics","arguments":{}}`,
 		"get_recent_activity": `{"name":"get_recent_activity","arguments":{}}`,
+		"wiki_health":         `{"name":"wiki_health","arguments":{}}`,
 	} {
 		resp := toolCall(t, srv, call)
 		encoded, err := json.Marshal(resp.StructuredContent)

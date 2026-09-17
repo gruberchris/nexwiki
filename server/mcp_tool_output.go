@@ -128,10 +128,14 @@ func (b BrokenLinkRef) Display() string {
 
 // StatisticsOutput is the `get_wiki_statistics` payload.
 type StatisticsOutput struct {
-	TotalArticles   int             `json:"total_articles"`
-	TotalLinks      int             `json:"total_links"`
-	BrokenLinkCount int             `json:"broken_link_count"`
-	BrokenLinks     []BrokenLinkRef `json:"broken_links"`
+	TotalArticles int `json:"total_articles"`
+	// UnreadableFileCount is how many article files the scan could not read or parse. None of the
+	// other numbers include them, so without it a wiki with broken files just looks smaller.
+	// wiki_health lists the files, from the same scan.
+	UnreadableFileCount int             `json:"unreadable_file_count"`
+	TotalLinks          int             `json:"total_links"`
+	BrokenLinkCount     int             `json:"broken_link_count"`
+	BrokenLinks         []BrokenLinkRef `json:"broken_links"`
 }
 
 // StatusTagsOutput is the `get_status_tags` payload. Only plans and skills have a status field;
@@ -336,11 +340,12 @@ func brokenLinkSchema() map[string]interface{} {
 
 func statisticsOutputSchema() map[string]interface{} {
 	return schemaObject(map[string]interface{}{
-		"total_articles":    schemaOf("integer", "Number of documents in the knowledge base."),
-		"total_links":       schemaOf("integer", "Number of internal links scanned, in either link form."),
-		"broken_link_count": schemaOf("integer", "Number of internal links with no destination."),
-		"broken_links":      schemaArrayOf(brokenLinkSchema(), "Every internal link whose target does not exist."),
-	}, "total_articles", "total_links", "broken_link_count", "broken_links")
+		"total_articles":        schemaOf("integer", "Number of documents in the knowledge base."),
+		"unreadable_file_count": schemaOf("integer", "Article files that could not be read or parsed, and so are not counted anywhere else. wiki_health lists them."),
+		"total_links":           schemaOf("integer", "Number of internal links scanned, in either link form."),
+		"broken_link_count":     schemaOf("integer", "Number of internal links with no destination."),
+		"broken_links":          schemaArrayOf(brokenLinkSchema(), "Every internal link whose target does not exist."),
+	}, "total_articles", "unreadable_file_count", "total_links", "broken_link_count", "broken_links")
 }
 
 func statusTagsOutputSchema() map[string]interface{} {

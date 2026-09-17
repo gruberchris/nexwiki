@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -629,5 +630,301 @@ func TestWikiHealthFlagsStaleConcepts(t *testing.T) {
 		if out.StaleConcepts[0].Detail != expectedDetail {
 			t.Errorf("expected detail %q, got %q", expectedDetail, out.StaleConcepts[0].Detail)
 		}
+	}
+}
+
+// writeBrokenArticle drops a file with malformed front matter straight into the article directory,
+// the way a hand edit or a bad sync would, bypassing the save path that would never write one.
+func writeBrokenArticle(t *testing.T, srv *Server, relPath string) {
+	t.Helper()
+	path := filepath.Join(srv.Storage.ArticleDir, filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("---\ntitle: [unclosed\n---\nbody\n"), 0644); err != nil {
+		t.Fatalf("writing %s failed: %v", path, err)
+	}
+}
+
+// assertMatchesOutputSchema validates a response the way a client receives it against the schema
+// the tool publishes. TestStructuredOutputMatchesSchema runs on a fixture with no unreadable files,
+// so without this the entries of unreadable_files would never be checked.
+func assertMatchesOutputSchema(t *testing.T, resp ToolResponse, schema map[string]interface{}) {
+	t.Helper()
+	encoded, err := json.Marshal(resp.StructuredContent)
+	if err != nil {
+		t.Fatalf("structuredContent does not serialize: %v", err)
+	}
+	var decoded interface{}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("structuredContent does not round-trip: %v", err)
+	}
+	for _, problem := range validateAgainstSchema(decoded, schema, "$") {
+		t.Error(problem)
+	}
+}
+
+// TestWikiHealthReportsUnreadableFiles pins that a file the scan cannot parse is reported instead of
+// silently missing, and that it leaves the report on the healthy documents around it unchanged.
+func TestWikiHealthReportsUnreadableFiles(t *testing.T) {
+	srv := newMCPServer(t)
+	captureLog(t) // the scan warns about the broken file; keep that out of the test output
+
+	if _, err := srv.Storage.SaveArticle("", "Healthy Page", "# Healthy", "", "", "", "seed", nil, ""); err != nil {
+		t.Fatalf("seeding failed: %v", err)
+	}
+	before := healthReport(t, srv, `{}`)
+	if before.UnreadableFileCount != 0 || before.UnreadableFiles == nil {
+		t.Fatalf("a wiki with no broken files should report 0 and an empty list, got %d and %#v",
+			before.UnreadableFileCount, before.UnreadableFiles)
+	}
+
+	writeBrokenArticle(t, srv, "notes/broken.md")
+
+	resp := toolCall(t, srv, `{"name":"wiki_health","arguments":{}}`)
+	var out HealthOutput
+	decodeStructured(t, resp, &out)
+
+	if out.UnreadableFileCount != 1 || len(out.UnreadableFiles) != 1 {
+		t.Fatalf("expected one unreadable file, got count %d and %+v", out.UnreadableFileCount, out.UnreadableFiles)
+	}
+	got := out.UnreadableFiles[0]
+	if got.Path != "notes/broken.md" {
+		t.Errorf("path = %q, want the slash-separated path relative to the article directory", got.Path)
+	}
+	if !strings.Contains(got.Error, "YAML") {
+		t.Errorf("error should carry the parse failure, got %q", got.Error)
+	}
+	if out.Truncated {
+		t.Error("one unreadable file is well under the default limit")
+	}
+
+	// The broken file is not a document, and the documents around it are reported as before.
+	if out.TotalDocuments != before.TotalDocuments {
+		t.Errorf("total_documents changed from %d to %d; an unreadable file is not a document", before.TotalDocuments, out.TotalDocuments)
+	}
+	if !findingSlugs(out.Orphans)["healthy-page"] {
+		t.Errorf("the healthy page should still be reported as an orphan, got %+v", out.Orphans)
+	}
+
+	text := resp.Content[0].Text
+	for _, want := range []string{
+		"- Unreadable article files (skipped by every check): 1\n",
+		"== Unreadable article files (1) ==",
+		"- notes/broken.md — invalid format: front matter is not valid YAML",
+		"Fix its front matter or file permissions, or delete the file.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("prose is missing %q:\n%s", want, text)
+		}
+	}
+
+	assertMatchesOutputSchema(t, resp, wikiHealthTool.Output)
+}
+
+// TestWikiHealthCapsUnreadableFiles pins that the new category honours 'limit' like every other:
+// the count stays complete, the list is cut, and the report says so.
+func TestWikiHealthCapsUnreadableFiles(t *testing.T) {
+	srv := newMCPServer(t)
+	captureLog(t)
+	for _, name := range []string{"c.md", "a.md", "b.md"} {
+		writeBrokenArticle(t, srv, name)
+	}
+
+	full := healthReport(t, srv, `{}`)
+	if full.UnreadableFileCount != 3 || len(full.UnreadableFiles) != 3 {
+		t.Fatalf("expected all three unreadable files, got count %d and %+v", full.UnreadableFileCount, full.UnreadableFiles)
+	}
+	if full.Truncated {
+		t.Error("three files are well under the default limit and must not report truncation")
+	}
+
+	capped := healthReport(t, srv, `{"limit":2}`)
+	if capped.UnreadableFileCount != 3 {
+		t.Errorf("count must stay complete under a limit, got %d", capped.UnreadableFileCount)
+	}
+	if len(capped.UnreadableFiles) != 2 || capped.UnreadableFiles[0].Path != "a.md" || capped.UnreadableFiles[1].Path != "b.md" {
+		t.Errorf("limit:2 should keep the first two paths in order, got %+v", capped.UnreadableFiles)
+	}
+	if !capped.Truncated {
+		t.Error("a capped unreadable list must set truncated")
+	}
+	if !strings.Contains(capped.Content(), "- b.md — ") || !strings.Contains(capped.Content(), "  ... and 1 more; raise 'limit' to see them.\n") {
+		t.Errorf("the prose should list the kept files and say the list was cut short:\n%s", capped.Content())
+	}
+}
+
+// TestWikiStatisticsCountsUnreadableFiles pins that get_wiki_statistics reports the number
+// wiki_health does. Both read one scan, and two tools disagreeing about the same wiki would leave an
+// agent unsure which to believe.
+func TestWikiStatisticsCountsUnreadableFiles(t *testing.T) {
+	srv := newMCPServer(t)
+	captureLog(t)
+
+	stats := func() (StatisticsOutput, ToolResponse) {
+		t.Helper()
+		resp := toolCall(t, srv, `{"name":"get_wiki_statistics","arguments":{}}`)
+		var out StatisticsOutput
+		decodeStructured(t, resp, &out)
+		return out, resp
+	}
+
+	clean, resp := stats()
+	if clean.UnreadableFileCount != 0 || !strings.Contains(resp.Content[0].Text, "- Unreadable Article Files: 0\n") {
+		t.Errorf("a clean wiki should report 0 unreadable files, got %d:\n%s", clean.UnreadableFileCount, resp.Content[0].Text)
+	}
+	if strings.Contains(resp.Content[0].Text, "Run wiki_health") {
+		t.Errorf("a clean wiki needs no pointer to wiki_health:\n%s", resp.Content[0].Text)
+	}
+
+	writeBrokenArticle(t, srv, "one.md")
+	writeBrokenArticle(t, srv, "nested/two.md")
+
+	got, resp := stats()
+	health := healthReport(t, srv, `{}`)
+	if got.UnreadableFileCount != 2 || got.UnreadableFileCount != health.UnreadableFileCount {
+		t.Errorf("get_wiki_statistics reports %d unreadable files, wiki_health %d; want 2 from both",
+			got.UnreadableFileCount, health.UnreadableFileCount)
+	}
+	for _, want := range []string{"- Unreadable Article Files: 2\n", "Run wiki_health to see which files and why."} {
+		if !strings.Contains(resp.Content[0].Text, want) {
+			t.Errorf("prose is missing %q:\n%s", want, resp.Content[0].Text)
+		}
+	}
+
+	assertMatchesOutputSchema(t, resp, getWikiStatisticsTool.Output)
+}
+
+// TestUnreadableForClientHidesArticleDir pins that an error handed to an MCP client names the file
+// by its relative path, never by where the wiki lives on the server's disk.
+func TestUnreadableForClientHidesArticleDir(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "data", "articles")
+	sep := string(filepath.Separator)
+
+	for _, tc := range []struct {
+		name, dir, path, err, want string
+	}{
+		{
+			name: "a top-level file",
+			dir:  abs,
+			path: "x.md",
+			err:  "open " + filepath.Join(abs, "x.md") + ": permission denied",
+			want: "open x.md: permission denied",
+		},
+		{
+			name: "a nested file keeps its slash-separated path",
+			dir:  abs,
+			path: "notes/x.md",
+			err:  "open " + filepath.Join(abs, "notes", "x.md") + ": permission denied",
+			want: "open notes/x.md: permission denied",
+		},
+		{
+			name: "a trailing separator on the configured directory",
+			dir:  abs + sep,
+			path: "x.md",
+			err:  "open " + filepath.Join(abs, "x.md") + ": permission denied",
+			want: "open x.md: permission denied",
+		},
+		{
+			name: "another path under the directory",
+			dir:  abs,
+			path: "x.md",
+			err:  "readlink " + filepath.Join(abs, "other.md") + ": invalid argument",
+			want: "readlink other.md: invalid argument",
+		},
+		{
+			name: "the bare directory",
+			dir:  abs,
+			path: "x.md",
+			err:  "lstat " + abs + ": permission denied",
+			want: "lstat .: permission denied",
+		},
+		{
+			name: "a parse error names no path and is left alone",
+			dir:  abs,
+			path: "x.md",
+			err:  "invalid format: missing front matter header marker",
+			want: "invalid format: missing front matter header marker",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := unreadableForClient(tc.dir, []UnreadableFile{{Path: tc.path, Error: tc.err}})
+			if len(got) != 1 || got[0].Path != tc.path || got[0].Error != tc.want {
+				t.Errorf("got %+v, want path %q and error %q", got, tc.path, tc.want)
+			}
+		})
+	}
+
+	// A data directory given relative to the working directory yields relative walk paths, and
+	// both that form and its absolute form must come out relative to the article directory.
+	t.Run("a relative article directory", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		rel := filepath.Join("data", "articles")
+		absRel, err := filepath.Abs(rel)
+		if err != nil {
+			t.Fatalf("Abs failed: %v", err)
+		}
+		files := []UnreadableFile{
+			{Path: "x.md", Error: "open " + filepath.Join(rel, "x.md") + ": permission denied"},
+			{Path: "x.md", Error: "open " + filepath.Join(absRel, "x.md") + ": permission denied"},
+			// Only the file's own path is matched in relative form, so text that merely contains
+			// the directory's name survives.
+			{Path: "x.md", Error: "yaml: cannot unmarshal !!str `" + rel + sep + "y` into []string"},
+		}
+		got := unreadableForClient(rel, files)
+		for i, want := range []string{
+			"open x.md: permission denied",
+			"open x.md: permission denied",
+			files[2].Error,
+		} {
+			if got[i].Error != want {
+				t.Errorf("entry %d: got %q, want %q", i, got[i].Error, want)
+			}
+		}
+	})
+
+	if got := unreadableForClient(abs, []UnreadableFile{}); got == nil || len(got) != 0 {
+		t.Errorf("no unreadable files must stay an empty list, not null: %#v", got)
+	}
+}
+
+// TestWikiHealthUnreadableErrorHidesArticleDir is the end-to-end case the sanitizing exists for: a
+// permission error from the OS names the absolute path it failed to open.
+func TestWikiHealthUnreadableErrorHidesArticleDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mode 0 does not stop reads on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads files whatever their mode")
+	}
+	srv := newMCPServer(t)
+	captureLog(t)
+
+	// Written directly and locked before any scan, so no cached copy can stand in for the read.
+	path := filepath.Join(srv.Storage.ArticleDir, "locked.md")
+	if err := os.WriteFile(path, []byte("---\ntitle: Locked\nslug: locked\n---\nbody\n"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatalf("Chmod failed: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0644) })
+
+	resp := toolCall(t, srv, `{"name":"wiki_health","arguments":{}}`)
+	var out HealthOutput
+	decodeStructured(t, resp, &out)
+
+	if len(out.UnreadableFiles) != 1 || out.UnreadableFiles[0].Path != "locked.md" {
+		t.Fatalf("expected locked.md to be reported, got %+v", out.UnreadableFiles)
+	}
+	if got, want := out.UnreadableFiles[0].Error, "open locked.md: permission denied"; got != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+	encoded, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if strings.Contains(string(encoded), srv.Storage.DataDir) {
+		t.Errorf("the response reveals the server's data directory %q:\n%s", srv.Storage.DataDir, encoded)
 	}
 }
