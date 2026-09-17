@@ -295,6 +295,19 @@
     height: auto !important;
   }
 
+  /* Viewport-anchored overlays are page chrome, never article content: every drawer, modal,
+     backdrop, toast, and editor popup positions itself with `fixed`, and nothing inside <article>
+     does. Hiding them is not belt-and-braces — it is required, and `display: none` specifically.
+     The container-flattening rule above matches on utility classes (.flex, .h-screen), which the
+     drawers also use, so it rewrites their `position: fixed` to `position: static` and drops them
+     into normal document flow. The activity log drawer is mounted at all times and merely
+     translated off-screen, so it landed in the flow immediately after the article and printed as
+     though the Live Activity Log were the tail of the page. `visibility: hidden` would not do:
+     a flattened drawer still occupies its full height and would print as blank pages instead. */
+  .fixed {
+    display: none !important;
+  }
+
   /* Ensure no-print items and their children are fully hidden, placed at the end to win cascade */
   .no-print,
   .no-print * {

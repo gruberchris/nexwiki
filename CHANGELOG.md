@@ -48,6 +48,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   - Article results (`resources/list`, `resources/read`) declare a 30-second TTL with `cacheScope: "private"`, so one caller's cache entry is never reused across authorization contexts. Existing `listChanged` notifications still invalidate them immediately.
   - `tools/call` and `prompts/get` deliberately carry no hints — the spec does not list them as cacheable.
   - Legacy-era (`initialize`-based) results are unchanged and correctly carry neither field.
+- **"Export as PDF" Appended the Live Activity Log to Every Article**:
+  - The exported PDF carried the whole activity drawer — "Live Activity Log" and its entries — after the end of the article body.
+  - Export as PDF is `window.print()`, so what reaches the PDF is decided entirely by the `@media print` block. That block flattens the app's layout containers by utility class (`.flex`, `.h-screen`, `.overflow-y-auto`) to stop them clipping the page, and it set `position: static` on everything it matched. The activity drawer uses those same utility classes, so the rule rewrote its `position: fixed` and dropped it into normal document flow. Because the drawer is mounted at all times and merely translated off-screen, it landed directly after the article on every single print.
+  - Print now removes `fixed`-positioned elements outright. In this app `position: fixed` means viewport-anchored chrome — drawers, modals, backdrops, toasts, the editor's autocomplete popup — and nothing inside the article uses it. `display: none` rather than `visibility: hidden`: a flattened drawer keeps its full height, so hiding it any other way trades the activity log for a run of blank pages.
+  - Export as Word and Export as Markdown were never affected. Word serializes the `.wiki-content` subtree and Markdown writes the stored source, so both were already scoped to the article.
 
 ## [0.18.0] — 2026-09-11
 
