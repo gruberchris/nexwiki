@@ -1,8 +1,11 @@
 package server
 
 import (
+	"errors"
 	"io/fs"
+	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -22,6 +25,17 @@ import (
 type articleCache struct {
 	mu      sync.Mutex
 	entries map[string]*articleCacheEntry
+	// failures holds, per path, the stat fingerprint of the file version that last failed to read
+	// or parse, so a broken file is warned about once per version rather than on every scan. See
+	// Storage.skipUnreadable.
+	failures map[string]fileVersion
+}
+
+// fileVersion identifies one version of a file on disk by the same modification time and size that
+// fresh compares.
+type fileVersion struct {
+	modTime time.Time
+	size    int64
 }
 
 // articleCacheEntry is one file's parsed form plus the stat fingerprint it was parsed from.
@@ -43,7 +57,10 @@ type articleCacheEntry struct {
 }
 
 func newArticleCache() *articleCache {
-	return &articleCache{entries: make(map[string]*articleCacheEntry)}
+	return &articleCache{
+		entries:  make(map[string]*articleCacheEntry),
+		failures: make(map[string]fileVersion),
+	}
 }
 
 // fresh reports whether a cached entry still matches what is on disk.
@@ -72,8 +89,24 @@ func (c *articleCache) store(path string, info fs.FileInfo, meta Article) *artic
 	}
 	c.mu.Lock()
 	c.entries[path] = entry
+	// A successful parse forgets any earlier failure, so the file breaking again warns again.
+	delete(c.failures, path)
 	c.mu.Unlock()
 	return entry
+}
+
+// noteFailure records that the current version of a file failed to read or parse, and reports
+// whether that is news. The check and the record happen under one lock, so concurrent scans
+// hitting the same broken file agree on exactly one of them reporting it first.
+func (c *articleCache) noteFailure(path string, info fs.FileInfo) bool {
+	version := fileVersion{modTime: info.ModTime(), size: info.Size()}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if prev, ok := c.failures[path]; ok && prev.size == version.size && prev.modTime.Equal(version.modTime) {
+		return false
+	}
+	c.failures[path] = version
+	return true
 }
 
 // setLinks attaches the outbound links and slug mentions to an entry, under the cache lock so a
@@ -95,8 +128,8 @@ func (c *articleCache) links(entry *articleCacheEntry) ([]LinkRef, []string, boo
 	return entry.links, entry.slugMentions, entry.linksLoaded
 }
 
-// prune drops entries for files that no longer exist, so a long-lived process does not accumulate
-// metadata for deleted or renamed articles.
+// prune drops entries and recorded failures for files that no longer exist, so a long-lived
+// process does not accumulate state for deleted or renamed articles.
 func (c *articleCache) prune(seen map[string]bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -105,6 +138,38 @@ func (c *articleCache) prune(seen map[string]bool) {
 			delete(c.entries, path)
 		}
 	}
+	for path := range c.failures {
+		if !seen[path] {
+			delete(c.failures, path)
+		}
+	}
+}
+
+// skipUnreadable is the one path every article walk takes when it drops a file it could not read
+// or parse. Skipping keeps one bad file from failing a whole listing or scan, but a silent skip
+// makes the file vanish from listings, search, and health reports with nothing saying why.
+//
+// The warning is logged once per file version, not once per scan: the sidebar, the dashboard, and
+// many MCP tools rescan the wiki, and a warning repeated on each of those would bury everything
+// else on stderr.
+//
+// It reports false for a file that vanished mid-walk: a rename or delete racing the scan leaves a
+// file that is gone, not broken, and reporting it would name a file that isn't there. The Lstat
+// tells that apart from a dangling symlink, which fails the same way but is still in the directory.
+func (s *Storage) skipUnreadable(path string, info fs.FileInfo, err error) (UnreadableFile, bool) {
+	if errors.Is(err, fs.ErrNotExist) {
+		if _, statErr := os.Lstat(path); errors.Is(statErr, fs.ErrNotExist) {
+			return UnreadableFile{}, false
+		}
+	}
+	rel := path
+	if r, relErr := filepath.Rel(s.ArticleDir, path); relErr == nil {
+		rel = filepath.ToSlash(r)
+	}
+	if s.cache.noteFailure(path, info) {
+		log.Printf("Warning: skipping unreadable article file %s: %v", rel, err)
+	}
+	return UnreadableFile{Path: rel, Error: err.Error()}, true
 }
 
 // cachedMeta returns the parsed metadata for one article file, reading and parsing only when the

@@ -181,6 +181,12 @@ func ExtractLinkRefs(content string) []LinkRef {
 	return refs
 }
 
+// UnreadableFile is an article file a scan skipped because it could not be read or parsed.
+type UnreadableFile struct {
+	Path  string `json:"path"` // relative to the article directory, slash-separated
+	Error string `json:"error"`
+}
+
 // LinkGraph is the whole wiki's internal-link structure from a single cached pass over the article
 // directory: who links to whom, in both directions, plus the links that go nowhere. Both link
 // forms are included — see LinkForm.
@@ -217,6 +223,10 @@ type LinkGraph struct {
 	// that overhead without reading the field; the absolute cost was judged small enough to
 	// prefer one scan over two.
 	Mentions map[string][]string
+	// Unreadable lists the files the scan skipped because they could not be read or parsed, sorted
+	// by path. A skipped file is absent from every other field, so without this a document with
+	// broken front matter would not exist as far as any health report could tell.
+	Unreadable []UnreadableFile
 }
 
 // ScanLinkGraph walks the article directory once and builds the whole link graph.
@@ -235,6 +245,14 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 		InboundCount: map[string]int{},
 		Broken:       []BrokenLinkRef{},
 		Mentions:     map[string][]string{},
+		Unreadable:   []UnreadableFile{},
+	}
+
+	skip := func(path string, info fs.FileInfo, err error) error {
+		if file, ok := s.skipUnreadable(path, info, err); ok {
+			graph.Unreadable = append(graph.Unreadable, file)
+		}
+		return nil
 	}
 
 	var order []string
@@ -251,11 +269,11 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 		}
 		_, meta, err := s.cachedMeta(path, info)
 		if err != nil {
-			return nil
+			return skip(path, info, err)
 		}
 		refs, mentions, err := s.cachedBodyRefs(path, info)
 		if err != nil {
-			return nil
+			return skip(path, info, err)
 		}
 		graph.Meta[meta.Slug] = *meta
 		graph.Outbound[meta.Slug] = refs
@@ -270,6 +288,9 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 	// Sorting makes the report stable across runs. Directory walk order is filesystem-dependent,
 	// and an agent diffing two health reports should see only real changes.
 	sort.Strings(order)
+	sort.Slice(graph.Unreadable, func(i, j int) bool {
+		return graph.Unreadable[i].Path < graph.Unreadable[j].Path
+	})
 
 	for _, slug := range order {
 		for _, ref := range graph.Outbound[slug] {
@@ -319,6 +340,7 @@ func (s *Storage) GetBacklinks(targetSlug string) ([]Article, error) {
 
 		_, meta, err := s.cachedMeta(path, info)
 		if err != nil {
+			s.skipUnreadable(path, info, err)
 			return nil
 		}
 		// "home" is excluded from listings but may still hold links, so it is included here.
@@ -328,6 +350,7 @@ func (s *Storage) GetBacklinks(targetSlug string) ([]Article, error) {
 
 		refs, err := s.cachedLinkTargets(path, info)
 		if err != nil {
+			s.skipUnreadable(path, info, err)
 			return nil
 		}
 		for _, ref := range refs {

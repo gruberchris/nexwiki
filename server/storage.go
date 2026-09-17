@@ -789,6 +789,7 @@ func (s *Storage) ListArticles() ([]Article, error) {
 		_, art, err := s.cachedMeta(path, info)
 		if err != nil {
 			// Skip malformed or unreadable files rather than failing the whole listing.
+			s.skipUnreadable(path, info, err)
 			return nil
 		}
 
