@@ -1846,7 +1846,28 @@ func (s *Storage) SyncSearchIndex() error {
 		batch = s.SearchIndex.NewBatch()
 	}
 
-	if homeArt, err := s.GetArticle("home"); err == nil {
+	// load reads one document in full for indexing. One that will not load is skipped rather than
+	// failing boot, but it then drops out of search with nothing saying why, so the skip is
+	// reported like any other unreadable file.
+	load := func(slug string) (*Article, bool) {
+		art, err := s.GetArticle(slug)
+		if err == nil {
+			return art, true
+		}
+		// Report the file GetArticle read. Lstat, as the walks' DirEntry.Info does, so a symlinked
+		// file gets the same fingerprint here as in a walk and the two do not take turns warning.
+		// With no file at that path there is nothing to name: it vanished after the listing, or
+		// its front-matter slug does not match its filename, which is not a read failure.
+		if cleaned := Slugify(slug); cleaned != "" {
+			path := filepath.Join(s.ArticleDir, cleaned+".md")
+			if info, statErr := os.Lstat(path); statErr == nil {
+				s.skipUnreadable(path, info, err)
+			}
+		}
+		return nil, false
+	}
+
+	if homeArt, ok := load("home"); ok {
 		if err := batch.Index(homeArt.Slug, homeArt); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to index 'home' article: %v\n", err)
 		}
@@ -1854,8 +1875,8 @@ func (s *Storage) SyncSearchIndex() error {
 
 	for _, item := range articles {
 		validSlugs[item.Slug] = true
-		art, err := s.GetArticle(item.Slug)
-		if err != nil {
+		art, ok := load(item.Slug)
+		if !ok {
 			continue
 		}
 		if err := batch.Index(art.Slug, art); err != nil {

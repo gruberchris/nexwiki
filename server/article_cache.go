@@ -145,9 +145,12 @@ func (c *articleCache) prune(seen map[string]bool) {
 	}
 }
 
-// skipUnreadable is the one path every article walk takes when it drops a file it could not read
-// or parse. Skipping keeps one bad file from failing a whole listing or scan, but a silent skip
-// makes the file vanish from listings, search, and health reports with nothing saying why.
+// skipUnreadable is the path a file takes when a scan of the article directory drops it because it
+// could not be read or parsed: the walks in ListArticles, ScanLinkGraph, GetBacklinks, and
+// findAssetReferrers, and SyncSearchIndex's per-document read. Skipping keeps one bad file from
+// failing a whole listing or scan, but a silent skip makes the file vanish from listings, search,
+// and health reports with nothing saying why. A file that cannot even be stat'd never reaches it:
+// with no fingerprint there is no version to warn about once.
 //
 // The warning is logged once per file version, not once per scan: the sidebar, the dashboard, and
 // many MCP tools rescan the wiki, and a warning repeated on each of those would bury everything

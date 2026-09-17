@@ -540,7 +540,15 @@ func (s *Storage) findAssetReferrers(oldSlug string) []string {
 		}
 		data, err := os.ReadFile(p)
 		if err != nil {
-			return nil // unreadable file: skip rather than fail the whole scan
+			// Skip rather than fail the whole scan. Leaving the file out loses no healing, since
+			// healRenamedLinks could not read it to rewrite it either, but its embeds are left
+			// pointing at the old slug and the warning is the only trace of that. A file that
+			// cannot be stat'd either has almost certainly vanished, and has no version to warn
+			// about once.
+			if info, infoErr := d.Info(); infoErr == nil {
+				s.skipUnreadable(p, info, err)
+			}
+			return nil
 		}
 		if !strings.Contains(string(data), prefix) {
 			return nil

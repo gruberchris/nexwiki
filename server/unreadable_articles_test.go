@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/blevesearch/bleve/v2"
 )
 
 // lockedBuffer is a log sink safe to read while something else might still be logging.
@@ -306,5 +308,122 @@ func TestUnreadableDistinguishesVanishedFromDangling(t *testing.T) {
 	}
 	if warnings := unreadableWarnings(t, buf, "dangling.md"); len(warnings) != 1 {
 		t.Errorf("expected one warning for the dangling symlink, got %q", warnings)
+	}
+}
+
+// makeUnreadable removes every permission from a file for the rest of the test. A read failure is
+// what these tests need, so the test is skipped where that does not produce one: as root, or on a
+// platform without Unix permissions.
+func makeUnreadable(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Chmod(path, 0); err != nil {
+		t.Skipf("cannot chmod on this platform: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0644) })
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("removing permissions does not stop reads here (running as root?)")
+	}
+}
+
+// inSearchIndex reports whether the search index holds a document with this slug.
+func inSearchIndex(t *testing.T, storage *Storage, slug string) bool {
+	t.Helper()
+	res, err := storage.SearchIndex.Search(bleve.NewSearchRequest(bleve.NewDocIDQuery([]string{slug})))
+	if err != nil {
+		t.Fatalf("index lookup for %s failed: %v", slug, err)
+	}
+	return res.Total == 1
+}
+
+// TestFindAssetReferrersWarnsOnceForUnreadableFile pins that the rename-time asset scan reports a
+// file it cannot read, once per version and sharing that record with the other walks, and still
+// returns every referrer it can read. It matches raw text, so malformed front matter does not hide
+// a referrer.
+func TestFindAssetReferrersWarnsOnceForUnreadableFile(t *testing.T) {
+	storage, _ := newUnreadableFixture(t)
+	buf := captureLog(t)
+
+	embed := "![diagram](/api/assets/good-one/diagram.png)"
+	for _, title := range []string{"Embeds Diagram", "Locked Embed"} {
+		if _, err := storage.SaveArticle("", title, embed, "", "", "", "seed", nil, ""); err != nil {
+			t.Fatalf("SaveArticle failed: %v", err)
+		}
+	}
+	writeWithMtime(t, filepath.Join(storage.ArticleDir, "malformed-embed.md"),
+		[]byte("---\ntitle: [unclosed\n---\n"+embed+"\n"), time.Now().Add(-time.Hour))
+	makeUnreadable(t, filepath.Join(storage.ArticleDir, "locked-embed.md"))
+
+	want := []string{"embeds-diagram", "malformed-embed"}
+	for i := 0; i < 3; i++ {
+		if got := storage.findAssetReferrers("good-one"); !reflect.DeepEqual(got, want) {
+			t.Fatalf("findAssetReferrers = %v, want %v", got, want)
+		}
+	}
+	warnings := unreadableWarnings(t, buf, "locked-embed.md")
+	if len(warnings) != 1 {
+		t.Fatalf("expected exactly one warning across repeated scans, got %d: %q", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "permission denied") {
+		t.Errorf("warning should carry the read error: %q", warnings[0])
+	}
+
+	// A listing reaches the same file version and must not warn about it a second time.
+	if _, err := storage.ListArticles(); err != nil {
+		t.Fatalf("ListArticles failed: %v", err)
+	}
+	if warnings := unreadableWarnings(t, buf, "locked-embed.md"); len(warnings) != 1 {
+		t.Errorf("a listing after the asset scan warned again, got %d: %q", len(warnings), warnings)
+	}
+}
+
+// TestSyncSearchIndexWarnsOnceForUnreadableFile pins that boot indexing reports a document it
+// listed but could not read, home included, once per version, and still indexes everything else.
+// The listing serves both files from the metadata cache, which a permission change does not
+// invalidate, so the full read in the sync is the first to fail.
+func TestSyncSearchIndexWarnsOnceForUnreadableFile(t *testing.T) {
+	storage, _ := newUnreadableFixture(t)
+	buf := captureLog(t)
+
+	// Cache every file while it is still readable.
+	if _, err := storage.ListArticles(); err != nil {
+		t.Fatalf("ListArticles failed: %v", err)
+	}
+	makeUnreadable(t, filepath.Join(storage.ArticleDir, "good-two.md"))
+	makeUnreadable(t, filepath.Join(storage.ArticleDir, "home.md"))
+
+	// Drop a healthy article from the index so the sync has to put it back.
+	if err := storage.UnindexArticle("good-one"); err != nil {
+		t.Fatalf("UnindexArticle failed: %v", err)
+	}
+	if inSearchIndex(t, storage, "good-one") {
+		t.Fatalf("good-one should be out of the index before the sync")
+	}
+
+	for i := 0; i < 3; i++ {
+		if err := storage.SyncSearchIndex(); err != nil {
+			t.Fatalf("SyncSearchIndex failed: %v", err)
+		}
+	}
+
+	for _, name := range []string{"good-two.md", "home.md"} {
+		warnings := unreadableWarnings(t, buf, name)
+		if len(warnings) != 1 {
+			t.Errorf("expected exactly one warning for %s across repeated syncs, got %d: %q", name, len(warnings), warnings)
+			continue
+		}
+		if !strings.Contains(warnings[0], "permission denied") {
+			t.Errorf("warning should carry the read error: %q", warnings[0])
+		}
+	}
+
+	if !inSearchIndex(t, storage, "good-one") {
+		t.Errorf("the healthy article should be indexed again")
+	}
+	// A skipped document is still a valid slug, so its earlier entry is kept, not treated as an
+	// orphan.
+	for _, slug := range []string{"good-two", "home"} {
+		if !inSearchIndex(t, storage, slug) {
+			t.Errorf("the skipped document %s should keep its existing index entry", slug)
+		}
 	}
 }
