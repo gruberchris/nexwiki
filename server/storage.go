@@ -1264,9 +1264,10 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	// Serialize front matter and content
 	serialized := serializeFrontMatter(art) + art.Content
 
-	// Write uncompressed active version to data/articles/
+	// Write uncompressed active version to data/articles/. Atomically, because the directory scans
+	// read without writeMu and must never see this file truncated or half-written.
 	filePath := filepath.Join(s.ArticleDir, newSlug+".md")
-	if err := os.WriteFile(filePath, []byte(serialized), 0644); err != nil {
+	if err := writeFileAtomic(filePath, []byte(serialized), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write active article file: %w", err)
 	}
 
@@ -2082,18 +2083,19 @@ func (s *Storage) SearchArticlesWithOptions(queryStr string, opts SearchOptions)
 
 // Helpers for reading/writing Gzip files
 
+// writeGzippedFile compresses in memory and then writes atomically: GetArticleHistory reads
+// snapshots without writeMu, and a snapshot streamed straight into its final path could be read
+// before the gzip footer landed, logging a spurious warning and omitting that version.
 func writeGzippedFile(filePath string, data []byte) error {
-	file, err := os.Create(filePath)
-	if err != nil {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	if _, err := gw.Write(data); err != nil {
 		return err
 	}
-	defer func() { _ = file.Close() }()
-
-	gw := gzip.NewWriter(file)
-	defer func() { _ = gw.Close() }()
-
-	_, err = gw.Write(data)
-	return err
+	if err := gw.Close(); err != nil {
+		return err
+	}
+	return writeFileAtomic(filePath, buf.Bytes(), 0644)
 }
 
 func readGzippedFile(filePath string) ([]byte, error) {

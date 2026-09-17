@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -366,6 +368,74 @@ func TestConcurrentSavesDoNotLoseRevisions(t *testing.T) {
 		if !seen[v] {
 			t.Errorf("revision %d missing from history (versions are not contiguous)", v)
 		}
+	}
+}
+
+// TestListArticlesNeverSeesAPartialSave guards SaveArticle's atomic write. ListArticles reads without
+// writeMu, and the live file used to be written with os.WriteFile, which truncates it first — so a
+// scan racing a save could read an empty or half-written article, fail to parse it, and silently
+// drop it from the listing. With a temp file renamed into place, every scan sees a whole file.
+func TestListArticlesNeverSeesAPartialSave(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("replacing a file is not atomic with respect to concurrent opens on Windows")
+	}
+	storage, err := NewStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+
+	// A large body widens the window in which a truncating write leaves a partial file on disk.
+	body := strings.Repeat("Padding prose so that each write is long enough to be caught mid-flight.\n", 250)
+	art, err := storage.SaveArticle("", "Partial Save Probe", body, "", "", "", "seed", nil, "")
+	if err != nil {
+		t.Fatalf("seed SaveArticle failed: %v", err)
+	}
+
+	var misses, scans atomic.Int64
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for r := 0; r < 4; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				articles, err := storage.ListArticles()
+				scans.Add(1)
+				if err != nil {
+					t.Errorf("ListArticles failed during concurrent saves: %v", err)
+					return
+				}
+				found := false
+				for _, a := range articles {
+					if a.Slug == art.Slug {
+						found = true
+						break
+					}
+				}
+				if !found {
+					misses.Add(1)
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < 25; i++ {
+		if _, err := storage.SaveArticle(art.Slug, art.Title, fmt.Sprintf("%s\nEdit %d.", body, i), "", "", "", "", nil, ""); err != nil {
+			t.Errorf("SaveArticle %d failed: %v", i, err)
+			break
+		}
+	}
+	close(stop)
+	wg.Wait()
+
+	if n := misses.Load(); n > 0 {
+		t.Errorf("%d of %d concurrent scans did not list the article being saved", n, scans.Load())
 	}
 }
 
