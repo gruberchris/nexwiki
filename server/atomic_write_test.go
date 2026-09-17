@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -348,12 +349,13 @@ func plantFile(t *testing.T, dataDir, rel string) string {
 func TestNewStorageRemovesLeftoverTempFiles(t *testing.T) {
 	dataDir := t.TempDir()
 	logs := captureLog(t)
-	first, err := NewStorage(dataDir)
+	first, err := openStorage(t, dataDir)
 	if err != nil {
 		t.Fatalf("NewStorage failed: %v", err)
 	}
-	if err := first.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
+	waitSweep(t, first) // let the background sweep finish, or Close would cut it short
+	if !closeStorage(t, first) {
+		t.FailNow()
 	}
 	if strings.Contains(logs.String(), "leftover temp file") {
 		t.Errorf("a clean data directory should log nothing about temp files, got %q", logs.String())
@@ -380,11 +382,12 @@ func TestNewStorageRemovesLeftoverTempFiles(t *testing.T) {
 		plantFile(t, dataDir, rel)
 	}
 
-	second, err := NewStorage(dataDir)
+	second, err := openStorage(t, dataDir)
 	if err != nil {
 		t.Fatalf("NewStorage failed: %v", err)
 	}
-	t.Cleanup(func() { _ = second.Close() })
+	t.Cleanup(func() { closeStorage(t, second) })
+	waitSweep(t, second)
 
 	for _, rel := range leftovers {
 		if _, err := os.Lstat(filepath.Join(dataDir, filepath.FromSlash(rel))); !errors.Is(err, fs.ErrNotExist) {
@@ -406,8 +409,10 @@ func TestNewStorageRemovesLeftoverTempFiles(t *testing.T) {
 			sweepLines = append(sweepLines, line)
 		}
 	}
-	if len(sweepLines) != 1 || !strings.HasPrefix(sweepLines[0], "Removed 4 leftover temp file") {
-		t.Errorf("want one line logging the removal count, got %q", sweepLines)
+	// One count from the startup sweep of the article directory, one from the background sweep.
+	want := "Removed 2 leftover temp file(s) from interrupted writes"
+	if !slices.Equal(sweepLines, []string{want, want}) {
+		t.Errorf("want two lines logging the removal counts, got %q", sweepLines)
 	}
 }
 
@@ -418,11 +423,11 @@ func TestLeftoverTempFileDoesNotBlockHomeSeeding(t *testing.T) {
 	plantFile(t, dataDir, "articles/"+atomicTempName(3))
 	captureLog(t)
 
-	storage, err := NewStorage(dataDir)
+	storage, err := openStorage(t, dataDir)
 	if err != nil {
 		t.Fatalf("NewStorage failed: %v", err)
 	}
-	t.Cleanup(func() { _ = storage.Close() })
+	t.Cleanup(func() { closeStorage(t, storage) })
 
 	if _, err := storage.GetArticle("home"); err != nil {
 		t.Errorf("home page was not seeded over a leftover temp file: %v", err)
@@ -449,11 +454,12 @@ func TestLeftoverTempFileRemovalFailureDoesNotFailStartup(t *testing.T) {
 	}
 	logs := captureLog(t)
 
-	storage, err := NewStorage(dataDir)
+	storage, err := openStorage(t, dataDir)
 	if err != nil {
 		t.Fatalf("NewStorage failed because a temp file could not be removed: %v", err)
 	}
-	t.Cleanup(func() { _ = storage.Close() })
+	t.Cleanup(func() { closeStorage(t, storage) })
+	waitSweep(t, storage)
 
 	if _, err := os.Lstat(stuck); err != nil {
 		t.Fatalf("the undeletable temp file is gone, so this test proved nothing: %v", err)
@@ -463,14 +469,566 @@ func TestLeftoverTempFileRemovalFailureDoesNotFailStartup(t *testing.T) {
 	}
 }
 
-// Downloads are served without writeMu, so re-uploading an asset must swap in a new file rather
-// than truncate and rewrite the one a download may be reading.
-func TestSaveAssetReplacesFileAtomically(t *testing.T) {
-	storage, err := NewStorage(t.TempDir())
+// testWaitLimit bounds every wait in these tests on something the code under test must finish or
+// release. Each normally takes milliseconds; a regression that never finishes fails the test at the
+// limit instead of hanging it until the package timeout.
+const testWaitLimit = 30 * time.Second
+
+// waitClosed reports whether ch is closed within testWaitLimit, failing the test if it is not.
+func waitClosed(t *testing.T, ch <-chan struct{}, what string) bool {
+	t.Helper()
+	select {
+	case <-ch:
+		return true
+	case <-time.After(testWaitLimit):
+		t.Errorf("%s did not finish within %s", what, testWaitLimit)
+		return false
+	}
+}
+
+// waitSweep waits for s's background temp file sweep to finish, and stops the test if s never
+// started one (sweepDone would be nil, and receiving from it would block forever), if the sweep
+// does not finish within testWaitLimit, or if it finished still holding writeMu, which would hang
+// the next save instead of failing.
+func waitSweep(t *testing.T, s *Storage) {
+	t.Helper()
+	if s.sweepDone == nil {
+		t.Fatal("NewStorage started no background temp file sweep")
+	}
+	if !waitClosed(t, s.sweepDone, "the background temp file sweep") {
+		t.FailNow()
+	}
+	if !s.writeMu.TryLock() {
+		t.Fatal("the background temp file sweep finished without releasing writeMu")
+	}
+	s.writeMu.Unlock()
+}
+
+// openStorage is NewStorage bounded by testWaitLimit, failing the test if it has not returned by
+// then: NewStorage sweeps the article directory and then seeds under writeMu, so a sweep that left
+// the lock held would otherwise hang the test there.
+func openStorage(t *testing.T, dataDir string) (*Storage, error) {
+	t.Helper()
+	var s *Storage
+	var err error
+	opened := make(chan struct{})
+	go func() {
+		defer close(opened)
+		s, err = NewStorage(dataDir)
+	}()
+	if !waitClosed(t, opened, "NewStorage") {
+		t.FailNow()
+	}
+	return s, err
+}
+
+// closeStorage closes s and reports whether Close returned nil within testWaitLimit, failing the
+// test otherwise. Close waits for the background sweep, so a sweep that never ends would otherwise
+// hang the test in Close.
+func closeStorage(t *testing.T, s *Storage) bool {
+	t.Helper()
+	var err error
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		err = s.Close()
+	}()
+	if !waitClosed(t, closed, "Close") {
+		return false
+	}
+	if err != nil {
+		t.Errorf("Close failed: %v", err)
+		return false
+	}
+	return true
+}
+
+// stubSweepDirHook installs hook as sweepDirHook for the rest of the test. Set it before the
+// NewStorage whose sweep it should see, or after that storage's sweepDone, so no sweep reads it
+// while it changes.
+func stubSweepDirHook(t *testing.T, hook func(dir string)) {
+	t.Helper()
+	prev := sweepDirHook
+	sweepDirHook = hook
+	t.Cleanup(func() { sweepDirHook = prev })
+}
+
+// holdSweep holds the sweep that called a sweepDirHook for dir: it closes held, if not nil, and
+// waits for release. Called from inside NewStorage instead, it fails the test and returns at once,
+// because the sweeps these tests hold run beside a live storage, and holding NewStorage would hang
+// the test rather than fail it. The wait is bounded too, so a release that never comes fails.
+func holdSweep(t *testing.T, dir string, held chan<- struct{}, release <-chan struct{}) {
+	t.Helper()
+	stack := make([]byte, 64<<10)
+	if strings.Contains(string(stack[:runtime.Stack(stack, false)]), ".NewStorage(") {
+		t.Errorf("NewStorage swept %s itself instead of leaving it to the background sweep", dir)
+		return
+	}
+	if held != nil {
+		close(held)
+	}
+	select {
+	case <-release:
+	case <-time.After(testWaitLimit):
+		t.Errorf("the sweep was held at %s for %s and never released", dir, testWaitLimit)
+	}
+}
+
+// expectBlockedIn waits, reading goroutine dumps, until a goroutine with fn on its stack is blocked
+// in this package's code. That is the observable sign of a goroutine waiting on a lock or channel
+// rather than not having run yet, which a sleep could only make likely; it is a close proxy, not a
+// proof, since any wait counts (a GC assist wait, say). It reports ifQuit if quit is closed first,
+// and the goroutines in fn if none blocks within testWaitLimit; it returns either way, so the
+// caller can release whatever it holds rather than leave the test to hang.
+func expectBlockedIn(t *testing.T, fn string, quit <-chan struct{}, ifQuit string) {
+	t.Helper()
+	deadline := time.Now().Add(testWaitLimit)
+	buf := make([]byte, 64<<10)
+	for {
+		select {
+		case <-quit:
+			t.Error(ifQuit)
+			return
+		default:
+		}
+		n := runtime.Stack(buf, true)
+		if n == len(buf) {
+			buf = make([]byte, 2*len(buf))
+			continue
+		}
+		dump := string(buf[:n])
+		var inFn []string
+		for _, g := range strings.Split(dump, "\n\n") {
+			if strings.Contains(g, fn) {
+				if blockedInNexwiki(g) {
+					return
+				}
+				inFn = append(inFn, g)
+			}
+		}
+		if time.Now().After(deadline) {
+			if inFn != nil {
+				dump = strings.Join(inFn, "\n\n")
+			}
+			t.Errorf("no goroutine in %s blocked within %s; goroutines:\n%s", fn, testWaitLimit, dump)
+			return
+		}
+		time.Sleep(time.Millisecond) // just the poll interval, not a guess at how long the wait takes
+	}
+}
+
+// thisPackage is this package's import path ("nexwiki/server"), read from the runtime so that frame
+// matching does not depend on the module's name.
+var thisPackage = func() string {
+	pc, _, _, _ := runtime.Caller(0)
+	return funcPackage(runtime.FuncForPC(pc).Name())
+}()
+
+// funcPackage returns the import path of a function as the runtime names it, e.g. "nexwiki/server"
+// for "nexwiki/server.(*Storage).Close.func1": the path ends at the first dot after the last slash.
+func funcPackage(name string) string {
+	slash := strings.LastIndex(name, "/") + 1
+	if dot := strings.Index(name[slash:], "."); dot >= 0 {
+		return name[:slash+dot]
+	}
+	return name
+}
+
+// goroutineState returns the state from a goroutine dump's header line, e.g. "chan receive" from
+// `goroutine 7 [chan receive, 2 minutes, locked to thread] {k: v}:`: the text between the first
+// " [" and the next "]", up to any comma. Durations, thread locking, and pprof labels (which follow
+// the brackets and may themselves contain brackets) are dropped. It returns "" for a line it
+// cannot parse.
+func goroutineState(header string) string {
+	_, rest, ok := strings.Cut(header, " [")
+	if !ok {
+		return ""
+	}
+	inside, _, ok := strings.Cut(rest, "]")
+	if !ok {
+		return ""
+	}
+	state, _, _ := strings.Cut(inside, ",")
+	return state
+}
+
+// blockedInNexwiki reports whether the goroutine in dump g is blocked (in any wait: not running,
+// runnable, preempted, or in a syscall, and with a header that parses) in this package's code: of
+// its frames from this package or from a third-party one (a dotted import path), the first is this
+// package's. That tells a wait written in Close from one inside something Close calls, such as the
+// search index's own Close, which must not pass for waiting on the sweep. Standard library frames,
+// above either, are skipped.
+func blockedInNexwiki(g string) bool {
+	header, frames, _ := strings.Cut(g, "\n")
+	switch goroutineState(header) {
+	case "", "running", "runnable", "syscall", "preempted":
+		return false
+	}
+	for _, line := range strings.Split(frames, "\n") {
+		call := strings.LastIndex(line, "(")
+		if call < 0 || strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "created by ") {
+			continue
+		}
+		pkg := funcPackage(line[:call])
+		if first, _, _ := strings.Cut(pkg, "/"); pkg == thisPackage || strings.Contains(first, ".") {
+			return pkg == thisPackage
+		}
+	}
+	return false
+}
+
+// A goroutine dump header can carry a wait duration, thread locking, and pprof labels, and a label
+// value can hold brackets. Only the state may decide whether the goroutine counts as blocked.
+func TestGoroutineStateForSweepTests(t *testing.T) {
+	for header, want := range map[string]string{
+		"goroutine 1 [running]:":                                             "running",
+		"goroutine 9 [runnable] {k: v}:":                                     "runnable",
+		`goroutine 9 [runnable] {k: v, sweep: "a]b[c"}:`:                     "runnable",
+		"goroutine 7 [chan receive, 2 minutes]:":                             "chan receive",
+		"goroutine 1 [running, locked to thread]:":                           "running",
+		"goroutine 8 [sync.Mutex.Lock, 3 minutes, locked to thread] {k: v}:": "sync.Mutex.Lock",
+		"goroutine 5 gp=0xc000102000 m=nil [GC assist wait]:":                "GC assist wait",
+		"goroutine 6 [syscall]":                                              "syscall",
+		"goroutine 6 [select":                                                "",
+		"not a goroutine header":                                             "",
+	} {
+		if got := goroutineState(header); got != want {
+			t.Errorf("goroutineState(%q) = %q, want %q", header, got, want)
+		}
+	}
+
+	// So a labeled runnable goroutine in this package's code must not count as blocked.
+	frames := "\n" + thisPackage + ".(*Storage).Close(0xc000010000)\n\t/src/server/storage.go:1 +0x1\n"
+	for header, want := range map[string]bool{
+		`goroutine 9 [runnable] {sweep: "a]b"}:`:     false,
+		`goroutine 9 [chan receive] {sweep: "a]b"}:`: true,
+		"goroutine 9 [sync.Mutex.Lock, 1 minutes]:":  true,
+		"goroutine 9 [preempted]:":                   false,
+		"goroutine 9 [chan receive":                  false, // unparseable
+	} {
+		if got := blockedInNexwiki(header + frames); got != want {
+			t.Errorf("blockedInNexwiki with header %q = %v, want %v", header, got, want)
+		}
+	}
+}
+
+// Only the article directory has to be clean before startup goes on. The history and asset trees
+// hold a directory per article, slow to walk on a NAS mount, so NewStorage must return without
+// waiting on them and sweep them afterwards.
+func TestStartupSweepsHistoryAndAssetsInBackground(t *testing.T) {
+	dataDir := t.TempDir()
+	article := plantFile(t, dataDir, "articles/"+atomicTempName(1))
+	later := []string{
+		plantFile(t, dataDir, "history/home/"+atomicTempName(2)),
+		plantFile(t, dataDir, "assets/home/"+atomicTempName(3)),
+	}
+	captureLog(t)
+
+	// Hold the background sweep at the history and asset roots until startup has been checked.
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseSweep := func() { releaseOnce.Do(func() { close(release) }) }
+	stubSweepDirHook(t, func(dir string) {
+		if dir == filepath.Join(dataDir, "history") || dir == filepath.Join(dataDir, "assets") {
+			holdSweep(t, dir, nil, release)
+		}
+	})
+
+	storage, err := openStorage(t, dataDir)
 	if err != nil {
 		t.Fatalf("NewStorage failed: %v", err)
 	}
-	t.Cleanup(func() { _ = storage.Close() })
+	t.Cleanup(func() { closeStorage(t, storage) })
+	t.Cleanup(releaseSweep) // runs first, so Close is not left waiting on a sweep still held
+
+	if _, err := os.Lstat(article); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("leftover temp file in the article directory survived startup (err %v)", err)
+	}
+	if _, err := storage.GetArticle("home"); err != nil {
+		t.Errorf("home page was not seeded: %v", err)
+	}
+	for _, path := range later {
+		if _, err := os.Lstat(path); err != nil {
+			t.Errorf("%s is gone while the background sweep was held, so startup swept it: %v", path, err)
+		}
+	}
+
+	releaseSweep()
+	waitSweep(t, storage)
+	for _, path := range later {
+		if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("background sweep left %s behind (err %v)", path, err)
+		}
+	}
+}
+
+// The background sweep runs alongside saves, and a temp file mid-save looks exactly like a
+// leftover. writeMu, which every writeFileAtomic caller holds, must keep the sweep out until the
+// save has renamed its temp file into place; and the sweep must not keep the lock between
+// directories, or it would stall saves for its whole walk.
+func TestTempFileSweepWaitsForWriteMu(t *testing.T) {
+	storage, err := openStorage(t, t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { closeStorage(t, storage) })
+	waitSweep(t, storage) // so only the sweep started below sees the hook
+	logs := captureLog(t)
+
+	pageDir := filepath.Join(storage.HistoryDir, "page")
+	inFlight := plantFile(t, storage.DataDir, "history/page/"+atomicTempName(11))
+	stranded := plantFile(t, storage.DataDir, "assets/page/"+atomicTempName(12))
+
+	reached := make(chan struct{})
+	proceed := make(chan struct{})
+	stubSweepDirHook(t, func(dir string) {
+		if dir == pageDir {
+			holdSweep(t, dir, reached, proceed)
+		}
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		storage.removeLeftoverTempFiles(nil, storage.HistoryDir, storage.AssetDir)
+	}()
+
+	select {
+	case <-reached:
+	case <-done:
+		t.Fatal("the sweep never reached the directory holding the in-flight temp file")
+	case <-time.After(testWaitLimit):
+		t.Fatalf("the sweep did not reach the directory holding the in-flight temp file within %s", testWaitLimit)
+	}
+	// The sweep has finished other directories and not yet started this one.
+	if !storage.writeMu.TryLock() {
+		close(proceed)
+		waitClosed(t, done, "the sweep")
+		t.Fatal("the sweep holds writeMu between directories, so it would stall saves for its whole walk")
+	}
+	// A save now holds the lock with its temp file in pageDir. Let the sweep try that directory.
+	close(proceed)
+	expectBlockedIn(t, ".removeLeftoverTempFiles(", done,
+		"the sweep finished without waiting for writeMu, which a save in progress held")
+	if _, err := os.Lstat(inFlight); err != nil {
+		t.Errorf("the sweep removed a temp file while writeMu was held: %v", err)
+	}
+
+	// The save renames its temp file into place, and only then releases the lock.
+	snapshot := filepath.Join(pageDir, "2.md.gz")
+	if err := os.Rename(inFlight, snapshot); err != nil {
+		t.Errorf("Rename failed: %v", err)
+	}
+	storage.writeMu.Unlock()
+	if !waitClosed(t, done, "the sweep") {
+		t.FailNow()
+	}
+
+	if got, err := os.ReadFile(snapshot); err != nil || string(got) != "partial" {
+		t.Errorf("saved snapshot = %q (err %v), want the save's content intact", got, err)
+	}
+	if names := dirNames(t, pageDir); !slices.Equal(names, []string{"2.md.gz"}) {
+		t.Errorf("history directory holds %v, want only 2.md.gz", names)
+	}
+	if _, err := os.Lstat(stranded); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a genuine leftover survived the sweep (err %v)", err)
+	}
+	if out := logs.String(); out != "Removed 1 leftover temp file(s) from interrupted writes\n" {
+		t.Errorf("want only the count of the one genuine leftover logged, got %q", out)
+	}
+}
+
+// Close must stop the background sweep and wait for it: a sweep that ran on would, at shutdown,
+// delete files after the storage was closed, and in tests walk a temp directory being removed.
+func TestCloseStopsBackgroundTempFileSweep(t *testing.T) {
+	dataDir := t.TempDir()
+	leftover := plantFile(t, dataDir, "history/page/"+atomicTempName(4))
+	captureLog(t)
+
+	paused := make(chan struct{})
+	release := make(chan struct{})
+	stubSweepDirHook(t, func(dir string) {
+		if dir == filepath.Join(dataDir, "history") {
+			holdSweep(t, dir, paused, release)
+		}
+	})
+	storage, err := openStorage(t, dataDir)
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { closeStorage(t, storage) }) // a no-op once the test has closed it
+	if storage.sweepDone == nil {
+		t.Fatal("NewStorage started no background temp file sweep")
+	}
+	select {
+	case <-paused:
+	case <-storage.sweepDone:
+		t.Fatal("the background sweep never reached the history tree")
+	case <-time.After(testWaitLimit):
+		t.Fatalf("the background sweep did not reach the history tree within %s", testWaitLimit)
+	}
+
+	var closeErr error
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		closeErr = storage.Close()
+	}()
+	expectBlockedIn(t, ".(*Storage).Close", closed, "Close returned while the background sweep was still running")
+	close(release)
+	if !waitClosed(t, closed, "Close") {
+		t.FailNow()
+	}
+	if closeErr != nil {
+		t.Fatalf("Close failed: %v", closeErr)
+	}
+	if _, err := os.Lstat(leftover); err != nil {
+		t.Errorf("the sweep went on after Close asked it to stop: %v", err)
+	}
+}
+
+// The sweep lists directories itself instead of using filepath.WalkDir, so it must keep WalkDir's
+// rule below a root: a symlink is neither followed nor removed. Following one could delete a file
+// outside the data directory or loop, and one named like a temp file is not something
+// writeFileAtomic made.
+func TestTempFileSweepIgnoresSymlinksBelowRoot(t *testing.T) {
+	base := t.TempDir()
+	storage, err := openStorage(t, filepath.Join(base, "data"))
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { closeStorage(t, storage) })
+	waitSweep(t, storage) // the links below are only ever swept by the guarded call further down
+
+	historyDir := storage.HistoryDir
+	pageDir := filepath.Join(historyDir, "page")
+	outsideTemp := plantFile(t, base, "outside/"+atomicTempName(21))
+	target := plantFile(t, base, "outside/target.md.gz")
+	leftover := plantFile(t, historyDir, "page/"+atomicTempName(22))
+	realDirs := map[string]bool{} // taken before any link exists, so none is reached through one
+	if err := filepath.WalkDir(historyDir, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			realDirs[path] = true
+		}
+		return err
+	}); err != nil {
+		t.Fatalf("WalkDir failed: %v", err)
+	}
+	links := map[string]string{
+		filepath.Join(historyDir, "linked"):        filepath.Dir(outsideTemp), // a directory outside the data tree
+		filepath.Join(pageDir, "loop"):             historyDir,                // an ancestor
+		filepath.Join(pageDir, atomicTempName(23)): target,                    // a regular file, under a temp file's name
+	}
+	for link, to := range links {
+		if err := os.Symlink(to, link); err != nil {
+			t.Skipf("symlinks unavailable here: %v", err)
+		}
+	}
+
+	// Only the real directories may be visited, once each. Anything else was reached through a link,
+	// so stop the sweep there: following the loop then fails the test instead of hanging it.
+	stop := make(chan struct{})
+	visits := map[string]int{}
+	var strayed []string
+	stubSweepDirHook(t, func(dir string) {
+		if visits[dir]++; realDirs[dir] && visits[dir] == 1 {
+			return
+		}
+		if strayed == nil {
+			close(stop)
+		}
+		strayed = append(strayed, dir)
+	})
+	logs := captureLog(t)
+	swept := make(chan struct{})
+	go func() {
+		defer close(swept)
+		storage.removeLeftoverTempFiles(stop, historyDir)
+	}()
+	if !waitClosed(t, swept, "the sweep") {
+		t.FailNow() // strayed is still the sweep's to write
+	}
+
+	if strayed != nil {
+		t.Fatalf("the sweep followed a symlink into %v", strayed)
+	}
+	if _, err := os.Lstat(leftover); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the leftover beside the links survived (err %v)", err)
+	}
+	if _, err := os.Lstat(outsideTemp); err != nil {
+		t.Errorf("a temp-named file outside the data tree is gone: %v", err)
+	}
+	for link := range links {
+		if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("symlink %s was removed or replaced (err %v)", link, err)
+		}
+	}
+	if _, err := os.Lstat(target); err != nil {
+		t.Errorf("the temp-named link's target is gone: %v", err)
+	}
+	if out := logs.String(); out != "Removed 1 leftover temp file(s) from interrupted writes\n" {
+		t.Errorf("want only the one genuine leftover counted and no warnings, got %q", out)
+	}
+}
+
+// filepath.WalkDir does not descend into a root that is itself a symlink, and linking the data
+// directory's trees out to other storage is a plausible NAS layout. The sweep must reach them.
+func TestTempFileSweepFollowsSymlinkedRoots(t *testing.T) {
+	base := t.TempDir()
+	dataDir := filepath.Join(base, "data")
+	elsewhere := filepath.Join(base, "elsewhere")
+	if err := os.Mkdir(dataDir, 0755); err != nil {
+		t.Fatalf("Mkdir failed: %v", err)
+	}
+	for _, tree := range []string{"articles", "history", "assets"} {
+		target := filepath.Join(elsewhere, tree)
+		if err := os.MkdirAll(target, 0755); err != nil {
+			t.Fatalf("MkdirAll failed: %v", err)
+		}
+		if err := os.Symlink(target, filepath.Join(dataDir, tree)); err != nil {
+			t.Skipf("symlinks unavailable here: %v", err)
+		}
+	}
+	article := plantFile(t, elsewhere, "articles/"+atomicTempName(1))
+	later := []string{
+		plantFile(t, elsewhere, "history/page/"+atomicTempName(2)),
+		plantFile(t, elsewhere, "assets/page/"+atomicTempName(3)),
+	}
+	captureLog(t)
+
+	storage, err := openStorage(t, dataDir)
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { closeStorage(t, storage) })
+
+	if _, err := os.Lstat(article); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("leftover under a symlinked article directory survived startup (err %v)", err)
+	}
+	if _, err := storage.GetArticle("home"); err != nil {
+		t.Errorf("home page was not seeded over a symlinked article directory: %v", err)
+	}
+	waitSweep(t, storage)
+	for _, path := range later {
+		if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("leftover %s under a symlinked root survived the sweep (err %v)", path, err)
+		}
+	}
+	for _, tree := range []string{"articles", "history", "assets"} {
+		if info, err := os.Lstat(filepath.Join(dataDir, tree)); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("%s is no longer a symlink (err %v)", tree, err)
+		}
+	}
+}
+
+// Downloads are served without writeMu, so re-uploading an asset must swap in a new file rather
+// than truncate and rewrite the one a download may be reading.
+func TestSaveAssetReplacesFileAtomically(t *testing.T) {
+	storage, err := openStorage(t, t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { closeStorage(t, storage) })
+	waitSweep(t, storage) // SaveAsset takes writeMu, which a broken sweep could leave held
 
 	oldData := bytes.Repeat([]byte("old "), 16<<10)
 	newData := bytes.Repeat([]byte("new!"), 8<<10)

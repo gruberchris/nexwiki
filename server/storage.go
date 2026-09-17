@@ -631,9 +631,19 @@ type Storage struct {
 	// → SaveArticle). Read paths intentionally do not take it: a reader racing a writer sees
 	// either the old or the new file, which is indistinguishable from reading a moment sooner.
 	//
-	// This guards a single process. A `-mcp-only` sidecar writing the same data directory is
-	// still unsynchronized; that needs an on-disk lock file.
+	// This guards a single process, which is enough: while one process has storage open, the search
+	// index's exclusive lock holds any other off in NewStorage, and a -mcp-only sidecar that detects
+	// a running primary proxies to it instead of opening storage.
+	//
+	// removeLeftoverTempFiles takes it per directory so it never deletes the temp file of a save in
+	// progress, which is why every writeFileAtomic caller must hold it.
 	writeMu sync.Mutex
+
+	// sweepStop and sweepDone belong to the background temp file sweep NewStorage starts. Close
+	// closes sweepStop and waits on sweepDone, so the sweep never touches the data directory after
+	// Close returns.
+	sweepStop chan struct{}
+	sweepDone chan struct{}
 }
 
 // NewStorage initializes and returns a Storage manager, ensuring required subdirectories exist.
@@ -680,13 +690,15 @@ func NewStorage(dataDir string) (*Storage, error) {
 		cache:       newArticleCache(),
 	}
 
-	// Clear temp files a crash stranded between writeFileAtomic's create and rename. Before
-	// seeding, which treats any entry in the article directory as an existing wiki. After the index
-	// open, because that exclusive lock is what rules out a live writer: a -mcp-only sidecar proxies
-	// to a primary it detects, and any other second process fails on the lock before reaching here.
-	// So no age threshold is needed, and one would miss the usual case: a crash followed by an
-	// immediate restart (a container restart policy), when the leftovers are youngest.
-	s.removeLeftoverTempFiles()
+	// Clear temp files a crash stranded between writeFileAtomic's create and rename from the article
+	// directory now, before seeding, which treats any entry there as an existing wiki. Leftovers in
+	// the history and asset trees only waste space, so the background sweep started below takes
+	// those. After the index open, because holding that exclusive lock rules out a writer in another
+	// process: a -mcp-only sidecar proxies to a primary it detects, and any other process waits on
+	// the lock (giving up after IndexOpenTimeout) and gets past it only once this one has closed the
+	// index. So no age threshold is needed, and one would miss the usual case: a crash followed by
+	// an immediate restart (a container restart policy), when the leftovers are youngest.
+	s.removeLeftoverTempFiles(nil, articleDir)
 
 	// Seed standard 'home' page if no articles exist
 	if err := s.seedDefaultHome(); err != nil {
@@ -710,6 +722,10 @@ func NewStorage(dataDir string) (*Storage, error) {
 		_ = index.Close()
 		return nil, fmt.Errorf("failed to sync search index: %w", err)
 	}
+
+	// Last, so a failed startup has no sweep to stop, and the sweep's I/O does not compete with the
+	// boot index sync on a slow mount.
+	s.sweepTempFilesInBackground()
 
 	return s, nil
 }
@@ -2344,9 +2360,16 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 
 // Close releases resources held by the Storage, including the Bleve search index.
 // It is safe to call multiple times; only the first invocation performs the close.
+//
+// It stops the background temp file sweep and waits for it, so it must not be called while
+// holding writeMu: a sweep waiting on that lock would never return.
 func (s *Storage) Close() error {
 	var err error
 	s.closeOnce.Do(func() {
+		if s.sweepStop != nil {
+			close(s.sweepStop)
+			<-s.sweepDone
+		}
 		if s.SearchIndex != nil {
 			err = s.SearchIndex.Close()
 		}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -51,7 +52,8 @@ var chmodFile = (*os.File).Chmod
 //
 // The temp file is created beside the destination so the rename never crosses a filesystem, and
 // its name does not end in ".md" (or ".md.gz") so the scans, which filter on those extensions,
-// never see it. A crash before the rename leaves it behind; NewStorage sweeps those at startup.
+// never see it. A crash before the rename leaves it behind for removeLeftoverTempFiles, which runs
+// alongside live saves and so relies on every caller holding Storage.writeMu.
 //
 // It otherwise behaves like os.WriteFile where that is cheap to keep: it writes through a symlink
 // instead of replacing the link, an existing file keeps its mode (where the filesystem allows the
@@ -96,7 +98,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 		want := existing.Mode().Perm()
 		if info, tmpStatErr := tmp.Stat(); tmpStatErr != nil || info.Mode().Perm() != want {
 			if chmodErr := chmodFile(tmp, want); chmodErr != nil {
-				log.Printf("Warning: saved %s without keeping its mode %v: %v", path, want, chmodErr)
+				log.Printf("Warning: could not preserve mode %v of %s: %v", want, path, chmodErr)
 			}
 		}
 	}
@@ -131,39 +133,81 @@ func isTransientWindowsRenameError(err error) bool {
 	return errno == errorAccessDenied || errno == errorSharingViolation
 }
 
-// removeLeftoverTempFiles deletes the temp files writeFileAtomic leaves behind when the process
-// dies between creating one and renaming it into place; nothing else would ever remove them. It
-// covers every tree writeFileAtomic writes into, touches only regular files whose names
-// isAtomicTempName accepts, and logs rather than returns failures so one stubborn file cannot stop
-// startup.
+// sweepDirHook, when non-nil, is called with each directory the temp file sweep takes up next,
+// before it checks stop: it can fire for a directory the sweep then abandons without locking or
+// listing it. Only tests set it, to pause the sweep at a known point or to watch which directories
+// it visits.
+var sweepDirHook func(dir string)
+
+// removeLeftoverTempFiles deletes the temp files writeFileAtomic leaves behind under roots when the
+// process dies between creating one and renaming it into place; nothing else would ever remove
+// them. It touches only regular files whose names isAtomicTempName accepts, does not follow
+// symlinks below a root (a symlinked root is followed, since os.ReadDir opens through it), and logs
+// rather than returns failures so one stubborn file cannot stop startup. Closing stop ends it
+// before its next directory.
 //
-// The caller must guarantee no writer is active in these trees, in this process or another: a
-// temp file mid-write looks exactly like a leftover. NewStorage calls it while holding the search
-// index's exclusive lock and before anything writes.
-func (s *Storage) removeLeftoverTempFiles() {
+// A temp file mid-write looks exactly like a leftover, so each directory is listed and cleaned
+// while holding writeMu, which every writeFileAtomic caller holds from create to rename; writers
+// in other processes are ruled out by the search index lock NewStorage holds. The lock is released
+// between directories, so a long sweep never holds up a save for more than one directory.
+func (s *Storage) removeLeftoverTempFiles(stop <-chan struct{}, roots ...string) {
 	removed := 0
-	for _, root := range []string{s.ArticleDir, s.HistoryDir, s.AssetDir} {
-		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				log.Printf("Warning: temp file sweep could not read %s: %v", s.dataRelPath(path), walkErr)
-				return nil
+	defer func() {
+		if removed > 0 {
+			log.Printf("Removed %d leftover temp file(s) from interrupted writes", removed)
+		}
+	}()
+
+	dirs := slices.Clone(roots)
+	for len(dirs) > 0 {
+		dir := dirs[len(dirs)-1]
+		dirs = dirs[:len(dirs)-1]
+		if sweepDirHook != nil {
+			sweepDirHook(dir)
+		}
+		select {
+		case <-stop:
+			return
+		default:
+		}
+
+		s.writeMu.Lock()
+		// ReadDir returns what it read before an error, so a partial listing is still cleaned. A
+		// directory that is gone was deleted or renamed along with its article: nothing to report.
+		entries, err := os.ReadDir(dir)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("Warning: temp file sweep could not read %s: %v", s.dataRelPath(dir), err)
+		}
+		for _, e := range entries {
+			path := filepath.Join(dir, e.Name())
+			if e.IsDir() {
+				dirs = append(dirs, path)
+				continue
 			}
-			if !d.Type().IsRegular() || !isAtomicTempName(d.Name()) {
-				return nil
+			if !e.Type().IsRegular() || !isAtomicTempName(e.Name()) {
+				continue
 			}
-			if err := os.Remove(path); err != nil {
-				if !errors.Is(err, fs.ErrNotExist) {
-					log.Printf("Warning: could not remove leftover temp file %s: %v", s.dataRelPath(path), err)
-				}
-				return nil
+			if err := os.Remove(path); err == nil {
+				removed++
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				log.Printf("Warning: could not remove leftover temp file %s: %v", s.dataRelPath(path), err)
 			}
-			removed++
-			return nil
-		})
+		}
+		s.writeMu.Unlock()
 	}
-	if removed > 0 {
-		log.Printf("Removed %d leftover temp file(s) from interrupted writes", removed)
-	}
+}
+
+// sweepTempFilesInBackground runs removeLeftoverTempFiles over the history and asset trees without
+// holding up startup. Nothing at boot needs them clean (history scans read only .md.gz, so a
+// leftover there only wastes space), and they hold a directory per article, which can take seconds
+// to walk on a NAS mount. Close stops the sweep and waits for it to return.
+func (s *Storage) sweepTempFilesInBackground() {
+	s.sweepStop = make(chan struct{})
+	s.sweepDone = make(chan struct{})
+	go func() {
+		defer close(s.sweepDone)
+		s.removeLeftoverTempFiles(s.sweepStop, s.HistoryDir, s.AssetDir)
+	}()
 }
 
 // dataRelPath shortens path to its slash-separated form relative to the data directory, for logs.
