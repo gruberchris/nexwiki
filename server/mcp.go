@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -67,9 +70,72 @@ type ToolResponse struct {
 	StructuredContent interface{} `json:"structuredContent,omitempty"`
 }
 
-// StartMCPServer runs the stdio MCP JSON-RPC protocol loop in a non-blocking background goroutine.
-func (srv *Server) StartMCPServer() {
-	scanner := bufio.NewScanner(os.Stdin)
+// StdioMCPServer is the stdio MCP JSON-RPC loop. Serve runs it; Stop ends it at a request boundary,
+// which shutdown needs before closing storage, since a request dispatched after that would write to
+// closed storage.
+type StdioMCPServer struct {
+	srv *Server
+	in  io.Reader
+	out io.Writer
+
+	// dispatchMu is held while a request is handled, and stopped is checked under it, so Stop can
+	// wait for the request in progress by taking the lock. stopped is set before Stop takes the lock,
+	// for the reason Storage.closed is: a Stop that gives up waiting still blocks later requests.
+	dispatchMu sync.Mutex
+	stopped    atomic.Bool
+}
+
+// NewStdioMCPServer returns a stdio loop serving srv, reading requests from in and writing responses
+// to out (os.Stdin and os.Stdout in production). It does not start reading until Serve is called.
+func NewStdioMCPServer(srv *Server, in io.Reader, out io.Writer) *StdioMCPServer {
+	return &StdioMCPServer{srv: srv, in: in, out: out}
+}
+
+// Stop ends dispatch: a request being handled finishes, and no later request is handled. It waits
+// for that request until ctx ends, returning ctx's error if it gave up.
+//
+// It cannot make Serve return. A blocked read on stdin cannot be interrupted portably, so the loop
+// stays parked in it until a line or EOF arrives, and then returns without handling the line. That
+// is harmless: Stop is only called on the way out of the process.
+func (s *StdioMCPServer) Stop(ctx context.Context) error {
+	s.stopped.Store(true)
+	idle := make(chan struct{})
+	go func() {
+		defer close(idle)
+		s.dispatchMu.Lock()
+		s.dispatchMu.Unlock()
+	}()
+	select {
+	case <-idle:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// dispatch handles one request line, reporting false, without handling it, once Stop has been
+// called.
+func (s *StdioMCPServer) dispatch(line []byte) bool {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	if s.stopped.Load() {
+		return false
+	}
+
+	var req JSONRPCRequest
+	if err := json.Unmarshal(line, &req); err != nil {
+		sendError(s.out, -32700, "Parse error: invalid JSON", nil)
+		return true
+	}
+	req.FromStdio = true
+	s.srv.handleRequest(s.out, &req)
+	return true
+}
+
+// Serve runs the loop until its input ends or reading fails. After Stop, it returns at the next line
+// it reads, without handling that line.
+func (s *StdioMCPServer) Serve() {
+	scanner := bufio.NewScanner(s.in)
 	// A tool call carrying a whole article body easily exceeds bufio's default 64 KB line cap, and
 	// exceeding it is not recoverable: Scan returns false, the loop below ends, and the stdio
 	// server stops answering for the rest of the process's life.
@@ -80,10 +146,6 @@ func (srv *Server) StartMCPServer() {
 	// the app looked healthy while its MCP channel was permanently dead — and the agent that sent
 	// the article got no response at all, not even an error, and the article was never written.
 	scanner.Buffer(make([]byte, 0, 64*1024), MaxStdioLineBytes)
-	// Every write to stdout goes through one lock, because subscription goroutines write here too.
-	// See syncLineWriter.
-	writer := newSyncLineWriter(os.Stdout)
-	srv.stdioOut = writer
 
 	_, _ = fmt.Fprintf(os.Stderr, "Always-on stdio MCP server loop successfully started in background!\n")
 
@@ -93,16 +155,9 @@ func (srv *Server) StartMCPServer() {
 		if len(line) == 0 {
 			continue
 		}
-
-		var req JSONRPCRequest
-		if err := json.Unmarshal(line, &req); err != nil {
-			sendError(writer, -32700, "Parse error: invalid JSON", nil)
-			continue
+		if !s.dispatch(line) {
+			return
 		}
-		req.FromStdio = true
-
-		// Handle request methods
-		srv.handleRequest(writer, &req)
 	}
 
 	// The loop above cannot resume after a scanner failure, so tell the client rather than going
@@ -110,7 +165,7 @@ func (srv *Server) StartMCPServer() {
 	// channel from a slow one.
 	if err := scanner.Err(); err != nil && err != io.EOF {
 		if errors.Is(err, bufio.ErrTooLong) {
-			sendError(writer, -32700, fmt.Sprintf(
+			sendError(s.out, -32700, fmt.Sprintf(
 				"Request exceeded the %d MB stdio line limit; the stdio channel has closed. Use the HTTP transport for payloads this large.",
 				MaxStdioLineBytes>>20), nil)
 		}

@@ -101,12 +101,15 @@ func (w *PlanLifecycleWorker) logf(format string, args ...interface{}) {
 // Run sweeps once immediately, then on the configured interval, until ctx is canceled.
 // It sweeps at startup because a daily ticker alone means a server restarted every morning
 // never fires.
+//
+// Cancellation stops a sweep in progress between plans, never inside a save, and Run returns once
+// it has: shutdown waits for that return before closing storage.
 func (w *PlanLifecycleWorker) Run(ctx context.Context) {
 	w.logf(
 		"Plan lifecycle worker: sweeping every %dd (archive completed/superseded after %dd, delete archived after %dd, dry-run=%t)\n",
 		w.Cfg.IntervalDays, w.Cfg.ArchiveAfterDays, w.Cfg.DeleteAfterDays, w.Cfg.DryRun)
 
-	w.Sweep()
+	w.sweep(ctx)
 
 	ticker := time.NewTicker(time.Duration(w.Cfg.IntervalDays) * 24 * time.Hour)
 	defer ticker.Stop()
@@ -116,7 +119,7 @@ func (w *PlanLifecycleWorker) Run(ctx context.Context) {
 			w.logf("Plan lifecycle worker: stopped\n")
 			return
 		case <-ticker.C:
-			w.Sweep()
+			w.sweep(ctx)
 		}
 	}
 }
@@ -124,6 +127,12 @@ func (w *PlanLifecycleWorker) Run(ctx context.Context) {
 // Sweep applies every due transition once. Each write takes the storage lock per article rather
 // than holding it across the whole sweep, so an agent mid-edit is never blocked behind a scan.
 func (w *PlanLifecycleWorker) Sweep() {
+	w.sweep(context.Background())
+}
+
+// sweep is Sweep, stopping before the next plan once ctx is canceled. A sweep over a large wiki can
+// outlast the shutdown deadline, and each plan's transition is complete on its own.
+func (w *PlanLifecycleWorker) sweep(ctx context.Context) {
 	metas, err := w.Storage.ListArticles()
 	if err != nil {
 		w.logf("Plan lifecycle worker: listing failed: %v\n", err)
@@ -132,6 +141,10 @@ func (w *PlanLifecycleWorker) Sweep() {
 	now := w.now()
 
 	for _, meta := range metas {
+		if ctx.Err() != nil {
+			w.logf("Plan lifecycle worker: canceled mid-sweep; the next sweep picks up the plans it did not reach\n")
+			return
+		}
 		if meta.Type != ContentTypePlan {
 			continue
 		}

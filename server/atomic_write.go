@@ -204,7 +204,8 @@ func (s *Storage) removeLeftoverTempFiles(stop <-chan struct{}, roots ...string)
 // sweepTempFilesInBackground runs removeLeftoverTempFiles over the history and asset trees without
 // holding up startup. Nothing at boot needs them clean (history scans read only .md.gz, so a
 // leftover there only wastes space), and they hold a directory per article, which can take seconds
-// to walk on a NAS mount. Close stops the sweep and waits for it to return.
+// to walk on a NAS mount. Close stops the sweep and waits for it to return; a CloseContext that gives
+// up at its deadline stops it without waiting.
 func (s *Storage) sweepTempFilesInBackground() {
 	s.sweepStop = make(chan struct{})
 	s.sweepDone = make(chan struct{})

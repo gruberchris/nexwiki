@@ -199,23 +199,64 @@ func main() {
 
 	// closeResources releases the Bleve index and the activity log file handle. Skipping this on
 	// exit is what leaves the search index inconsistent after a `docker stop`, so every exit path
-	// below routes through it.
-	closeResources := func() {
+	// below routes through it. ctx bounds both closes; see shutdownContexts.
+	//
+	// Storage closes first, for two reasons. A write that finishes while storage waits for it
+	// publishes its activity event after releasing writeMu, so closing the log afterwards makes that
+	// event more likely to be recorded, though not certain. And the log's Close waits on its lock with
+	// no deadline, so it must not run ahead of the index close, where a stuck append could keep the
+	// index open. It is bounded by ctx too: if storage used the whole deadline, the log is left open
+	// and the process exits without closing it.
+	closeResources := func(ctx context.Context) {
+		if err := storage.CloseContext(ctx); err != nil {
+			log.Printf("Warning: failed to close storage: %v", err)
+		}
 		if openActivityLog != nil {
-			if err := openActivityLog.Close(); err != nil {
-				log.Printf("Warning: failed to close activity log: %v", err)
+			closed := make(chan error, 1)
+			go func() { closed <- openActivityLog.Close() }()
+			select {
+			case err := <-closed:
+				if err != nil {
+					log.Printf("Warning: failed to close activity log: %v", err)
+				}
+			case <-ctx.Done():
+				// Appends are unbuffered, so every event already appended is on disk regardless.
+				log.Printf("Warning: exiting without waiting for the activity log to close: %v", ctx.Err())
 			}
 		}
-		if err := storage.Close(); err != nil {
-			log.Printf("Warning: failed to close storage: %v", err)
+	}
+
+	stdioServer := server.NewStdioMCPServer(srv, os.Stdin, os.Stdout)
+	// stopStdio stops the stdio loop dispatching, waiting for a request in progress, before storage
+	// closes: a request it dispatched afterwards would write to closed storage.
+	stopStdio := func(ctx context.Context) {
+		if err := stdioServer.Stop(ctx); err != nil {
+			log.Printf("Warning: a stdio MCP request was still running at the shutdown deadline: %v", err)
 		}
 	}
 
 	// In -mcp-only mode, run the stdio MCP server in the foreground and never bind the web port.
 	if mcpOnlyMode {
 		log.Printf("Running in stdio MCP-only mode (no web server). All MCP tools operate against the in-process storage layer.")
-		srv.StartMCPServer() // blocks until stdin EOF
-		closeResources()
+		served := make(chan struct{})
+		go func() {
+			defer close(served)
+			stdioServer.Serve() // returns at stdin EOF
+		}()
+
+		// A signal can arrive mid-request, so it gets the web server's bounded drain rather than the
+		// default of dying with the search index open. Stdin EOF is the normal end.
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		select {
+		case <-served:
+		case sig := <-sigCh:
+			log.Printf("Received %s: shutting down gracefully...", sig)
+		}
+		stopCtx, closeCtx, cancel := shutdownContexts()
+		defer cancel()
+		stopStdio(stopCtx) // returns at once after EOF: Serve has returned, so nothing is in progress
+		closeResources(closeCtx)
 		return
 	}
 
@@ -228,14 +269,36 @@ func main() {
 	// -mcp-only branch returned above), which is the one process that owns the data directory.
 	// A sidecar must never run a second sweep over the same files.
 	workerCtx, stopWorker := context.WithCancel(context.Background())
-	go (&server.PlanLifecycleWorker{
-		Storage: storage,
-		Bus:     eventBus,
-		Cfg:     server.LoadPlanLifecycleConfig(),
-	}).Run(workerCtx)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		(&server.PlanLifecycleWorker{
+			Storage: storage,
+			Bus:     eventBus,
+			Cfg:     server.LoadPlanLifecycleConfig(),
+		}).Run(workerCtx)
+	}()
 
 	// Spin up the stdio MCP JSON-RPC server in a background goroutine!
-	go srv.StartMCPServer()
+	go stdioServer.Serve()
+
+	// stopWriters stops the writers besides the HTTP server (the plan lifecycle worker and the stdio
+	// loop) and waits within ctx for each to finish what it is doing. One still running at the
+	// deadline is logged and left behind: storage turns its later writes away once it closes.
+	stopWriters := func(ctx context.Context) {
+		stopWorker()
+		stdioStopped := make(chan struct{})
+		go func() {
+			defer close(stdioStopped)
+			stopStdio(ctx)
+		}()
+		select {
+		case <-workerDone:
+		case <-ctx.Done():
+			log.Printf("Warning: the plan lifecycle worker was still running at the shutdown deadline: %v", ctx.Err())
+		}
+		<-stdioStopped
+	}
 
 	// Create New Mux Router (Go 1.22+ supports methods and wildcards out-of-the-box!)
 	mux := http.NewServeMux()
@@ -323,6 +386,9 @@ func main() {
 	// Shut down cleanly on SIGINT/SIGTERM (i.e. Ctrl-C and `docker stop`) so in-flight requests
 	// finish and, critically, the Bleve index and activity log are closed rather than killed.
 	shutdownDone := make(chan struct{})
+	// writersOverran and closeOverran record which shutdown deadline passed (see shutdownContexts).
+	// Set before shutdownDone closes.
+	writersOverran, closeOverran := false, false
 	go func() {
 		defer close(shutdownDone)
 		sigCh := make(chan os.Signal, 1)
@@ -334,17 +400,26 @@ func main() {
 		// go *idle*, and an SSE stream never does — a single browser tab on the wiki would
 		// otherwise hold shutdown open until the deadline.
 		srv.BeginShutdown()
-		stopWorker()
 
-		// The deadline sits below a container runtime's default 10s stop grace (docker stop,
-		// Kubernetes terminationGracePeriodSeconds) on purpose: if shutdown overruns it, the
-		// supervisor SIGKILLs the process before closeResources() can close the search index,
-		// which is the corruption this whole path exists to avoid.
-		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		stopCtx, closeCtx, cancel := shutdownContexts()
 		defer cancel()
-		if err := httpServer.Shutdown(ctx); err != nil {
+
+		// Every writer stops before storage closes, so none can write to a closed index. The HTTP
+		// server drains alongside the others rather than before them, so each gets the whole
+		// deadline instead of what the one before it left.
+		writersStopped := make(chan struct{})
+		go func() {
+			defer close(writersStopped)
+			stopWriters(stopCtx)
+		}()
+		if err := httpServer.Shutdown(stopCtx); err != nil {
 			log.Printf("Warning: graceful shutdown timed out: %v", err)
 		}
+		<-writersStopped
+		// Checked here, not at the end: the writers' deadline also passes while storage closes.
+		writersOverran = stopCtx.Err() != nil
+		closeResources(closeCtx)
+		closeOverran = closeCtx.Err() != nil
 	}()
 
 	// The banner has to name a host someone can paste into a browser. addr is "host:port", so
@@ -371,18 +446,57 @@ func main() {
 	// alongside an already-running web server, use -mcp-only instead.
 	err = httpServer.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		closeResources()
+		// The worker and the stdio loop are already running, and may be mid-write.
+		stopCtx, closeCtx, cancel := shutdownContexts()
+		stopWriters(stopCtx)
+		closeResources(closeCtx)
+		cancel()
 		log.Fatalf("Fatal: could not bind web server to %s: %v\nIf you intended to run a stdio MCP server alongside an existing web server, relaunch with the -mcp-only flag (or NEXWIKI_MCP_ONLY=true).", addr, err)
 	}
 
-	<-shutdownDone
-	closeResources()
-	log.Printf("NexWiki shut down cleanly.")
+	<-shutdownDone // the shutdown goroutine closes resources before it finishes
+	log.Print(shutdownSummary(writersOverran, closeOverran))
 }
 
-// shutdownTimeout bounds graceful shutdown. Deliberately under the 10s stop grace period a
-// container runtime allows by default, so the index is always closed before any SIGKILL.
+// shutdownTimeout bounds graceful shutdown, from the signal to the search index closing.
+// Deliberately under the 10s stop grace period a container runtime allows by default (docker stop,
+// Kubernetes terminationGracePeriodSeconds): if shutdown overran it, the supervisor would SIGKILL
+// the process before the index is closed, which is the corruption this whole path exists to avoid.
 const shutdownTimeout = 5 * time.Second
+
+// storageCloseReserve is the part of shutdownTimeout held back for closing storage, so writers that
+// use all of their time to stop still leave storage time to wait for a write in progress.
+const storageCloseReserve = 1 * time.Second
+
+// shutdownContexts returns the deadlines one shutdown runs under, both counted from now: stopCtx for
+// stopping the writers (the HTTP server, the plan lifecycle worker, the stdio loop), and closeCtx,
+// storageCloseReserve later, for closing storage. cancel releases both.
+func shutdownContexts() (stopCtx, closeCtx context.Context, cancel context.CancelFunc) {
+	deadline := time.Now().Add(shutdownTimeout)
+	closeCtx, cancelClose := context.WithDeadline(context.Background(), deadline)
+	stopCtx, cancelStop := context.WithDeadline(closeCtx, deadline.Add(-storageCloseReserve))
+	return stopCtx, closeCtx, func() {
+		cancelStop()
+		cancelClose()
+	}
+}
+
+// shutdownSummary is the last line a web server shutdown logs. writersOverran means the writers'
+// deadline passed before they all stopped, which each overrunning writer logs a warning about.
+// closeOverran means the overall deadline had passed once storage and the activity log were closed;
+// that includes a slow search index close, which logs no warning of its own.
+func shutdownSummary(writersOverran, closeOverran bool) string {
+	switch {
+	case closeOverran:
+		return fmt.Sprintf("NexWiki shut down after its %s shutdown deadline passed while closing storage; see any warnings above.",
+			shutdownTimeout)
+	case writersOverran:
+		return fmt.Sprintf("NexWiki shut down after the %s deadline for stopping writers passed; storage still closed within the %s shutdown deadline. See the warnings above.",
+			shutdownTimeout-storageCloseReserve, shutdownTimeout)
+	default:
+		return "NexWiki shut down cleanly."
+	}
+}
 
 // buildAppURL assembles the pasteable/openable wiki URL from the display
 // host (bind interface, or "localhost" when bound to all interfaces) and port.

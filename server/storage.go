@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
@@ -641,9 +643,16 @@ type Storage struct {
 
 	// sweepStop and sweepDone belong to the background temp file sweep NewStorage starts. Close
 	// closes sweepStop and waits on sweepDone, so the sweep never touches the data directory after
-	// Close returns.
+	// Close returns. A CloseContext that gives up at its deadline returns without that guarantee.
 	sweepStop chan struct{}
 	sweepDone chan struct{}
+
+	// closed is set as Close begins. Every write entry point checks it right after taking writeMu
+	// and returns ErrStorageClosed before touching the disk, so a write arriving during shutdown
+	// cannot leave a file the closed index never saw. It is set before Close waits for writeMu, not
+	// under it, so a writer queued behind the one Close waits for cannot slip in ahead of Close, and
+	// a Close that gives up waiting still turns later writers away.
+	closed atomic.Bool
 }
 
 // NewStorage initializes and returns a Storage manager, ensuring required subdirectories exist.
@@ -933,6 +942,9 @@ func (s *Storage) SaveArticleWithStatus(oldSlug string, title string, content st
 func (s *Storage) SaveArticleWithOverrides(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string, overrides ArticleOverrides) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return nil, ErrStorageClosed
+	}
 	return s.saveArticleLocked(oldSlug, title, content, description, source, resource, editSummary, tags, articleType, overrides)
 }
 
@@ -941,6 +953,9 @@ func (s *Storage) SaveArticleWithOverrides(oldSlug string, title string, content
 func (s *Storage) SetStatus(slug string, status string, loadedVersion int, editSummary string) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return nil, ErrStorageClosed
+	}
 
 	art, err := s.GetArticle(slug)
 	if err != nil {
@@ -1379,6 +1394,9 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 func (s *Storage) DeleteArticle(slug string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return ErrStorageClosed
+	}
 	return s.deleteArticleLocked(slug)
 }
 
@@ -1418,6 +1436,9 @@ func (s *Storage) SaveAsset(slug string, filename string, fileData []byte) (stri
 	// Shares writeMu with SaveArticle, which renames asset directories on slug changes.
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return "", ErrStorageClosed
+	}
 
 	cleanedSlug := Slugify(slug)
 	if cleanedSlug == "" {
@@ -2256,6 +2277,9 @@ type ArticleEdit struct {
 func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return nil, ErrStorageClosed
+	}
 
 	existing, err := s.GetArticle(slug)
 	if err != nil {
@@ -2305,6 +2329,9 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return nil, ErrStorageClosed
+	}
 
 	histArt, err := s.GetArticleVersion(slug, version)
 	if err != nil {
@@ -2333,6 +2360,9 @@ func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion int, editSummary string) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return nil, ErrStorageClosed
+	}
 
 	art, err := s.GetArticle(slug)
 	if err != nil {
@@ -2358,18 +2388,51 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 	})
 }
 
+// ErrStorageClosed is returned by a write that reaches storage after Close has begun. The write is
+// refused before it touches the disk.
+var ErrStorageClosed = errors.New("storage is closed")
+
 // Close releases resources held by the Storage, including the Bleve search index.
 // It is safe to call multiple times; only the first invocation performs the close.
 //
-// It stops the background temp file sweep and waits for it, so it must not be called while
-// holding writeMu: a sweep waiting on that lock would never return.
+// Before closing the index it turns new writes away and waits for a write in progress and for the
+// background temp file sweep, so no write lands on disk without reaching the index. It takes
+// writeMu to wait, so it must not be called while holding writeMu: it would wait on itself.
 func (s *Storage) Close() error {
+	return s.CloseContext(context.Background())
+}
+
+// CloseContext is Close with its waits bounded by ctx. When ctx ends first, it logs and closes the
+// index anyway, leaving the overrunning write or sweep to finish on its own. Shutdown runs against
+// a supervisor's kill deadline, and an index closed under an overrunning write only refuses that
+// write's update (the file is on disk, and the next startup's SyncSearchIndex indexes it), whereas
+// one still open at SIGKILL risks corruption.
+func (s *Storage) CloseContext(ctx context.Context) error {
 	var err error
 	s.closeOnce.Do(func() {
+		s.closed.Store(true)
 		if s.sweepStop != nil {
 			close(s.sweepStop)
-			<-s.sweepDone
 		}
+
+		// Waited on in a goroutine so ctx can bound it. The sweep is waited on without holding
+		// writeMu, which it takes per directory. Once writeMu has been taken after closed was set, no
+		// write is in progress and none can start, so it is released straight away.
+		idle := make(chan struct{})
+		go func() {
+			defer close(idle)
+			if s.sweepDone != nil {
+				<-s.sweepDone
+			}
+			s.writeMu.Lock()
+			s.writeMu.Unlock()
+		}()
+		select {
+		case <-idle:
+		case <-ctx.Done():
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: closing the search index while a write or the temp file sweep is still running (%v); the next startup's index sync picks up anything it missed\n", ctx.Err())
+		}
+
 		if s.SearchIndex != nil {
 			err = s.SearchIndex.Close()
 		}
@@ -2436,6 +2499,9 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 	// writers, rather than interleaving per-article saves with concurrent edits.
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return ErrStorageClosed
+	}
 
 	articles, err := s.ListArticles()
 	if err != nil {

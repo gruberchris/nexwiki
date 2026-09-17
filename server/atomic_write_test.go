@@ -617,6 +617,66 @@ func expectBlockedIn(t *testing.T, fn string, quit <-chan struct{}, ifQuit strin
 	}
 }
 
+// expectWaitingIn is expectBlockedIn narrowed to one kind of wait: it returns once a goroutine with
+// fn in one of its stack frames is parked in state, as goroutineState reads it ("chan receive",
+// "sync.Mutex.Lock"). Being blocked somewhere is not enough when the test then releases what the
+// goroutine should be waiting on: Close parked in a select may not have reached that wait yet. A
+// "created by" line is not a frame, so fn must name the waiting goroutine's code, not its parent's.
+// It reports ifQuit if quit is closed first, and the goroutines in fn if none waits within
+// testWaitLimit; it returns either way.
+func expectWaitingIn(t *testing.T, fn, state string, quit <-chan struct{}, ifQuit string) {
+	t.Helper()
+	deadline := time.Now().Add(testWaitLimit)
+	buf := make([]byte, 64<<10)
+	for {
+		select {
+		case <-quit:
+			t.Error(ifQuit)
+			return
+		default:
+		}
+		n := runtime.Stack(buf, true)
+		if n == len(buf) {
+			buf = make([]byte, 2*len(buf))
+			continue
+		}
+		var inFn []string
+		for _, g := range strings.Split(string(buf[:n]), "\n\n") {
+			if !hasFrameIn(g, fn) {
+				continue
+			}
+			if header, _, _ := strings.Cut(g, "\n"); goroutineState(header) == state {
+				return
+			}
+			inFn = append(inFn, g)
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("no goroutine in %s was in %q within %s; goroutines in it:\n%s",
+				fn, state, testWaitLimit, strings.Join(inFn, "\n\n"))
+			return
+		}
+		time.Sleep(time.Millisecond) // just the poll interval, not a guess at how long the wait takes
+	}
+}
+
+// expectWaitingOnMutex is expectWaitingIn for a goroutine in fn parked on a sync.Mutex.
+func expectWaitingOnMutex(t *testing.T, fn string, quit <-chan struct{}, ifQuit string) {
+	t.Helper()
+	expectWaitingIn(t, fn, "sync.Mutex.Lock", quit, ifQuit)
+}
+
+// hasFrameIn reports whether one of the function frames in goroutine dump g contains fn, skipping
+// the header, the file:line lines, and the "created by" line.
+func hasFrameIn(g, fn string) bool {
+	_, frames, _ := strings.Cut(g, "\n")
+	for _, line := range strings.Split(frames, "\n") {
+		if !strings.HasPrefix(line, "\t") && !strings.HasPrefix(line, "created by ") && strings.Contains(line, fn) {
+			return true
+		}
+	}
+	return false
+}
+
 // thisPackage is this package's import path ("nexwiki/server"), read from the runtime so that frame
 // matching does not depend on the module's name.
 var thisPackage = func() string {
@@ -873,7 +933,9 @@ func TestCloseStopsBackgroundTempFileSweep(t *testing.T) {
 		defer close(closed)
 		closeErr = storage.Close()
 	}()
-	expectBlockedIn(t, ".(*Storage).Close", closed, "Close returned while the background sweep was still running")
+	// A chan receive in Close's code is its wait on sweepDone. Merely blocked would also accept Close
+	// parked in a select before that wait has begun.
+	expectWaitingIn(t, ".(*Storage).Close", "chan receive", closed, "Close returned while the background sweep was still running")
 	close(release)
 	if !waitClosed(t, closed, "Close") {
 		t.FailNow()
