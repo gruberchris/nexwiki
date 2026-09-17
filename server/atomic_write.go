@@ -52,8 +52,11 @@ var chmodFile = (*os.File).Chmod
 //
 // The temp file is created beside the destination so the rename never crosses a filesystem, and
 // its name does not end in ".md" (or ".md.gz") so the scans, which filter on those extensions,
-// never see it. A crash before the rename leaves it behind for removeLeftoverTempFiles, which runs
-// alongside live saves and so relies on every caller holding Storage.writeMu.
+// never see it. A crash before the rename leaves it behind for removeLeftoverTempFiles. That sweeps
+// the article tree at startup, before any save, and the history and asset trees in the background
+// alongside live saves, so callers writing into the history or asset trees must hold
+// Storage.writeMu. A caller writing into the data directory root (ThemeStore) need not, and nothing
+// removes a temp file stranded there.
 //
 // It otherwise behaves like os.WriteFile where that is cheap to keep: it writes through a symlink
 // instead of replacing the link, an existing file keeps its mode (where the filesystem allows the
@@ -147,9 +150,10 @@ var sweepDirHook func(dir string)
 // before its next directory.
 //
 // A temp file mid-write looks exactly like a leftover, so each directory is listed and cleaned
-// while holding writeMu, which every writeFileAtomic caller holds from create to rename; writers
-// in other processes are ruled out by the search index lock NewStorage holds. The lock is released
-// between directories, so a long sweep never holds up a save for more than one directory.
+// while holding writeMu, which every writeFileAtomic caller writing under a swept root holds from
+// create to rename; writers in other processes are ruled out by the search index lock NewStorage
+// holds. The lock is released between directories, so a long sweep never holds up a save for more
+// than one directory.
 func (s *Storage) removeLeftoverTempFiles(stop <-chan struct{}, roots ...string) {
 	removed := 0
 	defer func() {

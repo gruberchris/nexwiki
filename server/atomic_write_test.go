@@ -763,9 +763,9 @@ func TestStartupSweepsHistoryAndAssetsInBackground(t *testing.T) {
 }
 
 // The background sweep runs alongside saves, and a temp file mid-save looks exactly like a
-// leftover. writeMu, which every writeFileAtomic caller holds, must keep the sweep out until the
-// save has renamed its temp file into place; and the sweep must not keep the lock between
-// directories, or it would stall saves for its whole walk.
+// leftover. writeMu, which every writeFileAtomic caller writing into a swept tree holds, must keep
+// the sweep out until the save has renamed its temp file into place; and the sweep must not keep
+// the lock between directories, or it would stall saves for its whole walk.
 func TestTempFileSweepWaitsForWriteMu(t *testing.T) {
 	storage, err := openStorage(t, t.TempDir())
 	if err != nil {

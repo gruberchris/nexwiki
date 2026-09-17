@@ -966,33 +966,31 @@ func (srv *Server) HandleSaveTheme(w http.ResponseWriter, r *http.Request) {
 
 	newTheme.Custom = true // enforce custom
 
-	customThemes, err := srv.Storage.ThemeStore.LoadCustomThemes()
-	if err != nil {
+	err := srv.Storage.ThemeStore.UpdateCustomThemes(func(customThemes []Theme) ([]Theme, error) {
+		// Check if updating an existing custom theme or adding a new one
+		for i, t := range customThemes {
+			if strings.EqualFold(t.Name, newTheme.Name) {
+				customThemes[i] = newTheme
+				return customThemes, nil
+			}
+		}
+		return append(customThemes, newTheme), nil
+	})
+	switch {
+	case errors.Is(err, errLoadCustomThemes):
 		writeError(w, http.StatusInternalServerError, "failed to load custom themes")
 		return
-	}
-
-	// Check if updating an existing custom theme or adding a new one
-	found := false
-	for i, t := range customThemes {
-		if strings.EqualFold(t.Name, newTheme.Name) {
-			customThemes[i] = newTheme
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		customThemes = append(customThemes, newTheme)
-	}
-
-	if err := srv.Storage.ThemeStore.SaveCustomThemes(customThemes); err != nil {
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, "failed to save custom theme")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, newTheme)
 }
+
+// errThemeNotFound is how HandleDeleteTheme's update reports that no custom theme has the name, so
+// nothing is saved and the handler answers 404.
+var errThemeNotFound = errors.New("theme not found")
 
 // HandleDeleteTheme deletes a custom theme by name.
 func (srv *Server) HandleDeleteTheme(w http.ResponseWriter, r *http.Request) {
@@ -1010,28 +1008,29 @@ func (srv *Server) HandleDeleteTheme(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	customThemes, err := srv.Storage.ThemeStore.LoadCustomThemes()
-	if err != nil {
+	err := srv.Storage.ThemeStore.UpdateCustomThemes(func(customThemes []Theme) ([]Theme, error) {
+		var updatedThemes []Theme
+		found := false
+		for _, t := range customThemes {
+			if strings.EqualFold(t.Name, themeName) {
+				found = true
+				continue
+			}
+			updatedThemes = append(updatedThemes, t)
+		}
+		if !found {
+			return nil, errThemeNotFound
+		}
+		return updatedThemes, nil
+	})
+	switch {
+	case errors.Is(err, errLoadCustomThemes):
 		writeError(w, http.StatusInternalServerError, "failed to load custom themes")
 		return
-	}
-
-	var updatedThemes []Theme
-	found := false
-	for _, t := range customThemes {
-		if strings.EqualFold(t.Name, themeName) {
-			found = true
-			continue
-		}
-		updatedThemes = append(updatedThemes, t)
-	}
-
-	if !found {
+	case errors.Is(err, errThemeNotFound):
 		writeError(w, http.StatusNotFound, "theme not found")
 		return
-	}
-
-	if err := srv.Storage.ThemeStore.SaveCustomThemes(updatedThemes); err != nil {
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, "failed to save updated custom themes")
 		return
 	}

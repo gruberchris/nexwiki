@@ -9,7 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -604,6 +608,218 @@ func TestHandleDeleteTheme(t *testing.T) {
 	srv.HandleDeleteTheme(w5, req5)
 	if w5.Code != http.StatusOK {
 		t.Errorf("valid delete: expected 200, got %d", w5.Code)
+	}
+}
+
+// runConcurrently calls fn(0) through fn(n-1) on n goroutines released together, and stops the test
+// if they have not all returned within testWaitLimit.
+func runConcurrently(t *testing.T, n int, what string, fn func(i int)) {
+	t.Helper()
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := range n {
+		go func() {
+			defer wg.Done()
+			<-start
+			fn(i)
+		}()
+	}
+	close(start)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	if !waitClosed(t, done, what) {
+		t.FailNow()
+	}
+}
+
+// Theme saves load the list, change it and save it back. Unless that whole sequence is serialized,
+// concurrent creates can start from the same list, and each save then discards the others' themes.
+func TestHandleSaveThemeConcurrentCreatesAllPersist(t *testing.T) {
+	srv := newTestServer(t)
+
+	const writers = 20
+	codes := make([]int, writers)
+	runConcurrently(t, writers, "the concurrent theme saves", func(i int) {
+		body := fmt.Sprintf(`{"name": "concurrent-%02d", "default_mode": "dark", "light": {}, "dark": {}}`, i)
+		w := httptest.NewRecorder()
+		srv.HandleSaveTheme(w, httptest.NewRequest("POST", "/api/themes", strings.NewReader(body)))
+		codes[i] = w.Code
+	})
+
+	want := make([]string, 0, writers)
+	for i, code := range codes {
+		if code != http.StatusOK {
+			t.Errorf("save of concurrent-%02d: expected 200, got %d", i, code)
+		}
+		want = append(want, fmt.Sprintf("concurrent-%02d", i))
+	}
+	got := readCustomThemesFile(t, srv.Storage.DataDir)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("%d of %d concurrently created themes persisted: %v", len(got), writers, got)
+	}
+}
+
+// Deletes load, change and save the list too, so a delete racing another delete or a create can
+// save a stale list, bringing back a theme that was already deleted or dropping one just created.
+func TestHandleDeleteThemeConcurrentWithCreates(t *testing.T) {
+	srv := newTestServer(t)
+
+	const n = 10
+	for i := range n {
+		for _, prefix := range []string{"keep", "drop"} {
+			body := fmt.Sprintf(`{"name": "%s-%02d"}`, prefix, i)
+			w := httptest.NewRecorder()
+			srv.HandleSaveTheme(w, httptest.NewRequest("POST", "/api/themes", strings.NewReader(body)))
+			if w.Code != http.StatusOK {
+				t.Fatalf("seeding %s-%02d: expected 200, got %d", prefix, i, w.Code)
+			}
+		}
+	}
+
+	// Even requests delete drop-NN, odd ones create new-NN.
+	codes := make([]int, 2*n)
+	runConcurrently(t, 2*n, "the concurrent theme deletes and creates", func(i int) {
+		w := httptest.NewRecorder()
+		if i%2 == 0 {
+			name := fmt.Sprintf("drop-%02d", i/2)
+			req := httptest.NewRequest("DELETE", "/api/themes/"+name, nil)
+			req.SetPathValue("name", name)
+			srv.HandleDeleteTheme(w, req)
+		} else {
+			body := fmt.Sprintf(`{"name": "new-%02d"}`, i/2)
+			srv.HandleSaveTheme(w, httptest.NewRequest("POST", "/api/themes", strings.NewReader(body)))
+		}
+		codes[i] = w.Code
+	})
+	for i, code := range codes {
+		if code != http.StatusOK {
+			t.Errorf("request %d: expected 200, got %d", i, code)
+		}
+	}
+
+	want := make([]string, 0, 2*n)
+	for i := range n {
+		want = append(want, fmt.Sprintf("keep-%02d", i), fmt.Sprintf("new-%02d", i))
+	}
+	slices.Sort(want)
+	got := readCustomThemesFile(t, srv.Storage.DataDir)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("after concurrent deletes and creates:\n got %v\nwant %v", got, want)
+	}
+}
+
+// Saving a theme whose name matches an existing one case-insensitively replaces it in place and
+// responds with the submitted theme marked custom; deleting by any casing removes it and responds
+// with a confirmation, a repeat delete responds 404, and deleting the last custom theme leaves the
+// list with only the default themes.
+func TestHandleSaveAndDeleteThemeRoundTrip(t *testing.T) {
+	srv := newTestServer(t)
+
+	save := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		w := httptest.NewRecorder()
+		srv.HandleSaveTheme(w, httptest.NewRequest("POST", "/api/themes", strings.NewReader(body)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("save %s: expected 200, got %d: %s", body, w.Code, w.Body.String())
+		}
+		return w
+	}
+	del := func(name string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest("DELETE", "/api/themes/"+name, nil)
+		req.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		srv.HandleDeleteTheme(w, req)
+		return w
+	}
+
+	save(`{"name": "keeper", "default_mode": "light", "light": {}, "dark": {}}`)
+	save(`{"name": "Ocean", "default_mode": "light", "light": {"bg_primary": "#001"}, "dark": {}}`)
+	w := save(`{"name": "ocean", "default_mode": "dark", "light": {"bg_primary": "#002"}, "dark": {}, "custom": false}`)
+
+	var echoed Theme
+	if err := json.Unmarshal(w.Body.Bytes(), &echoed); err != nil {
+		t.Fatalf("failed to parse save response: %v", err)
+	}
+	if echoed.Name != "ocean" || !echoed.Custom || echoed.Light.BgPrimary != "#002" {
+		t.Errorf("update response: got %+v, want the submitted theme marked custom", echoed)
+	}
+
+	loaded, err := srv.Storage.ThemeStore.LoadCustomThemes()
+	if err != nil {
+		t.Fatalf("LoadCustomThemes failed: %v", err)
+	}
+	if len(loaded) != 2 || loaded[0].Name != "keeper" || loaded[1].Name != "ocean" ||
+		loaded[1].DefaultMode != "dark" || loaded[1].Light.BgPrimary != "#002" || !loaded[1].Custom {
+		t.Errorf("after update: got %+v, want keeper then the updated ocean in its place", loaded)
+	}
+
+	w = del("OCEAN")
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var msg map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &msg); err != nil || msg["message"] != "theme deleted successfully" {
+		t.Errorf("delete response: got %s (%v)", w.Body.String(), err)
+	}
+	if got := readCustomThemesFile(t, srv.Storage.DataDir); !slices.Equal(got, []string{"keeper"}) {
+		t.Errorf("after delete: got %v, want [keeper]", got)
+	}
+
+	if w := del("ocean"); w.Code != http.StatusNotFound {
+		t.Errorf("repeat delete: expected 404, got %d", w.Code)
+	}
+	if w := del("keeper"); w.Code != http.StatusOK {
+		t.Errorf("delete last theme: expected 200, got %d", w.Code)
+	}
+	if got := readCustomThemesFile(t, srv.Storage.DataDir); len(got) != 0 {
+		t.Errorf("after deleting every theme: got %v, want none", got)
+	}
+
+	w = httptest.NewRecorder()
+	srv.HandleGetThemes(w, httptest.NewRequest("GET", "/api/themes", nil))
+	var all []Theme
+	if err := json.Unmarshal(w.Body.Bytes(), &all); err != nil {
+		t.Fatalf("failed to parse themes: %v", err)
+	}
+	if w.Code != http.StatusOK || len(all) != len(DefaultThemes) {
+		t.Errorf("list after deleting every custom theme: got %d with %d themes, want 200 with %d",
+			w.Code, len(all), len(DefaultThemes))
+	}
+}
+
+// A custom_themes.json that no longer parses is reported as a load failure by both writers, and
+// neither overwrites it with a list built from nothing.
+func TestHandleThemeWritesReportUnloadableFile(t *testing.T) {
+	srv := newTestServer(t)
+	path := filepath.Join(srv.Storage.DataDir, "custom_themes.json")
+	const corrupt = `[{"name": "trunc`
+	if err := os.WriteFile(path, []byte(corrupt), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	srv.HandleSaveTheme(w, httptest.NewRequest("POST", "/api/themes", strings.NewReader(`{"name": "new-theme"}`)))
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "failed to load custom themes") {
+		t.Errorf("save: expected 500 failed to load custom themes, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req := httptest.NewRequest("DELETE", "/api/themes/trunc", nil)
+	req.SetPathValue("name", "trunc")
+	w = httptest.NewRecorder()
+	srv.HandleDeleteTheme(w, req)
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "failed to load custom themes") {
+		t.Errorf("delete: expected 500 failed to load custom themes, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if data, _ := os.ReadFile(path); string(data) != corrupt {
+		t.Errorf("custom_themes.json was overwritten after failing to load: %s", data)
 	}
 }
 
