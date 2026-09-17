@@ -243,7 +243,6 @@ func TestSubscriptionStreamDeliversLiveUpdates(t *testing.T) {
 		t.Fatalf("NewRequest failed: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "http://localhost:8080")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -328,7 +327,6 @@ func TestSubscriptionWithNothingHonoredClosesGracefully(t *testing.T) {
 
 	body := `{"jsonrpc":"2.0","id":9,"method":"subscriptions/listen","params":{"notifications":{"toolsListChanged":true}}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/mcp", strings.NewReader(body))
-	req.Header.Set("Origin", "http://localhost:8080")
 	rec := httptest.NewRecorder()
 
 	srv.HandleStreamableHTTP(rec, req)

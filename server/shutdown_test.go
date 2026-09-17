@@ -39,7 +39,6 @@ func TestShutdownEndsOpenStreams(t *testing.T) {
 			request: func(string) *http.Request {
 				r := httptest.NewRequest(http.MethodGet, "/api/mcp", nil)
 				r.Header.Set("Accept", "text/event-stream")
-				r.Header.Set("Origin", "http://localhost:8080")
 				return r
 			},
 			serve: func(srv *Server) http.HandlerFunc { return srv.HandleStreamableHTTP },
@@ -50,7 +49,6 @@ func TestShutdownEndsOpenStreams(t *testing.T) {
 				body := `{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{"notifications":{"resourcesListChanged":true}}}`
 				r := httptest.NewRequest(http.MethodPost, "/api/mcp", strings.NewReader(body))
 				r.Header.Set("Content-Type", "application/json")
-				r.Header.Set("Origin", "http://localhost:8080")
 				return r
 			},
 			serve: func(srv *Server) http.HandlerFunc { return srv.HandleStreamableHTTP },
@@ -119,7 +117,6 @@ func TestSubscriptionStreamClosesGracefullyOnShutdown(t *testing.T) {
 
 	body := `{"jsonrpc":"2.0","id":31,"method":"subscriptions/listen","params":{"notifications":{"resourcesListChanged":true}}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/mcp", strings.NewReader(body))
-	req.Header.Set("Origin", "http://localhost:8080")
 	rec := httptest.NewRecorder()
 
 	done := make(chan struct{})

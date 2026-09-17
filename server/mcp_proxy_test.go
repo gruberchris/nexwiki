@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -408,6 +410,66 @@ func TestProxyAttributesToolCallsToTheStdioClient(t *testing.T) {
 				t.Errorf("tool call through the sidecar attributed to %q, want %q", events[0].Agent, tc.want)
 			}
 		})
+	}
+}
+
+// TestInvisibleConfiguredAgentNameIsTreatedAsUnset pins that an -agent-name made only of control
+// and zero-width characters counts as no name on both sides of a sidecar: the proxy forwards no
+// client-name header for it, and a primary configured the same way credits DefaultAgentName rather
+// than logging a blank agent. Both logging paths are covered: a per-call entry, and the per-document
+// entries of a bulk import, which log the resolved agent as given.
+func TestInvisibleConfiguredAgentNameIsTreatedAsUnset(t *testing.T) {
+	const invisible = "\x01\x1b\u200b\u200e\ufeff"
+	const listCall = `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_articles","arguments":{}}}`
+
+	built := NewMCPProxy("1", invisible, io.Discard)
+	defer built.stop()
+	req, err := built.newRequest([]byte(listCall))
+	if err != nil {
+		t.Fatalf("newRequest failed: %v", err)
+	}
+	if got := req.Header.Get(clientNameHeader); got != "" {
+		t.Errorf("the sidecar forwarded %q for a name that sanitizes to nothing", got)
+	}
+
+	primary, proxy, out := proxyAgainstPrimary(t)
+	primary.AgentName = invisible
+	proxy.agentName = built.agentName
+	logPath := persistPrimaryActivity(t, primary)
+
+	bundlePath := filepath.Join(primary.Storage.DataDir, "bundle.zip")
+	bundle := okfBundle(t, map[string]string{
+		"wiki/imported-page.md": "---\ntype: Wiki\ntitle: Imported Page\nslug: imported-page\n---\n# imported\n",
+	})
+	if err := os.WriteFile(bundlePath, bundle, 0644); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
+	importArgs, _ := json.Marshal(map[string]string{"path": bundlePath})
+	importCall := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"import_okf_bundle","arguments":` +
+		string(importArgs) + `}}`
+
+	proxy.Run(strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`, listCall, importCall,
+	}, "\n") + "\n"))
+
+	for _, msg := range out.messages(t) {
+		if errObj, isErr := msg["error"]; isErr {
+			t.Fatalf("proxied request failed: %v", errObj)
+		}
+	}
+	events, err := ReadActivityLog(logPath, time.Time{}, 50, "", "mcp")
+	if err != nil {
+		t.Fatalf("ReadActivityLog failed: %v", err)
+	}
+	tools := map[string]bool{}
+	for _, ev := range events {
+		tools[ev.Tool] = true
+		if ev.Agent != DefaultAgentName {
+			t.Errorf("%s event attributed to %q, want %q", ev.Tool, ev.Agent, DefaultAgentName)
+		}
+	}
+	if len(events) != 2 || !tools["list_articles"] || !tools["import_okf_bundle"] {
+		t.Fatalf("expected one list_articles and one import_okf_bundle event, got %+v", events)
 	}
 }
 

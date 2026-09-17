@@ -403,7 +403,6 @@ func TestStreamableHTTPPropagatesModernStatus(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/mcp", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "http://localhost:8080")
 	req.Header.Set("MCP-Protocol-Version", "1900-01-01")
 	req.Header.Set("Mcp-Method", "tools/list")
 	w := httptest.NewRecorder()

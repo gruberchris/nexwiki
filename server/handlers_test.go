@@ -1458,10 +1458,7 @@ func TestEnableCORSForBrowserMCPClients(t *testing.T) {
 
 	// Mounted behind the same middleware stack main.go uses: EnableCORS answers the preflight before
 	// the request ever reaches HandleStreamableHTTP, so testing the handler alone would miss it.
-	srv := newMCPServer(t)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/mcp", srv.HandleStreamableHTTP)
-	handler := EnableCORS(LimitRequestBodies(mux))
+	handler := mcpEndpoint(newMCPServer(t))
 
 	// Browsers lower-case the names they list in Access-Control-Request-Headers.
 	mcpHeaders := []string{

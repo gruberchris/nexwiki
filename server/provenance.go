@@ -97,6 +97,13 @@ func describeClient(info clientInfo) string {
 // ever kept to maxAgentNameBytes, and the slack allows for leading whitespace and characters that
 // are stripped. Without a bound, sanitizing costs time in proportion to whatever a client chose to
 // send, which may be megabytes: a request header, a clientInfo in an 8 MB body.
+//
+// Nothing past the first maxAgentNameScanBytes is seen, so stripped junk (leading whitespace,
+// control or format characters, invalid bytes) uses up that budget wherever in those bytes it
+// falls. Once more than about 360 of them are junk, fewer than maxAgentNameBytes of text can
+// remain: even a short name comes back truncated if its text runs past the bound, and empty if it
+// starts beyond it. No real client name looks like that, and a name that comes out empty is
+// treated as absent, so attribution falls through to the next source.
 const maxAgentNameScanBytes = 4 * maxAgentNameBytes
 
 // truncateAgentName bounds a self-reported name and strips the characters that would corrupt the
@@ -228,8 +235,10 @@ func (srv *Server) resolveAgent(req *JSONRPCRequest, env paramsEnvelope) string 
 			return name
 		}
 	}
-	if name := strings.TrimSpace(srv.AgentName); name != "" {
-		return truncateAgentName(name)
+	// Checked after sanitizing, not before: a configured name made only of characters the sanitizer
+	// strips is as good as unset, and returning it would log writes with no agent at all.
+	if name := truncateAgentName(strings.TrimSpace(srv.AgentName)); name != "" {
+		return name
 	}
 	return DefaultAgentName
 }

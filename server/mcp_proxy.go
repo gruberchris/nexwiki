@@ -74,7 +74,9 @@ type MCPProxy struct {
 }
 
 // NewMCPProxy builds a proxy targeting the primary's MCP endpoint on the given port. agentName is
-// this process's configured attribution fallback, and may be empty.
+// this process's configured attribution fallback, and may be empty. One that sanitizes to nothing
+// is kept empty too, so the proxy forwards no name for it and the primary's own fallback applies
+// rather than a blank agent.
 func NewMCPProxy(port, agentName string, out io.Writer) *MCPProxy {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &MCPProxy{

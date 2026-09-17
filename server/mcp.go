@@ -623,24 +623,13 @@ const mcpAllowedRequestHeaders = "Content-Type, Accept, Authorization, MCP-Proto
 
 // HandleStreamableHTTP implements the Streamable HTTP transport (2025 Spec)
 // supporting GET (initiating SSE stream) and POST (synchronous JSON-RPC).
+//
+// It must only be served behind EnableCORS, as main.go mounts it. Every MCP tool — including
+// delete_wiki_article and export_okf_bundle — is reachable here with no authentication, so an
+// unvalidated origin is full read/write access to the knowledge base. The Origin check lives in
+// EnableCORS alone so the two cannot drift apart: the middleware answers preflights and rejects
+// origins before the handler runs, so a second copy here could never take effect.
 func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) {
-	// Validate the browser Origin before doing anything else. Every MCP tool — including
-	// delete_wiki_article and export_okf_bundle — is reachable here with no authentication,
-	// so an unvalidated origin is full read/write access to the knowledge base.
-	applySecurityHeaders(w)
-	allowOrigin, originOK := originAllowed(r.Header.Get("Origin"), r.Host)
-	if !originOK {
-		applyCORSHeaders(w, "", "GET, POST, OPTIONS", mcpAllowedRequestHeaders)
-		http.Error(w, "origin not allowed; set "+AllowedOriginsEnv+" to permit it", http.StatusForbidden)
-		return
-	}
-	applyCORSHeaders(w, allowOrigin, "GET, POST, OPTIONS", mcpAllowedRequestHeaders)
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	switch r.Method {
 	case http.MethodGet:
 		// Verify accept header supports text/event-stream

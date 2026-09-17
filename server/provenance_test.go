@@ -125,6 +125,25 @@ func TestResolveAgentFallbackOrder(t *testing.T) {
 			want: DefaultAgentName,
 		},
 		{
+			name:       "a configured name of control and zero-width characters falls back to the default",
+			configured: "\x01\x1b\u200b\u200e\ufeff",
+			req:        &JSONRPCRequest{Headers: http.Header{}},
+			want:       DefaultAgentName,
+		},
+		{
+			name:       "a configured name that sanitizes to nothing falls back to the default on stdio too",
+			configured: "\x7f\u2060\u200d",
+			req:        stdioReq,
+			want:       DefaultAgentName,
+		},
+		{
+			// Past maxAgentNameScanBytes of junk, the real text is never reached.
+			name:       "a configured name whose text lies beyond the scan bound falls back to the default",
+			configured: strings.Repeat("\u200b", maxAgentNameScanBytes/3+1) + "Automation Script",
+			req:        &JSONRPCRequest{},
+			want:       DefaultAgentName,
+		},
+		{
 			name:       "empty modern clientInfo falls through rather than blanking attribution",
 			configured: "Automation Script",
 			req:        &JSONRPCRequest{},
@@ -340,7 +359,9 @@ func TestTruncateAgentNameMatchesReference(t *testing.T) {
 // or Base64 around the name; the quadratic version took minutes for a few hundred kilobytes. The
 // work runs on its own goroutine so a regression fails at the deadline instead of hanging the suite.
 func TestAgentNameSanitizingTimeIsBounded(t *testing.T) {
-	const budget = 2 * time.Second
+	// Generous: the slowest case, decoding the 8 MB initialize JSON under -race, can take about a
+	// second on a loaded machine, while a quadratic regression takes minutes.
+	const budget = 10 * time.Second
 	within := func(t *testing.T, name string, run func() string) {
 		t.Helper()
 		done := make(chan string, 1)

@@ -137,13 +137,14 @@ var corsAllowedHeaders = strings.Join([]string{
 	"Content-Type",  // JSON bodies from the web UI and MCP clients aren't a safelisted type
 	"Authorization", // NexWiki has no auth of its own, but a reverse proxy in front of it may
 	"Accept",        // read by the MCP GET stream; long or unusual values lose safelisted status
-	// Mirrored from the body on every modern-era request and rejected when missing
-	// (validateModernHeaders); legacy HTTP clients also send MCP-Protocol-Version after initialize.
+	// Mirrored from the body and rejected when missing (validateModernHeaders): the first two on
+	// every modern-era request, Mcp-Name only on those that name a target (methodsWithNameHeader).
+	// Legacy HTTP clients also send MCP-Protocol-Version after initialize.
 	"MCP-Protocol-Version",
 	"Mcp-Method",
 	"Mcp-Name",
 	// Client attribution over HTTP, which has no session to remember an initialize handshake.
-	"X-NexWiki-Client-Name",
+	clientNameHeader,
 }, ", ")
 
 // applyCORSHeaders echoes the validated origin (never "*" unless explicitly opted in) and
@@ -187,7 +188,7 @@ func EnableCORS(next http.Handler) http.Handler {
 		origin := r.Header.Get("Origin")
 		allowOrigin, ok := originAllowed(origin, r.Host)
 		if !ok {
-			applyCORSHeaders(w, "", corsAllowedMethods, corsAllowedHeaders)
+			applyCORSHeaders(w, "", "", "")
 			writeError(w, http.StatusForbidden,
 				"origin not allowed: "+origin+". NexWiki is unauthenticated and only accepts same-origin "+
 					"and loopback browser requests by default. Set "+AllowedOriginsEnv+" to permit this origin.")
