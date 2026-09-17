@@ -126,7 +126,7 @@ A guide to running NexWiki in containers using official multi-platform images:
 * **Multi-Platform GHCR Images**: Pulling and running `ghcr.io/gruberchris/nexwiki:latest` on `linux/amd64` and `linux/arm64`.
 * **Container Run Commands**: Minimal and advanced `docker run` invocations with port mapping and environment variables.
 * **Production Docker Compose**: Production-ready `docker-compose.yml` configuration with persistent volumes.
-* **Volume Persistence**: Understanding `/app/data` structure (`articles/`, `assets/`, `search.bleve/`, `activity.jsonl`) and graceful shutdown handling.
+* **Volume Persistence**: Understanding `/app/data` structure (`articles/`, `assets/`, `history/`, `search.bleve/`, `activity.jsonl`, `custom_themes.json`) and graceful shutdown handling.
 * **Stdio MCP Subprocesses**: Spawning stdio MCP workers via `docker exec` with the `-mcp-only` flag.
 
 ### 18. [NexWiki Production Deployment & Reverse Proxy Guide](./production_deployment.md)

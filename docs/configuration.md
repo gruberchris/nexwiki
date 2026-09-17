@@ -41,9 +41,9 @@ will name the wiki `"Primary Knowledge Base"`.
 | **Plan Lifecycle Interval** | — | `NEXWIKI_PLAN_LIFECYCLE_INTERVAL_DAYS` | `1` | Interval (in days) between automated sweeps by the background plan lifecycle worker. A sweep also runs once at startup. Minimum value is `1`. |
 | **Plan Auto-Archive** | — | `NEXWIKI_PLAN_ARCHIVE_AFTER_DAYS` | `90` | Days a collaborative AI plan remains in `completed` or `superseded` status before being automatically transitioned to `archived`. Set to `0` to disable. |
 | **Plan Auto-Delete** | — | `NEXWIKI_PLAN_DELETE_AFTER_DAYS` | `365` | Days an AI plan remains in `archived` status before being permanently deleted. Set to `0` to disable. **Safety Guard:** Plans referenced by inbound links from other documents are never deleted. |
-| **Plan Lifecycle Dry-Run** | — | `NEXWIKI_PLAN_LIFECYCLE_DRY_RUN` | `false` | When `true` or `1`, the plan lifecycle worker evaluates and logs planned transitions to stderr and the activity log without applying changes to disk. |
+| **Plan Lifecycle Dry-Run** | — | `NEXWIKI_PLAN_LIFECYCLE_DRY_RUN` | `false` | When `true` or `1`, the plan lifecycle worker evaluates and logs planned transitions to stderr only, without applying changes to disk. Dry-run writes nothing to the activity log, including `delete-refused` events for plans the backlink guard keeps. |
 | **Secret Scanning** | — | `NEXWIKI_SECRET_SCAN` | `refuse` | Disposition when an AI agent write contains credential-shaped text: `refuse` (reject the write with a descriptive error), `warn` (persist the write but add an alert note), or `off` (disable checks). Any unrecognized value falls back safely to `refuse`. |
-| **Activity Archive Cap** | — | `NEXWIKI_ACTIVITY_MAX_ARCHIVES` | unlimited | Maximum number of rotated `activity-<UTC>.jsonl` log archives retained in the data directory. When log files exceed 10 MB, they are rotated; setting this cap purges the oldest rotated files beyond the limit. |
+| **Activity Archive Cap** | — | `NEXWIKI_ACTIVITY_MAX_ARCHIVES` | unlimited | Maximum number of rotated log archives (`activity-<UTC>.jsonl`, or `activity.jsonl.<N>` when that timestamp is taken) retained in the data directory. When log files exceed 10 MB, they are rotated; setting this cap purges the oldest rotated files beyond the limit. |
 
 ---
 

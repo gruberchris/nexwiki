@@ -114,7 +114,7 @@ When running headless without the web interface:
   }
 }
 ```
-*(Note: Passing `-mcp-only` is required for stdio subprocesses to skip the web port bind).*
+*(Note: Passing `-mcp-only` is required for stdio subprocesses. It skips the web port bind, and if a NexWiki web server is already running, it proxies to it instead of opening the data directory; see [Sidecar proxy mode](docs/mcp_server.md#-sidecar-proxy-mode)).*
 
 ### Universal Agent Skill & In-Wiki Governance
 - **Agent Skill**: Copy [`agent-skill/nexwiki/`](agent-skill/nexwiki/) into your agent's skills folder (`~/.claude/skills/`, `~/.copilot/skills/`, `.agents/skills/`, etc.). Built on the open [Agent Skills](https://agentskills.io) standard, it works across Claude Code, GitHub Copilot CLI, Google Antigravity, OpenCode, and OpenAI Codex. See the [Agent Skill Guide](agent-skill/README.md).

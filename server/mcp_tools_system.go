@@ -16,7 +16,7 @@ import (
 var getWikiStatisticsTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_wiki_statistics",
-		"description": "Retrieve high-level wiki statistics, including total articles, storage footprint, a count of article files that cannot be read or parsed and article folders that cannot be listed, and a list of dead or broken internal links — both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links.",
+		"description": "Retrieve high-level wiki statistics, including total articles, a count of article files that cannot be read or parsed and article folders that cannot be listed, and a list of dead or broken internal links — both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links.",
 		"inputSchema": map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -131,7 +131,7 @@ func (srv *Server) toolGetStatusTags(args json.RawMessage) (interface{}, *JSONRP
 var getRecentActivityTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_recent_activity",
-		"description": "Query the durable wiki activity log to see what changed and when — useful at session start to catch up on edits made by other agents, processes, or the human since you last looked. Events from a different MCP process may lag by milliseconds.",
+		"description": "Query the durable wiki activity log to see what changed and when — useful at session start to catch up on edits made by other agents, processes, or the human since you last looked.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

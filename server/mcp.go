@@ -353,8 +353,6 @@ func (srv *Server) logMCPToolCall(params json.RawMessage, agent string) {
 
 	srv.EventBus.PublishActivity("mcp", action, tool, slug, title, agent)
 
-	// When running as a mcp-only sidecar alongside a web server, forward the event to it.
-
 	// If it's a mutation, broadcast a WikiUpdate to sync all clients!
 	if action != "read" {
 		articles, err := srv.Storage.ListArticles()
