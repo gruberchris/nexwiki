@@ -164,7 +164,7 @@ func (srv *Server) HandleGetConfig(w http.ResponseWriter, _ *http.Request) {
 func (srv *Server) HandleListArticles(w http.ResponseWriter, _ *http.Request) {
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, articles)
@@ -180,7 +180,7 @@ func (srv *Server) HandleGetArticle(w http.ResponseWriter, r *http.Request) {
 
 	art, err := srv.Storage.GetArticle(slug)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, srv.clientError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, art)
@@ -327,7 +327,7 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 	// Regular article creation always produces a Wiki document; reserved types are tool-only.
 	art, err := srv.Storage.SaveArticleWithOverrides("", req.Title, req.Content, description, source, resource, req.EditSummary, cleanedTags, ContentTypeWiki, overrides)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -435,7 +435,7 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "article not found")
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -503,7 +503,7 @@ func (srv *Server) HandleVerifyArticle(w http.ResponseWriter, r *http.Request) {
 		overrides,
 	)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -512,11 +512,6 @@ func (srv *Server) HandleVerifyArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, saved)
-}
-
-// RegisterRoutes registers all API routes on the provided ServeMux.
-func (srv *Server) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/articles/{slug}/verify", srv.HandleVerifyArticle)
 }
 
 // HandleUpdateArticleTags updates only the tags of an existing article.
@@ -560,7 +555,7 @@ func (srv *Server) HandleUpdateArticleTags(w http.ResponseWriter, r *http.Reques
 
 	art, err := srv.Storage.SaveArticle(slug, existing.Title, existing.Content, existing.Description, existing.Source, existing.Resource, summary, cleanedTags, existing.Type)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -606,7 +601,7 @@ func (srv *Server) HandleDeleteArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := srv.Storage.DeleteArticle(slug); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -704,7 +699,7 @@ func (srv *Server) HandleUploadAsset(w http.ResponseWriter, r *http.Request) {
 
 	url, err := srv.Storage.SaveAsset(slug, header.Filename, fileBytes)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -723,7 +718,7 @@ func (srv *Server) HandleGetAsset(w http.ResponseWriter, r *http.Request) {
 
 	filePath, err := srv.Storage.GetAssetPath(slug, filename)
 	if err != nil {
-		writeError(w, http.StatusForbidden, err.Error())
+		writeError(w, http.StatusForbidden, srv.clientError(err))
 		return
 	}
 
@@ -757,7 +752,7 @@ func (srv *Server) HandleSearchArticles(w http.ResponseWriter, r *http.Request) 
 	query := r.URL.Query().Get("q")
 	results, err := srv.Storage.SearchArticles(query)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, results)
@@ -779,7 +774,7 @@ func (srv *Server) HandleGetBacklinks(w http.ResponseWriter, r *http.Request) {
 
 	backlinks, err := srv.Storage.GetBacklinks(target.Slug)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 	if backlinks == nil {
@@ -798,7 +793,7 @@ func (srv *Server) HandleGetArticleHistory(w http.ResponseWriter, r *http.Reques
 
 	history, err := srv.Storage.GetArticleHistory(slug)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, srv.attributeHistory(Slugify(slug), history))
@@ -847,7 +842,7 @@ func (srv *Server) HandleGetArticleVersion(w http.ResponseWriter, r *http.Reques
 
 	art, err := srv.Storage.GetArticleVersion(slug, version)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, srv.clientError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, art)
@@ -876,7 +871,7 @@ func (srv *Server) HandleRevertArticle(w http.ResponseWriter, r *http.Request) {
 
 	art, err := srv.Storage.RevertArticle(slug, req.Version)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -921,7 +916,7 @@ func (srv *Server) HandleDeleteTagGlobally(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := srv.Storage.DeleteTagGlobally(tag); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -1076,7 +1071,7 @@ func extractDescription(content string) string {
 func (srv *Server) HandleListSkills(w http.ResponseWriter, r *http.Request) {
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -1123,7 +1118,7 @@ func (srv *Server) HandleGetSkill(w http.ResponseWriter, r *http.Request) {
 
 	art, err := srv.Storage.GetArticle(slug)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, srv.clientError(err))
 		return
 	}
 
@@ -1165,7 +1160,7 @@ func (srv *Server) HandleGetSkillRaw(w http.ResponseWriter, r *http.Request) {
 
 	art, err := srv.Storage.GetArticle(cleanedSlug)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, srv.clientError(err))
 		return
 	}
 
@@ -1197,7 +1192,7 @@ type WikiStats struct {
 func (srv *Server) HandleGetWikiStats(w http.ResponseWriter, _ *http.Request) {
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -1279,7 +1274,7 @@ func (srv *Server) HandleActivityStream(w http.ResponseWriter, r *http.Request) 
 func (srv *Server) HandleExportOKFBundle(w http.ResponseWriter, _ *http.Request) {
 	data, err := srv.Storage.ExportOKFBundle()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 	fileName := fmt.Sprintf("nexwiki-okf-%s.zip", time.Now().UTC().Format("2006-01-02"))
@@ -1310,8 +1305,13 @@ func (srv *Server) HandleImportOKFBundle(w http.ResponseWriter, r *http.Request)
 
 	report, err := srv.Storage.ImportOKFBundle(data)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, srv.clientError(err))
 		return
+	}
+	// A warning can carry the error of a document that failed to save.
+	hider := newDataDirHider(srv.Storage.DataDir)
+	for i, warning := range report.Warnings {
+		report.Warnings[i] = hider.hide(warning)
 	}
 	writeJSON(w, http.StatusOK, report)
 }
@@ -1344,7 +1344,7 @@ func (srv *Server) HandleGetActivityLog(w http.ResponseWriter, r *http.Request) 
 
 	events, err := ReadActivityLogBefore(ActivityLogPath(srv.Storage.DataDir), before, limit, q.Get("action"), q.Get("source"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 	if events == nil {

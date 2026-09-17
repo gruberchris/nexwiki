@@ -172,7 +172,7 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 
 	art, err := srv.Storage.SaveArticleWithOverrides("", title, mArgs.Content, mArgs.Description, mArgs.Source, "", summary, tags, ContentTypeMemory, ArticleOverrides{MemoryKind: &memoryKind})
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent memory: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent memory: %s", srv.clientError(err))}}}, nil
 	}
 
 	respText := fmt.Sprintf("Success! Protected AI Agent Memory '%s' created successfully.\nSlug: %s\nKind: %s\nCreated At: %s\nVersion: %d\nTags: %s\n",
@@ -267,7 +267,7 @@ func (srv *Server) toolAppendAgentMemory(args json.RawMessage) (interface{}, *JS
 
 	art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, existing.Resource, summary, existing.Tags, existing.Type)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent memory: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent memory: %s", srv.clientError(err))}}}, nil
 	}
 
 	respText := fmt.Sprintf("Success! Appended memory details to '%s' (version: %d, edited: %s).\n",
@@ -481,7 +481,7 @@ func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSON
 
 	art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, newTitle, newContent, newDescription, newSource, newResource, summary, newTags, existing.Type, ArticleOverrides{MemoryKind: kindOverride})
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent memory: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent memory: %s", srv.clientError(err))}}}, nil
 	}
 
 	if contested {
@@ -548,7 +548,7 @@ func (srv *Server) toolDeleteAgentMemory(args json.RawMessage) (interface{}, *JS
 	}
 
 	if err := srv.Storage.DeleteArticle(dArgs.Slug); err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error deleting agent memory: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error deleting agent memory: %s", srv.clientError(err))}}}, nil
 	}
 
 	respText := fmt.Sprintf("Success! AI Agent Memory '%s' (slug: %s) has been permanently deleted from disk along with all history backups.\n", existing.Title, existing.Slug)
@@ -598,7 +598,7 @@ func (srv *Server) toolListAgentMemories(args json.RawMessage) (interface{}, *JS
 
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
 	}
 
 	filterType := strings.ToLower(strings.TrimSpace(lArgs.MemoryType))

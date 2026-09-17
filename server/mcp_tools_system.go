@@ -192,7 +192,7 @@ func (srv *Server) toolGetRecentActivity(args json.RawMessage) (interface{}, *JS
 
 	events, err := ReadActivityLog(ActivityLogPath(srv.Storage.DataDir), since, limit, aArgs.Action, aArgs.Source)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error reading activity log: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error reading activity log: %s", srv.clientError(err))}}}, nil
 	}
 
 	// Fall back to the in-memory ring buffer when no durable log exists yet
@@ -260,7 +260,7 @@ var exportOkfBundleTool = toolDef{
 func (srv *Server) toolExportOkfBundle(args json.RawMessage) (interface{}, *JSONRPCError) {
 	data, err := srv.Storage.ExportOKFBundle()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error exporting OKF bundle: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error exporting OKF bundle: %s", srv.clientError(err))}}}, nil
 	}
 	fileName := fmt.Sprintf("okf-export-%s.zip", time.Now().UTC().Format("2006-01-02T15-04-05Z"))
 	outPath := filepath.Join(srv.Storage.DataDir, fileName)
@@ -268,7 +268,7 @@ func (srv *Server) toolExportOkfBundle(args json.RawMessage) (interface{}, *JSON
 		outPath = abs
 	}
 	if err := os.WriteFile(outPath, data, 0644); err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error writing OKF bundle to disk: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error writing OKF bundle to disk: %s", srv.clientError(err))}}}, nil
 	}
 	respText := fmt.Sprintf("Success! Exported OKF v%s bundle (%d bytes) to:\n%s\n", OKFVersion, len(data), outPath)
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
@@ -341,18 +341,20 @@ func (srv *Server) toolImportOkfBundle(args json.RawMessage) (interface{}, *JSON
 
 	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error reading bundle at '%s': %v", iArgs.Path, err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error reading bundle at '%s': %s", iArgs.Path, srv.clientError(err))}}}, nil
 	}
 	report, err := srv.Storage.ImportOKFBundle(data)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error importing OKF bundle: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error importing OKF bundle: %s", srv.clientError(err))}}}, nil
 	}
 	respText := fmt.Sprintf("OKF import complete: %d imported, %d skipped.\n", report.Imported, report.Skipped)
 	if len(report.MissingType) > 0 {
 		respText += fmt.Sprintf("Documents defaulted to Wiki (missing/unknown type): %s\n", strings.Join(report.MissingType, ", "))
 	}
+	// A warning can carry the error of a document that failed to save.
+	hider := newDataDirHider(srv.Storage.DataDir)
 	for _, wmsg := range report.Warnings {
-		respText += "Warning: " + wmsg + "\n"
+		respText += "Warning: " + hider.hide(wmsg) + "\n"
 	}
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
