@@ -1438,6 +1438,180 @@ func TestEnableCORS(t *testing.T) {
 	}
 }
 
+// corsList splits a comma-separated CORS header value into lower-cased names, so assertions do not
+// depend on the casing or order the server happens to use.
+func corsList(value string) []string {
+	var names []string
+	for _, part := range strings.Split(value, ",") {
+		if name := strings.ToLower(strings.TrimSpace(part)); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// TestEnableCORSForBrowserMCPClients covers #171. A browser MCP client on an allowed origin must be
+// able to send the protocol headers /api/mcp requires, and read the headers it answers with,
+// without that widening the policy for any other origin.
+func TestEnableCORSForBrowserMCPClients(t *testing.T) {
+	t.Setenv(AllowedOriginsEnv, "https://mcp-client.example")
+
+	// Mounted behind the same middleware stack main.go uses: EnableCORS answers the preflight before
+	// the request ever reaches HandleStreamableHTTP, so testing the handler alone would miss it.
+	srv := newMCPServer(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/mcp", srv.HandleStreamableHTTP)
+	handler := EnableCORS(LimitRequestBodies(mux))
+
+	// Browsers lower-case the names they list in Access-Control-Request-Headers.
+	mcpHeaders := []string{
+		"content-type", "accept", "mcp-protocol-version", "mcp-method", "mcp-name", "x-nexwiki-client-name",
+	}
+
+	preflight := func(origin, requestHeaders string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodOptions, "/api/mcp", nil)
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+		req.Header.Set("Access-Control-Request-Headers", requestHeaders)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w
+	}
+
+	for _, origin := range []string{"http://localhost:5173", "https://mcp-client.example"} {
+		t.Run("allowed origin "+origin+" may send the MCP headers", func(t *testing.T) {
+			w := preflight(origin, strings.Join(mcpHeaders, ","))
+			if w.Code != http.StatusOK {
+				t.Fatalf("preflight: expected 200, got %d", w.Code)
+			}
+			if got := w.Header().Get("Access-Control-Allow-Origin"); got != origin {
+				t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, origin)
+			}
+			allowed := corsList(w.Header().Get("Access-Control-Allow-Headers"))
+			for _, name := range append(mcpHeaders, "authorization") {
+				if !slices.Contains(allowed, name) {
+					t.Errorf("Access-Control-Allow-Headers %v is missing %q", allowed, name)
+				}
+			}
+			if methods := corsList(w.Header().Get("Access-Control-Allow-Methods")); !slices.Contains(methods, "post") {
+				t.Errorf("Access-Control-Allow-Methods %v must allow POST to /api/mcp", methods)
+			}
+		})
+	}
+
+	t.Run("allow list is explicit, never a wildcard or an echo of the request", func(t *testing.T) {
+		assertExplicit := func(t *testing.T, w *httptest.ResponseRecorder) {
+			t.Helper()
+			allowed := corsList(w.Header().Get("Access-Control-Allow-Headers"))
+			if len(allowed) == 0 {
+				t.Fatal("Access-Control-Allow-Headers is empty")
+			}
+			if slices.Contains(allowed, "*") {
+				t.Errorf("Access-Control-Allow-Headers %v must not contain a wildcard", allowed)
+			}
+			if slices.Contains(allowed, "x-arbitrary-header") {
+				t.Errorf("Access-Control-Allow-Headers %v echoed an unrequired header", allowed)
+			}
+		}
+
+		assertExplicit(t, preflight("http://localhost:5173", "mcp-method, x-arbitrary-header"))
+
+		// The origin opt-out widens who may call, not what they may send.
+		t.Setenv(AllowedOriginsEnv, "*")
+		w := preflight("https://evil.example", "mcp-method, x-arbitrary-header")
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+			t.Fatalf("wildcard opt-out: Access-Control-Allow-Origin = %q, want \"*\"", got)
+		}
+		assertExplicit(t, w)
+	})
+
+	t.Run("disallowed origin preflight is still rejected with no CORS grants", func(t *testing.T) {
+		w := preflight("https://evil.example", strings.Join(mcpHeaders, ","))
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("preflight: expected 403, got %d", w.Code)
+		}
+		for _, name := range []string{
+			"Access-Control-Allow-Origin", "Access-Control-Allow-Methods",
+			"Access-Control-Allow-Headers", "Access-Control-Expose-Headers",
+		} {
+			if got := w.Header().Get(name); got != "" {
+				t.Errorf("rejected origin got %s: %q", name, got)
+			}
+		}
+		// Vary keeps a shared cache from serving this 403 to an allowed origin, or the reverse.
+		if got := w.Header().Get("Vary"); got != "Origin" {
+			t.Errorf("Vary = %q, want Origin", got)
+		}
+		if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("security headers must still apply to a rejection; X-Frame-Options = %q", got)
+		}
+	})
+
+	// A browser only lets JavaScript read CORS-safelisted response headers (Content-Type, which
+	// separates a JSON reply from an SSE stream, among them) plus those named in
+	// Access-Control-Expose-Headers. NexWiki issues no Mcp-Session-Id, so nothing needs exposing
+	// today; the guard is that any protocol header a response does carry is readable.
+	t.Run("MCP response headers are readable by browser JavaScript", func(t *testing.T) {
+		requests := []struct {
+			name    string
+			body    string
+			headers map[string]string
+			want    string
+		}{
+			{
+				name: "modern server/discover",
+				body: `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{` +
+					`"io.modelcontextprotocol/protocolVersion":"` + ModernProtocolVersion + `",` +
+					`"io.modelcontextprotocol/clientCapabilities":{}}}}`,
+				headers: map[string]string{
+					"MCP-Protocol-Version": ModernProtocolVersion,
+					"Mcp-Method":           "server/discover",
+				},
+				want: "supportedVersions",
+			},
+			{
+				name: "legacy initialize",
+				body: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",` +
+					`"capabilities":{},"clientInfo":{"name":"browser-client","version":"1.0"}}}`,
+				want: "protocolVersion",
+			},
+		}
+
+		for _, tc := range requests {
+			t.Run(tc.name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodPost, "/api/mcp", strings.NewReader(tc.body))
+				req.Header.Set("Origin", "http://localhost:5173")
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Accept", "application/json, text/event-stream")
+				for k, v := range tc.headers {
+					req.Header.Set(k, v)
+				}
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, req)
+
+				if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), tc.want) {
+					t.Fatalf("expected 200 with %q, got %d: %s", tc.want, w.Code, w.Body.String())
+				}
+				if got := w.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+					t.Errorf("Access-Control-Allow-Origin = %q", got)
+				}
+
+				exposed := corsList(w.Header().Get("Access-Control-Expose-Headers"))
+				if slices.Contains(exposed, "*") {
+					t.Errorf("Access-Control-Expose-Headers %v must not contain a wildcard", exposed)
+				}
+				for name := range w.Header() {
+					lower := strings.ToLower(name)
+					if (strings.HasPrefix(lower, "mcp-") || strings.HasPrefix(lower, "x-nexwiki-")) &&
+						!slices.Contains(exposed, lower) {
+						t.Errorf("response sets %s but Access-Control-Expose-Headers %v hides it", name, exposed)
+					}
+				}
+			})
+		}
+	})
+}
+
 func TestOriginAllowed(t *testing.T) {
 	t.Setenv(AllowedOriginsEnv, "https://wiki.example.com")
 

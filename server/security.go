@@ -116,13 +116,46 @@ func applySecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
 }
 
+// corsAllowedMethods are the methods an allowed browser origin may use across the REST API and
+// /api/mcp.
+const corsAllowedMethods = "GET, POST, PUT, DELETE, OPTIONS"
+
+// corsAllowedHeaders is the explicit set of request headers an allowed browser origin may send. A
+// header missing here fails the preflight before the request reaches any handler, so it must name
+// everything NexWiki reads or requires. It is never "*" or an echo of
+// Access-Control-Request-Headers: the list is the contract, and a blind echo would make it
+// meaningless.
+//
+// Mcp-Session-Id and Last-Event-ID are deliberately absent. NexWiki issues no session and writes
+// no SSE event ids, so a conforming client has nothing to send back, and neither header is read.
+//
+// No Access-Control-Expose-Headers is sent either: every response header an MCP client reads
+// (Content-Type, to tell a JSON reply from an SSE stream) is CORS-safelisted. A protocol header
+// added to responses later, such as Mcp-Session-Id, must be exposed or browser JavaScript can't
+// see it.
+var corsAllowedHeaders = strings.Join([]string{
+	"Content-Type",  // JSON bodies from the web UI and MCP clients aren't a safelisted type
+	"Authorization", // NexWiki has no auth of its own, but a reverse proxy in front of it may
+	"Accept",        // read by the MCP GET stream; long or unusual values lose safelisted status
+	// Mirrored from the body on every modern-era request and rejected when missing
+	// (validateModernHeaders); legacy HTTP clients also send MCP-Protocol-Version after initialize.
+	"MCP-Protocol-Version",
+	"Mcp-Method",
+	"Mcp-Name",
+	// Client attribution over HTTP, which has no session to remember an initialize handshake.
+	"X-NexWiki-Client-Name",
+}, ", ")
+
 // applyCORSHeaders echoes the validated origin (never "*" unless explicitly opted in) and
-// marks the response as origin-dependent so shared caches do not cross-serve it.
+// marks the response as origin-dependent so shared caches do not cross-serve it. With no origin
+// to echo (a rejected origin, or a non-browser client) only Vary is set: the Allow-* headers
+// grant nothing without Allow-Origin, so sending them would only advertise the header surface.
 func applyCORSHeaders(w http.ResponseWriter, allowOrigin, methods, headers string) {
 	w.Header().Set("Vary", "Origin")
-	if allowOrigin != "" {
-		w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
+	if allowOrigin == "" {
+		return
 	}
+	w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
 	w.Header().Set("Access-Control-Allow-Methods", methods)
 	w.Header().Set("Access-Control-Allow-Headers", headers)
 }
@@ -151,19 +184,17 @@ func EnableCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		applySecurityHeaders(w)
 
-		allowedHeaders := allowedRequestHeadersFor(r.URL.Path)
-
 		origin := r.Header.Get("Origin")
 		allowOrigin, ok := originAllowed(origin, r.Host)
 		if !ok {
-			applyCORSHeaders(w, "", "GET, POST, PUT, DELETE, OPTIONS", allowedHeaders)
+			applyCORSHeaders(w, "", corsAllowedMethods, corsAllowedHeaders)
 			writeError(w, http.StatusForbidden,
 				"origin not allowed: "+origin+". NexWiki is unauthenticated and only accepts same-origin "+
 					"and loopback browser requests by default. Set "+AllowedOriginsEnv+" to permit this origin.")
 			return
 		}
 
-		applyCORSHeaders(w, allowOrigin, "GET, POST, PUT, DELETE, OPTIONS", allowedHeaders)
+		applyCORSHeaders(w, allowOrigin, corsAllowedMethods, corsAllowedHeaders)
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
