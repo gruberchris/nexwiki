@@ -428,6 +428,39 @@ func TestResolveConfiguredAgentNameEnvWins(t *testing.T) {
 	}
 }
 
+// TestResolveConfiguredAgentNameIgnoresAnEnvValueThatSanitizesToNothing pins that an env value
+// made only of characters the sanitizer strips doesn't displace a usable flag: every consumer
+// sanitizes the result, so it would resolve to DefaultAgentName instead of the flag's name.
+func TestResolveConfiguredAgentNameIgnoresAnEnvValueThatSanitizesToNothing(t *testing.T) {
+	for _, env := range []string{
+		"\u200b\u200e",         // zero-width space and left-to-right mark: format characters
+		" \x1b\x07 ",           // control characters between spaces
+		"\t\u2060\n",           // a word joiner between whitespace
+		"\u200b \u202e \u00a0", // format characters separated by spaces
+	} {
+		t.Run(strconv.QuoteToASCII(env), func(t *testing.T) {
+			t.Setenv("NEXWIKI_AGENT_NAME", env)
+			got := ResolveConfiguredAgentName("From Flag")
+			if got != "From Flag" {
+				t.Fatalf("got %q, want the flag when the env var sanitizes to nothing", got)
+			}
+			srv := &Server{AgentName: got}
+			if agent := srv.resolveAgent(&JSONRPCRequest{}, paramsEnvelope{}); agent != "From Flag" {
+				t.Errorf("resolveAgent = %q, want the flag's name", agent)
+			}
+			if proxied := NewMCPProxy("1", got, io.Discard).agentName; proxied != "From Flag" {
+				t.Errorf("sidecar agent name = %q, want the flag's name", proxied)
+			}
+		})
+	}
+
+	// A name with visible text still wins, surrounded by stripped characters or not.
+	t.Setenv("NEXWIKI_AGENT_NAME", "\u200bFrom Env ")
+	if got := truncateAgentName(ResolveConfiguredAgentName("From Flag")); got != "From Env" {
+		t.Errorf("got %q, want the environment variable's visible name to take precedence", got)
+	}
+}
+
 // --- the history join -------------------------------------------------------------------------
 
 func TestAttributeRevisionsJoinsTheActivityLog(t *testing.T) {

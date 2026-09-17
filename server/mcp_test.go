@@ -1255,12 +1255,13 @@ func TestMCPAppendAgentPlanComprehensive(t *testing.T) {
 }
 
 // mcpEndpoint mounts srv's MCP handler the way main.go does: on /api/mcp, behind EnableCORS and
-// LimitRequestBodies. HandleStreamableHTTP has no Origin check of its own, so a test of browser
-// behavior must go through this; calling the handler bare would accept what production rejects.
-func mcpEndpoint(srv *Server) http.Handler {
+// LimitRequestBodies. HandleStreamableHTTP has no Host or Origin check of its own, so a test of
+// browser behavior must go through this; calling the handler bare would accept what production
+// rejects. opts are passed to EnableCORS, as main.go passes the bind host.
+func mcpEndpoint(srv *Server, opts ...CORSOption) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/mcp", srv.HandleStreamableHTTP)
-	return EnableCORS(LimitRequestBodies(mux))
+	return EnableCORS(LimitRequestBodies(mux), opts...)
 }
 
 func TestHandleStreamableHTTP(t *testing.T) {
@@ -1268,7 +1269,7 @@ func TestHandleStreamableHTTP(t *testing.T) {
 	handler := mcpEndpoint(srv)
 
 	// OPTIONS pre-flight from the wiki's own loopback UI: allowed, origin echoed back verbatim.
-	req := httptest.NewRequest("OPTIONS", "/api/mcp", nil)
+	req := newLoopbackRequest("OPTIONS", "/api/mcp", nil)
 	req.Header.Set("Origin", "http://localhost:8080")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -1280,7 +1281,7 @@ func TestHandleStreamableHTTP(t *testing.T) {
 	}
 
 	// Unsupported method
-	req2 := httptest.NewRequest("PUT", "/api/mcp", nil)
+	req2 := newLoopbackRequest("PUT", "/api/mcp", nil)
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusMethodNotAllowed {
@@ -1288,7 +1289,7 @@ func TestHandleStreamableHTTP(t *testing.T) {
 	}
 
 	// POST with invalid JSON
-	req3 := httptest.NewRequest("POST", "/api/mcp", strings.NewReader("not json"))
+	req3 := newLoopbackRequest("POST", "/api/mcp", strings.NewReader("not json"))
 	req3.Header.Set("Content-Type", "application/json")
 	w3 := httptest.NewRecorder()
 	handler.ServeHTTP(w3, req3)
@@ -1298,7 +1299,7 @@ func TestHandleStreamableHTTP(t *testing.T) {
 
 	// POST with valid JSON-RPC initialize
 	body := `{"jsonrpc":"2.0","method":"initialize","params":null,"id":1}`
-	req4 := httptest.NewRequest("POST", "/api/mcp", strings.NewReader(body))
+	req4 := newLoopbackRequest("POST", "/api/mcp", strings.NewReader(body))
 	req4.Header.Set("Content-Type", "application/json")
 	w4 := httptest.NewRecorder()
 	handler.ServeHTTP(w4, req4)
@@ -1315,7 +1316,7 @@ func TestHandleStreamableHTTP(t *testing.T) {
 
 	// POST with tools/call
 	toolBody := `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_status_tags","arguments":{}},"id":2}`
-	req5 := httptest.NewRequest("POST", "/api/mcp", strings.NewReader(toolBody))
+	req5 := newLoopbackRequest("POST", "/api/mcp", strings.NewReader(toolBody))
 	req5.Header.Set("Content-Type", "application/json")
 	w5 := httptest.NewRecorder()
 	handler.ServeHTTP(w5, req5)
@@ -1326,7 +1327,7 @@ func TestHandleStreamableHTTP(t *testing.T) {
 	// GET with immediate context cancel (SSE stream setup then exit)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately so the stream loop exits right away
-	req6 := httptest.NewRequest("GET", "/api/mcp", nil).WithContext(ctx)
+	req6 := newLoopbackRequest("GET", "/api/mcp", nil).WithContext(ctx)
 	req6.Header.Set("Accept", "text/event-stream")
 	w6 := httptest.NewRecorder()
 	handler.ServeHTTP(w6, req6)
@@ -1335,7 +1336,7 @@ func TestHandleStreamableHTTP(t *testing.T) {
 	}
 
 	// GET with unsupported Accept header
-	req7 := httptest.NewRequest("GET", "/api/mcp", nil)
+	req7 := newLoopbackRequest("GET", "/api/mcp", nil)
 	req7.Header.Set("Accept", "application/json")
 	w7 := httptest.NewRecorder()
 	handler.ServeHTTP(w7, req7)
@@ -1351,7 +1352,9 @@ func TestHandleStreamableHTTP(t *testing.T) {
 func TestMCPEndpointRejectsDisallowedOrigins(t *testing.T) {
 	t.Setenv(AllowedOriginsEnv, "") // a developer's own allow list must not decide the outcome
 	srv := newMCPServer(t)
-	handler := mcpEndpoint(srv)
+	// WithBindHost makes wiki.lan an allowed Host, so a request addressed to that DNS name reaches
+	// the Origin rules below instead of being rejected by the Host check.
+	handler := mcpEndpoint(srv, WithBindHost("wiki.lan"))
 
 	const slug = "rejected-origin-write"
 	createBody := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_wiki_article",` +
@@ -1380,8 +1383,8 @@ func TestMCPEndpointRejectsDisallowedOrigins(t *testing.T) {
 
 	origins := []struct{ name, origin, host string }{
 		{"non-loopback Origin not in the allow list", "https://evil.example", "localhost:5808"},
-		// Rule 4 accepts an Origin equal to Host only when that Host is loopback or an IP literal.
-		{"Origin equal to a non-loopback DNS-name Host", "http://evil.example:5808", "evil.example:5808"},
+		// Rule 4 accepts an Origin equal to an allowed Host, not one naming a different DNS name.
+		{"Origin of another DNS name than an allowed DNS-name Host", "http://other.lan:5808", "wiki.lan:5808"},
 		{"opaque null Origin", "null", "localhost:5808"},
 	}
 	for _, o := range origins {

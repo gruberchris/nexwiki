@@ -420,7 +420,7 @@ func main() {
 
 	// Wrap server in CORS middleware for effortless multi-port local development,
 	// and cap request body sizes so a single request cannot exhaust memory or disk.
-	handler := server.EnableCORS(server.LimitRequestBodies(mux))
+	handler := server.EnableCORS(server.LimitRequestBodies(mux), server.WithBindHost(bindHost))
 
 	// Explicit timeouts: the zero-value http.Server has none, leaving the process open to
 	// Slowloris-style connection exhaustion. WriteTimeout stays 0 because /api/mcp and

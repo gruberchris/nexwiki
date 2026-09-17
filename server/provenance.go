@@ -346,8 +346,10 @@ func attributeRevisions(logPath string, slug string, versions []RevisionRef) []R
 // variable taking precedence over the flag — matching how NEXWIKI_NAME and NEXWIKI_THEME already
 // behave, per the rule in README's configuration table.
 func ResolveConfiguredAgentName(flagValue string) string {
-	if env := strings.TrimSpace(os.Getenv("NEXWIKI_AGENT_NAME")); env != "" {
-		return env
+	// Checked after sanitizing, as resolveAgent does: a value made only of characters the sanitizer
+	// strips is as good as unset, and letting it win would discard a usable -agent-name.
+	if env := os.Getenv("NEXWIKI_AGENT_NAME"); truncateAgentName(env) != "" {
+		return strings.TrimSpace(env)
 	}
 	return strings.TrimSpace(flagValue)
 }

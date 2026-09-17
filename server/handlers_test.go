@@ -1396,7 +1396,7 @@ func TestEnableCORS(t *testing.T) {
 	}))
 
 	// A loopback origin is echoed back verbatim (never "*"), and OPTIONS short-circuits with 200.
-	req := httptest.NewRequest("OPTIONS", "/api/test", nil)
+	req := newLoopbackRequest("OPTIONS", "/api/test", nil)
 	req.Header.Set("Origin", "http://localhost:5173")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -1415,7 +1415,7 @@ func TestEnableCORS(t *testing.T) {
 	}
 
 	// A request with no Origin is a non-browser client (curl, MCP SDK) and passes through.
-	req2 := httptest.NewRequest("GET", "/api/test", nil)
+	req2 := newLoopbackRequest("GET", "/api/test", nil)
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusTeapot {
@@ -1426,7 +1426,7 @@ func TestEnableCORS(t *testing.T) {
 	}
 
 	// A cross-site origin is rejected outright — reads included, since there is no auth.
-	req3 := httptest.NewRequest("DELETE", "/api/articles/home", nil)
+	req3 := newLoopbackRequest("DELETE", "/api/articles/home", nil)
 	req3.Header.Set("Origin", "https://evil.example")
 	w3 := httptest.NewRecorder()
 	handler.ServeHTTP(w3, req3)
@@ -1466,7 +1466,7 @@ func TestEnableCORSForBrowserMCPClients(t *testing.T) {
 	}
 
 	preflight := func(origin, requestHeaders string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodOptions, "/api/mcp", nil)
+		req := newLoopbackRequest(http.MethodOptions, "/api/mcp", nil)
 		req.Header.Set("Origin", origin)
 		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
 		req.Header.Set("Access-Control-Request-Headers", requestHeaders)
@@ -1576,7 +1576,7 @@ func TestEnableCORSForBrowserMCPClients(t *testing.T) {
 
 		for _, tc := range requests {
 			t.Run(tc.name, func(t *testing.T) {
-				req := httptest.NewRequest(http.MethodPost, "/api/mcp", strings.NewReader(tc.body))
+				req := newLoopbackRequest(http.MethodPost, "/api/mcp", strings.NewReader(tc.body))
 				req.Header.Set("Origin", "http://localhost:5173")
 				req.Header.Set("Content-Type", "application/json")
 				req.Header.Set("Accept", "application/json, text/event-stream")
@@ -1633,7 +1633,7 @@ func TestOriginAllowed(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, got := originAllowed(tc.origin, tc.host); got != tc.want {
+			if _, got := originAllowed(tc.origin, tc.host, ""); got != tc.want {
 				t.Errorf("originAllowed(%q, %q) = %v, want %v", tc.origin, tc.host, got, tc.want)
 			}
 		})
@@ -1641,7 +1641,7 @@ func TestOriginAllowed(t *testing.T) {
 
 	t.Run("wildcard opt-out restores permissive behavior", func(t *testing.T) {
 		t.Setenv(AllowedOriginsEnv, "*")
-		origin, ok := originAllowed("https://evil.example", "localhost:8080")
+		origin, ok := originAllowed("https://evil.example", "localhost:8080", "")
 		if !ok || origin != "*" {
 			t.Errorf("wildcard: got (%q, %v), want (\"*\", true)", origin, ok)
 		}
