@@ -731,7 +731,9 @@ func NewStorage(dataDir string) (*Storage, error) {
 		_, _ = fmt.Fprintf(os.Stderr, "Warning: status field migration failed: %v\n", err)
 	}
 
-	// Cleanup archived articles that have exceeded their retention period
+	// Cleanup archived articles that have exceeded their retention period. Never fatal, even for an
+	// invalid setting: an error here means nothing more was deleted, which is the safe outcome, and
+	// an optional retention sweep is no reason to keep the wiki from starting.
 	if err := s.CleanupArchivedArticles(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to cleanup archived articles: %v\n", err)
 	}
@@ -2582,8 +2584,17 @@ func (s *Storage) CloseContext(ctx context.Context) error {
 	return err
 }
 
-// CleanupArchivedArticles removes articles that have been tagged as archived
-// and whose archive time has elapsed based on the configured delay.
+// CleanupArchivedArticles permanently deletes the documents archived for longer than
+// NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS. Like the plan lifecycle worker's deletion it runs with
+// no human in the loop, so it applies the same backlink guard (see deletePlan): a document that is
+// still linked, or that a scan which skipped unreadable entries or found misplaced linkers cannot
+// show unlinked, is kept with a warning and checked again at the next startup.
+//
+// Plans are left to that worker. It archives them itself and deletes them on its own timer, which
+// this one would otherwise override.
+//
+// A failed delete is logged and the rest go ahead. It returns an error only when cleanup cannot
+// proceed at all: an invalid setting, a failed listing or backlink scan, or closed storage.
 func (s *Storage) CleanupArchivedArticles() error {
 	// Get the configured delay from environment variable
 	delayStr := os.Getenv("NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS")
@@ -2607,23 +2618,67 @@ func (s *Storage) CleanupArchivedArticles() error {
 		return fmt.Errorf("failed to list articles for cleanup: %w", err)
 	}
 
-	// Check each article
+	var due []Article
+	var slugs []string
+	plans := 0
 	for _, art := range articles {
-		// Skip if not archived
-		if art.ArchivedAt.IsZero() {
+		if art.ArchivedAt.IsZero() || time.Since(art.ArchivedAt) < time.Duration(delay)*24*time.Hour {
+			continue
+		}
+		if art.Type == ContentTypePlan {
+			plans++
+			continue
+		}
+		due = append(due, art)
+		slugs = append(slugs, art.Slug)
+	}
+	// One line rather than one per plan: a plan the worker keeps is counted at every startup.
+	if plans > 0 {
+		log.Printf("Archived article cleanup: leaving %d archived %s to the plan lifecycle worker", plans, plural(plans, "plan", "plans"))
+	}
+	if len(due) == 0 {
+		return nil
+	}
+
+	// One walk for every due document rather than one each. Nothing else writes while NewStorage runs
+	// this, so the only change to the links it found is this cleanup's own deletions, accounted for
+	// below.
+	scans, err := s.scanBacklinksToEach(slugs)
+	if err != nil {
+		return fmt.Errorf("backlink check for archived article cleanup failed, so nothing was deleted: %w", err)
+	}
+
+	deleted := make(map[string]bool)
+	for _, art := range due {
+		scan := scans[art.Slug]
+		var linkers []string
+		for _, bl := range scan.backlinks {
+			// Deleted earlier in this cleanup: its link went with it, so a scan made now, as
+			// deletePlan's is, would not find it.
+			if !deleted[bl.Slug] {
+				linkers = append(linkers, bl.Slug)
+			}
+		}
+		var reasons []string
+		if n := len(linkers); n > 0 {
+			reasons = append(reasons, fmt.Sprintf("still linked from %d %s: %s", n, plural(n, "document", "documents"), strings.Join(linkers, ", ")))
+		}
+		reasons = append(reasons, scan.incompleteReasons()...)
+		if len(reasons) > 0 {
+			log.Printf("Warning: not auto-deleting archived article '%s' (archived at: %s): %s. The next startup checks it again.",
+				art.Slug, art.ArchivedAt.Format(time.RFC3339), strings.Join(reasons, "; "))
 			continue
 		}
 
-		// Calculate if the delay has elapsed
-		elapsed := time.Since(art.ArchivedAt)
-		if elapsed >= time.Duration(delay)*24*time.Hour {
-			// Delete the article
-			err = s.DeleteArticle(art.Slug)
-			if err != nil {
-				return fmt.Errorf("failed to delete archived article %s: %w", art.Slug, err)
+		if err := s.DeleteArticle(art.Slug); err != nil {
+			if errors.Is(err, ErrStorageClosed) {
+				return fmt.Errorf("archived article cleanup stopped: %w", err)
 			}
-			_, _ = fmt.Fprintf(os.Stderr, "Deleted archived article: %s (archived at: %s)\n", art.Slug, art.ArchivedAt.Format(time.RFC3339))
+			log.Printf("Warning: failed to delete archived article '%s', continuing with the rest: %v", art.Slug, err)
+			continue
 		}
+		deleted[art.Slug] = true
+		log.Printf("Deleted archived article: %s (archived at: %s)", art.Slug, art.ArchivedAt.Format(time.RFC3339))
 	}
 
 	return nil

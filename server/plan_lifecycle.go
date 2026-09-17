@@ -245,14 +245,7 @@ func (w *PlanLifecycleWorker) deletePlan(art *Article) {
 		w.refuseDelete(art, fmt.Sprintf("still linked from: %s. Remove the links or delete it by hand.", strings.Join(linkers, ", ")))
 		return
 	}
-	var reasons []string
-	if n := len(scan.unreadable); n > 0 {
-		reasons = append(reasons, fmt.Sprintf("the backlink scan skipped %d unreadable %s that may link to it", n, plural(n, "entry", "entries")))
-	}
-	if n := len(scan.misplaced); n > 0 {
-		reasons = append(reasons, fmt.Sprintf("%d misplaced %s %s to it", n, plural(n, "document", "documents"), plural(n, "links", "link")))
-	}
-	if len(reasons) > 0 {
+	if reasons := scan.incompleteReasons(); len(reasons) > 0 {
 		w.refuseDelete(art, strings.Join(reasons, ", and ")+". Later sweeps check again; wiki_health lists what to fix.")
 		return
 	}

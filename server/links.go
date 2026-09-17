@@ -452,6 +452,120 @@ func (s *Storage) scanBacklinks(targetSlug string) (backlinkScan, error) {
 	return scan, nil
 }
 
+// scanBacklinksToEach is scanBacklinks for many slugs in one walk, keyed by the slugs as given. A
+// walk per slug costs a stat of every file per slug even with the cache warm, which on a large wiki
+// on a network mount multiplies startup time by the number of documents checked.
+//
+// Each slug's scan is the one scanBacklinks returns for it, so a change to either walk belongs in
+// both. That includes what scanBacklinks never reads: a target's own file is still read for the
+// other targets' links, but its failure to read is not reported against the target itself.
+func (s *Storage) scanBacklinksToEach(targetSlugs []string) (map[string]backlinkScan, error) {
+	byTarget := make(map[string]*backlinkScan, len(targetSlugs))
+	for _, slug := range targetSlugs {
+		if cleaned := Slugify(slug); cleaned != "" {
+			byTarget[cleaned] = &backlinkScan{}
+		}
+	}
+
+	// except is the target whose own file failed, or "" for none.
+	report := func(file UnreadableFile, except string) {
+		for slug, scan := range byTarget {
+			if slug != except {
+				scan.unreadable = append(scan.unreadable, file)
+			}
+		}
+	}
+	reportAll := func(file UnreadableFile) { report(file, "") }
+	skip := func(path string, info fs.FileInfo, err error, except string) error {
+		if file, ok := s.skipUnreadable(path, info, err); ok {
+			report(file, except)
+		}
+		return nil
+	}
+
+	if len(byTarget) > 0 {
+		err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return s.skipWalkError(path, d, walkErr, reportAll)
+			}
+			if d.IsDir() || filepath.Ext(path) != ".md" {
+				return nil
+			}
+			info, err := d.Info()
+			if err != nil {
+				return s.skipWalkError(path, d, err, reportAll)
+			}
+
+			_, meta, err := s.cachedMeta(path, info)
+			if err != nil {
+				return skip(path, info, err, "")
+			}
+			doc, misplaced := s.skipMisplaced(path, info, meta.Slug)
+			// As in scanBacklinks, a misplaced file is never a target itself, even a copy declaring a
+			// target's slug.
+			self := ""
+			if !misplaced {
+				self = meta.Slug
+			}
+
+			refs, err := s.cachedLinkTargets(path, info)
+			if err != nil {
+				return skip(path, info, err, self)
+			}
+			// scanBacklinks lists a document once however many times it links to the target.
+			var listed map[string]bool
+			for _, ref := range refs {
+				scan, ok := byTarget[ref.Slug]
+				if !ok || ref.Slug == self || listed[ref.Slug] {
+					continue
+				}
+				if listed == nil {
+					listed = make(map[string]bool)
+				}
+				listed[ref.Slug] = true
+				if misplaced {
+					scan.misplaced = append(scan.misplaced, doc)
+				} else {
+					scan.backlinks = append(scan.backlinks, *meta)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	for _, scan := range byTarget {
+		sort.Slice(scan.backlinks, func(i, j int) bool {
+			return scan.backlinks[i].Timestamp.After(scan.backlinks[j].Timestamp)
+		})
+	}
+	scans := make(map[string]backlinkScan, len(targetSlugs))
+	for _, slug := range targetSlugs {
+		if scan, ok := byTarget[Slugify(slug)]; ok {
+			scans[slug] = *scan
+		} else {
+			scans[slug] = backlinkScan{} // what scanBacklinks returns for a slug that cleans to nothing
+		}
+	}
+	return scans, nil
+}
+
+// incompleteReasons says why a scan that found no backlinks still does not show its slug unlinked,
+// for a caller about to delete the document: the entries it skipped, any of which may link to it,
+// and the misplaced documents that do. It is empty only when neither applies.
+func (scan backlinkScan) incompleteReasons() []string {
+	var reasons []string
+	if n := len(scan.unreadable); n > 0 {
+		reasons = append(reasons, fmt.Sprintf("the backlink scan skipped %d unreadable %s that may link to it", n, plural(n, "entry", "entries")))
+	}
+	if n := len(scan.misplaced); n > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d misplaced %s %s to it", n, plural(n, "document", "documents"), plural(n, "links", "link")))
+	}
+	return reasons
+}
+
 // RewriteWikiLinks rewrites every [[Target]] / [[Target|display]] WikiLink, whose target
 // resolves (via Slugify) to oldSlug, so it points at the newTitle instead, preserving any
 // display-text alias. It returns the rewritten content and whether any link changed.
