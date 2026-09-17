@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"nexwiki/server"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -92,7 +94,7 @@ func main() {
 	mcpOnly := flag.Bool("mcp-only", false, "Run as a pure stdio MCP server (skip the web port bind entirely)")
 	launchBrowser := flag.Bool("launch-in-browser", false, "Open the wiki URL in the system default web browser on startup")
 	bindAddr := flag.String("bind", "", "Network interface to bind (default: 127.0.0.1 for native local security; all interfaces in containers). Set to 0.0.0.0 or NEXWIKI_BIND to bind all interfaces")
-	agentName := flag.String("agent-name", "", "Fallback attribution recorded in the activity log for MCP clients that do not identify themselves. Clients that send MCP clientInfo are credited by their own name regardless of this")
+	agentName := flag.String("agent-name", "", "Fallback name credited in the activity log for MCP calls whose client is not identified")
 	flag.Parse()
 
 	// NEXWIKI_MCP_ONLY env overrides the flag (e.g., set in a Claude Desktop spawn config).
@@ -148,6 +150,57 @@ func main() {
 		return
 	}
 
+	// From here this process opens the data directory itself, so SIGINT and SIGTERM are caught before
+	// it does. NewStorage cannot be interrupted, and the default action would kill it partway through
+	// its migration or first index build with the search index open. A signal that arrives meanwhile
+	// waits in the buffer and is acted on as soon as NewStorage returns.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	// Any process reaching here owns its data directory outright: a detected primary would have
+	// been proxied to above, so there is no secondary to forward activity events from.
+	if mcpOnlyMode {
+		log.Printf("-mcp-only: no web server detected; running standalone and persisting activity directly.")
+	}
+
+	// A normal launch is the web server, so what it needs that can fail without touching the data
+	// directory comes first: the frontend assets, then the web port. A launch that cannot serve then
+	// exits having created, seeded, and locked nothing. The usual cause is a stdio client config
+	// missing -mcp-only while a web server already holds the port, and it used to create and seed a
+	// whole data directory, often the default one, on its way to the bind error.
+	var (
+		frontendFS  fs.FS
+		webListener net.Listener
+		bindHost    string
+		addr        string
+	)
+	if !mcpOnlyMode {
+		var err error
+		if frontendFS, err = loadFrontendFS(); err != nil {
+			log.Fatalf("Fatal: failed to open embedded files: %v", err)
+		}
+
+		// Bind host resolution: native desktop execution defaults to binding loopback (127.0.0.1)
+		// to avoid accidental exposure on shared LAN/Wi-Fi networks. In containerized environments,
+		// it defaults to all interfaces ("") so container port mapping functions properly.
+		// Users can explicitly configure binding via -bind flag or NEXWIKI_BIND environment variable.
+		bindHost = resolveBindHost(*bindAddr, os.Getenv("NEXWIKI_BIND"), isRunningInContainer())
+		addr = fmt.Sprintf("%s:%s", bindHost, *port)
+
+		// Bind-or-halt: a normal launch IS the web server. If the port is already in use or
+		// misconfigured, it halts rather than silently falling back. To run a stdio MCP server
+		// alongside an already-running web server, use -mcp-only instead.
+		//
+		// Listening is not serving: until httpServer.Serve runs, after storage is open and seeded,
+		// connections only wait in the kernel's listen backlog and no request is read. A client that
+		// connects meanwhile is answered once storage is ready; one that gives up first, like
+		// probeForPrimary with its short timeout, concludes what a refused connection told it
+		// before: no server yet.
+		if webListener, err = net.Listen("tcp", addr); err != nil {
+			log.Fatalf("Fatal: could not bind web server to %s: %v\nIf you intended to run a stdio MCP server alongside an existing web server, relaunch with the -mcp-only flag (or NEXWIKI_MCP_ONLY=true).", addr, err)
+		}
+	}
+
 	// Ensure storage is initialized.
 	//
 	// The index-lock deadline lives inside NewStorage and covers only the Bleve open, which is the
@@ -156,15 +209,39 @@ func main() {
 	// legitimately took longer was killed and reported as a lock conflict.
 	storage, err := server.NewStorage(*dataDir)
 	if err != nil {
-		// A primary on the configured port is handled above by proxying, so reaching here with a
-		// locked index means some other process owns the directory — a second instance on a
-		// different port, or a stale one that never shut down.
+		// Release the port before exiting: this process will never serve it.
+		if webListener != nil {
+			_ = webListener.Close()
+		}
+		// A primary on the configured port is handled above, proxied to in -mcp-only mode and
+		// refused by the bind otherwise, so reaching here with a locked index means some other
+		// process owns the directory — a second instance on a different port, or a stale one that
+		// never shut down.
 		if errors.Is(err, server.ErrSearchIndexLocked) {
 			log.Fatalf("Fatal: could not open the search index in %s within %s — another process is "+
 				"holding it open.\nStop any other NexWiki process using this data directory, or pass "+
 				"a different -data path.", *dataDir, server.IndexOpenTimeout)
 		}
 		log.Fatalf("Fatal: failed to initialize storage: %v", err)
+	}
+
+	// A signal that arrived while storage was opening is acted on now, before anything else starts or
+	// writes, so storage is all there is to close, under the same deadline as any shutdown. A signal
+	// from here on waits in the buffer for the mode's own shutdown path below.
+	select {
+	case sig := <-sigCh:
+		log.Printf("Received %s while opening storage: shutting down gracefully...", sig)
+		if webListener != nil {
+			_ = webListener.Close()
+		}
+		_, closeCtx, cancel := shutdownContexts()
+		defer cancel()
+		if err := storage.CloseContext(closeCtx); err != nil {
+			log.Printf("Warning: failed to close storage: %v", err)
+		}
+		log.Print(shutdownSummary(false, closeCtx.Err() != nil))
+		return
+	default:
 	}
 
 	// Initialize EventBus for real-time pub-sub sync
@@ -175,12 +252,6 @@ func main() {
 	// Attribution fallback for MCP callers that send no clientInfo. Deliberately NOT `name`:
 	// NEXWIKI_NAME is the wiki's display title, and using it here is the defect this fixes.
 	srv.AgentName = server.ResolveConfiguredAgentName(*agentName)
-
-	// Any process reaching here owns its data directory outright: a detected primary would have
-	// been proxied to above, so there is no secondary to forward activity events from.
-	if mcpOnlyMode {
-		log.Printf("-mcp-only: no web server detected; running standalone and persisting activity directly.")
-	}
 
 	// Persist activity events durably to data/activity.jsonl. Whichever process reaches here owns
 	// the data directory outright, so it is the only writer: a sidecar alongside a primary proxies
@@ -235,6 +306,14 @@ func main() {
 		}
 	}
 
+	// Ensure the governance skill the MCP tool-description hooks reference actually exists,
+	// so agents can load nexwiki-agent-guidelines out of the box. Idempotent.
+	//
+	// Before either mode serves anything, because the server's instructions tell agents to load it
+	// first. A standalone -mcp-only process owns its data directory just as the web server does, so
+	// it seeds too; a proxy never gets here, and its primary has seeded already.
+	srv.SeedAgentGuidelinesIfMissing()
+
 	// In -mcp-only mode, run the stdio MCP server in the foreground and never bind the web port.
 	if mcpOnlyMode {
 		log.Printf("Running in stdio MCP-only mode (no web server). All MCP tools operate against the in-process storage layer.")
@@ -246,8 +325,6 @@ func main() {
 
 		// A signal can arrive mid-request, so it gets the web server's bounded drain rather than the
 		// default of dying with the search index open. Stdin EOF is the normal end.
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 		select {
 		case <-served:
 		case sig := <-sigCh:
@@ -259,10 +336,6 @@ func main() {
 		closeResources(closeCtx)
 		return
 	}
-
-	// Ensure the governance skill the MCP tool-description hooks reference actually exists,
-	// so agents can load nexwiki-agent-guidelines out of the box. Idempotent.
-	srv.SeedAgentGuidelinesIfMissing()
 
 	// Plan lifecycle worker: archives finished plans and deletes long-archived ones on a timer.
 	// Primary-only by construction — this code path is only reached by the web primary (the
@@ -336,23 +409,7 @@ func main() {
 	mux.HandleFunc("GET /api/skills/{slug}", srv.HandleGetSkill)
 	mux.HandleFunc("GET /api/skills/{slug}/raw", srv.HandleGetSkillRaw)
 
-	// Create FS for React Frontend.
-	// We check if "frontend/dist" exists as a physical directory on disk for dev mode live-reloading.
-	// If it doesn't exist, we fall back to the embedded binary filesystem.
-	var frontendFS fs.FS
-	if info, err := os.Stat("frontend/dist"); err == nil && info.IsDir() {
-		log.Println("Serving frontend assets from live disk (development mode)")
-		frontendFS = os.DirFS("frontend/dist")
-	} else {
-		log.Println("Serving frontend assets from embedded filesystem (production mode)")
-		subFS, err := fs.Sub(embeddedFrontend, "frontend/dist")
-		if err != nil {
-			log.Fatalf("Fatal: failed to open embedded files: %v", err)
-		}
-		frontendFS = subFS
-	}
-
-	// Dynamic SPA routing handler for static frontend files
+	// Dynamic SPA routing handler for static frontend files, loaded before storage opened
 	frontendHandler := &SPAFrontendHandler{
 		staticFS: frontendFS,
 		storage:  storage,
@@ -365,13 +422,6 @@ func main() {
 	// and cap request body sizes so a single request cannot exhaust memory or disk.
 	handler := server.EnableCORS(server.LimitRequestBodies(mux))
 
-	// Bind host resolution: native desktop execution defaults to binding loopback (127.0.0.1)
-	// to avoid accidental exposure on shared LAN/Wi-Fi networks. In containerized environments,
-	// it defaults to all interfaces ("") so container port mapping functions properly.
-	// Users can explicitly configure binding via -bind flag or NEXWIKI_BIND environment variable.
-	bindHost := resolveBindHost(*bindAddr, os.Getenv("NEXWIKI_BIND"), isRunningInContainer())
-	addr := fmt.Sprintf("%s:%s", bindHost, *port)
-
 	// Explicit timeouts: the zero-value http.Server has none, leaving the process open to
 	// Slowloris-style connection exhaustion. WriteTimeout stays 0 because /api/mcp and
 	// /api/activity/stream are long-lived streams that a write deadline would sever.
@@ -383,43 +433,49 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 	}
 
-	// Shut down cleanly on SIGINT/SIGTERM (i.e. Ctrl-C and `docker stop`) so in-flight requests
-	// finish and, critically, the Bleve index and activity log are closed rather than killed.
-	shutdownDone := make(chan struct{})
 	// writersOverran and closeOverran record which shutdown deadline passed (see shutdownContexts).
-	// Set before shutdownDone closes.
+	// Set before shutdown returns.
 	writersOverran, closeOverran := false, false
+	var shutdownOnce sync.Once
+	// shutdown drains in-flight requests and every other writer, then closes the Bleve index and
+	// activity log rather than leaving them to be killed. Once only: a signal can race the web server
+	// failing, and the second caller waits for the first to finish.
+	shutdown := func() {
+		shutdownOnce.Do(func() {
+			// Tell open response streams to end first. http.Server.Shutdown waits for connections to
+			// go *idle*, and an SSE stream never does — a single browser tab on the wiki would
+			// otherwise hold shutdown open until the deadline.
+			srv.BeginShutdown()
+
+			stopCtx, closeCtx, cancel := shutdownContexts()
+			defer cancel()
+
+			// Every writer stops before storage closes, so none can write to a closed index. The HTTP
+			// server drains alongside the others rather than before them, so each gets the whole
+			// deadline instead of what the one before it left.
+			writersStopped := make(chan struct{})
+			go func() {
+				defer close(writersStopped)
+				stopWriters(stopCtx)
+			}()
+			if err := httpServer.Shutdown(stopCtx); err != nil {
+				log.Printf("Warning: graceful shutdown timed out: %v", err)
+			}
+			<-writersStopped
+			// Checked here, not at the end: the writers' deadline also passes while storage closes.
+			writersOverran = stopCtx.Err() != nil
+			closeResources(closeCtx)
+			closeOverran = closeCtx.Err() != nil
+		})
+	}
+
+	// Shut down cleanly on SIGINT/SIGTERM (i.e. Ctrl-C and `docker stop`).
+	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 		sig := <-sigCh
 		log.Printf("Received %s: shutting down gracefully...", sig)
-
-		// Tell open response streams to end first. http.Server.Shutdown waits for connections to
-		// go *idle*, and an SSE stream never does — a single browser tab on the wiki would
-		// otherwise hold shutdown open until the deadline.
-		srv.BeginShutdown()
-
-		stopCtx, closeCtx, cancel := shutdownContexts()
-		defer cancel()
-
-		// Every writer stops before storage closes, so none can write to a closed index. The HTTP
-		// server drains alongside the others rather than before them, so each gets the whole
-		// deadline instead of what the one before it left.
-		writersStopped := make(chan struct{})
-		go func() {
-			defer close(writersStopped)
-			stopWriters(stopCtx)
-		}()
-		if err := httpServer.Shutdown(stopCtx); err != nil {
-			log.Printf("Warning: graceful shutdown timed out: %v", err)
-		}
-		<-writersStopped
-		// Checked here, not at the end: the writers' deadline also passes while storage closes.
-		writersOverran = stopCtx.Err() != nil
-		closeResources(closeCtx)
-		closeOverran = closeCtx.Err() != nil
+		shutdown()
 	}()
 
 	// The banner has to name a host someone can paste into a browser. addr is "host:port", so
@@ -431,27 +487,23 @@ func main() {
 	}
 	log.Printf("NexWiki web server is running on http://%s:%s", displayHost, *port)
 
-	// Open the wiki in the user's browser when requested. The opener runs in a
-	// goroutine that waits until the server answers /api/config, so the tab
-	// does not land on a connection-refused page on slow disks (first-run
-	// index build). Never fatal: a headless box simply logs a warning.
-	// -mcp-only never reaches here (it returns above), so there is no need to
-	// guard against the headless stdio mode.
+	// Open the wiki in the user's browser when requested. Storage is ready by now, but requests are
+	// only read once Serve below starts accepting, so the opener runs in a goroutine that waits until
+	// the server answers /api/config: the tab never opens ahead of a serving wiki, or at all if Serve
+	// fails. Never fatal: a headless box simply logs a warning. -mcp-only never reaches here (it
+	// returns above), so there is no need to guard against the headless stdio mode.
 	if launchInBrowser {
 		go waitForServerAndOpenBrowser(probeHost(bindHost), *port, buildAppURL(displayHost, *port))
 	}
 
-	// Bind-or-halt: a normal launch IS the web server. If the port is already in use or
-	// misconfigured, it halts rather than silently falling back. To run a stdio MCP server
-	// alongside an already-running web server, use -mcp-only instead.
-	err = httpServer.ListenAndServe()
+	// The port was bound before storage opened, so this is where accepting begins, and an error here
+	// is the listener failing, not the bind. If a signal has already begun shutdown, Serve returns
+	// ErrServerClosed at once and closes the listener.
+	err = httpServer.Serve(webListener)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		// The worker and the stdio loop are already running, and may be mid-write.
-		stopCtx, closeCtx, cancel := shutdownContexts()
-		stopWriters(stopCtx)
-		closeResources(closeCtx)
-		cancel()
-		log.Fatalf("Fatal: could not bind web server to %s: %v\nIf you intended to run a stdio MCP server alongside an existing web server, relaunch with the -mcp-only flag (or NEXWIKI_MCP_ONLY=true).", addr, err)
+		// Requests already accepted, the worker, and the stdio loop may all be mid-write.
+		shutdown()
+		log.Fatalf("Fatal: web server on %s stopped: %v", addr, err)
 	}
 
 	<-shutdownDone // the shutdown goroutine closes resources before it finishes
@@ -481,10 +533,11 @@ func shutdownContexts() (stopCtx, closeCtx context.Context, cancel context.Cance
 	}
 }
 
-// shutdownSummary is the last line a web server shutdown logs. writersOverran means the writers'
-// deadline passed before they all stopped, which each overrunning writer logs a warning about.
-// closeOverran means the overall deadline had passed once storage and the activity log were closed;
-// that includes a slow search index close, which logs no warning of its own.
+// shutdownSummary is the last line a web server shutdown logs, as is any shutdown that begins while
+// storage is opening. writersOverran means the writers' deadline passed before they all stopped,
+// which each overrunning writer logs a warning about. closeOverran means the overall deadline had
+// passed once storage and the activity log were closed; that includes a slow search index close,
+// which logs no warning of its own.
 func shutdownSummary(writersOverran, closeOverran bool) string {
 	switch {
 	case closeOverran:
@@ -496,6 +549,17 @@ func shutdownSummary(writersOverran, closeOverran bool) string {
 	default:
 		return "NexWiki shut down cleanly."
 	}
+}
+
+// loadFrontendFS returns the React build the web server serves. "frontend/dist" on disk wins when it
+// exists, for dev mode live-reloading; otherwise the build embedded in the binary is used.
+func loadFrontendFS() (fs.FS, error) {
+	if info, err := os.Stat("frontend/dist"); err == nil && info.IsDir() {
+		log.Println("Serving frontend assets from live disk (development mode)")
+		return os.DirFS("frontend/dist"), nil
+	}
+	log.Println("Serving frontend assets from embedded filesystem (production mode)")
+	return fs.Sub(embeddedFrontend, "frontend/dist")
 }
 
 // buildAppURL assembles the pasteable/openable wiki URL from the display
