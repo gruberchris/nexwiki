@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -298,9 +299,9 @@ func itoa(n int) string {
 	return string(digits)
 }
 
-// TestWikiHealthOnAHealthyWikiSaysSo pins the empty case. A maintenance tool that answers a clean
-// wiki with a wall of zeros trains an agent to stop reading it.
-func TestWikiHealthOnAHealthyWikiSaysSo(t *testing.T) {
+// newHealthyWikiServer returns a server whose wiki_health report has nothing to flag.
+func newHealthyWikiServer(t *testing.T) *Server {
+	t.Helper()
 	srv := newMCPServer(t)
 
 	// The seeded home page ships with example WikiLinks to pages that do not exist yet, so make
@@ -310,6 +311,13 @@ func TestWikiHealthOnAHealthyWikiSaysSo(t *testing.T) {
 			t.Fatalf("setup failed: %s", resp.Content[0].Text)
 		}
 	}
+	return srv
+}
+
+// TestWikiHealthOnAHealthyWikiSaysSo pins the empty case. A maintenance tool that answers a clean
+// wiki with a wall of zeros trains an agent to stop reading it.
+func TestWikiHealthOnAHealthyWikiSaysSo(t *testing.T) {
+	srv := newHealthyWikiServer(t)
 
 	resp := toolCall(t, srv, `{"name":"wiki_health","arguments":{}}`)
 	var out HealthOutput
@@ -722,6 +730,56 @@ func TestWikiHealthReportsUnreadableFiles(t *testing.T) {
 	assertMatchesOutputSchema(t, resp, wikiHealthTool.Output)
 }
 
+// TestWikiHealthUnreadableFileAloneNeedsAttention pins that an unreadable file on its own stops the
+// report calling the wiki healthy. The other unreadable-file fixtures keep the seeded home page's
+// broken links, which would mask the file being left out of the tally.
+func TestWikiHealthUnreadableFileAloneNeedsAttention(t *testing.T) {
+	srv := newHealthyWikiServer(t)
+	captureLog(t)
+
+	if text := toolCall(t, srv, `{"name":"wiki_health","arguments":{}}`).Content[0].Text; !strings.Contains(text, "the wiki is healthy") {
+		t.Fatalf("the fixture must start with nothing to report, or this test proves nothing:\n%s", text)
+	}
+
+	writeBrokenArticle(t, srv, "broken.md")
+
+	resp := toolCall(t, srv, `{"name":"wiki_health","arguments":{}}`)
+	var out HealthOutput
+	decodeStructured(t, resp, &out)
+	if out.UnreadableFileCount != 1 {
+		t.Fatalf("expected one unreadable file, got %d", out.UnreadableFileCount)
+	}
+	text := resp.Content[0].Text
+	if strings.Contains(text, "the wiki is healthy") {
+		t.Errorf("a wiki with an unreadable file is not healthy:\n%s", text)
+	}
+	if !strings.Contains(text, "- broken.md — ") {
+		t.Errorf("the report should go on to list the file:\n%s", text)
+	}
+}
+
+// TestWikiHealthProseDropsTheErrorsOwnPeriod pins that an error ending in a period, as Windows OS
+// errors do ("Access is denied."), does not double up with the one the remedy sentence adds, and
+// that only the prose is trimmed.
+func TestWikiHealthProseDropsTheErrorsOwnPeriod(t *testing.T) {
+	const osErr = "open locked.md: Access is denied."
+	out := HealthOutput{
+		UnreadableFileCount: 1,
+		UnreadableFiles:     []UnreadableFile{{Path: "locked.md", Error: osErr}},
+	}
+
+	text := renderHealthReport(out)
+	if want := "- locked.md — open locked.md: Access is denied. Fix its front matter"; !strings.Contains(text, want) {
+		t.Errorf("prose is missing %q:\n%s", want, text)
+	}
+	if strings.Contains(text, "denied..") {
+		t.Errorf("prose doubles the period:\n%s", text)
+	}
+	if got := out.UnreadableFiles[0].Error; got != osErr {
+		t.Errorf("the structured error must be left as the OS reported it, got %q", got)
+	}
+}
+
 // TestWikiHealthCapsUnreadableFiles pins that the new category honours 'limit' like every other:
 // the count stays complete, the list is cut, and the report says so.
 func TestWikiHealthCapsUnreadableFiles(t *testing.T) {
@@ -755,8 +813,8 @@ func TestWikiHealthCapsUnreadableFiles(t *testing.T) {
 }
 
 // TestWikiStatisticsCountsUnreadableFiles pins that get_wiki_statistics reports the number
-// wiki_health does. Both read one scan, and two tools disagreeing about the same wiki would leave an
-// agent unsure which to believe.
+// wiki_health does. Both count with ScanLinkGraph, and two tools disagreeing about the same wiki
+// would leave an agent unsure which to believe.
 func TestWikiStatisticsCountsUnreadableFiles(t *testing.T) {
 	srv := newMCPServer(t)
 	captureLog(t)
@@ -838,6 +896,48 @@ func TestUnreadableForClientHidesArticleDir(t *testing.T) {
 			path: "x.md",
 			err:  "lstat " + abs + ": permission denied",
 			want: "lstat .: permission denied",
+		},
+		{
+			name: "the bare directory at the end of the text",
+			dir:  abs,
+			path: "x.md",
+			err:  "cannot walk " + abs,
+			want: "cannot walk .",
+		},
+		{
+			name: "the bare directory in quotes",
+			dir:  abs,
+			path: "x.md",
+			err:  `cannot walk "` + abs + `": permission denied`,
+			want: `cannot walk ".": permission denied`,
+		},
+		{
+			name: "the bare directory before whitespace",
+			dir:  abs,
+			path: "x.md",
+			err:  "walking " + abs + " failed",
+			want: "walking . failed",
+		},
+		{
+			name: "a sibling directory whose name starts with the directory's is left alone",
+			dir:  abs,
+			path: "x.md",
+			err:  "open " + abs + "-old: permission denied",
+			want: "open " + abs + "-old: permission denied",
+		},
+		{
+			name: "a file in a sibling directory is left alone",
+			dir:  abs,
+			path: "x.md",
+			err:  "open " + filepath.Join(abs+"-old", "x.md") + ": permission denied",
+			want: "open " + filepath.Join(abs+"-old", "x.md") + ": permission denied",
+		},
+		{
+			name: "a sibling at the end of the text is left alone",
+			dir:  abs,
+			path: "x.md",
+			err:  "cannot walk " + abs + ".bak",
+			want: "cannot walk " + abs + ".bak",
 		},
 		{
 			name: "a parse error names no path and is left alone",
@@ -926,5 +1026,89 @@ func TestWikiHealthUnreadableErrorHidesArticleDir(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), srv.Storage.DataDir) {
 		t.Errorf("the response reveals the server's data directory %q:\n%s", srv.Storage.DataDir, encoded)
+	}
+}
+
+// TestErrorForClientHidesArticleDir pins the sanitizing of an error that stopped a whole scan, which
+// is about no one file: walking the article directory fails with the OS naming the directory or a
+// subdirectory by absolute path.
+func TestErrorForClientHidesArticleDir(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "data", "articles")
+
+	for _, tc := range []struct {
+		name, dir, err, want string
+	}{
+		{
+			name: "the directory itself",
+			dir:  abs,
+			err:  "failed to list articles: open " + abs + ": permission denied",
+			want: "failed to list articles: open .: permission denied",
+		},
+		{
+			name: "a subdirectory",
+			dir:  abs,
+			err:  "open " + filepath.Join(abs, "notes") + ": permission denied",
+			want: "open notes: permission denied",
+		},
+		{
+			name: "a sibling directory",
+			dir:  abs,
+			err:  "open " + abs + "-old: permission denied",
+			want: "open " + abs + "-old: permission denied",
+		},
+		{
+			// With no file to match, the relative form has nothing it can safely replace.
+			name: "a relative directory",
+			dir:  filepath.Join("data", "articles"),
+			err:  "open " + filepath.Join("data", "articles") + ": permission denied",
+			want: "open " + filepath.Join("data", "articles") + ": permission denied",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := errorForClient(tc.dir, errors.New(tc.err)); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestScanErrorsHideArticleDir is the end-to-end case for errorForClient: when the article directory
+// cannot be read at all, both tools that scan it fail, and neither error may reveal where it is.
+func TestScanErrorsHideArticleDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mode 0 does not stop reads on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads directories whatever their mode")
+	}
+	srv := newMCPServer(t)
+	captureLog(t)
+
+	dir := srv.Storage.ArticleDir
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatalf("Chmod failed: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, info.Mode().Perm()) })
+
+	for _, tc := range []struct{ tool, want string }{
+		{tool: "wiki_health", want: "Error scanning the wiki: open .: permission denied"},
+		// ListArticles runs before the link scan here, so its error is the one returned.
+		{tool: "get_wiki_statistics", want: "failed to list articles: open .: permission denied"},
+	} {
+		resp := toolCall(t, srv, `{"name":"`+tc.tool+`","arguments":{}}`)
+		if !resp.IsError || len(resp.Content) != 1 || resp.Content[0].Text != tc.want {
+			t.Errorf("%s: got %+v, want an error reading %q", tc.tool, resp, tc.want)
+		}
+		encoded, err := json.Marshal(resp)
+		if err != nil {
+			t.Fatalf("marshal failed: %v", err)
+		}
+		if strings.Contains(string(encoded), srv.Storage.DataDir) {
+			t.Errorf("%s reveals the server's data directory %q:\n%s", tc.tool, srv.Storage.DataDir, encoded)
+		}
 	}
 }

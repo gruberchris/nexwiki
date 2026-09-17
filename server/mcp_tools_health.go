@@ -3,10 +3,13 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // This file holds wiki_health, the maintenance tool. Everything it reports is something the wiki
@@ -263,7 +266,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 
 	graph, err := srv.Storage.ScanLinkGraph()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error scanning the wiki: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning the wiki: " + errorForClient(srv.Storage.ArticleDir, err)}}}, nil
 	}
 
 	slugs := make([]string, 0, len(graph.Meta))
@@ -513,32 +516,99 @@ func capFindings(findings []HealthFinding, limit int, truncated bool) ([]HealthF
 // under the article directory, and that absolute path is the server's business, not an MCP
 // client's. Each error names the file by the relative path its entry already carries instead.
 func unreadableForClient(articleDir string, files []UnreadableFile) []UnreadableFile {
+	hider := newArticleDirHider(articleDir)
+	out := make([]UnreadableFile, 0, len(files))
+	for _, f := range files {
+		out = append(out, UnreadableFile{Path: f.Path, Error: hider.hide(f.Error, f.Path)})
+	}
+	return out
+}
+
+// errorForClient is the text of an error that stopped a whole-wiki operation, with the article
+// directory hidden as unreadableForClient hides it. When the article directory itself cannot be
+// opened, the OS error names it.
+func errorForClient(articleDir string, err error) string {
+	return newArticleDirHider(articleDir).hide(err.Error(), "")
+}
+
+// articleDirHider rewrites text so it names paths relative to the article directory rather than
+// where that directory sits on the server's disk.
+type articleDirHider struct {
+	dirs []string
+}
+
+// pathReplacement is one string articleDirHider swaps out. A bounded one only matches where a path
+// ends, so it cannot replace the front of a longer name.
+type pathReplacement struct {
+	old, new string
+	bounded  bool
+}
+
+func newArticleDirHider(articleDir string) articleDirHider {
 	// The scan opens paths joined onto ArticleDir as configured, which may be relative, so both
 	// that form and the absolute one are scrubbed.
 	dirs := []string{filepath.Clean(articleDir)}
 	if abs, err := filepath.Abs(articleDir); err == nil && abs != dirs[0] {
 		dirs = append(dirs, abs)
 	}
+	return articleDirHider{dirs: dirs}
+}
 
-	out := make([]UnreadableFile, 0, len(files))
-	for _, f := range files {
-		// A Replacer makes one left-to-right pass and never rescans what it replaced. Where several
-		// pairs match at one position the earliest argument wins, so the file's full path goes
-		// before the directory it sits in, and the directory with its separator before the bare one.
-		var pairs []string
-		for _, dir := range dirs {
-			pairs = append(pairs, filepath.Join(dir, filepath.FromSlash(f.Path)), f.Path)
+// hide returns text with the article directory hidden. relPath, when not empty, is the
+// slash-separated path of the file the text is about.
+func (h articleDirHider) hide(text, relPath string) string {
+	// Where several replacements match at one position the earliest wins, so the file's full path
+	// goes before the directory it sits in, and the directory with its separator before the bare one.
+	var reps []pathReplacement
+	if relPath != "" {
+		for _, dir := range h.dirs {
+			reps = append(reps, pathReplacement{old: filepath.Join(dir, filepath.FromSlash(relPath)), new: relPath})
 		}
-		// Any other mention of the directory goes too, but only in absolute form: a short
-		// relative directory such as "articles" could match ordinary error text.
-		for _, dir := range dirs {
-			if filepath.IsAbs(dir) {
-				pairs = append(pairs, dir+string(filepath.Separator), "", dir, ".")
+	}
+	// Any other mention of the directory goes too, but only in absolute form: a short relative
+	// directory such as "articles" could match ordinary error text. Swapping a path's directory
+	// prefix leaves a valid relative path whatever follows, but the bare directory becoming "."
+	// does not, so that one is bounded: /srv/data/articles-old must not become .-old.
+	for _, dir := range h.dirs {
+		if filepath.IsAbs(dir) {
+			reps = append(reps,
+				pathReplacement{old: dir + string(filepath.Separator)},
+				pathReplacement{old: dir, new: ".", bounded: true})
+		}
+	}
+	if len(reps) == 0 {
+		return text
+	}
+
+	// One left-to-right pass that never rescans what it has already replaced.
+	var b strings.Builder
+	for i := 0; i < len(text); {
+		matched := false
+		for _, r := range reps {
+			if strings.HasPrefix(text[i:], r.old) && (!r.bounded || pathEndsAt(text, i+len(r.old))) {
+				b.WriteString(r.new)
+				i += len(r.old)
+				matched = true
+				break
 			}
 		}
-		out = append(out, UnreadableFile{Path: f.Path, Error: strings.NewReplacer(pairs...).Replace(f.Error)})
+		if !matched {
+			b.WriteByte(text[i])
+			i++
+		}
 	}
-	return out
+	return b.String()
+}
+
+// pathEndsAt reports whether a path running up to text[i] ends there. A separator, whitespace, or
+// the punctuation that closes a path in error text ends it. Anything else is taken to continue the
+// name, since a file name may legally hold it.
+func pathEndsAt(text string, i int) bool {
+	if i == len(text) {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(text[i:])
+	return (r < utf8.RuneSelf && os.IsPathSeparator(uint8(r))) || unicode.IsSpace(r) || strings.ContainsRune(":;,\"'`)]}", r)
 }
 
 // renderHealthReport writes the prose from the same value the structured payload carries, so the
@@ -610,9 +680,11 @@ func renderHealthReport(out HealthOutput) string {
 	if out.UnreadableFileCount > 0 {
 		fmt.Fprintf(&b, "\n== Unreadable article files (%d) ==\n", out.UnreadableFileCount)
 		for _, f := range out.UnreadableFiles {
-			// YAML errors can span lines; flattened so each file stays one list item.
+			// YAML errors can span lines; flattened so each file stays one list item. A closing period
+			// is dropped because the sentence adds its own, and Windows ends OS errors with one
+			// ("Access is denied.").
 			fmt.Fprintf(&b, "- %s — %s. Fix its front matter or file permissions, or delete the file.\n",
-				f.Path, strings.Join(strings.Fields(f.Error), " "))
+				f.Path, strings.TrimRight(strings.Join(strings.Fields(f.Error), " "), ". "))
 		}
 		if len(out.UnreadableFiles) < out.UnreadableFileCount {
 			fmt.Fprintf(&b, "  ... and %d more; raise 'limit' to see them.\n", out.UnreadableFileCount-len(out.UnreadableFiles))

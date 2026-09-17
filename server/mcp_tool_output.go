@@ -131,7 +131,7 @@ type StatisticsOutput struct {
 	TotalArticles int `json:"total_articles"`
 	// UnreadableFileCount is how many article files the scan could not read or parse. None of the
 	// other numbers include them, so without it a wiki with broken files just looks smaller.
-	// wiki_health lists the files, from the same scan.
+	// wiki_health lists the files, found by its own call to the same ScanLinkGraph.
 	UnreadableFileCount int             `json:"unreadable_file_count"`
 	TotalLinks          int             `json:"total_links"`
 	BrokenLinkCount     int             `json:"broken_link_count"`

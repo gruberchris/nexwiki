@@ -32,7 +32,7 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	// number every other tool reports. Link scanning below deliberately does include home.
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: errorForClient(srv.Storage.ArticleDir, err)}}}, nil
 	}
 
 	// One cached pass replaces the read-every-file-in-full loop this used to run: the graph is
@@ -40,7 +40,7 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	// traversing the wiki a second time.
 	graph, err := srv.Storage.ScanLinkGraph()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error scanning WikiLinks: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning WikiLinks: " + errorForClient(srv.Storage.ArticleDir, err)}}}, nil
 	}
 
 	var respText string
