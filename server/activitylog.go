@@ -2,10 +2,12 @@ package server
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -107,11 +109,14 @@ func (al *ActivityLog) rotateLocked() {
 	reopen()
 }
 
-// the nextArchivePath returns a non-colliding archive path: a UTC-timestamped name, falling back to a
+// activityArchiveStampLayout is the UTC stamp in a timestamped archive name. Colons are not
+// filesystem-safe on all platforms, so the time fields are dash-separated.
+const activityArchiveStampLayout = "2006-01-02T15-04-05Z"
+
+// nextArchivePath returns a non-colliding archive path: a UTC-timestamped name, falling back to a
 // monotonic activity.jsonl.N suffix if a same-second archive already exists.
 func nextArchivePath(dataDir string) string {
-	// Colons are not filesystem-safe on all platforms, so use a dash-separated UTC stamp.
-	stamp := time.Now().UTC().Format("2006-01-02T15-04-05Z")
+	stamp := time.Now().UTC().Format(activityArchiveStampLayout)
 	candidate := filepath.Join(dataDir, activityArchivePrefix+stamp+".jsonl")
 	if _, err := os.Stat(candidate); os.IsNotExist(err) {
 		return candidate
@@ -124,27 +129,99 @@ func nextArchivePath(dataDir string) string {
 	}
 }
 
-// listActivityArchives returns the archive file paths in newest-first order.
+// activityArchive is one rotated archive and its place in the rotation history.
+type activityArchive struct {
+	path string
+	// at places the archive in time. A timestamped name records its rotation second, so that is
+	// used. An activity.jsonl.N name records no time, and N is no guide either: nextArchivePath
+	// takes the lowest free N, so after any archive is deleted a newer fallback can take a lower
+	// number than an older one. The modification time stands in instead. It is the last append
+	// before rotation, which the rename preserves, and that append came after the same-second
+	// archive it collided with was rotated out, so it lands between the right neighbours. A copy
+	// that rewrote mtimes can misplace a fallback, but never a timestamped archive.
+	at time.Time
+	// n is the N of an activity.jsonl.N name, zero otherwise.
+	n int
+}
+
+// compare orders archives oldest first.
+func (a activityArchive) compare(b activityArchive) int {
+	if c := a.at.Compare(b.at); c != 0 {
+		return c
+	}
+	// Equal times happen when modification times are whole seconds. A fallback exists only
+	// because the timestamped name for its second was already taken, so the timestamped archive
+	// (n zero; fallbacks start at 1) is the older. Between fallbacks, with no deletion in between,
+	// the lowest free N was taken first. Names are matched exactly, so no two archives share both
+	// a stamp and an N, and this decides every pair.
+	return cmp.Compare(a.n, b.n)
+}
+
+// listActivityArchives returns the archive file paths in newest-first order. Pruning and both
+// readers depend on this being chronological: pruning deletes from the tail, and the readers stop
+// walking once the files they have read cover the query. Name order is not chronological —
+// every activity.jsonl.N sorts after every activity-<UTC>.jsonl, and .10 before .9.
 func listActivityArchives(dataDir string) []string {
 	entries, err := os.ReadDir(dataDir)
 	if err != nil {
 		return nil
 	}
-	var archives []string
+	var archives []activityArchive
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		name := e.Name()
-		isTimestamped := strings.HasPrefix(name, activityArchivePrefix) && strings.HasSuffix(name, ".jsonl")
-		isMonotonic := strings.HasPrefix(name, ActivityLogFilename+".")
-		if isTimestamped || isMonotonic {
-			archives = append(archives, filepath.Join(dataDir, name))
+		if a, ok := parseActivityArchive(dataDir, e); ok {
+			archives = append(archives, a)
 		}
 	}
-	// Newest first: timestamped names sort lexically by time; this also keeps monotonic suffixes grouped.
-	sort.Sort(sort.Reverse(sort.StringSlice(archives)))
-	return archives
+	slices.SortFunc(archives, func(a, b activityArchive) int { return b.compare(a) })
+
+	paths := make([]string, 0, len(archives))
+	for _, a := range archives {
+		paths = append(paths, a.path)
+	}
+	return paths
+}
+
+// parseActivityArchive reports whether a directory entry is a rotated archive and where it falls
+// in time. Only names nextArchivePath can write qualify, exactly: pruning deletes whatever this
+// accepts, so a prefix match would let the retention cap delete a user's own activity-backup.jsonl
+// and let reads mix its events into the history. The one-deep rotation that predated timestamped
+// names only ever wrote activity.jsonl.1, which still qualifies. Only fallback names cost a stat;
+// timestamped names carry their own time.
+func parseActivityArchive(dataDir string, e os.DirEntry) (activityArchive, bool) {
+	name := e.Name()
+	path := filepath.Join(dataDir, name)
+
+	if rest, ok := strings.CutPrefix(name, activityArchivePrefix); ok {
+		stamp, isJSONL := strings.CutSuffix(rest, ".jsonl")
+		if !isJSONL {
+			return activityArchive{}, false
+		}
+		// Parse alone also accepts stamps Format never writes, such as a one-digit hour or
+		// fractional seconds, so the stamp must survive the round trip unchanged.
+		at, err := time.Parse(activityArchiveStampLayout, stamp)
+		if err != nil || at.Format(activityArchiveStampLayout) != stamp {
+			return activityArchive{}, false
+		}
+		return activityArchive{path: path, at: at}, true
+	}
+
+	if suffix, ok := strings.CutPrefix(name, ActivityLogFilename+"."); ok {
+		// Likewise Atoi accepts a sign, leading zeros and zero; Itoa of a count from 1 writes none.
+		n, err := strconv.Atoi(suffix)
+		if err != nil || n < 1 || strconv.Itoa(n) != suffix {
+			return activityArchive{}, false
+		}
+		info, err := e.Info()
+		if err != nil {
+			return activityArchive{}, false // removed since the directory was read
+		}
+		return activityArchive{path: path, at: info.ModTime(), n: n}, true
+	}
+
+	return activityArchive{}, false
 }
 
 // pruneActivityArchives enforces an optional retention cap (NEXWIKI_ACTIVITY_MAX_ARCHIVES).
@@ -282,7 +359,10 @@ func ReadActivityLogFiltered(path string, filter ActivityFilter) ([]LogEvent, er
 // filters, and returns at most limit of the newest matches in chronological order (oldest first).
 // It walks files newest-first and stops as soon as the since/limit window is satisfied, so a
 // "last 24h" query never scans years of archived history. Unparseable lines are skipped.
-// Files are opened fresh on every call so mcp-only sidecar processes can read the shared log.
+// Files are opened by path on every call rather than through the writer's handle, which is
+// write-only and replaced on rotation, so each read sees the current active file and archives.
+// Only the process that owns the data directory reads them (the primary, or a standalone
+// -mcp-only process); an -mcp-only sidecar that finds a running primary proxies to it instead.
 func ReadActivityLog(path string, since time.Time, limit int, actionFilter string, sourceFilter string) ([]LogEvent, error) {
 	return ReadActivityLogFiltered(path, ActivityFilter{
 		Since:  since,
