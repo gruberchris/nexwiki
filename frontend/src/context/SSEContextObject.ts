@@ -3,8 +3,11 @@ import { createContext } from 'react';
 export interface LogEvent {
   id: string;
   timestamp: string;
-  source: 'mcp' | 'api';
-  action: 'create' | 'edit' | 'delete' | 'read' | 'revert';
+  // 'lifecycle' is the server's plan lifecycle worker, acting unattended.
+  source: 'mcp' | 'api' | 'lifecycle';
+  // Mirrors the server's activityLogActions. 'verify' is a human verifying a document in the web UI;
+  // 'delete-refused' is the lifecycle worker keeping a plan that may still be linked.
+  action: 'create' | 'edit' | 'delete' | 'read' | 'revert' | 'verify' | 'delete-refused';
   tool: string;
   slug: string;
   title: string;

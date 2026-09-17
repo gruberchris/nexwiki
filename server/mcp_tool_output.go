@@ -1,6 +1,9 @@
 package server
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // This file holds the structured-output half of the tool contract: the Go types a read tool
 // returns as `structuredContent`, and the JSON Schema each one publishes as `outputSchema`.
@@ -90,9 +93,10 @@ type RevisionRef struct {
 	// event for it — which is normal for revisions predating the log, or older than its retention.
 	// Self-reported by the client: a provenance hint, not an authentication claim.
 	Agent string `json:"agent,omitempty"`
-	// Tool is the MCP tool used, empty for edits made through the web UI.
+	// Tool is the MCP tool used, or the web or lifecycle operation when one applies ("okf_import",
+	// "plan_lifecycle"); empty for ordinary web UI edits.
 	Tool string `json:"tool,omitempty"`
-	// Via is the transport that carried the edit: "mcp" or "api".
+	// Via is what carried the edit: "mcp", "api" (the web UI), or "lifecycle" (the plan worker).
 	Via string `json:"via,omitempty"`
 }
 
@@ -315,8 +319,8 @@ func historyOutputSchema() map[string]interface{} {
 		"timestamp":    schemaOf("string", "RFC3339 time the revision was written."),
 		"edit_summary": schemaOf("string", "Summary recorded with the edit."),
 		"agent":        schemaOf("string", "Who made this revision, from the activity log. Absent when the log has no matching event. Self-reported by the client: a provenance hint, not an authentication claim."),
-		"tool":         schemaOf("string", "MCP tool used for the edit; absent for edits made in the web UI."),
-		"via":          schemaOf("string", "Transport that carried the edit: 'mcp' or 'api'."),
+		"tool":         schemaOf("string", "MCP tool used for the edit, or the web or lifecycle operation when one applies (e.g. 'okf_import', 'plan_lifecycle'); absent for ordinary web UI edits."),
+		"via":          schemaOf("string", "What carried the edit: 'mcp', 'api' (the web UI), or 'lifecycle' (the plan lifecycle worker)."),
 	}, "version", "timestamp")
 
 	return schemaObject(map[string]interface{}{
@@ -361,9 +365,9 @@ func activityOutputSchema() map[string]interface{} {
 	event := schemaObject(map[string]interface{}{
 		"id":        schemaOf("string", "Event identifier."),
 		"timestamp": schemaOf("string", "RFC3339 time the event occurred."),
-		"source":    schemaOf("string", "'mcp' for AI tool calls, 'api' for web UI actions."),
-		"action":    schemaOf("string", "create, edit, delete, read, or revert."),
-		"tool":      schemaOf("string", "MCP tool name; empty for REST API actions."),
+		"source":    schemaOf("string", "'mcp' for AI tool calls, 'api' for web UI actions, 'lifecycle' for the plan lifecycle worker."),
+		"action":    schemaOf("string", "One of: "+strings.Join(activityLogActions, ", ")+"."),
+		"tool":      schemaOf("string", "MCP tool name, or the web or lifecycle operation when one applies (e.g. 'delete_tag', 'plan_lifecycle'); empty for ordinary web UI actions."),
 		"slug":      schemaOf("string", "Slug of the affected document."),
 		"title":     schemaOf("string", "Title of the affected document."),
 		"agent":     schemaOf("string", "Who performed the action."),

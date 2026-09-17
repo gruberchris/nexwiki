@@ -128,10 +128,20 @@ func (srv *Server) toolGetStatusTags(args json.RawMessage) (interface{}, *JSONRP
 	}, nil
 }
 
+// activityLogActions is every action the activity log records, and so the closed set the
+// get_recent_activity filter offers. An action missing here cannot be filtered on at all, since
+// the schema rejects it; TestActivityEnumsCoverLoggedValues fails when a new one is logged
+// without being added.
+var activityLogActions = []string{"create", "edit", "delete", "revert", "verify", "read", "delete-refused"}
+
+// activityLogSources is every source the activity log records, kept honest the same way by
+// TestActivityEnumsCoverLoggedValues.
+var activityLogSources = []string{"mcp", "api", "lifecycle"}
+
 var getRecentActivityTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_recent_activity",
-		"description": "Query the durable wiki activity log to see what changed and when — useful at session start to catch up on edits made by other agents, processes, or the human since you last looked.",
+		"description": "Query the durable wiki activity log to see what changed, when, and who did it — useful at session start to catch up on edits made by other agents, the human, or the plan lifecycle worker since you last looked. Filter by action and by source.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -144,14 +154,16 @@ var getRecentActivityTool = toolDef{
 					"description": "Maximum number of events to return, newest kept (default 50, max 500).",
 				},
 				"action": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional filter by action type.",
-					"enum":        []string{"create", "edit", "delete", "read", "revert"},
+					"type": "string",
+					"description": "Optional filter by action: 'create', 'edit' (including appends, tag changes, OKF re-imports, and auto-archiving), 'delete', " +
+						"'revert' (rolled back to an earlier version), 'verify' (a human verified a document), 'read' (a read-only tool call), or " +
+						"'delete-refused' (the plan lifecycle worker kept a plan that may still be linked).",
+					"enum": activityLogActions,
 				},
 				"source": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional filter by origin: 'mcp' for AI tool calls, 'api' for human web UI actions.",
-					"enum":        []string{"mcp", "api"},
+					"description": "Optional filter by origin: 'mcp' for AI tool calls, 'api' for human web UI actions, 'lifecycle' for the plan lifecycle worker's unattended archiving and deletion.",
+					"enum":        activityLogSources,
 				},
 			},
 		},
@@ -356,5 +368,8 @@ func (srv *Server) toolImportOkfBundle(args json.RawMessage) (interface{}, *JSON
 	for _, wmsg := range report.Warnings {
 		respText += "Warning: " + hider.hide(wmsg) + "\n"
 	}
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+	return ToolResponse{
+		Content: []ToolContent{{Type: "text", Text: respText}},
+		bulk:    &bulkWrite{docs: report.saved},
+	}, nil
 }

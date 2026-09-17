@@ -19,18 +19,20 @@ import (
 //
 // A `-mcp-only` process pointed at a running instance's data directory cannot open it: the Bleve
 // index holds an exclusive lock, so only one process may own a wiki at a time. That is precisely
-// the documented Claude Desktop stdio configuration, which previously hung forever and now fails
-// fast with an explanation.
+// the documented Claude Desktop stdio configuration, which once hung forever on the lock and later
+// failed fast with an explanation — honest, but still not a working setup.
 //
-// Failing clearly is better than hanging, but it still leaves the documented setup not *working*.
-// Proxy mode fixes that properly: instead of opening storage at all, the sidecar forwards each
-// stdio JSON-RPC message to the running primary's /api/mcp endpoint and writes the reply back to
-// stdout. One process owns the wiki; the sidecar is a pipe.
+// Proxy mode makes it work: when main.go detects a running primary, the sidecar does not open
+// storage at all. It forwards each stdio JSON-RPC message to the primary's /api/mcp endpoint and
+// writes the reply back to stdout. One process owns the wiki; the sidecar is a pipe.
 //
 // A useful consequence: because the primary answers subscriptions/listen with an SSE stream, the
-// proxy can relay those notifications to stdout as they arrive. A standalone stdio server serves
-// subscriptions from its own EventBus, but a sidecar has no EventBus to serve from — the primary
-// owns the data directory — so relaying is how a sidecar's client gets them.
+// proxy can relay those notifications to stdout as they arrive — so a stdio client gets live
+// subscriptions, which a standalone stdio server cannot offer.
+//
+// The one thing a pipe loses is the stdio handshake. A standalone server remembers the client name
+// from a legacy `initialize`, but the primary receives these calls over sessionless HTTP, so the
+// proxy remembers the name itself and forwards it on every request (see clientNameHeader).
 
 // proxyRequestTimeout bounds a single forwarded request. Long enough for a slow OKF bundle import,
 // short enough that a wedged primary does not hang the client forever. Streaming responses
@@ -59,19 +61,31 @@ type MCPProxy struct {
 	// closes it, so waiting on those goroutines after the client disconnected would hang forever.
 	shutdown context.Context
 	stop     context.CancelFunc
+
+	// agentName is this sidecar's own -agent-name / NEXWIKI_AGENT_NAME, sanitized once when the
+	// proxy is built. It is forwarded when the stdio client sends no clientInfo, so it credits calls
+	// here exactly as it would if this process were running standalone, rather than being ignored
+	// in favor of the primary's.
+	agentName string
+	// stdioClient holds the name from the stdio client's legacy `initialize`, the identity a
+	// standalone server would remember for the connection. agentIdentity is locked, which matters
+	// here: subscription streams build their requests on their own goroutines.
+	stdioClient agentIdentity
 }
 
-// NewMCPProxy builds a proxy targeting the primary's MCP endpoint on the given port.
-func NewMCPProxy(port string, out io.Writer) *MCPProxy {
+// NewMCPProxy builds a proxy targeting the primary's MCP endpoint on the given port. agentName is
+// this process's configured attribution fallback, and may be empty.
+func NewMCPProxy(port, agentName string, out io.Writer) *MCPProxy {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &MCPProxy{
 		endpoint: fmt.Sprintf("http://127.0.0.1:%s/api/mcp", port),
 		// No overall client timeout: subscription streams are long-lived by design. Per-request
 		// deadlines are applied to non-streaming calls instead.
-		client:   &http.Client{},
-		out:      out,
-		shutdown: ctx,
-		stop:     cancel,
+		client:    &http.Client{},
+		out:       out,
+		shutdown:  ctx,
+		stop:      cancel,
+		agentName: truncateAgentName(agentName),
 	}
 }
 
@@ -144,13 +158,20 @@ func (p *MCPProxy) newRequest(payload []byte) (*http.Request, error) {
 		Method string          `json:"method"`
 		Params json.RawMessage `json:"params"`
 	}
-	if err := json.Unmarshal(payload, &parsed); err != nil {
+	parseErr := json.Unmarshal(payload, &parsed)
+	env := parseParamsEnvelope(parsed.Params)
+	if parseErr == nil && parsed.Method == "initialize" && !isModernRequest(nil, env) {
+		// The capture a standalone stdio server makes from the same handshake.
+		p.stdioClient.rememberInitialize(parsed.Params)
+	}
+	p.setClientNameHeader(req)
+
+	if parseErr != nil {
 		return req, nil // let the primary report the parse error
 	}
 
 	// nil headers: the message arrived on stdio, so the body is the only era signal there is. The
 	// headers this function is about to synthesize are the ones the primary will check.
-	env := parseParamsEnvelope(parsed.Params)
 	if !isModernRequest(nil, env) {
 		return req, nil // legacy era: no mirrored headers required
 	}
@@ -163,6 +184,19 @@ func (p *MCPProxy) newRequest(payload []byte) (*http.Request, error) {
 		}
 	}
 	return req, nil
+}
+
+// setClientNameHeader forwards who the stdio client is, since the primary cannot learn it from a
+// handshake it never saw: the name from the client's `initialize`, else this sidecar's own
+// -agent-name. The primary still prefers a modern request's per-request clientInfo over it.
+func (p *MCPProxy) setClientNameHeader(req *http.Request) {
+	name := p.stdioClient.get()
+	if name == "" {
+		name = p.agentName
+	}
+	if name != "" {
+		req.Header.Set(clientNameHeader, encodeHeaderValue(name))
+	}
 }
 
 // forward sends one request and writes the single JSON response back.

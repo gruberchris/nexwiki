@@ -24,7 +24,8 @@ type JSONRPCRequest struct {
 	ID      interface{}     `json:"id,omitempty"`
 
 	// Headers carries the HTTP headers when the request arrived over Streamable HTTP, so the
-	// modern era can verify the mirrored metadata against the body. Nil on stdio.
+	// modern era can verify the mirrored metadata against the body, and so a legacy request can be
+	// attributed to the client name a sidecar forwards (see clientNameHeader). Nil on stdio.
 	Headers http.Header `json:"-"`
 	// IsModern records that the request opted into the per-request-metadata era, which decides
 	// whether protocol errors surface as HTTP failures or ride inside a 200 response.
@@ -68,6 +69,17 @@ type ToolResponse struct {
 	// omitempty keeps every prose-only tool byte-identical on the wire, so clients that predate
 	// structured output see no change at all.
 	StructuredContent interface{} `json:"structuredContent,omitempty"`
+
+	// bulk is set by a tool that writes many documents in one call, which no single slug can
+	// describe in the activity log. executeToolCall logs one event per document from it instead of
+	// the per-call entry. Unexported, so it never reaches the wire.
+	bulk *bulkWrite
+}
+
+// bulkWrite lists the documents a bulk tool call wrote, each as its metadata without the body. An
+// empty list means the call wrote nothing, so nothing is logged.
+type bulkWrite struct {
+	docs []Article
 }
 
 // StdioMCPServer is the stdio MCP JSON-RPC loop. Serve runs it; Stop ends it at a request boundary,
@@ -283,7 +295,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 		result, rpcErr = listTools(env.Cursor)
 
 	case "tools/call":
-		result, rpcErr = srv.executeToolCall(req.Params, srv.resolveAgent(env))
+		result, rpcErr = srv.executeToolCall(req.Params, srv.resolveAgent(req, env))
 
 	case "prompts/list":
 		result, rpcErr = listPrompts(env.Cursor)
@@ -323,7 +335,7 @@ func (srv *Server) dispatchModern(req *JSONRPCRequest, env paramsEnvelope) (inte
 		return nil, rpcErr
 	}
 
-	payload, rpcErr := srv.handleModernMethod(req.Method, env)
+	payload, rpcErr := srv.handleModernMethod(req, env)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -356,6 +368,25 @@ func (srv *Server) writeResponse(w io.Writer, req *JSONRPCRequest, result interf
 	return status
 }
 
+// mcpToolAction maps a tool name to the activity-log action its successful call is recorded as.
+//
+// A revert is its own action, as it is for the web UI's revert: filtering the log on "revert" must
+// find an agent's reverts too, rather than only the ones made in a browser.
+func mcpToolAction(tool string) string {
+	switch {
+	case strings.HasPrefix(tool, "create_"):
+		return "create"
+	case strings.HasPrefix(tool, "revert_"):
+		return "revert"
+	case strings.HasPrefix(tool, "edit_"), strings.HasPrefix(tool, "append_"), strings.HasPrefix(tool, "update_"):
+		return "edit"
+	case strings.HasPrefix(tool, "delete_"):
+		return "delete"
+	default:
+		return "read"
+	}
+}
+
 // logMCPToolCall logs a successfully executed MCP tool call and publishes it, attributed to agent.
 func (srv *Server) logMCPToolCall(params json.RawMessage, agent string) {
 	if srv.EventBus == nil {
@@ -379,15 +410,8 @@ func (srv *Server) logMCPToolCall(params json.RawMessage, agent string) {
 	}
 	_ = json.Unmarshal(args.Arguments, &common)
 
-	action := "read"
 	tool := args.Name
-	if strings.HasPrefix(tool, "create_") {
-		action = "create"
-	} else if strings.HasPrefix(tool, "edit_") || strings.HasPrefix(tool, "append_") || strings.HasPrefix(tool, "revert_") || strings.HasPrefix(tool, "update_") {
-		action = "edit"
-	} else if strings.HasPrefix(tool, "delete_") {
-		action = "delete"
-	}
+	action := mcpToolAction(tool)
 
 	slug := common.Slug
 	if slug == "" && common.Title != "" {
@@ -467,7 +491,17 @@ func memoryScopeTags(tags []string) []string {
 func (srv *Server) executeToolCall(params json.RawMessage, agent string) (interface{}, *JSONRPCError) {
 	result, rpcErr := srv.executeToolCallInternal(params)
 	if rpcErr == nil && !isToolError(result) {
-		srv.logMCPToolCall(params, agent)
+		if resp, ok := result.(ToolResponse); ok && resp.bulk != nil {
+			// Logged per document, as the web equivalent is. The per-call entry would have no slug,
+			// and its action would be guessed from the tool name: an import was logged as a read.
+			var call struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(params, &call)
+			srv.publishBulkChanges("mcp", call.Name, agent, resp.bulk.docs)
+		} else {
+			srv.logMCPToolCall(params, agent)
+		}
 		result = srv.applyLookupDamper(params, agent, result)
 	}
 	return result, rpcErr

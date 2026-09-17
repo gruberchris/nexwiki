@@ -1,5 +1,5 @@
 import React, { useRef, useState, useMemo } from 'react';
-import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu, History } from 'lucide-react';
+import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu, History, Clock } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useClickOutside } from '../hooks/useClickOutside';
@@ -15,7 +15,7 @@ interface ActivityLogDrawerProps {
   onNavigate: (slug: string) => void;
 }
 
-type SourceFilter = 'all' | 'api' | 'mcp';
+type SourceFilter = 'all' | LogEvent['source'];
 
 export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
   isOpen,
@@ -117,13 +117,32 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
         return 'bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-450';
       case 'delete':
         return 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-450';
+      case 'verify':
+        return 'bg-teal-500/10 border-teal-500/20 text-teal-600 dark:text-teal-400';
+      case 'delete-refused':
+        return 'bg-orange-500/10 border-orange-500/20 text-orange-600 dark:text-orange-400';
       case 'read':
       default:
         return 'bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-450';
     }
   };
 
+  // Badge text for an action. The raw value is still what the filter matches, so only the display
+  // changes: 'delete-refused' reads as two words.
+  const getActionLabel = (action: string) => action.replace(/-/g, ' ');
+
   const getSourceIcon = (source: string) => {
+    if (source.toLowerCase() === 'lifecycle') {
+      return (
+        <span
+          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold bg-violet-500/10 border border-violet-500/20 text-violet-600 dark:text-violet-400 shadow-xs select-none"
+          title="Plan lifecycle worker (unattended)"
+        >
+          <Clock size={10} />
+          <span>Lifecycle</span>
+        </span>
+      );
+    }
     if (source.toLowerCase() === 'mcp') {
       return (
         <span
@@ -233,6 +252,17 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
               <Cpu size={12} />
               <span>MCP Server</span>
             </button>
+            <button
+              onClick={() => setActiveSource('lifecycle')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                activeSource === 'lifecycle'
+                  ? 'bg-violet-500/10 border-violet-500/30 text-violet-600 dark:text-violet-400 shadow-xs ring-1 ring-violet-500/20'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-850'
+              }`}
+            >
+              <Clock size={12} />
+              <span>Lifecycle</span>
+            </button>
           </div>
 
           <FilterInput
@@ -296,7 +326,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
                     <div className="flex items-center gap-1.5">
                       {getSourceIcon(event.source)}
                       <span className={`text-[10px] px-2 py-0.2 rounded border font-bold uppercase tracking-wider ${getActionBadge(event.action)}`}>
-                        {event.action}
+                        {getActionLabel(event.action)}
                       </span>
                     </div>
                     <span className="text-[9px] font-semibold text-slate-400 dark:text-slate-550">

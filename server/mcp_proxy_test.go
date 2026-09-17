@@ -299,3 +299,159 @@ func TestScannerBufferAcceptsLongLines(t *testing.T) {
 		t.Errorf("line truncated to %d bytes", len(scanner.Text()))
 	}
 }
+
+// persistPrimaryActivity wires a durable activity log into the primary, as main.go does, and returns
+// its path so a test can read back what the primary recorded.
+func persistPrimaryActivity(t *testing.T, primary *Server) string {
+	t.Helper()
+	al, err := OpenActivityLog(primary.Storage.DataDir)
+	if err != nil {
+		t.Fatalf("OpenActivityLog failed: %v", err)
+	}
+	t.Cleanup(func() { _ = al.Close() })
+	primary.EventBus.SetPersist(func(ev LogEvent) {
+		if err := al.Append(ev); err != nil {
+			t.Errorf("failed to persist activity event: %v", err)
+		}
+	})
+	return ActivityLogPath(primary.Storage.DataDir)
+}
+
+// TestProxyAttributesToolCallsToTheStdioClient is the regression guard for tool calls through a
+// sidecar being credited to the primary's fallback. The primary never sees the stdio client's
+// `initialize` — it receives each call over sessionless HTTP — so the proxy has to carry the name.
+//
+// Each case checks the name the primary's durable log records for a tool call, and between them
+// they pin the whole precedence: per-request clientInfo, then the stdio client's handshake, then
+// the sidecar's own -agent-name, then the primary's.
+func TestProxyAttributesToolCallsToTheStdioClient(t *testing.T) {
+	const listCall = `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_articles","arguments":{}}}`
+	modernCall := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_articles","arguments":{},` +
+		`"_meta":{"io.modelcontextprotocol/protocolVersion":"` + ModernProtocolVersion + `",` +
+		`"io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"Modern Client"}}}}`
+
+	tests := []struct {
+		name         string
+		sidecarAgent string
+		input        []string
+		want         string
+	}{
+		{
+			name:         "legacy initialize clientInfo",
+			sidecarAgent: "Sidecar Fallback",
+			input: []string{
+				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"reviewer"}}}`,
+				`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+				listCall,
+			},
+			want: "reviewer",
+		},
+		{
+			name:         "non-ASCII clientInfo survives the header",
+			sidecarAgent: "Sidecar Fallback",
+			input: []string{
+				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"Réviseur","version":"2.0"}}}`,
+				listCall,
+			},
+			want: "Réviseur 2.0",
+		},
+		{
+			name:         "sidecar -agent-name when the client sends no clientInfo",
+			sidecarAgent: "Sidecar Fallback",
+			input: []string{
+				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`,
+				listCall,
+			},
+			want: "Sidecar Fallback",
+		},
+		{
+			name: "primary -agent-name when the sidecar knows no name",
+			input: []string{
+				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+				listCall,
+			},
+			want: "Primary Fallback",
+		},
+		{
+			name:         "modern per-request clientInfo beats the forwarded name",
+			sidecarAgent: "Sidecar Fallback",
+			input: []string{
+				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"reviewer"}}}`,
+				modernCall,
+			},
+			want: "Modern Client",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			primary, proxy, out := proxyAgainstPrimary(t)
+			primary.AgentName = "Primary Fallback"
+			proxy.agentName = tc.sidecarAgent
+			logPath := persistPrimaryActivity(t, primary)
+
+			proxy.Run(strings.NewReader(strings.Join(tc.input, "\n") + "\n"))
+
+			for _, msg := range out.messages(t) {
+				if errObj, isErr := msg["error"]; isErr {
+					t.Fatalf("proxied request failed: %v", errObj)
+				}
+			}
+			events, err := ReadActivityLog(logPath, time.Time{}, 50, "", "mcp")
+			if err != nil {
+				t.Fatalf("ReadActivityLog failed: %v", err)
+			}
+			if len(events) != 1 || events[0].Tool != "list_articles" {
+				t.Fatalf("expected exactly one logged list_articles call, got %+v", events)
+			}
+			if events[0].Agent != tc.want {
+				t.Errorf("tool call through the sidecar attributed to %q, want %q", events[0].Agent, tc.want)
+			}
+		})
+	}
+}
+
+// TestProxyClientNameHeader pins what the proxy sends: nothing until it knows a name, the Base64
+// sentinel for a name that cannot travel as a plain header, and the same header on a subscription
+// stream, which builds its request on another goroutine.
+func TestProxyClientNameHeader(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	proxy := &MCPProxy{endpoint: "http://127.0.0.1:1/api/mcp", shutdown: ctx, stop: cancel}
+
+	req, err := proxy.newRequest([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+	if err != nil {
+		t.Fatalf("newRequest failed: %v", err)
+	}
+	if got := req.Header.Get(clientNameHeader); got != "" {
+		t.Errorf("no name is known yet, but the proxy sent %q", got)
+	}
+
+	// An initialize without clientInfo must not erase a name the client already gave.
+	for _, payload := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"日本 Client"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"initialize","params":{}}`,
+	} {
+		if _, err := proxy.newRequest([]byte(payload)); err != nil {
+			t.Fatalf("newRequest failed: %v", err)
+		}
+	}
+
+	done := make(chan *http.Request, 1)
+	go func() {
+		req, _ := proxy.newRequest([]byte(`{"jsonrpc":"2.0","id":3,"method":"subscriptions/listen","params":{}}`))
+		done <- req
+	}()
+	select {
+	case req = <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out building a subscription request")
+	}
+	raw := req.Header.Get(clientNameHeader)
+	if !strings.HasPrefix(raw, "=?base64?") {
+		t.Errorf("a non-ASCII name must use the Base64 sentinel, got %q", raw)
+	}
+	if got := forwardedClientName(req.Header); got != "日本 Client" {
+		t.Errorf("primary decodes %q, want %q", got, "日本 Client")
+	}
+}

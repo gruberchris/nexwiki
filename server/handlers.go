@@ -509,6 +509,27 @@ func (srv *Server) HandleVerifyArticle(w http.ResponseWriter, r *http.Request) {
 
 	if srv.EventBus != nil {
 		srv.EventBus.PublishActivity("api", "verify", "", saved.Slug, saved.Title, "User")
+		// Verifying saves a new revision and changes the trust tier, so open tabs reload it like
+		// any other edit.
+		articles, err := srv.Storage.ListArticles()
+		if err == nil {
+			dir := getArticleDirectory(saved.Type)
+			dirCount := 0
+			for _, a := range articles {
+				if getArticleDirectory(a.Type) == dir {
+					dirCount++
+				}
+			}
+			srv.EventBus.PublishWikiUpdate(WikiUpdate{
+				Type:           "article-edited",
+				Slug:           saved.Slug,
+				Title:          saved.Title,
+				Tags:           saved.Tags,
+				Directory:      dir,
+				TotalCount:     len(articles),
+				DirectoryCount: dirCount,
+			})
+		}
 	}
 
 	writeJSON(w, http.StatusOK, saved)
@@ -915,12 +936,96 @@ func (srv *Server) HandleDeleteTagGlobally(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := srv.Storage.DeleteTagGlobally(tag); err != nil {
-		writeError(w, http.StatusInternalServerError, srv.clientError(err))
+	// Storage reports only whether the sweep succeeded, not which documents it rewrote, so note the
+	// version of each document carrying the tag first. One whose version has since moved on was
+	// rewritten by the sweep; the rest were not changed and are not announced. The version is the
+	// test, not whether the tag is gone: a document carrying case variants of it ("removable" and
+	// "Removable") is rewritten with only one of them removed.
+	type carrier struct {
+		slug    string
+		version int
+	}
+	// Matched the way DeleteTagGlobally matches, so the two agree on which documents carry it.
+	tagLower := strings.ToLower(tag)
+	var carriers []carrier
+	if srv.EventBus != nil {
+		if articles, err := srv.Storage.ListArticles(); err == nil {
+			for _, a := range articles {
+				if slices.ContainsFunc(a.Tags, func(t string) bool { return strings.ToLower(t) == tagLower }) {
+					carriers = append(carriers, carrier{a.Slug, a.Version})
+				}
+			}
+		}
+	}
+
+	sweepErr := srv.Storage.DeleteTagGlobally(tag)
+
+	// Announced even when the sweep failed partway: the documents it had already rewritten stay
+	// rewritten, and the activity log is the audit trail for exactly that.
+	var swept []Article
+	for _, c := range carriers {
+		art, err := srv.Storage.GetArticle(c.slug)
+		if err != nil || art.Version == c.version {
+			continue
+		}
+		art.Content = ""
+		swept = append(swept, *art)
+	}
+	srv.publishBulkChanges("api", "delete_tag", "User", swept)
+
+	if sweepErr != nil {
+		writeError(w, http.StatusInternalServerError, srv.clientError(sweepErr))
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "tag deleted globally successfully"})
+}
+
+// publishBulkChanges announces the documents a bulk operation wrote — a web import or tag deletion,
+// or an MCP import — as the single-document writes are announced: an activity event attributed to
+// source and agent, and a live wiki update, for each.
+//
+// One event per document rather than one summary, for the reasons the activity log exists. Each
+// document gets its own revision, and get_article_history credits a revision by finding an event
+// for its slug, so a slug-less summary would leave all of them unattributed. MCP clients subscribe
+// to individual article URIs, and only a per-slug update notifies them. And the action filter keeps
+// its meaning: an import that creates ten documents is ten creates.
+//
+// The listing behind the counts is read once for the batch, not once per document as the
+// single-document handlers do, which would make a large import quadratic.
+func (srv *Server) publishBulkChanges(source, tool, agent string, docs []Article) {
+	if srv.EventBus == nil || len(docs) == 0 {
+		return
+	}
+	articles, listErr := srv.Storage.ListArticles()
+	dirCounts := make(map[string]int)
+	for _, a := range articles {
+		dirCounts[getArticleDirectory(a.Type)]++
+	}
+
+	for _, art := range docs {
+		// A document's first revision is version 1, and any later save supersedes an existing
+		// document, so the version tells a create from a replacement — including an import whose
+		// title lands on a slug that already exists.
+		action, updateType := "edit", "article-edited"
+		if art.Version == 1 {
+			action, updateType = "create", "article-added"
+		}
+		srv.EventBus.PublishActivity(source, action, tool, art.Slug, art.Title, agent)
+		if listErr != nil {
+			continue
+		}
+		dir := getArticleDirectory(art.Type)
+		srv.EventBus.PublishWikiUpdate(WikiUpdate{
+			Type:           updateType,
+			Slug:           art.Slug,
+			Title:          art.Title,
+			Tags:           art.Tags,
+			Directory:      dir,
+			TotalCount:     len(articles),
+			DirectoryCount: dirCounts[dir],
+		})
+	}
 }
 
 // HandleGetThemes serves all default and custom themes to the client.
@@ -1308,6 +1413,8 @@ func (srv *Server) HandleImportOKFBundle(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, srv.clientError(err))
 		return
 	}
+	// Only the documents the import saved: skipped, refused, and failed entries changed nothing.
+	srv.publishBulkChanges("api", "okf_import", "User", report.saved)
 	// A warning can carry the error of a document that failed to save.
 	hider := newDataDirHider(srv.Storage.DataDir)
 	for i, warning := range report.Warnings {

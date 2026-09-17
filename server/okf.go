@@ -184,6 +184,11 @@ type OKFImportReport struct {
 	Skipped     int      `json:"skipped"`
 	MissingType []string `json:"missing_type"`
 	Warnings    []string `json:"warnings"`
+
+	// saved holds the metadata of each document the import wrote, in bundle order and without its
+	// body, so a caller can announce every change it made. Unexported, so it is not part of the
+	// report a client receives.
+	saved []Article
 }
 
 // ImportOKFBundle walks a zipped OKF bundle, parsing each non-reserved .md as an OKF concept
@@ -339,11 +344,15 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 			overrides.Attester = art.Attester
 		}
 
-		if _, err := s.SaveArticleWithOverrides(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, normalizeType(art.Type), overrides); err != nil {
+		saved, err := s.SaveArticleWithOverrides(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, normalizeType(art.Type), overrides)
+		if err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: save failed: %v", f.Name, err))
 			continue
 		}
 		report.Imported++
+		meta := *saved
+		meta.Content = ""
+		report.saved = append(report.saved, meta)
 	}
 
 	return report, nil

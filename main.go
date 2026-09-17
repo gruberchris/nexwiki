@@ -146,7 +146,7 @@ func main() {
 	if primaryDetected {
 		log.Printf("-mcp-only: web server detected on port %s; running as a proxy to it. "+
 			"The primary owns the data directory; this process forwards MCP traffic to it.", *port)
-		server.NewMCPProxy(*port, os.Stdout).Run(os.Stdin)
+		server.NewMCPProxy(*port, server.ResolveConfiguredAgentName(*agentName), os.Stdout).Run(os.Stdin)
 		return
 	}
 
