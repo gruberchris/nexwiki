@@ -680,6 +680,14 @@ func NewStorage(dataDir string) (*Storage, error) {
 		cache:       newArticleCache(),
 	}
 
+	// Clear temp files a crash stranded between writeFileAtomic's create and rename. Before
+	// seeding, which treats any entry in the article directory as an existing wiki. After the index
+	// open, because that exclusive lock is what rules out a live writer: a -mcp-only sidecar proxies
+	// to a primary it detects, and any other second process fails on the lock before reaching here.
+	// So no age threshold is needed, and one would miss the usual case: a crash followed by an
+	// immediate restart (a container restart policy), when the leftovers are youngest.
+	s.removeLeftoverTempFiles()
+
 	// Seed standard 'home' page if no articles exist
 	if err := s.seedDefaultHome(); err != nil {
 		_ = index.Close()
@@ -1410,8 +1418,10 @@ func (s *Storage) SaveAsset(slug string, filename string, fileData []byte) (stri
 		return "", fmt.Errorf("failed to create article asset folder: %w", err)
 	}
 
+	// Atomically, because downloads are served without writeMu: re-uploading an asset must not hand
+	// a concurrent download a truncated file.
 	filePath := filepath.Join(articleAssetDir, safeFilename)
-	if err := os.WriteFile(filePath, fileData, 0644); err != nil {
+	if err := writeFileAtomic(filePath, fileData, 0644); err != nil {
 		return "", fmt.Errorf("failed to write asset file: %w", err)
 	}
 
