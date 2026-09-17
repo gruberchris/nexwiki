@@ -322,9 +322,29 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 // returns metadata for every article whose body links to the target slug, in either internal link
 // form. Self-links are skipped. Results are sorted by UpdatedAt descending.
 func (s *Storage) GetBacklinks(targetSlug string) ([]Article, error) {
+	backlinks, _, err := s.getBacklinksWithSkipped(targetSlug)
+	return backlinks, err
+}
+
+// getBacklinksWithSkipped is GetBacklinks that also returns the entries the scan skipped because
+// they could not be read, parsed, or listed. Any of them may link to the target, so no backlinks
+// plus a skipped entry means "unknown", not "unlinked". A caller that acts irreversibly on an
+// empty result, such as the plan lifecycle worker's deletion, must check both.
+func (s *Storage) getBacklinksWithSkipped(targetSlug string) ([]Article, []UnreadableFile, error) {
 	cleanedTarget := Slugify(targetSlug)
 	if cleanedTarget == "" {
-		return nil, nil
+		return nil, nil, nil
+	}
+
+	var skipped []UnreadableFile
+	report := func(file UnreadableFile) {
+		skipped = append(skipped, file)
+	}
+	skip := func(path string, info fs.FileInfo, err error) error {
+		if file, ok := s.skipUnreadable(path, info, err); ok {
+			report(file)
+		}
+		return nil
 	}
 
 	// Walk the article directory directly rather than going through ListArticles and then
@@ -333,20 +353,19 @@ func (s *Storage) GetBacklinks(targetSlug string) ([]Article, error) {
 	var backlinks []Article
 	err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return s.skipWalkError(path, d, walkErr, nil)
+			return s.skipWalkError(path, d, walkErr, report)
 		}
 		if d.IsDir() || filepath.Ext(path) != ".md" {
 			return nil
 		}
 		info, err := d.Info()
 		if err != nil {
-			return s.skipWalkError(path, d, err, nil)
+			return s.skipWalkError(path, d, err, report)
 		}
 
 		_, meta, err := s.cachedMeta(path, info)
 		if err != nil {
-			s.skipUnreadable(path, info, err)
-			return nil
+			return skip(path, info, err)
 		}
 		// "home" is excluded from listings but may still hold links, so it is included here.
 		if meta.Slug == cleanedTarget {
@@ -355,8 +374,7 @@ func (s *Storage) GetBacklinks(targetSlug string) ([]Article, error) {
 
 		refs, err := s.cachedLinkTargets(path, info)
 		if err != nil {
-			s.skipUnreadable(path, info, err)
-			return nil
+			return skip(path, info, err)
 		}
 		for _, ref := range refs {
 			if ref.Slug == cleanedTarget {
@@ -367,14 +385,14 @@ func (s *Storage) GetBacklinks(targetSlug string) ([]Article, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	sort.Slice(backlinks, func(i, j int) bool {
 		return backlinks[i].Timestamp.After(backlinks[j].Timestamp)
 	})
 
-	return backlinks, nil
+	return backlinks, skipped, nil
 }
 
 // RewriteWikiLinks rewrites every [[Target]] / [[Target|display]] WikiLink, whose target

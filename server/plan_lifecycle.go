@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -76,6 +77,10 @@ type PlanLifecycleWorker struct {
 	// Now is the worker's clock, injectable so tests exercise 90-day timers without waiting
 	// 90 days. Nil means time.Now.
 	Now func() time.Time
+
+	// Log receives the worker's report lines, injectable so tests can check what a sweep said
+	// about a plan it left alone. Nil means os.Stderr.
+	Log io.Writer
 }
 
 func (w *PlanLifecycleWorker) now() time.Time {
@@ -85,11 +90,19 @@ func (w *PlanLifecycleWorker) now() time.Time {
 	return time.Now()
 }
 
+func (w *PlanLifecycleWorker) logf(format string, args ...interface{}) {
+	out := w.Log
+	if out == nil {
+		out = os.Stderr
+	}
+	_, _ = fmt.Fprintf(out, format, args...)
+}
+
 // Run sweeps once immediately, then on the configured interval, until ctx is canceled.
 // It sweeps at startup because a daily ticker alone means a server restarted every morning
 // never fires.
 func (w *PlanLifecycleWorker) Run(ctx context.Context) {
-	_, _ = fmt.Fprintf(os.Stderr,
+	w.logf(
 		"Plan lifecycle worker: sweeping every %dd (archive completed/superseded after %dd, delete archived after %dd, dry-run=%t)\n",
 		w.Cfg.IntervalDays, w.Cfg.ArchiveAfterDays, w.Cfg.DeleteAfterDays, w.Cfg.DryRun)
 
@@ -100,7 +113,7 @@ func (w *PlanLifecycleWorker) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker: stopped\n")
+			w.logf("Plan lifecycle worker: stopped\n")
 			return
 		case <-ticker.C:
 			w.Sweep()
@@ -113,7 +126,7 @@ func (w *PlanLifecycleWorker) Run(ctx context.Context) {
 func (w *PlanLifecycleWorker) Sweep() {
 	metas, err := w.Storage.ListArticles()
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker: listing failed: %v\n", err)
+		w.logf("Plan lifecycle worker: listing failed: %v\n", err)
 		return
 	}
 	now := w.now()
@@ -159,16 +172,16 @@ func (w *PlanLifecycleWorker) Sweep() {
 // dashboard's open-work filter and to the lifecycle timers.
 func (w *PlanLifecycleWorker) backfillStatus(art *Article) {
 	if w.Cfg.DryRun {
-		_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker (dry-run): would set plan '%s' to '%s' (no status on disk)\n",
+		w.logf("Plan lifecycle worker (dry-run): would set plan '%s' to '%s' (no status on disk)\n",
 			art.Slug, DefaultPlanStatus)
 		return
 	}
 	updated, err := w.Storage.SetStatus(art.Slug, DefaultPlanStatus, 0, "Backfilled the default status: this plan predates the status field")
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker: failed to backfill status for '%s': %v\n", art.Slug, err)
+		w.logf("Plan lifecycle worker: failed to backfill status for '%s': %v\n", art.Slug, err)
 		return
 	}
-	_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker: set plan '%s' to '%s' (no status on disk)\n", art.Slug, DefaultPlanStatus)
+	w.logf("Plan lifecycle worker: set plan '%s' to '%s' (no status on disk)\n", art.Slug, DefaultPlanStatus)
 	w.publish("edit", updated.Slug, updated.Title, updated, "article-edited")
 }
 
@@ -180,17 +193,17 @@ func daysToDuration(days int) time.Duration {
 // status_changed_at as part of the same save.
 func (w *PlanLifecycleWorker) archivePlan(art *Article, fromStatus string) {
 	if w.Cfg.DryRun {
-		_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker (dry-run): would archive plan '%s' (%s for %dd)\n",
+		w.logf("Plan lifecycle worker (dry-run): would archive plan '%s' (%s for %dd)\n",
 			art.Slug, fromStatus, w.Cfg.ArchiveAfterDays)
 		return
 	}
 	summary := fmt.Sprintf("Auto-archived by the plan lifecycle worker: %s for more than %d days", fromStatus, w.Cfg.ArchiveAfterDays)
 	updated, err := w.Storage.SetStatus(art.Slug, StatusArchived, 0, summary)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker: failed to archive plan '%s': %v\n", art.Slug, err)
+		w.logf("Plan lifecycle worker: failed to archive plan '%s': %v\n", art.Slug, err)
 		return
 	}
-	_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker: archived plan '%s' (%s → archived)\n", art.Slug, fromStatus)
+	w.logf("Plan lifecycle worker: archived plan '%s' (%s → archived)\n", art.Slug, fromStatus)
 	w.publish("edit", updated.Slug, updated.Title, updated, "article-edited")
 }
 
@@ -198,10 +211,15 @@ func (w *PlanLifecycleWorker) archivePlan(art *Article, fromStatus string) {
 // in which case it refuses and reports the plan for a human decision instead. The refusal is
 // logged to the activity log so a permanently-skipped plan is visible rather than silently
 // immortal.
+//
+// A backlink scan that skipped entries it could not read, parse, or list is refused the same way: a
+// document with broken front matter or in an unreadable folder may be exactly the one that links
+// here, and the scan cannot say. Each later sweep checks again, and deletes the plan only if a
+// complete scan finds no backlinks.
 func (w *PlanLifecycleWorker) deletePlan(art *Article) {
-	backlinks, err := w.Storage.GetBacklinks(art.Slug)
+	backlinks, skipped, err := w.Storage.getBacklinksWithSkipped(art.Slug)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker: backlink check failed for '%s'; not deleting: %v\n", art.Slug, err)
+		w.logf("Plan lifecycle worker: backlink check failed for '%s'; not deleting: %v\n", art.Slug, err)
 		return
 	}
 	if len(backlinks) > 0 {
@@ -209,27 +227,36 @@ func (w *PlanLifecycleWorker) deletePlan(art *Article) {
 		for _, bl := range backlinks {
 			linkers = append(linkers, bl.Slug)
 		}
-		_, _ = fmt.Fprintf(os.Stderr,
-			"Plan lifecycle worker: refusing to delete plan '%s' — still linked from: %s. Remove the links or delete it by hand.\n",
-			art.Slug, strings.Join(linkers, ", "))
-		if w.Bus != nil && !w.Cfg.DryRun {
-			w.Bus.PublishActivity("lifecycle", "delete-refused", "plan_lifecycle", art.Slug, art.Title, "NexWiki")
-		}
+		w.refuseDelete(art, fmt.Sprintf("still linked from: %s. Remove the links or delete it by hand.", strings.Join(linkers, ", ")))
+		return
+	}
+	if len(skipped) > 0 {
+		w.refuseDelete(art, fmt.Sprintf("the backlink scan skipped %d unreadable %s that may link to it. Later sweeps check again; wiki_health lists what to fix.",
+			len(skipped), plural(len(skipped), "entry", "entries")))
 		return
 	}
 	if w.Cfg.DryRun {
-		_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker (dry-run): would permanently delete plan '%s' (archived for more than %dd)\n",
+		w.logf("Plan lifecycle worker (dry-run): would permanently delete plan '%s' (archived for more than %dd)\n",
 			art.Slug, w.Cfg.DeleteAfterDays)
 		return
 	}
 	if err := w.Storage.DeleteArticle(art.Slug); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker: failed to delete plan '%s': %v\n", art.Slug, err)
+		w.logf("Plan lifecycle worker: failed to delete plan '%s': %v\n", art.Slug, err)
 		return
 	}
 	// This line is the audit trail for an unrecoverable, unattended action — never drop it.
-	_, _ = fmt.Fprintf(os.Stderr, "Plan lifecycle worker: PERMANENTLY DELETED plan '%s' (archived for more than %d days)\n",
+	w.logf("Plan lifecycle worker: PERMANENTLY DELETED plan '%s' (archived for more than %d days)\n",
 		art.Slug, w.Cfg.DeleteAfterDays)
 	w.publish("delete", art.Slug, art.Title, art, "article-removed")
+}
+
+// refuseDelete reports a plan deletePlan kept, with the reason, and records the refusal in the
+// activity log. The event has no field for the reason, so the log line carries it.
+func (w *PlanLifecycleWorker) refuseDelete(art *Article, reason string) {
+	w.logf("Plan lifecycle worker: refusing to delete plan '%s' — %s\n", art.Slug, reason)
+	if w.Bus != nil && !w.Cfg.DryRun {
+		w.Bus.PublishActivity("lifecycle", "delete-refused", "plan_lifecycle", art.Slug, art.Title, "NexWiki")
+	}
 }
 
 // publish emits the activity-log event and the SSE count-sync update for one transition, so open
