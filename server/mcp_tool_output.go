@@ -137,10 +137,14 @@ type StatisticsOutput struct {
 	// directories it could not list, each counted once. None of the other numbers include them, so
 	// without it a wiki with broken files just looks smaller. wiki_health lists them, found by its
 	// own call to the same ScanLinkGraph.
-	UnreadableFileCount int             `json:"unreadable_file_count"`
-	TotalLinks          int             `json:"total_links"`
-	BrokenLinkCount     int             `json:"broken_link_count"`
-	BrokenLinks         []BrokenLinkRef `json:"broken_links"`
+	UnreadableFileCount int `json:"unreadable_file_count"`
+	// MisplacedDocumentCount is how many documents the scan left out because they are not stored as
+	// <slug>.md directly in the article directory (see Storage.isCanonical). Like the unreadable
+	// files, none of the other numbers include them, and wiki_health lists them.
+	MisplacedDocumentCount int             `json:"misplaced_document_count"`
+	TotalLinks             int             `json:"total_links"`
+	BrokenLinkCount        int             `json:"broken_link_count"`
+	BrokenLinks            []BrokenLinkRef `json:"broken_links"`
 }
 
 // StatusTagsOutput is the `get_status_tags` payload. Only plans and skills have a status field;
@@ -345,12 +349,13 @@ func brokenLinkSchema() map[string]interface{} {
 
 func statisticsOutputSchema() map[string]interface{} {
 	return schemaObject(map[string]interface{}{
-		"total_articles":        schemaOf("integer", "Number of documents in the knowledge base."),
-		"unreadable_file_count": schemaOf("integer", "Article files that could not be read or parsed, plus directories that could not be listed, each directory counted once however many articles it holds. None are counted anywhere else; wiki_health lists them."),
-		"total_links":           schemaOf("integer", "Number of internal links scanned, in either link form."),
-		"broken_link_count":     schemaOf("integer", "Number of internal links with no destination."),
-		"broken_links":          schemaArrayOf(brokenLinkSchema(), "Every internal link whose target does not exist."),
-	}, "total_articles", "unreadable_file_count", "total_links", "broken_link_count", "broken_links")
+		"total_articles":           schemaOf("integer", "Number of documents in the knowledge base."),
+		"unreadable_file_count":    schemaOf("integer", "Article files that could not be read or parsed, plus directories that could not be listed, each directory counted once however many articles it holds. None are counted anywhere else; wiki_health lists them."),
+		"misplaced_document_count": schemaOf("integer", "Documents not stored as <slug>.md directly in the article directory: in a subfolder, under a filename that differs from their slug, or with a slug not in slug form. They cannot be opened, and none are counted anywhere else; wiki_health lists them."),
+		"total_links":              schemaOf("integer", "Number of internal links scanned, in either link form."),
+		"broken_link_count":        schemaOf("integer", "Number of internal links with no destination."),
+		"broken_links":             schemaArrayOf(brokenLinkSchema(), "Every internal link whose target does not exist."),
+	}, "total_articles", "unreadable_file_count", "misplaced_document_count", "total_links", "broken_link_count", "broken_links")
 }
 
 func statusTagsOutputSchema() map[string]interface{} {

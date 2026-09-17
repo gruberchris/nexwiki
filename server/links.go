@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -188,6 +189,29 @@ type UnreadableFile struct {
 	Error string `json:"error"`
 }
 
+// MisplacedDocument is an article file that parses but is not stored as <slug>.md directly in the
+// article directory, or whose slug is not in slug form, so every scan leaves it out. See
+// Storage.isCanonical.
+//
+// It is not serialized: wiki_health reports each one as a MisplacedDocumentFinding.
+type MisplacedDocument struct {
+	Path string // relative to the article directory, slash-separated
+	Slug string // declared in its front matter, or derived from its title when it declares none
+}
+
+// problem says what is wrong with the document, for a log line. caseInsensitive
+// is how the article directory's filesystem compares names (see Storage.isCanonical).
+func (d MisplacedDocument) problem(caseInsensitive bool) string {
+	if !isSlugForm(d.Slug) {
+		return fmt.Sprintf("its slug %q is not in slug form (lowercase letters, digits, and hyphens)", d.Slug)
+	}
+	where := fmt.Sprintf("its slug is %q, so it belongs at %s.md directly in the article directory", d.Slug, d.Slug)
+	if !caseInsensitive && asciiEqualFold(d.Path, d.Slug+".md") {
+		where += ", and file names are compared exactly, case included"
+	}
+	return where
+}
+
 // LinkGraph is the whole wiki's internal-link structure from a single cached pass over the article
 // directory: who links to whom, in both directions, plus the links that go nowhere. Both link
 // forms are included — see LinkForm.
@@ -229,6 +253,10 @@ type LinkGraph struct {
 	// absent from every other field, so without this a document with broken front matter, or a
 	// whole folder of documents, would not exist as far as any health report could tell.
 	Unreadable []UnreadableFile
+	// Misplaced lists the documents the scan skipped because they are not stored as <slug>.md
+	// directly in the article directory, sorted by path. Like an unreadable file, a misplaced one is
+	// absent from every other field: it is not a document, a link source, or a link target.
+	Misplaced []MisplacedDocument
 }
 
 // ScanLinkGraph walks the article directory once and builds the whole link graph.
@@ -248,6 +276,7 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 		Broken:       []BrokenLinkRef{},
 		Mentions:     map[string][]string{},
 		Unreadable:   []UnreadableFile{},
+		Misplaced:    []MisplacedDocument{},
 	}
 
 	report := func(file UnreadableFile) {
@@ -276,6 +305,10 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 		if err != nil {
 			return skip(path, info, err)
 		}
+		if doc, misplaced := s.skipMisplaced(path, info, meta.Slug); misplaced {
+			graph.Misplaced = append(graph.Misplaced, doc)
+			return nil
+		}
 		refs, mentions, err := s.cachedBodyRefs(path, info)
 		if err != nil {
 			return skip(path, info, err)
@@ -295,6 +328,9 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 	sort.Strings(order)
 	sort.Slice(graph.Unreadable, func(i, j int) bool {
 		return graph.Unreadable[i].Path < graph.Unreadable[j].Path
+	})
+	sort.Slice(graph.Misplaced, func(i, j int) bool {
+		return graph.Misplaced[i].Path < graph.Misplaced[j].Path
 	})
 
 	for _, slug := range order {
@@ -322,23 +358,38 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 // returns metadata for every article whose body links to the target slug, in either internal link
 // form. Self-links are skipped. Results are sorted by UpdatedAt descending.
 func (s *Storage) GetBacklinks(targetSlug string) ([]Article, error) {
-	backlinks, _, err := s.getBacklinksWithSkipped(targetSlug)
-	return backlinks, err
+	scan, err := s.scanBacklinks(targetSlug)
+	return scan.backlinks, err
 }
 
-// getBacklinksWithSkipped is GetBacklinks that also returns the entries the scan skipped because
-// they could not be read, parsed, or listed. Any of them may link to the target, so no backlinks
-// plus a skipped entry means "unknown", not "unlinked". A caller that acts irreversibly on an
-// empty result, such as the plan lifecycle worker's deletion, must check both.
-func (s *Storage) getBacklinksWithSkipped(targetSlug string) ([]Article, []UnreadableFile, error) {
+// backlinkScan is what one walk found linking to a slug.
+//
+// No backlinks is only "unlinked" when unreadable and misplaced are empty too. Any unreadable entry
+// may link to the slug, and the scan cannot say. A misplaced document certainly links to it, but is no
+// backlink: the wiki does not list it, and saving it under its slug would write a different file. A
+// caller that acts irreversibly on an empty result, such as the plan lifecycle worker's deletion,
+// must check all three.
+type backlinkScan struct {
+	// backlinks are the documents whose bodies link to the slug, newest first.
+	backlinks []Article
+	// misplaced are the misplaced documents whose bodies link to the slug, in walk order.
+	misplaced []MisplacedDocument
+	// unreadable are the entries the walk could not read, parse, or list, in walk order.
+	unreadable []UnreadableFile
+}
+
+// scanBacklinks walks the article directory for every document whose body links to targetSlug,
+// in either internal link form. Self-links are skipped. See backlinkScan for what the misplaced and
+// unreadable entries mean to a caller.
+func (s *Storage) scanBacklinks(targetSlug string) (backlinkScan, error) {
+	var scan backlinkScan
 	cleanedTarget := Slugify(targetSlug)
 	if cleanedTarget == "" {
-		return nil, nil, nil
+		return scan, nil
 	}
 
-	var skipped []UnreadableFile
 	report := func(file UnreadableFile) {
-		skipped = append(skipped, file)
+		scan.unreadable = append(scan.unreadable, file)
 	}
 	skip := func(path string, info fs.FileInfo, err error) error {
 		if file, ok := s.skipUnreadable(path, info, err); ok {
@@ -350,7 +401,6 @@ func (s *Storage) getBacklinksWithSkipped(targetSlug string) ([]Article, []Unrea
 	// Walk the article directory directly rather than going through ListArticles and then
 	// re-reading each file: link targets are cached alongside metadata, so an unchanged wiki
 	// costs one stat per file instead of a full read and Markdown scan.
-	var backlinks []Article
 	err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return s.skipWalkError(path, d, walkErr, report)
@@ -367,8 +417,10 @@ func (s *Storage) getBacklinksWithSkipped(targetSlug string) ([]Article, []Unrea
 		if err != nil {
 			return skip(path, info, err)
 		}
-		// "home" is excluded from listings but may still hold links, so it is included here.
-		if meta.Slug == cleanedTarget {
+		doc, misplaced := s.skipMisplaced(path, info, meta.Slug)
+		// "home" is excluded from listings but may still hold links, so it is included here. A
+		// misplaced file is never the target itself, even a copy declaring the target's slug.
+		if !misplaced && meta.Slug == cleanedTarget {
 			return nil // self-links are not backlinks
 		}
 
@@ -377,22 +429,27 @@ func (s *Storage) getBacklinksWithSkipped(targetSlug string) ([]Article, []Unrea
 			return skip(path, info, err)
 		}
 		for _, ref := range refs {
-			if ref.Slug == cleanedTarget {
-				backlinks = append(backlinks, *meta)
-				break
+			if ref.Slug != cleanedTarget {
+				continue
 			}
+			if misplaced {
+				scan.misplaced = append(scan.misplaced, doc)
+			} else {
+				scan.backlinks = append(scan.backlinks, *meta)
+			}
+			break
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, nil, err
+		return backlinkScan{}, err
 	}
 
-	sort.Slice(backlinks, func(i, j int) bool {
-		return backlinks[i].Timestamp.After(backlinks[j].Timestamp)
+	sort.Slice(scan.backlinks, func(i, j int) bool {
+		return scan.backlinks[i].Timestamp.After(scan.backlinks[j].Timestamp)
 	})
 
-	return backlinks, skipped, nil
+	return scan, nil
 }
 
 // RewriteWikiLinks rewrites every [[Target]] / [[Target|display]] WikiLink, whose target
@@ -538,24 +595,29 @@ func AssetReferencePrefix(slug string) string {
 }
 
 // findAssetReferrers returns the slugs of every document whose body embeds an asset owned by
-// oldSlug, including oldSlug's own successor if it is already on disk. Entries it cannot read are
-// skipped, so the error is only for an article directory that cannot be read or searched. See
-// skipWalkError.
+// oldSlug, including oldSlug's own successor if it is already on disk, and separately the misplaced
+// documents that embed one, sorted by path. Entries it cannot read or parse are skipped, so the
+// error is only for an article directory that cannot be read or searched. See skipWalkError.
 //
 // This exists because GetBacklinks cannot answer the question: it reports documents that *link* to
 // a slug, and an embedded image is not a link. A page that only shows another page's diagram has no
 // backlink to it and would be missed entirely.
 //
+// A misplaced document is no referrer: healRenamedLinks could only rewrite one by saving it under
+// its slug, which is a different file. It is returned so the rename can say it was left alone. The
+// slugs come from front matter, not filenames, which for a document that is not misplaced agree.
+//
 // It reads every article body rather than using the mtime cache, which caches parsed link refs and
 // not raw content. That is acceptable precisely here: a rename is rare, and healRenamedLinks is
 // already about to re-save every affected document.
-func (s *Storage) findAssetReferrers(oldSlug string) ([]string, error) {
+func (s *Storage) findAssetReferrers(oldSlug string) ([]string, []MisplacedDocument, error) {
 	prefix := AssetReferencePrefix(oldSlug)
 	if prefix == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	var slugs []string
+	var misplacedDocs []MisplacedDocument
 	err := filepath.WalkDir(s.ArticleDir, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return s.skipWalkError(p, d, walkErr, nil)
@@ -563,26 +625,39 @@ func (s *Storage) findAssetReferrers(oldSlug string) ([]string, error) {
 		if d.IsDir() || filepath.Ext(p) != ".md" {
 			return nil
 		}
+		info, err := d.Info()
+		if err != nil {
+			return s.skipWalkError(p, d, err, nil)
+		}
+		// Skip rather than fail the whole scan. Leaving a file out loses no healing, since
+		// healRenamedLinks could not read or parse it to rewrite it either, but any embeds in it are
+		// left pointing at the old slug and the warning is the only trace of that.
+		_, meta, err := s.cachedMeta(p, info)
+		if err != nil {
+			s.skipUnreadable(p, info, err)
+			return nil
+		}
+		doc, misplaced := s.skipMisplaced(p, info, meta.Slug)
 		data, err := os.ReadFile(p)
 		if err != nil {
-			// Skip rather than fail the whole scan. Leaving the file out loses no healing, since
-			// healRenamedLinks could not read it to rewrite it either, but any embeds in it are
-			// left pointing at the old slug and the warning is the only trace of that.
-			info, infoErr := d.Info()
-			if infoErr != nil {
-				return s.skipWalkError(p, d, infoErr, nil)
-			}
 			s.skipUnreadable(p, info, err)
 			return nil
 		}
 		if !strings.Contains(string(data), prefix) {
 			return nil
 		}
-		slugs = append(slugs, strings.TrimSuffix(filepath.Base(p), ".md"))
+		if misplaced {
+			misplacedDocs = append(misplacedDocs, doc)
+		} else {
+			slugs = append(slugs, meta.Slug)
+		}
 		return nil
 	})
 	sort.Strings(slugs)
-	return slugs, err
+	sort.Slice(misplacedDocs, func(i, j int) bool {
+		return misplacedDocs[i].Path < misplacedDocs[j].Path
+	})
+	return slugs, misplacedDocs, err
 }
 
 // TranslateWikiLinksToBundlePaths rewrites [[Target]] / [[Target|alias]] WikiLinks into

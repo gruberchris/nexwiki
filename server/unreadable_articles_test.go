@@ -341,9 +341,9 @@ func inSearchIndex(t *testing.T, storage *Storage, slug string) bool {
 }
 
 // TestFindAssetReferrersWarnsOnceForUnreadableFile pins that the rename-time asset scan reports a
-// file it cannot read, once per version and sharing that record with the other walks, and still
-// returns every referrer it can read. It matches raw text, so malformed front matter does not hide
-// a referrer.
+// file it cannot read or parse, once per version and sharing that record with the other walks, and
+// still returns every referrer it can read. A file with malformed front matter is one of those: it
+// has no slug to heal it under, and healRenamedLinks could not parse it to rewrite it anyway.
 func TestFindAssetReferrersWarnsOnceForUnreadableFile(t *testing.T) {
 	storage, _ := newUnreadableFixture(t)
 	buf := captureLog(t)
@@ -358,15 +358,18 @@ func TestFindAssetReferrersWarnsOnceForUnreadableFile(t *testing.T) {
 		[]byte("---\ntitle: [unclosed\n---\n"+embed+"\n"), time.Now().Add(-time.Hour))
 	makeUnreadable(t, filepath.Join(storage.ArticleDir, "locked-embed.md"))
 
-	want := []string{"embeds-diagram", "malformed-embed"}
+	want := []string{"embeds-diagram"}
 	for i := 0; i < 3; i++ {
-		got, err := storage.findAssetReferrers("good-one")
+		got, _, err := storage.findAssetReferrers("good-one")
 		if err != nil {
 			t.Fatalf("findAssetReferrers failed: %v", err)
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("findAssetReferrers = %v, want %v", got, want)
 		}
+	}
+	if warnings := unreadableWarnings(t, buf, "malformed-embed.md"); len(warnings) != 1 || !strings.Contains(warnings[0], "YAML") {
+		t.Errorf("expected exactly one warning carrying the parse error for the malformed file, got %q", warnings)
 	}
 	warnings := unreadableWarnings(t, buf, "locked-embed.md")
 	if len(warnings) != 1 {
@@ -501,13 +504,14 @@ func unreadablePaths(t *testing.T, graph *LinkGraph) []string {
 
 // TestUnreadableSubdirectoryIsSkipped pins that a folder the walks cannot list costs only that
 // folder: every scan still succeeds with everything outside it, the folder is reported to health
-// checks, and it warns once for as long as it stays unreadable.
+// checks, and it warns once for as long as it stays unreadable. A document in a folder is misplaced
+// once the folder can be listed, so recovery reports it as that rather than listing it.
 func TestUnreadableSubdirectoryIsSkipped(t *testing.T) {
 	storage, _ := newUnreadableFixture(t)
 	buf := captureLog(t)
 
 	body := "![diagram](/api/assets/good-one/diagram.png) and [[Good One]]\n"
-	writeWithMtime(t, filepath.Join(storage.ArticleDir, "open", "nested.md"),
+	writeWithMtime(t, filepath.Join(storage.ArticleDir, "nested.md"),
 		[]byte("---\ntitle: Nested\nslug: nested\n---\n"+body), time.Now().Add(-time.Hour))
 	locked := filepath.Join(storage.ArticleDir, "locked")
 	writeWithMtime(t, filepath.Join(locked, "hidden.md"),
@@ -558,7 +562,7 @@ func TestUnreadableSubdirectoryIsSkipped(t *testing.T) {
 			t.Errorf("backlinks should come from outside the unreadable folder only, got %v", from)
 		}
 
-		referrers, err := storage.findAssetReferrers("good-one")
+		referrers, _, err := storage.findAssetReferrers("good-one")
 		if err != nil {
 			t.Fatalf("an unreadable subdirectory must not fail the asset scan: %v", err)
 		}
@@ -567,21 +571,19 @@ func TestUnreadableSubdirectoryIsSkipped(t *testing.T) {
 		}
 	}
 
-	warnings := unreadableWarnings(t, buf, "locked/")
+	const folderWarning = "directory locked/:"
+	warnings := unreadableWarnings(t, buf, folderWarning)
 	if len(warnings) != 1 {
 		t.Fatalf("expected exactly one warning across repeated scans, got %d: %q", len(warnings), warnings)
 	}
-	if !strings.Contains(warnings[0], "directory locked/:") {
-		t.Errorf("warning should name the folder relative to the article directory: %q", warnings[0])
-	}
 
-	// Once the folder can be listed again its articles come back and a listing forgets the
-	// failure, so losing access again warns again.
+	// Once the folder can be listed again its document is scanned, and found misplaced, and a
+	// listing forgets the failure, so losing access again warns again.
 	if err := os.Chmod(locked, 0755); err != nil {
 		t.Fatalf("Chmod failed: %v", err)
 	}
-	if got := listed(); !contains(got, "hidden") {
-		t.Errorf("the folder's articles should be listed once it is readable, got %v", got)
+	if got := listed(); contains(got, "hidden") {
+		t.Errorf("a document in a folder is misplaced and must not be listed, got %v", got)
 	}
 	graph, err := storage.ScanLinkGraph()
 	if err != nil {
@@ -590,11 +592,14 @@ func TestUnreadableSubdirectoryIsSkipped(t *testing.T) {
 	if got, want := unreadablePaths(t, graph), []string{"broken.md"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Unreadable paths after recovery = %v, want %v", got, want)
 	}
+	if want := []MisplacedDocument{{Path: "locked/hidden.md", Slug: "hidden"}}; !reflect.DeepEqual(graph.Misplaced, want) {
+		t.Errorf("Misplaced after recovery = %+v, want %+v", graph.Misplaced, want)
+	}
 	if err := os.Chmod(locked, 0); err != nil {
 		t.Fatalf("Chmod failed: %v", err)
 	}
 	listed()
-	if warnings := unreadableWarnings(t, buf, "locked/"); len(warnings) != 2 {
+	if warnings := unreadableWarnings(t, buf, folderWarning); len(warnings) != 2 {
 		t.Errorf("expected a second warning after the folder became unreadable again, got %d: %q", len(warnings), warnings)
 	}
 }
@@ -604,7 +609,8 @@ func TestUnreadableSubdirectoryIsSkipped(t *testing.T) {
 // produces. In a subdirectory the file is skipped and warned about once; an article root in that
 // state fails the scan instead (see TestUnreadableArticleRootFailsScans). Its cached parse still
 // matches the file, so the failure has to be forgotten some other way once the file is reachable
-// again; this pins that it is, and that losing access again warns again.
+// again; this pins that it is, and that losing access again warns again. A document in a
+// subdirectory is misplaced, so while it is reachable it is reported as that instead.
 func TestUnstattableArticleFileIsSkipped(t *testing.T) {
 	storage, _ := newUnreadableFixture(t)
 	buf := captureLog(t)
@@ -613,7 +619,9 @@ func TestUnstattableArticleFileIsSkipped(t *testing.T) {
 	file := filepath.Join(dir, "listed.md")
 	writeWithMtime(t, file, []byte("---\ntitle: Listed\nslug: listed\n---\nbody\n"), time.Now().Add(-time.Hour))
 
-	listed := func() bool {
+	// scan lists the wiki, which prunes the cache as the server's listings do, and returns the link
+	// graph.
+	scan := func() *LinkGraph {
 		t.Helper()
 		articles, err := storage.ListArticles()
 		if err != nil {
@@ -621,36 +629,45 @@ func TestUnstattableArticleFileIsSkipped(t *testing.T) {
 		}
 		for _, a := range articles {
 			if a.Slug == "listed" {
-				return true
+				t.Errorf("a document in a subdirectory must never be listed")
 			}
-		}
-		return false
-	}
-	if !listed() { // also caches the file's parse
-		t.Fatalf("the file should be listed while it is reachable")
-	}
-
-	lockSearch(t, dir)
-
-	for i := 0; i < 3; i++ {
-		if listed() {
-			t.Errorf("a file that cannot be stat'd must not be listed")
 		}
 		graph, err := storage.ScanLinkGraph()
 		if err != nil {
 			t.Fatalf("a file that cannot be stat'd must not fail the link graph: %v", err)
 		}
+		return graph
+	}
+	reachable := []MisplacedDocument{{Path: "no-search/listed.md", Slug: "listed"}}
+	expectReachable := func(when string) {
+		t.Helper()
+		graph := scan()
+		if !reflect.DeepEqual(graph.Misplaced, reachable) || contains(unreadablePaths(t, graph), "no-search/listed.md") {
+			t.Errorf("%s: the file should be reported misplaced and not unreadable, got misplaced %+v and unreadable %v",
+				when, graph.Misplaced, unreadablePaths(t, graph))
+		}
+	}
+	expectReachable("before locking") // also caches the file's parse
+
+	lockSearch(t, dir)
+
+	for i := 0; i < 3; i++ {
+		graph := scan()
 		if got, want := unreadablePaths(t, graph), []string{"broken.md", "no-search/listed.md"}; !reflect.DeepEqual(got, want) {
 			t.Errorf("Unreadable paths = %v, want %v", got, want)
+		}
+		if len(graph.Misplaced) != 0 {
+			t.Errorf("a file that cannot be stat'd cannot be found misplaced, got %+v", graph.Misplaced)
 		}
 		if _, err := storage.GetBacklinks("good-one"); err != nil {
 			t.Fatalf("a file that cannot be stat'd must not fail a backlink scan: %v", err)
 		}
-		if _, err := storage.findAssetReferrers("good-one"); err != nil {
+		if _, _, err := storage.findAssetReferrers("good-one"); err != nil {
 			t.Fatalf("a file that cannot be stat'd must not fail the asset scan: %v", err)
 		}
 	}
-	warnings := unreadableWarnings(t, buf, "no-search/listed.md")
+	const unreadableWarning = "unreadable article file no-search/listed.md"
+	warnings := unreadableWarnings(t, buf, unreadableWarning)
 	if len(warnings) != 1 {
 		t.Fatalf("expected exactly one warning across repeated scans, got %d: %q", len(warnings), warnings)
 	}
@@ -661,15 +678,17 @@ func TestUnstattableArticleFileIsSkipped(t *testing.T) {
 	if err := os.Chmod(dir, 0755); err != nil {
 		t.Fatalf("Chmod failed: %v", err)
 	}
-	if !listed() {
-		t.Errorf("the file should be listed again once it can be stat'd")
-	}
+	expectReachable("once it can be stat'd again")
 	if err := os.Chmod(dir, 0600); err != nil {
 		t.Fatalf("Chmod failed: %v", err)
 	}
-	listed()
-	if warnings := unreadableWarnings(t, buf, "no-search/listed.md"); len(warnings) != 2 {
+	scan()
+	if warnings := unreadableWarnings(t, buf, unreadableWarning); len(warnings) != 2 {
 		t.Errorf("expected a second warning after the file became unreachable again, got %d: %q", len(warnings), warnings)
+	}
+	// Each spell of being reachable is news too, since the unreadable spell in between replaced it.
+	if warnings := unreadableWarnings(t, buf, "misplaced article file no-search/listed.md"); len(warnings) != 2 {
+		t.Errorf("expected one misplaced warning per reachable spell, got %d: %q", len(warnings), warnings)
 	}
 }
 
@@ -679,7 +698,8 @@ func TestUnstattableArticleFileIsSkipped(t *testing.T) {
 // directory itself is searchable. That costs only the folder: every scan and the boot index sync
 // still succeed, and the folder is reported like any other that cannot be listed. The folder's
 // listing fails for real; its stat is simulated, since permissions alone cannot deny it here. The
-// probe itself is real, and must not run at all on a scan that hits no denied stat.
+// probe itself is real, and must not run at all on a scan that hits no denied stat. The document in
+// the folder is misplaced, so while the folder is reachable it is reported as that.
 func TestUnstattableTopLevelDirectoryUnderSearchableRoot(t *testing.T) {
 	storage, _ := newUnreadableFixture(t)
 	buf := captureLog(t)
@@ -699,9 +719,9 @@ func TestUnstattableTopLevelDirectoryUnderSearchableRoot(t *testing.T) {
 		return nil
 	})
 
-	// scanAll runs every walk, checking each succeeds, and returns the link graph's unreadable paths
-	// and the slugs listed.
-	scanAll := func() (unreadable, listed []string) {
+	// scanAll runs every walk, checking each succeeds, and returns the link graph and the slugs
+	// listed.
+	scanAll := func() (graph *LinkGraph, listed []string) {
 		t.Helper()
 		articles, err := storage.ListArticles()
 		if err != nil {
@@ -711,21 +731,21 @@ func TestUnstattableTopLevelDirectoryUnderSearchableRoot(t *testing.T) {
 			listed = append(listed, a.Slug)
 		}
 		sort.Strings(listed)
-		graph, err := storage.ScanLinkGraph()
+		graph, err = storage.ScanLinkGraph()
 		if err != nil {
 			t.Fatalf("ScanLinkGraph failed: %v", err)
 		}
 		if _, err := storage.GetBacklinks("good-one"); err != nil {
 			t.Fatalf("GetBacklinks failed: %v", err)
 		}
-		if _, err := storage.findAssetReferrers("good-one"); err != nil {
+		if _, _, err := storage.findAssetReferrers("good-one"); err != nil {
 			t.Fatalf("findAssetReferrers failed: %v", err)
 		}
-		return unreadablePaths(t, graph), listed
+		return graph, listed
 	}
 
-	if _, listed := scanAll(); !contains(listed, "hidden") {
-		t.Fatalf("the folder's article should be listed while the folder is reachable, got %v", listed)
+	if graph, _ := scanAll(); len(graph.Misplaced) != 1 || graph.Misplaced[0].Path != "labelled/hidden.md" {
+		t.Fatalf("the folder's document should be scanned, and found misplaced, while the folder is reachable, got %+v", graph.Misplaced)
 	}
 	if probes != 0 {
 		t.Fatalf("scans that hit no denied stat probed the article directory %d times", probes)
@@ -733,11 +753,11 @@ func TestUnstattableTopLevelDirectoryUnderSearchableRoot(t *testing.T) {
 
 	lockDir(t, labelled)
 	for i := 0; i < 3; i++ {
-		unreadable, listed := scanAll()
+		graph, listed := scanAll()
 		if want := []string{"good-one", "good-two"}; !reflect.DeepEqual(listed, want) {
 			t.Errorf("ListArticles = %v, want %v", listed, want)
 		}
-		if want := []string{"broken.md", "labelled/"}; !reflect.DeepEqual(unreadable, want) {
+		if unreadable, want := unreadablePaths(t, graph), []string{"broken.md", "labelled/"}; !reflect.DeepEqual(unreadable, want) {
 			t.Errorf("Unreadable paths = %v, want %v", unreadable, want)
 		}
 	}
@@ -750,7 +770,7 @@ func TestUnstattableTopLevelDirectoryUnderSearchableRoot(t *testing.T) {
 	if !inSearchIndex(t, storage, "good-one") {
 		t.Error("the boot index sync must keep articles outside the denied folder")
 	}
-	if warnings := unreadableWarnings(t, buf, "labelled/"); len(warnings) != 1 {
+	if warnings := unreadableWarnings(t, buf, "directory labelled/:"); len(warnings) != 1 {
 		t.Errorf("expected exactly one warning across repeated scans, got %d: %q", len(warnings), warnings)
 	}
 }
@@ -766,7 +786,7 @@ func TestUnreadableArticleRootFailsScans(t *testing.T) {
 		{"ListArticles", func(s *Storage) error { _, err := s.ListArticles(); return err }},
 		{"ScanLinkGraph", func(s *Storage) error { _, err := s.ScanLinkGraph(); return err }},
 		{"GetBacklinks", func(s *Storage) error { _, err := s.GetBacklinks("good-one"); return err }},
-		{"findAssetReferrers", func(s *Storage) error { _, err := s.findAssetReferrers("good-one"); return err }},
+		{"findAssetReferrers", func(s *Storage) error { _, _, err := s.findAssetReferrers("good-one"); return err }},
 	}
 	// expectFailures checks every scan fails, and when want is not empty that its error says so.
 	expectFailures := func(t *testing.T, storage *Storage, want string) {

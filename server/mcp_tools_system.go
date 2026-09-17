@@ -16,7 +16,7 @@ import (
 var getWikiStatisticsTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_wiki_statistics",
-		"description": "Retrieve high-level wiki statistics, including total articles, a count of article files that cannot be read or parsed and article folders that cannot be listed, and a list of dead or broken internal links — both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links.",
+		"description": "Retrieve high-level wiki statistics, including total articles, a count of article files that cannot be read or parsed and article folders that cannot be listed, a count of documents stored somewhere other than articles/<slug>.md, and a list of dead or broken internal links — both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links.",
 		"inputSchema": map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -47,12 +47,19 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	respText = "NexWiki Knowledge Base Statistics:\n"
 	respText += fmt.Sprintf("- Total Articles: %d\n", len(articles))
 	respText += fmt.Sprintf("- Unreadable Article Files and Folders: %d\n", len(graph.Unreadable))
+	respText += fmt.Sprintf("- Misplaced Documents: %d\n", len(graph.Misplaced))
 	respText += fmt.Sprintf("- Total Internal Links Scanned: %d\n", graph.TotalLinks)
 	respText += fmt.Sprintf("- Total Broken/Dead Internal Links: %d\n\n", len(graph.Broken))
 
+	// Only the counts are reported here; wiki_health owns the lists and the remedies.
 	if len(graph.Unreadable) > 0 {
-		// Only the count is reported here; wiki_health owns the list and the remedies.
-		respText += "Some article files could not be read or parsed, or folders could not be listed. Those articles are left out of the counts above, and links to them show as broken. Run wiki_health to see which and why.\n\n"
+		respText += "Some article files could not be read or parsed, or folders could not be listed. "
+	}
+	if len(graph.Misplaced) > 0 {
+		respText += "Some documents are not stored as articles/<slug>.md (in a subfolder, under another filename, or with a slug not in slug form), so they cannot be opened. "
+	}
+	if len(graph.Unreadable) > 0 || len(graph.Misplaced) > 0 {
+		respText += "Those documents are left out of the counts above, and links to them show as broken. Run wiki_health to see which and why.\n\n"
 	}
 
 	if len(graph.Broken) == 0 {
@@ -70,11 +77,12 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	return ToolResponse{
 		Content: []ToolContent{{Type: "text", Text: respText}},
 		StructuredContent: StatisticsOutput{
-			TotalArticles:       len(articles),
-			UnreadableFileCount: len(graph.Unreadable),
-			TotalLinks:          graph.TotalLinks,
-			BrokenLinkCount:     len(graph.Broken),
-			BrokenLinks:         graph.Broken,
+			TotalArticles:          len(articles),
+			UnreadableFileCount:    len(graph.Unreadable),
+			MisplacedDocumentCount: len(graph.Misplaced),
+			TotalLinks:             graph.TotalLinks,
+			BrokenLinkCount:        len(graph.Broken),
+			BrokenLinks:            graph.Broken,
 		},
 	}, nil
 }

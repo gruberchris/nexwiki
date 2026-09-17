@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,11 +27,12 @@ import (
 type articleCache struct {
 	mu      sync.Mutex
 	entries map[string]*articleCacheEntry
-	// failures holds, per path, the stat fingerprint of the file version that last failed to read
-	// or parse, so a broken file is warned about once per version rather than on every scan. A
-	// directory that could not be listed, or a file that could not be stat'd, has no version and is
-	// recorded under the zero fileVersion. See Storage.skipUnreadable and Storage.skipWalkError.
-	failures map[string]fileVersion
+	// failures holds, per path, the file version that last failed to read or parse or was found
+	// misplaced, so a broken or misplaced file is warned about once per version rather than on every
+	// scan. A directory that could not be listed, or a file that could not be stat'd, has no version
+	// and is recorded under the zero fileVersion. See Storage.skipUnreadable, Storage.skipWalkError,
+	// and Storage.skipMisplaced.
+	failures map[string]failureRecord
 }
 
 // fileVersion identifies one version of a file on disk by the same modification time and size that
@@ -38,6 +40,19 @@ type articleCache struct {
 type fileVersion struct {
 	modTime time.Time
 	size    int64
+}
+
+func (v fileVersion) equal(other fileVersion) bool {
+	return v.size == other.size && v.modTime.Equal(other.modTime)
+}
+
+// failureRecord is the version of a file that was last warned about.
+type failureRecord struct {
+	version fileVersion
+	// misplaced marks a file that parsed but is not stored where its slug says it lives. store
+	// forgets any other failure once the file parses, but a successful parse is how this one was
+	// found, so a scan parsing the same version must not reset it and warn a second time.
+	misplaced bool
 }
 
 // articleCacheEntry is one file's parsed form plus the stat fingerprint it was parsed from.
@@ -61,7 +76,7 @@ type articleCacheEntry struct {
 func newArticleCache() *articleCache {
 	return &articleCache{
 		entries:  make(map[string]*articleCacheEntry),
-		failures: make(map[string]fileVersion),
+		failures: make(map[string]failureRecord),
 	}
 }
 
@@ -91,8 +106,11 @@ func (c *articleCache) store(path string, info fs.FileInfo, meta Article) *artic
 	}
 	c.mu.Lock()
 	c.entries[path] = entry
-	// A successful parse forgets any earlier failure, so the file breaking again warns again.
-	delete(c.failures, path)
+	// A successful parse forgets any earlier failure, so the file breaking again warns again. A
+	// misplaced record of this same version stays: see failureRecord.
+	if prev, ok := c.failures[path]; ok && !(prev.misplaced && prev.version.equal(fileVersion{modTime: entry.modTime, size: entry.size})) {
+		delete(c.failures, path)
+	}
 	c.mu.Unlock()
 	return entry
 }
@@ -106,6 +124,17 @@ func (c *articleCache) store(path string, info fs.FileInfo, meta Article) *artic
 // dropping it means a file that recovers is parsed afresh, so store forgets the failure and a
 // later one warns again.
 func (c *articleCache) noteFailure(path string, info fs.FileInfo) bool {
+	return c.note(path, info, false)
+}
+
+// noteMisplaced records that the current version of a file is misplaced, and reports whether that
+// is news, under the same lock and version rule as noteFailure. info must not be nil: only a file
+// that parsed can be misplaced.
+func (c *articleCache) noteMisplaced(path string, info fs.FileInfo) bool {
+	return c.note(path, info, true)
+}
+
+func (c *articleCache) note(path string, info fs.FileInfo, misplaced bool) bool {
 	var version fileVersion
 	if info != nil {
 		version = fileVersion{modTime: info.ModTime(), size: info.Size()}
@@ -115,10 +144,13 @@ func (c *articleCache) noteFailure(path string, info fs.FileInfo) bool {
 	if info == nil {
 		delete(c.entries, path)
 	}
-	if prev, ok := c.failures[path]; ok && prev.size == version.size && prev.modTime.Equal(version.modTime) {
+	// One record per version whatever its kind. A misplaced file whose body then fails to read in
+	// another scan is not news, and letting the kinds replace each other would have the scans that
+	// read bodies and the ones that do not take turns warning about the same version.
+	if prev, ok := c.failures[path]; ok && prev.version.equal(version) {
 		return false
 	}
-	c.failures[path] = version
+	c.failures[path] = failureRecord{version: version, misplaced: misplaced}
 	return true
 }
 
@@ -165,7 +197,8 @@ func (c *articleCache) prune(seen map[string]bool) {
 // findAssetReferrers, and SyncSearchIndex's per-document read. Skipping keeps one bad file from
 // failing a whole listing or scan, but a silent skip makes the file vanish from listings, search,
 // and health reports with nothing saying why. A file that cannot even be stat'd goes through
-// skipWalkError instead.
+// skipWalkError instead, and one that parses but is stored in the wrong place through
+// skipMisplaced.
 //
 // The warning is logged once per file version, not once per scan: the sidebar, the dashboard, and
 // many MCP tools rescan the wiki, and a warning repeated on each of those would bury everything
@@ -185,6 +218,150 @@ func (s *Storage) skipUnreadable(path string, info fs.FileInfo, err error) (Unre
 		log.Printf("Warning: skipping unreadable article file %s: %v", rel, err)
 	}
 	return UnreadableFile{Path: rel, Error: err.Error()}, true
+}
+
+// skipMisplaced is the check every walk of the article directory makes once a file has parsed:
+// ListArticles, ScanLinkGraph, GetBacklinks, and findAssetReferrers. See isCanonical for the rule.
+// Listing a file that breaks it offered a document that could not be opened, searched, or exported,
+// and saving it back under its slug wrote a different file: a duplicate, or over whatever article
+// already held that slug. So every walk leaves it out, and it is reported for a person to move or
+// delete rather than guessed at.
+//
+// It reports whether the file is misplaced, warning once per file version like skipUnreadable.
+func (s *Storage) skipMisplaced(path string, info fs.FileInfo, slug string) (MisplacedDocument, bool) {
+	if s.isCanonical(path, slug) {
+		return MisplacedDocument{}, false
+	}
+	doc := MisplacedDocument{Path: s.articleRelPath(path), Slug: slug}
+	if s.cache.noteMisplaced(path, info) {
+		log.Printf("Warning: skipping misplaced article file %s: %s", doc.Path, doc.problem(s.caseInsensitive))
+	}
+	return doc, true
+}
+
+// isCanonical reports whether the parsed document a walk found at path is stored where its slug
+// says it lives, which is what makes it a document at all. A document is stored as <slug>.md
+// directly in the article directory, where slug is the one parseArticleFile returns, declared in its
+// front matter or derived from its title, and is in slug form: what Slugify returns, so lowercase
+// letters, digits, and hyphens. That is the only file a slug lookup (GetArticle, metaBySlug) reads
+// and a save writes, and NexWiki never writes any other.
+//
+// Anything else that parses is misplaced: a file in a subdirectory, a copy whose filename differs
+// from its slug (cp a.md b.md), or a slug no lookup can reach because lookups slugify what they are
+// given. The filename is compared the way the filesystem compares names (see caseInsensitive):
+// exactly where case matters, and ignoring ASCII case where it does not, since there a lookup of bar
+// opens Bar.md. That keeps what the walks report as misplaced and what a lookup can open in
+// agreement. Only ASCII case: a slug is ASCII, and a filesystem's folding beyond it varies (NTFS does
+// not take the Kelvin sign for k, as Unicode folding does), so a non-ASCII name is not assumed to
+// open by an ASCII slug.
+//
+// A lookup builds its path from the slug, so for one this reduces to the parsed slug being the one
+// looked up, and it compares that directly.
+func (s *Storage) isCanonical(path, slug string) bool {
+	// A file directly in the article directory splits into that directory, a separator, and its
+	// name: the walks join names onto ArticleDir, which NewStorage builds with filepath.Join and so
+	// is already clean. This runs for every file on every scan, and cleaning both paths each time
+	// was most of its cost.
+	dir, file := filepath.Split(path)
+	if len(dir) != len(s.ArticleDir)+1 || !strings.HasPrefix(dir, s.ArticleDir) {
+		return false
+	}
+	stem, ok := strings.CutSuffix(file, ".md")
+	if !ok {
+		return false
+	}
+	if s.caseInsensitive {
+		return asciiEqualFold(stem, slug) && isSlugForm(slug)
+	}
+	return stem == slug && isSlugForm(slug)
+}
+
+// asciiEqualFold reports whether a and b are equal ignoring the case of ASCII letters only. See
+// isCanonical for why not strings.EqualFold.
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		if asciiLowerByte(a[i]) != asciiLowerByte(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// asciiLower lowercases the ASCII letters in s and leaves every other byte alone.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		b[i] = asciiLowerByte(c)
+	}
+	return string(b)
+}
+
+func asciiLowerByte(c byte) byte {
+	if 'A' <= c && c <= 'Z' {
+		return c + 'a' - 'A'
+	}
+	return c
+}
+
+// caseProbeName is the file detectCaseInsensitive creates in the article directory for a moment. It
+// is lowercase so its uppercase form is a different name, and neither an article (.md) nor a name
+// the temp file sweep removes. It is fixed rather than random because detection runs while
+// NewStorage holds the search index lock, so no other NexWiki process can be probing the same
+// directory, and a fixed name means a probe a crash left behind is removed next start rather than
+// accumulating.
+const caseProbeName = ".nexwiki-case-probe"
+
+// caseProbeLstat is os.Lstat as detectCaseInsensitive calls it, held in a variable only so tests can
+// give either answer whatever the host filesystem does.
+var caseProbeLstat = os.Lstat
+
+// detectCaseInsensitive reports whether dir's filesystem treats names that differ only in case as
+// the same entry: macOS and Windows by default, and SMB, FAT, and case-folding mounts anywhere. It
+// creates caseProbeName, stats its uppercase form, and removes the probe. It runs once per Storage,
+// so no lookup pays for it.
+//
+// Any failure answers false, case-sensitive, with a warning. That is also the conservative answer:
+// on a filesystem that ignores case it reports a file whose name differs from its slug only in case
+// as misplaced, while a lookup still opens it. That is the right document with the right slug, so the
+// disagreement costs a warning, not data.
+func detectCaseInsensitive(dir string) bool {
+	warn := func(err error) bool {
+		log.Printf("Warning: could not tell whether the article directory ignores case in file names, so treating it as case-sensitive: %v", err)
+		return false
+	}
+	probe := filepath.Join(dir, caseProbeName)
+	// Whatever holds the name goes first: a probe a crash left behind, or anything else. os.Remove
+	// removes a symlink rather than what it points at, and O_EXCL will not follow one either, so the
+	// probe can never truncate or create a file somewhere else.
+	if err := os.Remove(probe); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return warn(err)
+	}
+	f, err := os.OpenFile(probe, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return warn(err)
+	}
+	_ = f.Close()
+	defer func() {
+		if err := os.Remove(probe); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("Warning: could not remove %s from the article directory: %v", caseProbeName, err)
+		}
+	}()
+
+	probeInfo, err := caseProbeLstat(probe)
+	if err != nil {
+		return warn(err)
+	}
+	upperInfo, err := caseProbeLstat(filepath.Join(dir, strings.ToUpper(caseProbeName)))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false // the usual answer on a filesystem where case matters
+	}
+	if err != nil {
+		return warn(err)
+	}
+	return os.SameFile(probeInfo, upperInfo)
 }
 
 // skipWalkError is the per-entry error handling the article walks share for an entry they could

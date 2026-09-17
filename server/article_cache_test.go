@@ -233,7 +233,7 @@ func TestConcurrentListArticlesIsSafe(t *testing.T) {
 
 // --- benchmarks -------------------------------------------------------------------------------
 //
-// Run: go test ./server/ -run XXX -bench 'BenchmarkListArticles|BenchmarkGetBacklinks' -benchtime 20x
+// Run: go test ./server/ -run XXX -bench 'BenchmarkListArticles|BenchmarkGetBacklinks|BenchmarkScanLinkGraph' -benchtime 20x
 
 func benchStorage(b *testing.B, n int) *Storage {
 	b.Helper()
@@ -255,6 +255,21 @@ func BenchmarkListArticles(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		if _, err := storage.ListArticles(); err != nil {
 			b.Fatalf("ListArticles failed: %v", err)
+		}
+	}
+}
+
+// BenchmarkScanLinkGraph is the few-hundred-document counterpart of BenchmarkLargeCorpusScanLinkGraph,
+// quick enough to run on every change to what a walk does per file.
+func BenchmarkScanLinkGraph(b *testing.B) {
+	storage := benchStorage(b, 300)
+	if _, err := storage.ScanLinkGraph(); err != nil {
+		b.Fatalf("warmup failed: %v", err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := storage.ScanLinkGraph(); err != nil {
+			b.Fatalf("ScanLinkGraph failed: %v", err)
 		}
 	}
 }

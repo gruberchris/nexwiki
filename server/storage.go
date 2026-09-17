@@ -10,6 +10,7 @@ import (
 	"html"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -623,6 +624,11 @@ type Storage struct {
 	// edits made outside NexWiki are still picked up. See article_cache.go.
 	cache *articleCache
 
+	// caseInsensitive records whether the article directory's filesystem ignores case in file names,
+	// detected once by NewStorage. It decides how the walks compare a filename to its slug. See
+	// isCanonical and detectCaseInsensitive.
+	caseInsensitive bool
+
 	// writeMu serializes every mutation of the article tree. Writers arrive concurrently from
 	// the HTTP API, the in-process MCP goroutine, and the Streamable HTTP transport; without
 	// this, two writers can both scan the history directory, compute the same next version
@@ -709,6 +715,10 @@ func NewStorage(dataDir string) (*Storage, error) {
 	// an immediate restart (a container restart policy), when the leftovers are youngest.
 	s.removeLeftoverTempFiles(nil, articleDir)
 
+	// Before anything scans the article directory, and before seeding, which would take a probe left
+	// in it for an existing wiki. The probe is gone again when this returns.
+	s.caseInsensitive = detectCaseInsensitive(articleDir)
+
 	// Seed standard 'home' page if no articles exist
 	if err := s.seedDefaultHome(); err != nil {
 		_ = index.Close()
@@ -783,23 +793,53 @@ func openSearchIndex(indexPath string, timeout time.Duration) (bleve.Index, erro
 	}
 }
 
+// Slugify's patterns, compiled once. Compiling them on every call cost ~8µs, and link scans call
+// Slugify for every link in every body they read.
+var (
+	slugDisallowedChars = regexp.MustCompile(`[^a-z0-9\s-_]`)
+	slugHyphenRuns      = regexp.MustCompile(`-+`)
+)
+
 // Slugify standardizes title strings into valid URL-safe and file-safe slug formats.
 func Slugify(title string) string {
 	slug := strings.ToLower(title)
 	// Replace non-alphanumeric characters with spaces
-	reg := regexp.MustCompile(`[^a-z0-9\s-_]`)
-	slug = reg.ReplaceAllString(slug, "")
+	slug = slugDisallowedChars.ReplaceAllString(slug, "")
 	// Replace spaces and underscores with hyphens
 	slug = strings.ReplaceAll(slug, " ", "-")
 	slug = strings.ReplaceAll(slug, "_", "-")
 	// Replace multiple hyphens with a single hyphen
-	regHyphen := regexp.MustCompile(`-+`)
-	slug = regHyphen.ReplaceAllString(slug, "-")
+	slug = slugHyphenRuns.ReplaceAllString(slug, "-")
 	return strings.Trim(slug, "-")
 }
 
+// isSlugForm reports whether Slugify(s) == s, without running Slugify: the article walks ask it of
+// every file on every scan. It must agree with Slugify exactly, quirks included, and
+// TestIsSlugFormAgreesWithSlugify holds it to that. Slugify keeps lowercase ASCII letters, digits,
+// hyphens, and the whitespace \s matches, and turns spaces and underscores into hyphens, so its
+// output is those characters less the space, with no hyphen at either end or next to another.
+func isSlugForm(s string) bool {
+	if strings.HasPrefix(s, "-") || strings.HasSuffix(s, "-") {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case 'a' <= c && c <= 'z', '0' <= c && c <= '9', c == '\t', c == '\n', c == '\f', c == '\r':
+		case c == '-':
+			if s[i-1] == '-' {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // ListArticles reads all Markdown files and returns metadata sorted by updated time (newest first).
-// The "home" article is excluded from listings (reserved for the Hero dashboard).
+// The "home" article is excluded from listings (reserved for the Hero dashboard), and so is every
+// misplaced document: one not stored as <slug>.md directly in the article directory (see
+// skipMisplaced).
 func (s *Storage) ListArticles() ([]Article, error) {
 	var articles []Article
 
@@ -829,6 +869,11 @@ func (s *Storage) ListArticles() ([]Article, error) {
 			s.skipUnreadable(path, info, err)
 			return nil
 		}
+		// Checked before the home exclusion, so a listing alone reports a misplaced file that declares
+		// slug home.
+		if _, misplaced := s.skipMisplaced(path, info, art.Slug); misplaced {
+			return nil
+		}
 
 		// Exclude "home" from listings (reserved for Hero dashboard)
 		if art.Slug == "home" {
@@ -854,8 +899,18 @@ func (s *Storage) ListArticles() ([]Article, error) {
 	return articles, nil
 }
 
+// errArticleNotFound is what a slug lookup or write returns for a slug with no document: no file at
+// <slug>.md, or one declaring another slug. The two are indistinguishable to a caller on purpose,
+// since a misplaced file is not a document; wiki_health is where it is reported.
+var errArticleNotFound = errors.New("article not found")
+
+func articleNotFound(slug string) error {
+	return fmt.Errorf("%w: %s", errArticleNotFound, slug)
+}
+
 // metaBySlug returns cached metadata for one slug, reading the file only when it has changed.
-// Callers that need the Markdown body must use GetArticle.
+// Callers that need the Markdown body must use GetArticle. Like GetArticle, it answers not found
+// for a misplaced file.
 func (s *Storage) metaBySlug(slug string) (*Article, error) {
 	cleanedSlug := Slugify(slug)
 	if cleanedSlug == "" {
@@ -866,16 +921,30 @@ func (s *Storage) metaBySlug(slug string) (*Article, error) {
 	info, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("article not found: %s", slug)
+			return nil, articleNotFound(slug)
 		}
 		return nil, err
 	}
 
 	_, meta, err := s.cachedMeta(filePath, info)
-	return meta, err
+	if err != nil {
+		return nil, err
+	}
+	if meta.Slug != cleanedSlug {
+		return nil, articleNotFound(slug)
+	}
+	return meta, nil
 }
 
 // GetArticle reads and parses a single article by slug.
+//
+// A file at <slug>.md that declares another slug, such as a copy, is misplaced, and not found
+// exactly like a missing file. Every read by slug, and the edit, re-tag, status change, and delete
+// entry points, start here, so nothing can open such a file by its filename and then save it under
+// its declared slug, over another article. The save and DeleteArticle check again for themselves.
+//
+// The path is built from the slug, so the declared slug is all there is to compare: see
+// isCanonical for why that agrees with the walks on any filesystem.
 func (s *Storage) GetArticle(slug string) (*Article, error) {
 	cleanedSlug := Slugify(slug)
 	if cleanedSlug == "" {
@@ -886,12 +955,19 @@ func (s *Storage) GetArticle(slug string) (*Article, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("article not found: %s", slug)
+			return nil, articleNotFound(slug)
 		}
 		return nil, err
 	}
 
-	return parseArticleFile(data, true)
+	art, err := parseArticleFile(data, true)
+	if err != nil {
+		return nil, err
+	}
+	if art.Slug != cleanedSlug {
+		return nil, articleNotFound(slug)
+	}
+	return art, nil
 }
 
 // SaveArticle writes article Markdown to disk, handling potential slug changes and compressing a copy in gzip version history.
@@ -993,6 +1069,13 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 		if err == nil {
 			existingArt, parseErr := parseArticleFile(existingData, false)
 			if parseErr == nil {
+				// A save that starts from a slug must not start from a misplaced file: loaded by its
+				// filename and saved under its declared slug, it would overwrite another article. Most
+				// callers ask GetArticle first, which refuses one, so this covers those that do not
+				// (RevertArticle) and a file that changed in between.
+				if existingArt.Slug != oldSlug {
+					return nil, articleNotFound(oldSlug)
+				}
 				// Preserve the existing document class unless the caller explicitly supplied one.
 				if articleType == "" {
 					resolvedType = existingArt.Type
@@ -1108,7 +1191,6 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	}
 
 	histFolder := filepath.Join(s.HistoryDir, newSlug)
-	_ = os.MkdirAll(histFolder, 0755)
 
 	// The version this save supersedes, read from the document's own front matter. After the rename
 	// block above, newSlug is where the previous state lives whichever slug it arrived under —
@@ -1119,6 +1201,13 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	if prevErr == nil {
 		if prevArt, err := parseArticleFile(prevData, false); err == nil {
 			prevVersion = prevArt.Version
+			// A create whose path a misplaced file already holds would overwrite that file, which is
+			// not a document but may be the only copy of what is in it. Only a create can get here
+			// with one: an update was checked above, and a rename refused an occupied target.
+			// Refused before this save touches the history directory, so it leaves nothing behind.
+			if oldSlug == "" && prevArt.Slug != newSlug {
+				return nil, fmt.Errorf("a misplaced file already occupies articles/%s.md; move or delete it first (wiki_health lists it)", newSlug)
+			}
 		}
 	}
 
@@ -1149,6 +1238,8 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 			nextVersion = 2
 		}
 	}
+
+	_ = os.MkdirAll(histFolder, 0755)
 
 	// Archive the state being superseded if no snapshot of it exists, so the timeline the version
 	// numbers promise has an entry to revert to. This covers a document whose history was pruned as
@@ -1344,18 +1435,28 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 // question. GetBacklinks reports documents that *link* to oldSlug; a document that merely embeds
 // one of its images has no link and no backlink, so findAssetReferrers finds it separately. The
 // renamed document's own body is handled in saveArticleLocked, not here.
+//
+// Every write goes back to the file it read. A save writes <Slugify(title)>.md, so a referrer is
+// rewritten only when that is where it already is; anything else would turn healing a link into
+// creating a duplicate document or overwriting a different one. A referrer that cannot be healed
+// in place is logged, naming the file, and left for a person to fix.
 func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 	candidates := map[string]bool{}
-	backlinks, err := s.GetBacklinks(oldSlug)
+	// Keyed by path, since a misplaced document can both link to the article and embed its assets.
+	misplaced := map[string]MisplacedDocument{}
+	backlinks, err := s.scanBacklinks(oldSlug)
 	if err != nil {
 		// A failed backlink scan is not a reason to skip asset healing too: the two scans are
 		// independent, and half the healing beats none.
 		_, _ = fmt.Fprintf(os.Stderr, "Warning: link-heal scan failed after renaming '%s'→'%s': %v\n", oldSlug, newSlug, err)
 	}
-	for _, bl := range backlinks {
+	for _, bl := range backlinks.backlinks {
 		candidates[bl.Slug] = true
 	}
-	referrers, err := s.findAssetReferrers(oldSlug)
+	for _, doc := range backlinks.misplaced {
+		misplaced[doc.Path] = doc
+	}
+	referrers, misplacedReferrers, err := s.findAssetReferrers(oldSlug)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "Warning: asset-heal scan failed after renaming '%s'→'%s': %v\n", oldSlug, newSlug, err)
 	}
@@ -1364,6 +1465,22 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 		if slug != newSlug {
 			candidates[slug] = true
 		}
+	}
+	for _, doc := range misplacedReferrers {
+		misplaced[doc.Path] = doc
+	}
+
+	// A misplaced document is not where its slug says, so saving it under that slug would write a
+	// different file. It is left as it is, and named, because it still points at the old slug.
+	paths := make([]string, 0, len(misplaced))
+	for path := range misplaced {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		doc := misplaced[path]
+		log.Printf("Warning: not healing references to renamed article '%s' in misplaced article file %s: %s; update it by hand",
+			oldSlug, doc.Path, doc.problem(s.caseInsensitive))
 	}
 
 	slugs := make([]string, 0, len(candidates))
@@ -1375,6 +1492,15 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 	for _, slug := range slugs {
 		linker, err := s.GetArticle(slug)
 		if err != nil {
+			log.Printf("Warning: not healing references to renamed article '%s' in %s.md: %v", oldSlug, slug, err)
+			continue
+		}
+		// GetArticle only returns the document stored at <slug>.md, having refused the file if it
+		// became misplaced since the scan. The save below writes <Slugify(title)>.md, though, and a
+		// title edited outside NexWiki leaves the slug behind, so that would be another file.
+		if Slugify(linker.Title) != slug {
+			log.Printf("Warning: not healing references to renamed article '%s' in %s.md: its title %q does not yield its slug, so saving it would move it; update it by hand",
+				oldSlug, slug, linker.Title)
 			continue
 		}
 		rewritten, wikiChanged := RewriteWikiLinks(linker.Content, oldSlug, newTitle)
@@ -1385,7 +1511,7 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 		}
 		summary := fmt.Sprintf("Auto-healed internal link: '%s' renamed to '%s'", oldSlug, newSlug)
 		if _, err := s.saveArticleLocked(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type, ArticleOverrides{}); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to heal links in '%s' after rename: %v\n", linker.Slug, err)
+			log.Printf("Warning: not healing references to renamed article '%s' in %s.md: %v", oldSlug, slug, err)
 		}
 	}
 }
@@ -1409,6 +1535,15 @@ func (s *Storage) deleteArticleLocked(slug string) error {
 
 	// 1. Delete the Markdown file
 	filePath := filepath.Join(s.ArticleDir, cleanedSlug+".md")
+	// A misplaced file is not the document with this slug, so it is not found and nothing is removed:
+	// not the file, which a person removes by hand as wiki_health says, and not the history and
+	// assets under this slug, which may belong to what the file used to be. No listing shows it, so
+	// nothing offers to delete it.
+	if info, err := os.Stat(filePath); err == nil {
+		if _, meta, err := s.cachedMeta(filePath, info); err == nil && meta.Slug != cleanedSlug {
+			return articleNotFound(slug)
+		}
+	}
 	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to delete article file: %w", err)
 	}
@@ -1902,30 +2037,7 @@ func (s *Storage) SyncSearchIndex() error {
 		batch = s.SearchIndex.NewBatch()
 	}
 
-	// load reads one document in full for indexing. One that will not load is skipped rather than
-	// failing boot. Its slug still counts as valid (home's always does, and any other document's
-	// because it was listed), so any index entry it already has is kept, but that entry is not
-	// refreshed, and a document with none stays out of search. The skip is reported like any other
-	// unreadable file so neither happens without a trace.
-	load := func(slug string) (*Article, bool) {
-		art, err := s.GetArticle(slug)
-		if err == nil {
-			return art, true
-		}
-		// Report the file GetArticle read. Lstat, as the walks' DirEntry.Info does, so a symlinked
-		// file gets the same fingerprint here as in a walk and the two do not take turns warning.
-		// With no file at that path there is nothing to name: it vanished after the listing, or
-		// its front-matter slug does not match its filename, which is not a read failure.
-		if cleaned := Slugify(slug); cleaned != "" {
-			path := filepath.Join(s.ArticleDir, cleaned+".md")
-			if info, statErr := os.Lstat(path); statErr == nil {
-				s.skipUnreadable(path, info, err)
-			}
-		}
-		return nil, false
-	}
-
-	if homeArt, ok := load("home"); ok {
+	if homeArt, ok := s.loadForIndex("home"); ok {
 		if err := batch.Index(homeArt.Slug, homeArt); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to index 'home' article: %v\n", err)
 		}
@@ -1933,7 +2045,7 @@ func (s *Storage) SyncSearchIndex() error {
 
 	for _, item := range articles {
 		validSlugs[item.Slug] = true
-		art, ok := load(item.Slug)
+		art, ok := s.loadForIndex(item.Slug)
 		if !ok {
 			continue
 		}
@@ -1980,6 +2092,36 @@ func (s *Storage) SyncSearchIndex() error {
 	newCount, _ := s.SearchIndex.DocCount()
 	_, _ = fmt.Fprintf(os.Stderr, "Boot synchronization complete. Search index contains %d articles.\n", newCount)
 	return nil
+}
+
+// loadForIndex reads one document in full for SyncSearchIndex. One that will not load is skipped
+// rather than failing boot. Its slug still counts as valid (home's always does, and any other
+// document's because it was listed), so any index entry it already has is kept, but that entry is
+// not refreshed, and a document with none stays out of search. The skip is reported like any other
+// unreadable file so neither happens without a trace.
+//
+// A slug with no document is skipped silently. That is a file that vanished after the listing, a
+// home page that was never there, or a misplaced file, such as a home.md declaring another slug or
+// a listed document whose slug has changed since. A misplaced file is reported by the walks, as
+// misplaced; reported here it would be called unreadable, and for a file that changed after the
+// listing, that record would stand for the version and keep the right warning from ever appearing.
+func (s *Storage) loadForIndex(slug string) (*Article, bool) {
+	art, err := s.GetArticle(slug)
+	if err == nil {
+		return art, true
+	}
+	if errors.Is(err, errArticleNotFound) {
+		return nil, false
+	}
+	// Report the file GetArticle read. Lstat, as the walks' DirEntry.Info does, so a symlinked
+	// file gets the same fingerprint here as in a walk and the two do not take turns warning.
+	if cleaned := Slugify(slug); cleaned != "" {
+		path := filepath.Join(s.ArticleDir, cleaned+".md")
+		if info, statErr := os.Lstat(path); statErr == nil {
+			s.skipUnreadable(path, info, err)
+		}
+	}
+	return nil, false
 }
 
 // SearchResult represents a single full-text query match.

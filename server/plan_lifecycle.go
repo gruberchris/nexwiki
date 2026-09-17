@@ -227,25 +227,33 @@ func (w *PlanLifecycleWorker) archivePlan(art *Article, fromStatus string) {
 //
 // A backlink scan that skipped entries it could not read, parse, or list is refused the same way: a
 // document with broken front matter or in an unreadable folder may be exactly the one that links
-// here, and the scan cannot say. Each later sweep checks again, and deletes the plan only if a
-// complete scan finds no backlinks.
+// here, and the scan cannot say. So is a misplaced document that does link here (one not stored as
+// <slug>.md directly in the article directory): the wiki does not list it, so it is no backlink,
+// but deleting the plan would still break its link. Each later sweep checks again, and deletes the
+// plan only if a complete scan finds no backlinks and no misplaced document linking here.
 func (w *PlanLifecycleWorker) deletePlan(art *Article) {
-	backlinks, skipped, err := w.Storage.getBacklinksWithSkipped(art.Slug)
+	scan, err := w.Storage.scanBacklinks(art.Slug)
 	if err != nil {
 		w.logf("Plan lifecycle worker: backlink check failed for '%s'; not deleting: %v\n", art.Slug, err)
 		return
 	}
-	if len(backlinks) > 0 {
+	if len(scan.backlinks) > 0 {
 		var linkers []string
-		for _, bl := range backlinks {
+		for _, bl := range scan.backlinks {
 			linkers = append(linkers, bl.Slug)
 		}
 		w.refuseDelete(art, fmt.Sprintf("still linked from: %s. Remove the links or delete it by hand.", strings.Join(linkers, ", ")))
 		return
 	}
-	if len(skipped) > 0 {
-		w.refuseDelete(art, fmt.Sprintf("the backlink scan skipped %d unreadable %s that may link to it. Later sweeps check again; wiki_health lists what to fix.",
-			len(skipped), plural(len(skipped), "entry", "entries")))
+	var reasons []string
+	if n := len(scan.unreadable); n > 0 {
+		reasons = append(reasons, fmt.Sprintf("the backlink scan skipped %d unreadable %s that may link to it", n, plural(n, "entry", "entries")))
+	}
+	if n := len(scan.misplaced); n > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d misplaced %s %s to it", n, plural(n, "document", "documents"), plural(n, "links", "link")))
+	}
+	if len(reasons) > 0 {
+		w.refuseDelete(art, strings.Join(reasons, ", and ")+". Later sweeps check again; wiki_health lists what to fix.")
 		return
 	}
 	if w.Cfg.DryRun {
