@@ -770,20 +770,24 @@ func Slugify(title string) string {
 func (s *Storage) ListArticles() ([]Article, error) {
 	var articles []Article
 
+	// seen includes the paths that fail with a walk error, which is why a file is marked before its
+	// stat: the prune below then keeps the failure on record, so it warns once rather than on every
+	// listing.
 	seen := make(map[string]bool)
 	err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			seen[path] = true
+			return s.skipWalkError(path, d, err, nil)
 		}
 		if d.IsDir() || filepath.Ext(path) != ".md" {
 			return nil
 		}
 
+		seen[path] = true
 		info, err := d.Info()
 		if err != nil {
-			return err
+			return s.skipWalkError(path, d, err, nil)
 		}
-		seen[path] = true
 
 		// Served from cache when the file is unchanged; a stat beats an open + YAML parse.
 		_, art, err := s.cachedMeta(path, info)
@@ -1312,7 +1316,11 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 	for _, bl := range backlinks {
 		candidates[bl.Slug] = true
 	}
-	for _, slug := range s.findAssetReferrers(oldSlug) {
+	referrers, err := s.findAssetReferrers(oldSlug)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: asset-heal scan failed after renaming '%s'→'%s': %v\n", oldSlug, newSlug, err)
+	}
+	for _, slug := range referrers {
 		// The renamed document is its own asset referrer and was already healed in place.
 		if slug != newSlug {
 			candidates[slug] = true
@@ -1848,8 +1856,9 @@ func (s *Storage) SyncSearchIndex() error {
 	}
 
 	// load reads one document in full for indexing. One that will not load is skipped rather than
-	// failing boot, but it then drops out of search with nothing saying why, so the skip is
-	// reported like any other unreadable file.
+	// failing boot. It is still listed, so any index entry it already has is kept, but that entry is
+	// not refreshed, and a document with none stays out of search. The skip is reported like any
+	// other unreadable file so neither happens without a trace.
 	load := func(slug string) (*Article, bool) {
 		art, err := s.GetArticle(slug)
 		if err == nil {

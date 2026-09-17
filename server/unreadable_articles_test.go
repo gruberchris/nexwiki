@@ -2,10 +2,13 @@ package server
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -355,7 +358,11 @@ func TestFindAssetReferrersWarnsOnceForUnreadableFile(t *testing.T) {
 
 	want := []string{"embeds-diagram", "malformed-embed"}
 	for i := 0; i < 3; i++ {
-		if got := storage.findAssetReferrers("good-one"); !reflect.DeepEqual(got, want) {
+		got, err := storage.findAssetReferrers("good-one")
+		if err != nil {
+			t.Fatalf("findAssetReferrers failed: %v", err)
+		}
+		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("findAssetReferrers = %v, want %v", got, want)
 		}
 	}
@@ -424,6 +431,313 @@ func TestSyncSearchIndexWarnsOnceForUnreadableFile(t *testing.T) {
 	for _, slug := range []string{"good-two", "home"} {
 		if !inSearchIndex(t, storage, slug) {
 			t.Errorf("the skipped document %s should keep its existing index entry", slug)
+		}
+	}
+}
+
+// lockDir removes every permission from a directory for the rest of the test. Like makeUnreadable,
+// the test is skipped where that does not stop the directory being listed.
+func lockDir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Skipf("cannot chmod on this platform: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0755) })
+	if _, err := os.ReadDir(dir); err == nil {
+		t.Skip("removing permissions does not stop listing a directory here (running as root?)")
+	}
+}
+
+// unreadablePaths returns the paths a link graph reports as unreadable, failing the test for any
+// entry that carries no error.
+func unreadablePaths(t *testing.T, graph *LinkGraph) []string {
+	t.Helper()
+	var paths []string
+	for _, f := range graph.Unreadable {
+		if f.Error == "" {
+			t.Errorf("unreadable entry %s has no error", f.Path)
+		}
+		paths = append(paths, f.Path)
+	}
+	return paths
+}
+
+// TestUnreadableSubdirectoryIsSkipped pins that a folder the walks cannot list costs only that
+// folder: every scan still succeeds with everything outside it, the folder is reported to health
+// checks, and it warns once for as long as it stays unreadable.
+func TestUnreadableSubdirectoryIsSkipped(t *testing.T) {
+	storage, _ := newUnreadableFixture(t)
+	buf := captureLog(t)
+
+	body := "![diagram](/api/assets/good-one/diagram.png) and [[Good One]]\n"
+	writeWithMtime(t, filepath.Join(storage.ArticleDir, "open", "nested.md"),
+		[]byte("---\ntitle: Nested\nslug: nested\n---\n"+body), time.Now().Add(-time.Hour))
+	locked := filepath.Join(storage.ArticleDir, "locked")
+	writeWithMtime(t, filepath.Join(locked, "hidden.md"),
+		[]byte("---\ntitle: Hidden\nslug: hidden\n---\n"+body), time.Now().Add(-time.Hour))
+	lockDir(t, locked)
+
+	listed := func() []string {
+		t.Helper()
+		articles, err := storage.ListArticles()
+		if err != nil {
+			t.Fatalf("an unreadable subdirectory must not fail the listing: %v", err)
+		}
+		var slugs []string
+		for _, a := range articles {
+			slugs = append(slugs, a.Slug)
+		}
+		sort.Strings(slugs)
+		return slugs
+	}
+
+	for i := 0; i < 3; i++ {
+		if got, want := listed(), []string{"good-one", "good-two", "nested"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("ListArticles = %v, want %v", got, want)
+		}
+
+		graph, err := storage.ScanLinkGraph()
+		if err != nil {
+			t.Fatalf("an unreadable subdirectory must not fail the link graph: %v", err)
+		}
+		if _, ok := graph.Meta["nested"]; !ok {
+			t.Errorf("articles outside the unreadable folder must still be in the graph: %v", graph.Meta)
+		}
+		if got, want := unreadablePaths(t, graph), []string{"broken.md", "locked/"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("Unreadable paths = %v, want %v", got, want)
+		} else if !strings.Contains(graph.Unreadable[1].Error, "permission denied") {
+			t.Errorf("the folder's entry should carry the listing error: %+v", graph.Unreadable[1])
+		}
+
+		backlinks, err := storage.GetBacklinks("good-one")
+		if err != nil {
+			t.Fatalf("an unreadable subdirectory must not fail a backlink scan: %v", err)
+		}
+		var from []string
+		for _, a := range backlinks {
+			from = append(from, a.Slug)
+		}
+		if !contains(from, "nested") || contains(from, "hidden") {
+			t.Errorf("backlinks should come from outside the unreadable folder only, got %v", from)
+		}
+
+		referrers, err := storage.findAssetReferrers("good-one")
+		if err != nil {
+			t.Fatalf("an unreadable subdirectory must not fail the asset scan: %v", err)
+		}
+		if want := []string{"nested"}; !reflect.DeepEqual(referrers, want) {
+			t.Errorf("findAssetReferrers = %v, want %v", referrers, want)
+		}
+	}
+
+	warnings := unreadableWarnings(t, buf, "locked/")
+	if len(warnings) != 1 {
+		t.Fatalf("expected exactly one warning across repeated scans, got %d: %q", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "directory locked/:") {
+		t.Errorf("warning should name the folder relative to the article directory: %q", warnings[0])
+	}
+
+	// Once the folder can be listed again its articles come back and a listing forgets the
+	// failure, so losing access again warns again.
+	if err := os.Chmod(locked, 0755); err != nil {
+		t.Fatalf("Chmod failed: %v", err)
+	}
+	if got := listed(); !contains(got, "hidden") {
+		t.Errorf("the folder's articles should be listed once it is readable, got %v", got)
+	}
+	graph, err := storage.ScanLinkGraph()
+	if err != nil {
+		t.Fatalf("ScanLinkGraph failed: %v", err)
+	}
+	if got, want := unreadablePaths(t, graph), []string{"broken.md"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Unreadable paths after recovery = %v, want %v", got, want)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatalf("Chmod failed: %v", err)
+	}
+	listed()
+	if warnings := unreadableWarnings(t, buf, "locked/"); len(warnings) != 2 {
+		t.Errorf("expected a second warning after the folder became unreadable again, got %d: %q", len(warnings), warnings)
+	}
+}
+
+// TestUnstattableArticleFileIsSkipped pins the other per-entry walk error: a file its directory
+// lists but that cannot then be stat'd, which a directory granting read but not search permission
+// produces. The file is skipped and warned about once. Its cached parse still matches the file,
+// so the failure has to be forgotten some other way once the file is reachable again; this pins
+// that it is, and that losing access again warns again.
+func TestUnstattableArticleFileIsSkipped(t *testing.T) {
+	storage, _ := newUnreadableFixture(t)
+	buf := captureLog(t)
+
+	dir := filepath.Join(storage.ArticleDir, "no-search")
+	file := filepath.Join(dir, "listed.md")
+	writeWithMtime(t, file, []byte("---\ntitle: Listed\nslug: listed\n---\nbody\n"), time.Now().Add(-time.Hour))
+
+	listed := func() bool {
+		t.Helper()
+		articles, err := storage.ListArticles()
+		if err != nil {
+			t.Fatalf("a file that cannot be stat'd must not fail the listing: %v", err)
+		}
+		for _, a := range articles {
+			if a.Slug == "listed" {
+				return true
+			}
+		}
+		return false
+	}
+	if !listed() { // also caches the file's parse
+		t.Fatalf("the file should be listed while it is reachable")
+	}
+
+	if err := os.Chmod(dir, 0600); err != nil {
+		t.Skipf("cannot chmod on this platform: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0755) })
+	if _, err := os.ReadDir(dir); err != nil {
+		t.Skipf("a directory without search permission cannot be listed here: %v", err)
+	}
+	if _, err := os.Lstat(file); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("removing search permission does not stop a stat here (running as root?): %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if listed() {
+			t.Errorf("a file that cannot be stat'd must not be listed")
+		}
+		graph, err := storage.ScanLinkGraph()
+		if err != nil {
+			t.Fatalf("a file that cannot be stat'd must not fail the link graph: %v", err)
+		}
+		if got, want := unreadablePaths(t, graph), []string{"broken.md", "no-search/listed.md"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("Unreadable paths = %v, want %v", got, want)
+		}
+		if _, err := storage.GetBacklinks("good-one"); err != nil {
+			t.Fatalf("a file that cannot be stat'd must not fail a backlink scan: %v", err)
+		}
+		if _, err := storage.findAssetReferrers("good-one"); err != nil {
+			t.Fatalf("a file that cannot be stat'd must not fail the asset scan: %v", err)
+		}
+	}
+	warnings := unreadableWarnings(t, buf, "no-search/listed.md")
+	if len(warnings) != 1 {
+		t.Fatalf("expected exactly one warning across repeated scans, got %d: %q", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "permission denied") {
+		t.Errorf("warning should carry the stat error: %q", warnings[0])
+	}
+
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatalf("Chmod failed: %v", err)
+	}
+	if !listed() {
+		t.Errorf("the file should be listed again once it can be stat'd")
+	}
+	if err := os.Chmod(dir, 0600); err != nil {
+		t.Fatalf("Chmod failed: %v", err)
+	}
+	listed()
+	if warnings := unreadableWarnings(t, buf, "no-search/listed.md"); len(warnings) != 2 {
+		t.Errorf("expected a second warning after the file became unreachable again, got %d: %q", len(warnings), warnings)
+	}
+}
+
+// TestUnreadableArticleRootFailsScans pins the one walk error that must still fail a scan. A data
+// directory that is missing or cannot be read is broken, and reporting it as an empty wiki would
+// hide that.
+func TestUnreadableArticleRootFailsScans(t *testing.T) {
+	scans := []struct {
+		name string
+		run  func(*Storage) error
+	}{
+		{"ListArticles", func(s *Storage) error { _, err := s.ListArticles(); return err }},
+		{"ScanLinkGraph", func(s *Storage) error { _, err := s.ScanLinkGraph(); return err }},
+		{"GetBacklinks", func(s *Storage) error { _, err := s.GetBacklinks("good-one"); return err }},
+		{"findAssetReferrers", func(s *Storage) error { _, err := s.findAssetReferrers("good-one"); return err }},
+	}
+	expectFailures := func(t *testing.T, storage *Storage) {
+		t.Helper()
+		for _, scan := range scans {
+			if err := scan.run(storage); err == nil {
+				t.Errorf("%s: expected an error", scan.name)
+			}
+		}
+	}
+
+	t.Run("missing", func(t *testing.T) {
+		storage, _ := newUnreadableFixture(t)
+		captureLog(t)
+		if err := os.RemoveAll(storage.ArticleDir); err != nil {
+			t.Fatalf("RemoveAll failed: %v", err)
+		}
+		expectFailures(t, storage)
+	})
+
+	t.Run("unreadable", func(t *testing.T) {
+		storage, _ := newUnreadableFixture(t)
+		captureLog(t)
+		lockDir(t, storage.ArticleDir)
+		expectFailures(t, storage)
+	})
+}
+
+// TestSkipWalkErrorClassification pins how the walks classify an entry they cannot stat or list.
+// An entry deleted or renamed between the directory read and its stat or listing is a race no
+// test can trigger on demand, so the classification is checked directly: it is gone, not broken,
+// and is skipped with no warning and no report. Any other error below the root is reported once,
+// and the root itself fails the scan either way.
+func TestSkipWalkErrorClassification(t *testing.T) {
+	storage, broken := newUnreadableFixture(t)
+	buf := captureLog(t)
+
+	dirInfo, err := os.Stat(storage.ArticleDir)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	fileInfo, err := os.Stat(broken)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	dirEntry, fileEntry := fs.FileInfoToDirEntry(dirInfo), fs.FileInfoToDirEntry(fileInfo)
+	pathErr := func(path string, err error) error {
+		return &os.PathError{Op: "lstat", Path: path, Err: err}
+	}
+
+	var reported []UnreadableFile
+	report := func(f UnreadableFile) { reported = append(reported, f) }
+
+	goneDir := filepath.Join(storage.ArticleDir, "gone-dir")
+	if ret := storage.skipWalkError(goneDir, dirEntry, pathErr(goneDir, fs.ErrNotExist), report); ret != fs.SkipDir {
+		t.Errorf("a vanished directory should skip its subtree, got %v", ret)
+	}
+	goneFile := filepath.Join(storage.ArticleDir, "gone.md")
+	if ret := storage.skipWalkError(goneFile, fileEntry, pathErr(goneFile, fs.ErrNotExist), report); ret != nil {
+		t.Errorf("a vanished file should be skipped with nil, got %v", ret)
+	}
+	if len(reported) != 0 {
+		t.Errorf("vanished entries must not be reported, got %+v", reported)
+	}
+	if warnings := unreadableWarnings(t, buf, "gone"); len(warnings) != 0 {
+		t.Errorf("vanished entries must not be logged, got %q", warnings)
+	}
+
+	for i := 0; i < 2; i++ {
+		if ret := storage.skipWalkError(goneDir, dirEntry, pathErr(goneDir, fs.ErrPermission), report); ret != fs.SkipDir {
+			t.Errorf("an unreadable directory should skip its subtree, got %v", ret)
+		}
+	}
+	if len(reported) != 2 || reported[0].Path != "gone-dir/" {
+		t.Errorf("an unreadable directory should be reported on each scan with a trailing slash, got %+v", reported)
+	}
+	if warnings := unreadableWarnings(t, buf, "gone-dir/"); len(warnings) != 1 {
+		t.Errorf("an unreadable directory should warn once, got %q", warnings)
+	}
+
+	for _, rootErr := range []error{pathErr(storage.ArticleDir, fs.ErrNotExist), pathErr(storage.ArticleDir, fs.ErrPermission)} {
+		if ret := storage.skipWalkError(storage.ArticleDir, nil, rootErr, report); ret != rootErr {
+			t.Errorf("the article root must fail the scan with its error, got %v for %v", ret, rootErr)
 		}
 	}
 }
