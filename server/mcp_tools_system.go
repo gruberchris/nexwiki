@@ -16,7 +16,7 @@ import (
 var getWikiStatisticsTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_wiki_statistics",
-		"description": "Retrieve high-level wiki statistics, including total articles, storage footprint, and a list of dead or broken internal links — both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links.",
+		"description": "Retrieve high-level wiki statistics, including total articles, storage footprint, a count of article files that cannot be read or parsed and article folders that cannot be listed, and a list of dead or broken internal links — both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links.",
 		"inputSchema": map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -32,22 +32,28 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	// number every other tool reports. Link scanning below deliberately does include home.
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: errorForClient(srv.Storage.ArticleDir, err)}}}, nil
 	}
 
 	// One cached pass replaces the read-every-file-in-full loop this used to run: the graph is
-	// built from mtime-validated metadata and link caches, and wiki_health shares it rather than
-	// traversing the wiki a second time.
+	// built from mtime-validated metadata and link caches. wiki_health runs its own ScanLinkGraph;
+	// what the two tools share is those per-file caches, so neither rereads unchanged files.
 	graph, err := srv.Storage.ScanLinkGraph()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error scanning WikiLinks: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning WikiLinks: " + errorForClient(srv.Storage.ArticleDir, err)}}}, nil
 	}
 
 	var respText string
 	respText = "NexWiki Knowledge Base Statistics:\n"
 	respText += fmt.Sprintf("- Total Articles: %d\n", len(articles))
+	respText += fmt.Sprintf("- Unreadable Article Files and Folders: %d\n", len(graph.Unreadable))
 	respText += fmt.Sprintf("- Total Internal Links Scanned: %d\n", graph.TotalLinks)
 	respText += fmt.Sprintf("- Total Broken/Dead Internal Links: %d\n\n", len(graph.Broken))
+
+	if len(graph.Unreadable) > 0 {
+		// Only the count is reported here; wiki_health owns the list and the remedies.
+		respText += "Some article files could not be read or parsed, or folders could not be listed. Those articles are left out of the counts above, and links to them show as broken. Run wiki_health to see which and why.\n\n"
+	}
 
 	if len(graph.Broken) == 0 {
 		respText += "Excellent! All internal links are healthy and fully connected! 🎉\n"
@@ -64,10 +70,11 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	return ToolResponse{
 		Content: []ToolContent{{Type: "text", Text: respText}},
 		StructuredContent: StatisticsOutput{
-			TotalArticles:   len(articles),
-			TotalLinks:      graph.TotalLinks,
-			BrokenLinkCount: len(graph.Broken),
-			BrokenLinks:     graph.Broken,
+			TotalArticles:       len(articles),
+			UnreadableFileCount: len(graph.Unreadable),
+			TotalLinks:          graph.TotalLinks,
+			BrokenLinkCount:     len(graph.Broken),
+			BrokenLinks:         graph.Broken,
 		},
 	}, nil
 }

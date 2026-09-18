@@ -631,9 +631,19 @@ type Storage struct {
 	// → SaveArticle). Read paths intentionally do not take it: a reader racing a writer sees
 	// either the old or the new file, which is indistinguishable from reading a moment sooner.
 	//
-	// This guards a single process. A `-mcp-only` sidecar writing the same data directory is
-	// still unsynchronized; that needs an on-disk lock file.
+	// This guards a single process, which is enough: while one process has storage open, the search
+	// index's exclusive lock holds any other off in NewStorage, and a -mcp-only sidecar that detects
+	// a running primary proxies to it instead of opening storage.
+	//
+	// removeLeftoverTempFiles takes it per directory so it never deletes the temp file of a save in
+	// progress, which is why every writeFileAtomic caller must hold it.
 	writeMu sync.Mutex
+
+	// sweepStop and sweepDone belong to the background temp file sweep NewStorage starts. Close
+	// closes sweepStop and waits on sweepDone, so the sweep never touches the data directory after
+	// Close returns.
+	sweepStop chan struct{}
+	sweepDone chan struct{}
 }
 
 // NewStorage initializes and returns a Storage manager, ensuring required subdirectories exist.
@@ -680,6 +690,16 @@ func NewStorage(dataDir string) (*Storage, error) {
 		cache:       newArticleCache(),
 	}
 
+	// Clear temp files a crash stranded between writeFileAtomic's create and rename from the article
+	// directory now, before seeding, which treats any entry there as an existing wiki. Leftovers in
+	// the history and asset trees only waste space, so the background sweep started below takes
+	// those. After the index open, because holding that exclusive lock rules out a writer in another
+	// process: a -mcp-only sidecar proxies to a primary it detects, and any other process waits on
+	// the lock (giving up after IndexOpenTimeout) and gets past it only once this one has closed the
+	// index. So no age threshold is needed, and one would miss the usual case: a crash followed by
+	// an immediate restart (a container restart policy), when the leftovers are youngest.
+	s.removeLeftoverTempFiles(nil, articleDir)
+
 	// Seed standard 'home' page if no articles exist
 	if err := s.seedDefaultHome(); err != nil {
 		_ = index.Close()
@@ -702,6 +722,10 @@ func NewStorage(dataDir string) (*Storage, error) {
 		_ = index.Close()
 		return nil, fmt.Errorf("failed to sync search index: %w", err)
 	}
+
+	// Last, so a failed startup has no sweep to stop, and the sweep's I/O does not compete with the
+	// boot index sync on a slow mount.
+	s.sweepTempFilesInBackground()
 
 	return s, nil
 }
@@ -770,25 +794,30 @@ func Slugify(title string) string {
 func (s *Storage) ListArticles() ([]Article, error) {
 	var articles []Article
 
+	// seen includes the paths that fail with a walk error, which is why a file is marked before its
+	// stat: the prune below then keeps the failure on record, so it warns once rather than on every
+	// listing.
 	seen := make(map[string]bool)
 	err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			seen[path] = true
+			return s.skipWalkError(path, d, err, nil)
 		}
 		if d.IsDir() || filepath.Ext(path) != ".md" {
 			return nil
 		}
 
+		seen[path] = true
 		info, err := d.Info()
 		if err != nil {
-			return err
+			return s.skipWalkError(path, d, err, nil)
 		}
-		seen[path] = true
 
 		// Served from cache when the file is unchanged; a stat beats an open + YAML parse.
 		_, art, err := s.cachedMeta(path, info)
 		if err != nil {
 			// Skip malformed or unreadable files rather than failing the whole listing.
+			s.skipUnreadable(path, info, err)
 			return nil
 		}
 
@@ -1263,9 +1292,10 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	// Serialize front matter and content
 	serialized := serializeFrontMatter(art) + art.Content
 
-	// Write uncompressed active version to data/articles/
+	// Write uncompressed active version to data/articles/. Atomically, because the directory scans
+	// read without writeMu and must never see this file truncated or half-written.
 	filePath := filepath.Join(s.ArticleDir, newSlug+".md")
-	if err := os.WriteFile(filePath, []byte(serialized), 0644); err != nil {
+	if err := writeFileAtomic(filePath, []byte(serialized), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write active article file: %w", err)
 	}
 
@@ -1310,7 +1340,11 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 	for _, bl := range backlinks {
 		candidates[bl.Slug] = true
 	}
-	for _, slug := range s.findAssetReferrers(oldSlug) {
+	referrers, err := s.findAssetReferrers(oldSlug)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: asset-heal scan failed after renaming '%s'→'%s': %v\n", oldSlug, newSlug, err)
+	}
+	for _, slug := range referrers {
 		// The renamed document is its own asset referrer and was already healed in place.
 		if slug != newSlug {
 			candidates[slug] = true
@@ -1400,8 +1434,10 @@ func (s *Storage) SaveAsset(slug string, filename string, fileData []byte) (stri
 		return "", fmt.Errorf("failed to create article asset folder: %w", err)
 	}
 
+	// Atomically, because downloads are served without writeMu: re-uploading an asset must not hand
+	// a concurrent download a truncated file.
 	filePath := filepath.Join(articleAssetDir, safeFilename)
-	if err := os.WriteFile(filePath, fileData, 0644); err != nil {
+	if err := writeFileAtomic(filePath, fileData, 0644); err != nil {
 		return "", fmt.Errorf("failed to write asset file: %w", err)
 	}
 
@@ -1845,7 +1881,30 @@ func (s *Storage) SyncSearchIndex() error {
 		batch = s.SearchIndex.NewBatch()
 	}
 
-	if homeArt, err := s.GetArticle("home"); err == nil {
+	// load reads one document in full for indexing. One that will not load is skipped rather than
+	// failing boot. Its slug still counts as valid (home's always does, and any other document's
+	// because it was listed), so any index entry it already has is kept, but that entry is not
+	// refreshed, and a document with none stays out of search. The skip is reported like any other
+	// unreadable file so neither happens without a trace.
+	load := func(slug string) (*Article, bool) {
+		art, err := s.GetArticle(slug)
+		if err == nil {
+			return art, true
+		}
+		// Report the file GetArticle read. Lstat, as the walks' DirEntry.Info does, so a symlinked
+		// file gets the same fingerprint here as in a walk and the two do not take turns warning.
+		// With no file at that path there is nothing to name: it vanished after the listing, or
+		// its front-matter slug does not match its filename, which is not a read failure.
+		if cleaned := Slugify(slug); cleaned != "" {
+			path := filepath.Join(s.ArticleDir, cleaned+".md")
+			if info, statErr := os.Lstat(path); statErr == nil {
+				s.skipUnreadable(path, info, err)
+			}
+		}
+		return nil, false
+	}
+
+	if homeArt, ok := load("home"); ok {
 		if err := batch.Index(homeArt.Slug, homeArt); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to index 'home' article: %v\n", err)
 		}
@@ -1853,8 +1912,8 @@ func (s *Storage) SyncSearchIndex() error {
 
 	for _, item := range articles {
 		validSlugs[item.Slug] = true
-		art, err := s.GetArticle(item.Slug)
-		if err != nil {
+		art, ok := load(item.Slug)
+		if !ok {
 			continue
 		}
 		if err := batch.Index(art.Slug, art); err != nil {
@@ -2060,18 +2119,19 @@ func (s *Storage) SearchArticlesWithOptions(queryStr string, opts SearchOptions)
 
 // Helpers for reading/writing Gzip files
 
+// writeGzippedFile compresses in memory and then writes atomically: GetArticleHistory reads
+// snapshots without writeMu, and a snapshot streamed straight into its final path could be read
+// before the gzip footer landed, logging a spurious warning and omitting that version.
 func writeGzippedFile(filePath string, data []byte) error {
-	file, err := os.Create(filePath)
-	if err != nil {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	if _, err := gw.Write(data); err != nil {
 		return err
 	}
-	defer func() { _ = file.Close() }()
-
-	gw := gzip.NewWriter(file)
-	defer func() { _ = gw.Close() }()
-
-	_, err = gw.Write(data)
-	return err
+	if err := gw.Close(); err != nil {
+		return err
+	}
+	return writeFileAtomic(filePath, buf.Bytes(), 0644)
 }
 
 func readGzippedFile(filePath string) ([]byte, error) {
@@ -2300,9 +2360,16 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 
 // Close releases resources held by the Storage, including the Bleve search index.
 // It is safe to call multiple times; only the first invocation performs the close.
+//
+// It stops the background temp file sweep and waits for it, so it must not be called while
+// holding writeMu: a sweep waiting on that lock would never return.
 func (s *Storage) Close() error {
 	var err error
 	s.closeOnce.Do(func() {
+		if s.sweepStop != nil {
+			close(s.sweepStop)
+			<-s.sweepDone
+		}
 		if s.SearchIndex != nil {
 			err = s.SearchIndex.Close()
 		}

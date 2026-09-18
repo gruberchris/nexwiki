@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -268,10 +269,14 @@ func TestLifecycleWorkerDeletesLongArchivedPlans(t *testing.T) {
 	backdateStatusChange(t, s, "ancient-archived", 400)
 
 	w := &PlanLifecycleWorker{Storage: s, Cfg: PlanLifecycleConfig{ArchiveAfterDays: 90, DeleteAfterDays: 365}}
+	out := captureWorkerLog(w)
 	w.Sweep()
 
 	if _, err := s.GetArticle("ancient-archived"); err == nil {
 		t.Error("a plan archived past the deletion window must be deleted")
+	}
+	if !strings.Contains(out.String(), "PERMANENTLY DELETED plan 'ancient-archived'") {
+		t.Errorf("a deletion must leave its audit line, got %q", out.String())
 	}
 }
 
@@ -283,11 +288,132 @@ func TestLifecycleWorkerRefusesToDeleteLinkedPlans(t *testing.T) {
 	}
 	backdateStatusChange(t, s, "referenced-archived", 400)
 
-	w := &PlanLifecycleWorker{Storage: s, Cfg: PlanLifecycleConfig{ArchiveAfterDays: 90, DeleteAfterDays: 365}}
+	bus := NewEventBus()
+	w := &PlanLifecycleWorker{Storage: s, Bus: bus, Cfg: PlanLifecycleConfig{ArchiveAfterDays: 90, DeleteAfterDays: 365}}
+	out := captureWorkerLog(w)
 	w.Sweep()
 
 	if _, err := s.GetArticle("referenced-archived"); err != nil {
 		t.Error("a plan other documents link to must never be auto-deleted")
+	}
+	if !strings.Contains(out.String(), "refusing to delete plan 'referenced-archived' — still linked from: pointer-page") {
+		t.Errorf("the refusal must name the linker, got %q", out.String())
+	}
+	if n := deleteRefusals(bus, "referenced-archived"); n != 1 {
+		t.Errorf("the refusal must be recorded as one delete-refused activity event, got %d", n)
+	}
+}
+
+// captureWorkerLog points a worker's report lines at a buffer for the test to inspect.
+func captureWorkerLog(w *PlanLifecycleWorker) *strings.Builder {
+	out := &strings.Builder{}
+	w.Log = out
+	return out
+}
+
+// incompleteScanWarning is the fragment of the worker's line for a plan it kept because the
+// backlink scan skipped entries.
+func incompleteScanWarning(slug string, skipped int) string {
+	return fmt.Sprintf("refusing to delete plan '%s' — the backlink scan skipped %d unreadable %s", slug, skipped, plural(skipped, "entry", "entries"))
+}
+
+// deleteRefusals counts the delete-refused activity events the worker published for a plan.
+func deleteRefusals(bus *EventBus, slug string) int {
+	n := 0
+	for _, ev := range bus.GetHistory() {
+		if ev.Source == "lifecycle" && ev.Action == "delete-refused" && ev.Tool == "plan_lifecycle" && ev.Slug == slug {
+			n++
+		}
+	}
+	return n
+}
+
+// TestLifecycleWorkerKeepsPlanWhenLinkerIsUnparsable pins that a document the backlink scan skips
+// can't make a plan it links to look unlinked. Broken front matter drops the file from every scan,
+// so the only safe reading of "no backlinks" is "unknown" and the plan waits for a sweep that can
+// read everything.
+func TestLifecycleWorkerKeepsPlanWhenLinkerIsUnparsable(t *testing.T) {
+	s := newLifecycleStorage(t)
+	captureLog(t) // the scans' own skip warnings
+	savePlan(t, s, "Shadowed Archived", StatusArchived)
+	backdateStatusChange(t, s, "shadowed-archived", 400)
+	broken := filepath.Join(s.ArticleDir, "broken.md")
+	writeWithMtime(t, broken, []byte("---\ntitle: [unclosed\n---\nSee [[Shadowed Archived]].\n"), time.Now().Add(-time.Hour))
+
+	_, skipped, err := s.getBacklinksWithSkipped("shadowed-archived")
+	if err != nil {
+		t.Fatalf("getBacklinksWithSkipped failed: %v", err)
+	}
+	if len(skipped) != 1 || skipped[0].Path != "broken.md" || skipped[0].Error == "" {
+		t.Errorf("skipped = %+v, want only broken.md with its error", skipped)
+	}
+
+	bus := NewEventBus()
+	w := &PlanLifecycleWorker{Storage: s, Bus: bus, Cfg: PlanLifecycleConfig{ArchiveAfterDays: 90, DeleteAfterDays: 365}}
+	out := captureWorkerLog(w)
+	w.Sweep()
+
+	if _, err := s.GetArticle("shadowed-archived"); err != nil {
+		t.Fatal("a plan must not be deleted while the backlink scan skipped a file that could link to it")
+	}
+	if !strings.Contains(out.String(), incompleteScanWarning("shadowed-archived", 1)) {
+		t.Errorf("the kept plan must be warned about with the skipped count, got %q", out.String())
+	}
+	if n := deleteRefusals(bus, "shadowed-archived"); n != 1 {
+		t.Errorf("the refusal must be recorded as one delete-refused activity event, got %d", n)
+	}
+	if strings.Contains(out.String(), "PERMANENTLY DELETED") {
+		t.Errorf("nothing may be deleted, got %q", out.String())
+	}
+
+	// With the file gone the scan is complete again, so a later sweep deletes the plan.
+	if err := os.Remove(broken); err != nil {
+		t.Fatalf("Remove failed: %v", err)
+	}
+	w.Sweep()
+	if _, err := s.GetArticle("shadowed-archived"); err == nil {
+		t.Error("a later sweep with a complete backlink scan must delete the plan")
+	}
+}
+
+// TestLifecycleWorkerKeepsPlanWhenLinkerIsInUnreadableFolder is the folder form of the same guard:
+// an unlistable subdirectory used to fail the backlink scan outright and now only skips that
+// folder, which must not turn into a deletion.
+func TestLifecycleWorkerKeepsPlanWhenLinkerIsInUnreadableFolder(t *testing.T) {
+	s := newLifecycleStorage(t)
+	captureLog(t) // the scans' own skip warnings
+	savePlan(t, s, "Hidden Linked Archived", StatusArchived)
+	backdateStatusChange(t, s, "hidden-linked-archived", 400)
+	locked := filepath.Join(s.ArticleDir, "locked")
+	writeWithMtime(t, filepath.Join(locked, "pointer.md"),
+		[]byte("---\ntitle: Pointer\nslug: pointer\n---\nSee [[Hidden Linked Archived]].\n"), time.Now().Add(-time.Hour))
+	lockDir(t, locked)
+
+	bus := NewEventBus()
+	w := &PlanLifecycleWorker{Storage: s, Bus: bus, Cfg: PlanLifecycleConfig{ArchiveAfterDays: 90, DeleteAfterDays: 365}}
+	out := captureWorkerLog(w)
+	w.Sweep()
+
+	if _, err := s.GetArticle("hidden-linked-archived"); err != nil {
+		t.Fatal("a plan must not be deleted while the backlink scan skipped a folder that could link to it")
+	}
+	if !strings.Contains(out.String(), incompleteScanWarning("hidden-linked-archived", 1)) {
+		t.Errorf("the kept plan must be warned about with the skipped count, got %q", out.String())
+	}
+	if n := deleteRefusals(bus, "hidden-linked-archived"); n != 1 {
+		t.Errorf("the refusal must be recorded as one delete-refused activity event, got %d", n)
+	}
+
+	// Once the folder is readable the link is found, and the plan is refused as linked.
+	if err := os.Chmod(locked, 0755); err != nil {
+		t.Fatalf("Chmod failed: %v", err)
+	}
+	w.Sweep()
+	if _, err := s.GetArticle("hidden-linked-archived"); err != nil {
+		t.Fatal("a plan other documents link to must never be auto-deleted")
+	}
+	if !strings.Contains(out.String(), "refusing to delete plan 'hidden-linked-archived' — still linked from: pointer") {
+		t.Errorf("the recovered scan should refuse on the real link, got %q", out.String())
 	}
 }
 

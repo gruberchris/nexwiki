@@ -1,8 +1,12 @@
 package server
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
+	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -22,6 +26,18 @@ import (
 type articleCache struct {
 	mu      sync.Mutex
 	entries map[string]*articleCacheEntry
+	// failures holds, per path, the stat fingerprint of the file version that last failed to read
+	// or parse, so a broken file is warned about once per version rather than on every scan. A
+	// directory that could not be listed, or a file that could not be stat'd, has no version and is
+	// recorded under the zero fileVersion. See Storage.skipUnreadable and Storage.skipWalkError.
+	failures map[string]fileVersion
+}
+
+// fileVersion identifies one version of a file on disk by the same modification time and size that
+// fresh compares.
+type fileVersion struct {
+	modTime time.Time
+	size    int64
 }
 
 // articleCacheEntry is one file's parsed form plus the stat fingerprint it was parsed from.
@@ -43,7 +59,10 @@ type articleCacheEntry struct {
 }
 
 func newArticleCache() *articleCache {
-	return &articleCache{entries: make(map[string]*articleCacheEntry)}
+	return &articleCache{
+		entries:  make(map[string]*articleCacheEntry),
+		failures: make(map[string]fileVersion),
+	}
 }
 
 // fresh reports whether a cached entry still matches what is on disk.
@@ -72,8 +91,35 @@ func (c *articleCache) store(path string, info fs.FileInfo, meta Article) *artic
 	}
 	c.mu.Lock()
 	c.entries[path] = entry
+	// A successful parse forgets any earlier failure, so the file breaking again warns again.
+	delete(c.failures, path)
 	c.mu.Unlock()
 	return entry
+}
+
+// noteFailure records that the current version of a file failed to read or parse, and reports
+// whether that is news. The check and the record happen under one lock, so concurrent scans
+// hitting the same broken file agree on exactly one of them reporting it first.
+//
+// info is nil for a path that could not be stat'd or listed at all, which is news once for as long
+// as that lasts. Any cached parse of the path is dropped too: it can no longer be validated, and
+// dropping it means a file that recovers is parsed afresh, so store forgets the failure and a
+// later one warns again.
+func (c *articleCache) noteFailure(path string, info fs.FileInfo) bool {
+	var version fileVersion
+	if info != nil {
+		version = fileVersion{modTime: info.ModTime(), size: info.Size()}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if info == nil {
+		delete(c.entries, path)
+	}
+	if prev, ok := c.failures[path]; ok && prev.size == version.size && prev.modTime.Equal(version.modTime) {
+		return false
+	}
+	c.failures[path] = version
+	return true
 }
 
 // setLinks attaches the outbound links and slug mentions to an entry, under the cache lock so a
@@ -95,8 +141,10 @@ func (c *articleCache) links(entry *articleCacheEntry) ([]LinkRef, []string, boo
 	return entry.links, entry.slugMentions, entry.linksLoaded
 }
 
-// prune drops entries for files that no longer exist, so a long-lived process does not accumulate
-// metadata for deleted or renamed articles.
+// prune drops entries and recorded failures for paths the listing did not mark seen, so a
+// long-lived process does not accumulate state for deleted or renamed articles. The listing marks
+// a directory seen only while it cannot be listed, so a directory that recovers is forgotten here
+// and warns again if it breaks again.
 func (c *articleCache) prune(seen map[string]bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -105,6 +153,132 @@ func (c *articleCache) prune(seen map[string]bool) {
 			delete(c.entries, path)
 		}
 	}
+	for path := range c.failures {
+		if !seen[path] {
+			delete(c.failures, path)
+		}
+	}
+}
+
+// skipUnreadable is the path a file takes when a scan of the article directory drops it because it
+// could not be read or parsed: the walks in ListArticles, ScanLinkGraph, GetBacklinks, and
+// findAssetReferrers, and SyncSearchIndex's per-document read. Skipping keeps one bad file from
+// failing a whole listing or scan, but a silent skip makes the file vanish from listings, search,
+// and health reports with nothing saying why. A file that cannot even be stat'd goes through
+// skipWalkError instead.
+//
+// The warning is logged once per file version, not once per scan: the sidebar, the dashboard, and
+// many MCP tools rescan the wiki, and a warning repeated on each of those would bury everything
+// else on stderr.
+//
+// It reports false for a file that vanished mid-walk: a rename or delete racing the scan leaves a
+// file that is gone, not broken, and reporting it would name a file that isn't there. The Lstat
+// tells that apart from a dangling symlink, which fails the same way but is still in the directory.
+func (s *Storage) skipUnreadable(path string, info fs.FileInfo, err error) (UnreadableFile, bool) {
+	if errors.Is(err, fs.ErrNotExist) {
+		if _, statErr := os.Lstat(path); errors.Is(statErr, fs.ErrNotExist) {
+			return UnreadableFile{}, false
+		}
+	}
+	rel := s.articleRelPath(path)
+	if s.cache.noteFailure(path, info) {
+		log.Printf("Warning: skipping unreadable article file %s: %v", rel, err)
+	}
+	return UnreadableFile{Path: rel, Error: err.Error()}, true
+}
+
+// skipWalkError is the per-entry error handling the article walks share for an entry they could
+// not get as far as reading: a directory WalkDir could not list, or a file DirEntry.Info could not
+// stat. Call it with the WalkDir callback's path and entry, and return what it returns: nil to
+// skip a file, fs.SkipDir to skip a directory's subtree, or an error to fail the scan.
+//
+// A missing or unreadable article root fails the scan, because listing a broken data directory as
+// an empty wiki hides that, and callers act on the listing: SyncSearchIndex would drop every index
+// entry as an orphan. So does a root that can be listed but not searched (read permission without
+// execute), which lists every entry and then cannot stat or open any of them. That shows as a
+// permission error stat'ing an entry directly under the root: a file's error here already is that
+// stat, and a directory that cannot be listed is stat'd to tell. But one entry's stat can also be
+// denied on its own, by an SELinux label, a macOS ACL, or a FUSE mount another user owns, and
+// failing every scan for that would keep the server from even starting while blaming the wrong
+// directory. So the root is blamed only when articleDirSearchable finds it at fault. Any other stat
+// failure there, such as an I/O error or a stale network handle, may be that one entry's too.
+//
+// Anything else is skipped, so one bad entry never fails a scan. A file in a subdirectory that
+// cannot be searched is skipped and reported on its own, like any other file, rather than as the
+// subdirectory: the scan loses the same articles either way, and the report names each of them.
+// An entry that no longer exists is skipped silently: a delete or rename racing the walk leaves it
+// gone, not broken. Any other failure is warned about once while it lasts, like skipUnreadable, and
+// passed to report, when that is not nil, with a directory's path ending in /.
+func (s *Storage) skipWalkError(path string, d fs.DirEntry, err error, report func(UnreadableFile)) error {
+	if path == s.ArticleDir {
+		return err
+	}
+	// WalkDir passes a nil entry only for the root, so d is set from here on.
+	isDir := d.IsDir()
+	var skip error
+	if isDir {
+		skip = fs.SkipDir
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return skip
+	}
+	if filepath.Dir(path) == filepath.Clean(s.ArticleDir) {
+		statErr := err
+		if isDir {
+			// Stat'd, not just probed: a directory whose listing failed (on a stale network handle,
+			// say) and that is gone now was deleted, not broken, and is skipped silently like any other.
+			_, statErr = walkLstat(path)
+			if errors.Is(statErr, fs.ErrNotExist) {
+				return skip
+			}
+		}
+		if errors.Is(statErr, fs.ErrPermission) && !s.articleDirSearchable() {
+			// The stat error names an entry, but the entry is not what needs fixing.
+			return fmt.Errorf("article directory is not searchable: %w", statErr)
+		}
+	}
+	rel, kind := s.articleRelPath(path), "file"
+	if isDir {
+		rel, kind = rel+"/", "directory"
+	}
+	if s.cache.noteFailure(path, nil) {
+		log.Printf("Warning: skipping unreadable article %s %s: %v", kind, rel, err)
+	}
+	if report != nil {
+		report(UnreadableFile{Path: rel, Error: err.Error()})
+	}
+	return skip
+}
+
+// articleDirSearchProbe is the name articleDirSearchable stats directly under the article
+// directory. Nothing creates it: it is neither an article (.md) nor an atomic write's temp file.
+const articleDirSearchProbe = ".nexwiki-search-probe"
+
+// walkLstat is os.Lstat as skipWalkError calls it, held in a variable only so tests can fail the
+// call: a stat denied while the article directory is still searchable cannot be set up with
+// permissions alone.
+var walkLstat = os.Lstat
+
+// articleDirSearchable reports whether the article directory can be searched, for skipWalkError to
+// tell a root that denies every stat under it from one entry whose stat was denied. It stats a name
+// that is not there, which a searchable root answers with not-exist, so only a permission error
+// convicts the root. Any other error, or finding the name after all, is no evidence against it,
+// and failing every scan on a guess would keep the server from starting.
+//
+// It costs a stat, possibly on a slow network mount, so it runs only once a stat has already been
+// denied, and never under the cache lock.
+func (s *Storage) articleDirSearchable() bool {
+	_, err := walkLstat(filepath.Join(s.ArticleDir, articleDirSearchProbe))
+	return !errors.Is(err, fs.ErrPermission)
+}
+
+// articleRelPath names a path under the article directory the way warnings and reports do:
+// relative and slash-separated.
+func (s *Storage) articleRelPath(path string) string {
+	if r, err := filepath.Rel(s.ArticleDir, path); err == nil {
+		return filepath.ToSlash(r)
+	}
+	return path
 }
 
 // cachedMeta returns the parsed metadata for one article file, reading and parsing only when the

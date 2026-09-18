@@ -6,6 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- **Unreadable Files and Folders in `wiki_health` and `get_wiki_statistics`**:
+  - `wiki_health` has an eleventh check: `unreadable_file_count` and `unreadable_files` (`[{path, error}]`, sorted by path, a folder's `path` ending in `/`), capped by `limit` and flagged in `truncated`. It is listed first in the prose report, counts toward the wiki needing attention, and gives files and folders different remedies. The `error` values contain no absolute server paths.
+  - `get_wiki_statistics` gains `unreadable_file_count`, and its summary says when files or folders were left out of the counts.
+
+### Changed
+- **Atomic Writes for Articles, History Snapshots, and Uploaded Assets**:
+  - Saves used to truncate the live file and write into it, so a scan racing a save could read an empty or half-written article and drop it from its results, a history read could catch a snapshot before its gzip footer was written, and a download racing a re-upload could receive a truncated asset.
+  - Each write now goes to a `.nexwiki-<n>.tmp` file in the same directory, is synced to disk, and is renamed into place. The file keeps its permission mode where the filesystem allows; if a mount rejects the `chmod` needed to keep it (some SMB/CIFS and FUSE mounts), the save still succeeds with the new file's default mode and logs a warning.
+  - Temp files left behind by a crash are removed at startup: from the article directory before the home page is seeded, and from the history and asset trees in the background.
+  - Side effects of replacing a file rather than rewriting it: sync clients such as Syncthing or Dropbox may briefly see a `.nexwiki-*.tmp` file, hard links to an article file keep the old content, the saved file is owned by the user NexWiki runs as, and on Unix a read-only article file is replaced on save. Documented in `docs/production_deployment.md`.
+
+### Fixed
+- **Unreadable Article Files and Folders Are No Longer Skipped Silently**:
+  - An article file that could not be read or parsed (e.g. malformed front matter) was left out of listings, link scans, and health reports without a trace. It is still skipped, but the server now logs `Warning: skipping unreadable article file <path>: <error>` to stderr, with the path relative to the article directory, once per file version per server run: again only if the file changes and still fails or breaks again after being fixed, and once more at startup after a restart if it is still broken.
+  - One bad entry no longer fails an article listing or link scan. An article folder that cannot be listed, or a file that cannot be stat'd, is skipped and logged the same way (a folder as `Warning: skipping unreadable article directory <path>/: <error>`), and a file deleted or renamed mid-scan is skipped silently. Previously each of these could fail the whole listing, and at boot, server startup.
+  - The startup search index sync and the asset-embed scan run after a rename log the files they skip too, and the asset scan no longer stops silently at the first folder it cannot list.
+  - An article directory that can be listed but not searched (read permission without execute) fails every scan with `article directory is not searchable`. NexWiki confirms this with a probe first, so a single entry whose stat is denied on its own (an SELinux label, a macOS ACL, a FUSE mount) is skipped and reported instead.
+- **Scan Errors From `wiki_health` and `get_wiki_statistics` No Longer Expose Server Paths**:
+  - When a scan fails outright, the error text either tool returns no longer contains the article directory's absolute path on the server.
+- **Plan Lifecycle Worker Refuses to Delete Plans After an Incomplete Backlink Scan**:
+  - The worker permanently deletes a long-archived plan only if no document links to it, but the backlink scan skipped files it could not read or parse, so a plan linked only from such a file looked unlinked. It now refuses whenever the scan skipped any file or folder, logs why and, outside dry-run mode, records a `delete-refused` activity event, as it already did for a plan that is still linked. Later sweeps check again.
+
 ## [0.19.0] — 2026-09-18
 
 ### Added

@@ -3,9 +3,13 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // This file holds wiki_health, the maintenance tool. Everything it reports is something the wiki
@@ -62,10 +66,18 @@ type HealthFinding struct {
 // HealthOutput is the wiki_health payload. Counts are reported separately from the item lists
 // because the lists are capped: a wiki with 400 orphans should say so without returning 400 items.
 type HealthOutput struct {
-	TotalDocuments  int             `json:"total_documents"`
-	StaleDays       int             `json:"stale_days"`
-	Limit           int             `json:"limit"`
-	Truncated       bool            `json:"truncated"`
+	TotalDocuments int  `json:"total_documents"`
+	StaleDays      int  `json:"stale_days"`
+	Limit          int  `json:"limit"`
+	Truncated      bool `json:"truncated"`
+
+	// UnreadableFileCount and UnreadableFiles report article files the scan could not read or
+	// parse, and directories it could not list. Such a file, or every article in such a directory,
+	// is missing from total_documents and from every other category, so without this a document
+	// with broken front matter would not exist as far as the report could tell.
+	UnreadableFileCount int              `json:"unreadable_file_count"`
+	UnreadableFiles     []UnreadableFile `json:"unreadable_files"`
+
 	OrphanCount     int             `json:"orphan_count"`
 	Orphans         []HealthFinding `json:"orphans"`
 	BrokenLinkCount int             `json:"broken_link_count"`
@@ -149,11 +161,18 @@ func healthOutputSchema() map[string]interface{} {
 		"detail":     schemaOf("string", "What to do about it."),
 	}, "slug", "title", "other_slug", "detail")
 
+	unreadable := schemaObject(map[string]interface{}{
+		"path":  schemaOf("string", "Path relative to the article directory, slash-separated. A directory that could not be listed appears with a trailing /, standing for every article in it."),
+		"error": schemaOf("string", "Why the file could not be read or parsed, or the directory could not be listed."),
+	}, "path", "error")
+
 	return schemaObject(map[string]interface{}{
 		"total_documents":            schemaOf("integer", "Documents scanned, including the home dashboard."),
 		"stale_days":                 schemaOf("integer", "Age threshold applied to in-flight plans."),
 		"limit":                      schemaOf("integer", "Maximum items returned per category."),
 		"truncated":                  schemaOf("boolean", "True when a category hit the limit and its list is shorter than its count."),
+		"unreadable_file_count":      schemaOf("integer", "Entries in unreadable_files: article files that could not be read or parsed, plus directories that could not be listed, each directory counted once however many articles it holds. None of them are in total_documents or any other check."),
+		"unreadable_files":           schemaArrayOf(unreadable, "Unreadable article files and unlistable directories (path ending in /), sorted by path, up to the limit."),
 		"orphan_count":               schemaOf("integer", "Documents no other document links to."),
 		"orphans":                    schemaArrayOf(finding, "Orphaned documents, up to the limit."),
 		"broken_link_count":          schemaOf("integer", "Internal links with no destination, in either link form."),
@@ -180,6 +199,7 @@ func healthOutputSchema() map[string]interface{} {
 		"parked_plan_count":          schemaOf("integer", "Plans deliberately set aside; reported as a count only, since they need no action."),
 		"plan_status_census":         planStatusCensusSchema(),
 	}, "total_documents", "stale_days", "limit", "truncated",
+		"unreadable_file_count", "unreadable_files",
 		"orphan_count", "orphans", "broken_link_count", "broken_links",
 		"unsourced_memory_count", "unsourced_memories",
 		"unkinded_memory_count", "unkinded_memories",
@@ -193,7 +213,7 @@ func healthOutputSchema() map[string]interface{} {
 var wikiHealthTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "wiki_health",
-		"description": "Audit the knowledge base for maintenance work: orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source' or without a 'memory_kind', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
+		"description": "Audit the knowledge base for maintenance work: article files that cannot be read or parsed (such as malformed front matter) and article folders that cannot be listed, orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source' or without a 'memory_kind', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -247,7 +267,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 
 	graph, err := srv.Storage.ScanLinkGraph()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error scanning the wiki: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning the wiki: " + errorForClient(srv.Storage.ArticleDir, err)}}}, nil
 	}
 
 	slugs := make([]string, 0, len(graph.Meta))
@@ -397,6 +417,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		TotalDocuments:         len(graph.Meta),
 		StaleDays:              staleDays,
 		Limit:                  limit,
+		UnreadableFileCount:    len(graph.Unreadable),
 		UnreferencedSkillCount: len(unreferencedSkills),
 		OrphanCount:            len(orphans),
 		BrokenLinkCount:        len(graph.Broken),
@@ -437,6 +458,12 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		out.BrokenLinks = out.BrokenLinks[:limit]
 		out.Truncated = true
 	}
+	out.UnreadableFiles = graph.Unreadable
+	if len(out.UnreadableFiles) > limit {
+		out.UnreadableFiles = out.UnreadableFiles[:limit]
+		out.Truncated = true
+	}
+	out.UnreadableFiles = unreadableForClient(srv.Storage.ArticleDir, out.UnreadableFiles)
 
 	return ToolResponse{
 		Content:           []ToolContent{{Type: "text", Text: renderHealthReport(out)}},
@@ -485,12 +512,123 @@ func capFindings(findings []HealthFinding, limit int, truncated bool) ([]HealthF
 	return findings, truncated
 }
 
+// unreadableForClient returns a copy of a scan's unreadable files whose errors no longer reveal
+// where the wiki lives on the server. An OS read error embeds the path the scan opened, which sits
+// under the article directory, and that absolute path is the server's business, not an MCP
+// client's. Each error names the file by the relative path its entry already carries instead.
+func unreadableForClient(articleDir string, files []UnreadableFile) []UnreadableFile {
+	hider := newArticleDirHider(articleDir)
+	out := make([]UnreadableFile, 0, len(files))
+	for _, f := range files {
+		out = append(out, UnreadableFile{Path: f.Path, Error: hider.hide(f.Error, f.Path)})
+	}
+	return out
+}
+
+// errorForClient is the text of an error that stopped a whole-wiki operation, with the article
+// directory hidden as unreadableForClient hides it. When the article directory itself cannot be
+// opened, the OS error names it.
+func errorForClient(articleDir string, err error) string {
+	return newArticleDirHider(articleDir).hide(err.Error(), "")
+}
+
+// articleDirHider rewrites text so it names paths relative to the article directory rather than
+// where that directory sits on the server's disk.
+type articleDirHider struct {
+	dirs []string
+}
+
+// pathReplacement is one string articleDirHider swaps out. A bounded one only matches where a path
+// ends, so it cannot replace the front of a longer name.
+type pathReplacement struct {
+	old, new string
+	bounded  bool
+}
+
+func newArticleDirHider(articleDir string) articleDirHider {
+	// The scan opens paths joined onto ArticleDir as configured, which may be relative, so both
+	// that form and the absolute one are scrubbed.
+	dirs := []string{filepath.Clean(articleDir)}
+	if abs, err := filepath.Abs(articleDir); err == nil && abs != dirs[0] {
+		dirs = append(dirs, abs)
+	}
+	return articleDirHider{dirs: dirs}
+}
+
+// hide returns text with the article directory hidden. relPath, when not empty, is the
+// slash-separated path of the file the text is about, or of the directory when it ends in /.
+func (h articleDirHider) hide(text, relPath string) string {
+	// Where several replacements match at one position the earliest wins, so the file's full path
+	// goes before the directory it sits in, and a directory with its separator before the bare one.
+	var reps []pathReplacement
+	if relPath != "" {
+		for _, dir := range h.dirs {
+			full := filepath.Join(dir, filepath.FromSlash(relPath))
+			if !strings.HasSuffix(relPath, "/") {
+				reps = append(reps, pathReplacement{old: full, new: relPath})
+				continue
+			}
+			// A directory's relPath brings its own trailing separator, which Join dropped, so a path
+			// inside the directory has its separator replaced rather than doubled (dir//x.md). The
+			// bare directory must end where its name does, or a sibling would become dir/-old.
+			reps = append(reps,
+				pathReplacement{old: full + string(filepath.Separator), new: relPath},
+				pathReplacement{old: full, new: relPath, bounded: true})
+		}
+	}
+	// Any other mention of the directory goes too, but only in absolute form: a short relative
+	// directory such as "articles" could match ordinary error text. Swapping a path's directory
+	// prefix leaves a valid relative path whatever follows, but the bare directory becoming "."
+	// does not, so that one is bounded: /srv/data/articles-old must not become .-old.
+	for _, dir := range h.dirs {
+		if filepath.IsAbs(dir) {
+			reps = append(reps,
+				pathReplacement{old: dir + string(filepath.Separator)},
+				pathReplacement{old: dir, new: ".", bounded: true})
+		}
+	}
+	if len(reps) == 0 {
+		return text
+	}
+
+	// One left-to-right pass that never rescans what it has already replaced.
+	var b strings.Builder
+	for i := 0; i < len(text); {
+		matched := false
+		for _, r := range reps {
+			if strings.HasPrefix(text[i:], r.old) && (!r.bounded || pathEndsAt(text, i+len(r.old))) {
+				b.WriteString(r.new)
+				i += len(r.old)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			b.WriteByte(text[i])
+			i++
+		}
+	}
+	return b.String()
+}
+
+// pathEndsAt reports whether a path running up to text[i] ends there. A separator, whitespace, or
+// the punctuation that closes a path in error text ends it. Anything else is taken to continue the
+// name, since a file name may legally hold it.
+func pathEndsAt(text string, i int) bool {
+	if i == len(text) {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(text[i:])
+	return (r < utf8.RuneSelf && os.IsPathSeparator(uint8(r))) || unicode.IsSpace(r) || strings.ContainsRune(":;,\"'`)]}", r)
+}
+
 // renderHealthReport writes the prose from the same value the structured payload carries, so the
 // two halves cannot disagree. Clean categories are still listed: "0 broken links" is information,
 // and omitting it makes an agent wonder whether the check ran.
 func renderHealthReport(out HealthOutput) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "NexWiki Health Report (%d documents scanned)\n\n", out.TotalDocuments)
+	fmt.Fprintf(&b, "- Unreadable article files and folders (skipped by every check): %d\n", out.UnreadableFileCount)
 	fmt.Fprintf(&b, "- Orphan pages: %d\n", out.OrphanCount)
 	fmt.Fprintf(&b, "- Broken internal links: %d\n", out.BrokenLinkCount)
 	fmt.Fprintf(&b, "- Memories with no source: %d\n", out.UnsourcedCount)
@@ -528,7 +666,7 @@ func renderHealthReport(out HealthOutput) string {
 		b.WriteString("\n")
 	}
 
-	needsAttention := out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount + out.UnkindedCount + out.ContestedCount +
+	needsAttention := out.UnreadableFileCount + out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount + out.UnkindedCount + out.ContestedCount +
 		out.StalePlanCount + out.StaleConceptCount + out.ColdMemoryCount + out.DuplicateCount + out.UnreferencedSkillCount
 	if needsAttention == 0 {
 		b.WriteString("\nNothing needs attention — the wiki is healthy. 🎉\n")
@@ -545,6 +683,29 @@ func renderHealthReport(out HealthOutput) string {
 		}
 		if len(findings) < count {
 			fmt.Fprintf(&b, "  ... and %d more; raise 'limit' to see them.\n", count-len(findings))
+		}
+	}
+
+	// Unreadable files come first: every other category is blind to them, so fixing one can change
+	// what the rest of the report says.
+	if out.UnreadableFileCount > 0 {
+		fmt.Fprintf(&b, "\n== Unreadable article files and folders (%d) ==\n", out.UnreadableFileCount)
+		for _, f := range out.UnreadableFiles {
+			remedy := "Fix its front matter or file permissions, or delete the file."
+			if strings.HasSuffix(f.Path, "/") {
+				// A directory that could not be listed has no front matter, and deleting it would take
+				// the articles inside with it. Permissions are the usual cause but not the only one: an
+				// I/O error or a stale or disconnected network mount fails the listing too.
+				remedy = "Fix what keeps the directory from being listed (usually its permissions) so the articles in it are scanned."
+			}
+			// YAML errors can span lines; flattened so each file stays one list item. A closing period
+			// is dropped because the sentence adds its own, and Windows ends OS errors with one
+			// ("Access is denied.").
+			fmt.Fprintf(&b, "- %s — %s. %s\n",
+				f.Path, strings.TrimRight(strings.Join(strings.Fields(f.Error), " "), ". "), remedy)
+		}
+		if len(out.UnreadableFiles) < out.UnreadableFileCount {
+			fmt.Fprintf(&b, "  ... and %d more; raise 'limit' to see them.\n", out.UnreadableFileCount-len(out.UnreadableFiles))
 		}
 	}
 
