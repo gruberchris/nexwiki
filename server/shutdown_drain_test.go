@@ -168,6 +168,10 @@ func TestWritesAfterCloseAreRefused(t *testing.T) {
 			_, err := s.SaveArticle(art.Slug, art.Title, "# v3", "", "", "", "", art.Tags, "")
 			return err
 		}},
+		{"SaveArticleWithOverrides (in place)", func() error {
+			_, err := s.SaveArticleWithOverrides(art.Slug, "Another Title", "# v3", "", "", "", "", art.Tags, "", ArticleOverrides{KeepSlug: true})
+			return err
+		}},
 		{"SetStatus", func() error {
 			_, err := s.SetStatus(plan.Slug, "completed", 0, "")
 			return err

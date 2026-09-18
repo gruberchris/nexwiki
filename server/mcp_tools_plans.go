@@ -208,7 +208,7 @@ func (srv *Server) toolAppendAgentPlan(args json.RawMessage) (interface{}, *JSON
 	}
 	secretNote := secretWarning(warnedSecrets(aArgs.ContentToAppend, "", ""))
 
-	art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, existing.Resource, summary, existing.Tags, existing.Type)
+	art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, existing.Resource, summary, existing.Tags, existing.Type, ArticleOverrides{KeepSlug: true})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent plan: %s", srv.clientError(err))}}}, nil
 	}
@@ -364,7 +364,8 @@ func (srv *Server) toolEditAgentPlan(args json.RawMessage) (interface{}, *JSONRP
 	}
 	secretNote := secretWarning(warnedSecrets(newContent, newDescription, newSource))
 
-	art, err := srv.Storage.SaveArticleWithStatus(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type, eArgs.Status)
+	// Only an edit that supplies a title may rename the plan.
+	art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type, ArticleOverrides{Status: eArgs.Status, KeepSlug: eArgs.Title == nil})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent plan: %s", srv.clientError(err))}}}, nil
 	}

@@ -327,7 +327,12 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 	// Regular article creation always produces a Wiki document; reserved types are tool-only.
 	art, err := srv.Storage.SaveArticleWithOverrides("", req.Title, req.Content, description, source, resource, req.EditSummary, cleanedTags, ContentTypeWiki, overrides)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, srv.clientError(err))
+		status := http.StatusInternalServerError
+		if errors.Is(err, errMisplacedOccupant) {
+			// The path is taken, just not by a document, so the check above could not see it.
+			status = http.StatusConflict
+		}
+		writeError(w, status, srv.clientError(err))
 		return
 	}
 
@@ -488,6 +493,7 @@ func (srv *Server) HandleVerifyArticle(w http.ResponseWriter, r *http.Request) {
 
 	overrides := ArticleOverrides{
 		Verified: &updatedVerified,
+		KeepSlug: true,
 	}
 
 	saved, err := srv.Storage.SaveArticleWithOverrides(
@@ -574,7 +580,7 @@ func (srv *Server) HandleUpdateArticleTags(w http.ResponseWriter, r *http.Reques
 		summary = "Updated article tags"
 	}
 
-	art, err := srv.Storage.SaveArticle(slug, existing.Title, existing.Content, existing.Description, existing.Source, existing.Resource, summary, cleanedTags, existing.Type)
+	art, err := srv.Storage.SaveArticleWithOverrides(slug, existing.Title, existing.Content, existing.Description, existing.Source, existing.Resource, summary, cleanedTags, existing.Type, ArticleOverrides{KeepSlug: true})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
@@ -890,8 +896,13 @@ func (srv *Server) HandleRevertArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Revert takes no loaded version, so there is no conflict to report.
 	art, err := srv.Storage.RevertArticle(slug, req.Version)
-	if err != nil {
+	switch {
+	case errors.Is(err, errArticleNotFound), errors.Is(err, errVersionNotFound):
+		writeError(w, http.StatusNotFound, srv.clientError(err))
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}

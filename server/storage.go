@@ -979,9 +979,10 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, desc
 	return s.SaveArticleWithStatus(oldSlug, title, content, description, source, resource, editSummary, tags, articleType, nil)
 }
 
-// ArticleOverrides carries the write-time fields that are classifications rather than content.
+// ArticleOverrides carries the write-time fields that are classifications rather than content, and
+// whether the save may rename the document.
 //
-// Every field is omitted-means-preserve: a nil pointer says "leave it alone", so an ordinary save
+// Every classification field is omitted-means-preserve: a nil pointer says "leave it alone", so an ordinary save
 // — a body edit, a rename, a tag change, a link heal — cannot silently reclassify a document.
 // Only a caller that genuinely means to change one passes a value.
 //
@@ -989,6 +990,14 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, desc
 // reached ten, and WS5 of the memory-enforcement plan adds a third classification (`change_kind`)
 // on the same path. A struct absorbs that; an eleventh string parameter does not.
 type ArticleOverrides struct {
+	// KeepSlug saves an existing document back under the slug it was loaded from, whatever its
+	// title slugifies to. Only an explicit title edit may rename a document: a title edited outside
+	// NexWiki can leave a canonical document at articles/<slug>.md with a title that yields another
+	// slug, and a status change, re-tag, append, revert, or link heal must not move it (breaking
+	// links to it, or colliding with the article at the other slug). Every save that is not a title
+	// edit sets it. A create has no slug to keep, so it derives one from the title regardless.
+	KeepSlug bool
+
 	// Status moves a plan or skill through its lifecycle. A status change is a state transition,
 	// not a content edit, which is why SaveArticle takes none at all.
 	Status *string
@@ -1045,12 +1054,23 @@ func (s *Storage) SetStatus(slug string, status string, loadedVersion int, editS
 	if editSummary == "" {
 		editSummary = fmt.Sprintf("Status changed to '%s'", NormalizeStatus(status))
 	}
-	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, art.Tags, art.Type, ArticleOverrides{Status: &status})
+	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, art.Tags, art.Type, ArticleOverrides{Status: &status, KeepSlug: true})
 }
+
+// errMisplacedOccupant is what a create returns when a misplaced file already holds the path it
+// would write, so handlers can answer it as a conflict. The error wrapping it names the path.
+var errMisplacedOccupant = errors.New("a misplaced file already occupies")
 
 // saveArticleLocked is SaveArticle's body. The caller must hold writeMu.
 func (s *Storage) saveArticleLocked(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string, overrides ArticleOverrides) (*Article, error) {
 	newSlug := Slugify(title)
+	keepSlug := overrides.KeepSlug && oldSlug != ""
+	if keepSlug {
+		newSlug = Slugify(oldSlug)
+		if newSlug == "" {
+			return nil, fmt.Errorf("invalid slug")
+		}
+	}
 	if newSlug == "" {
 		return nil, fmt.Errorf("article title must contain valid characters to generate a slug")
 	}
@@ -1107,7 +1127,15 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 					Executor:        existingArt.Executor,
 					Attester:        existingArt.Attester,
 				}
+			} else if keepSlug {
+				return nil, parseErr
 			}
+		} else if keepSlug {
+			// A save in place updates a document; with none to update it would create one.
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, articleNotFound(oldSlug)
+			}
+			return nil, err
 		}
 	}
 
@@ -1208,7 +1236,7 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 			// with one: an update was checked above, and a rename refused an occupied target.
 			// Refused before this save touches the history directory, so it leaves nothing behind.
 			if oldSlug == "" && prevArt.Slug != newSlug {
-				return nil, fmt.Errorf("a misplaced file already occupies articles/%s.md; move or delete it first (wiki_health lists it)", newSlug)
+				return nil, fmt.Errorf("%w articles/%s.md; move or delete it first (wiki_health lists it)", errMisplacedOccupant, newSlug)
 			}
 		}
 	}
@@ -1438,10 +1466,11 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 // one of its images has no link and no backlink, so findAssetReferrers finds it separately. The
 // renamed document's own body is handled in saveArticleLocked, not here.
 //
-// Every write goes back to the file it read. A save writes <Slugify(title)>.md, so a referrer is
-// rewritten only when that is where it already is; anything else would turn healing a link into
-// creating a duplicate document or overwriting a different one. A referrer that cannot be healed
-// in place is logged, naming the file, and left for a person to fix.
+// Every write goes back to the file it read; anything else would turn healing a link into creating a
+// duplicate document or overwriting a different one. A referrer is saved in place (KeepSlug), so one
+// whose title was edited outside NexWiki and no longer yields its slug is healed where it is rather
+// than moved. A misplaced referrer, or one that cannot be read or saved, is logged, naming the file,
+// and left for a person to fix.
 func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 	candidates := map[string]bool{}
 	// Keyed by path, since a misplaced document can both link to the article and embed its assets.
@@ -1497,14 +1526,6 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 			log.Printf("Warning: not healing references to renamed article '%s' in %s.md: %v", oldSlug, slug, err)
 			continue
 		}
-		// GetArticle only returns the document stored at <slug>.md, having refused the file if it
-		// became misplaced since the scan. The save below writes <Slugify(title)>.md, though, and a
-		// title edited outside NexWiki leaves the slug behind, so that would be another file.
-		if Slugify(linker.Title) != slug {
-			log.Printf("Warning: not healing references to renamed article '%s' in %s.md: its title %q does not yield its slug, so saving it would move it; update it by hand",
-				oldSlug, slug, linker.Title)
-			continue
-		}
 		rewritten, wikiChanged := RewriteWikiLinks(linker.Content, oldSlug, newTitle)
 		rewritten, pathChanged := RewriteArticlePathLinks(rewritten, oldSlug, newSlug)
 		rewritten, assetChanged := RewriteAssetPathLinks(rewritten, oldSlug, newSlug)
@@ -1512,7 +1533,10 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 			continue
 		}
 		summary := fmt.Sprintf("Auto-healed internal link: '%s' renamed to '%s'", oldSlug, newSlug)
-		if _, err := s.saveArticleLocked(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type, ArticleOverrides{}); err != nil {
+		// GetArticle only returns the document stored at <slug>.md, having refused the file if it
+		// became misplaced since the scan, and KeepSlug writes that same file back even when its
+		// title yields another slug.
+		if _, err := s.saveArticleLocked(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type, ArticleOverrides{KeepSlug: true}); err != nil {
 			log.Printf("Warning: not healing references to renamed article '%s' in %s.md: %v", oldSlug, slug, err)
 		}
 	}
@@ -2417,7 +2441,9 @@ type ArticleEdit struct {
 // performing them separately lets a concurrent writer land in between, so the guard passes and
 // the other session's edit is silently overwritten anyway.
 //
-// The document type is immutable here; regular edits never relabel a reserved OKF class.
+// The document type is immutable here; regular edits never relabel a reserved OKF class. This is the
+// title edit, so the slug follows edit.Title, as the web editor expects when it opens the saved
+// article at the slug the title yields.
 func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -2469,7 +2495,19 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 		})
 }
 
-// RevertArticle rolls the current active document back to the content of a historical version.
+// errVersionNotFound is what RevertArticle returns when the document has no snapshot of the
+// requested version.
+var errVersionNotFound = errors.New("version not found")
+
+// RevertArticle rolls the current active document back to the content of a historical version,
+// saved as a new version.
+//
+// It restores the version's body, description, source, resource, tags, sources, stale_after, and
+// verifications. It keeps what identifies the document and what state it is in as they are now: the
+// title, and with it the slug, so a revert never moves the article and breaks links to it; the type,
+// which ordinary edits never relabel either; the memory kind; and the lifecycle status, a state
+// transition with its own clock, so undoing an edit to a completed plan's body does not send it back
+// to draft.
 func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -2477,21 +2515,27 @@ func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 		return nil, ErrStorageClosed
 	}
 
-	histArt, err := s.GetArticleVersion(slug, version)
+	// First, so a missing or misplaced document is not found whether or not history exists under
+	// its slug.
+	current, err := s.GetArticle(slug)
 	if err != nil {
+		return nil, err
+	}
+	histArt, err := s.GetArticleVersion(current.Slug, version)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s has no version %d", errVersionNotFound, current.Slug, version)
+		}
 		return nil, err
 	}
 
 	summary := fmt.Sprintf("Reverted to version %d", version)
-	// A revision written before status became a field carries it as a tag, so lift it out rather
-	// than let a revert resurrect a tag set that validation now rejects. A revision that already
-	// has the field keeps it.
-	status, tags := ExtractLegacyStatus(histArt.Type, histArt.Tags)
-	if histArt.Status != "" {
-		status = histArt.Status
-	}
-	return s.saveArticleLocked(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, tags, histArt.Type, ArticleOverrides{
-		Status:     &status,
+	// A revision written before status became a field carries it as a tag. The status is not
+	// restored, but the tag must still go, or the revert would bring back a tag set that validation
+	// now rejects.
+	_, tags := ExtractLegacyStatus(current.Type, histArt.Tags)
+	return s.saveArticleLocked(current.Slug, current.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, tags, current.Type, ArticleOverrides{
+		KeepSlug:   true,
 		Sources:    &histArt.Sources,
 		StaleAfter: &histArt.StaleAfter,
 		Verified:   &histArt.Verified,
@@ -2525,6 +2569,7 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 	}
 
 	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, tags, art.Type, ArticleOverrides{
+		KeepSlug:   true,
 		Sources:    &art.Sources,
 		StaleAfter: &art.StaleAfter,
 		Verified:   &art.Verified,
@@ -2724,7 +2769,7 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 			// Remove the tag
 			newTags := append(art.Tags[:tagIndex], art.Tags[tagIndex+1:]...)
 			// Save the updated article
-			_, err = s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type, ArticleOverrides{})
+			_, err = s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type, ArticleOverrides{KeepSlug: true})
 			if err != nil {
 				return fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
 			}

@@ -703,11 +703,11 @@ func TestRenameNeverHealsIntoAnotherFile(t *testing.T) {
 	}
 }
 
-// TestRenameWarnsAboutReferrersItCannotHealInPlace pins the other two ways a canonical referrer can
-// fail to heal: its read fails, or its title does not yield its slug, so saving it would write
-// <Slugify(title)>.md, moving it. Both used to be skipped silently or, for the title, renamed. Now
-// both are left untouched and named.
-func TestRenameWarnsAboutReferrersItCannotHealInPlace(t *testing.T) {
+// TestRenameHealsReferrersInPlace pins how healing treats two awkward canonical referrers. One whose
+// title does not yield its slug used to be renamed to <Slugify(title)>.md by the save, and then was
+// skipped with a warning; it is now healed where it is. One whose read fails is left untouched and
+// named.
+func TestRenameHealsReferrersInPlace(t *testing.T) {
 	storage, err := NewStorage(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStorage failed: %v", err)
@@ -719,21 +719,31 @@ func TestRenameWarnsAboutReferrersItCannotHealInPlace(t *testing.T) {
 		t.Fatalf("SaveArticle failed: %v", err)
 	}
 	// Edited outside NexWiki: the title changed and the slug did not.
-	oddPath := filepath.Join(storage.ArticleDir, "odd-title.md")
 	writeArticleFile(t, storage, "odd-title.md", "title: Something Else\nslug: odd-title\n", "See [[Diagram Source]].\n", time.Now().Add(-time.Hour))
-	oddBefore := readFile(t, oddPath)
 
 	if _, err := storage.SaveArticle("diagram-source", "Diagram Renamed", "# Diagram", "", "", "", "rename", nil, ""); err != nil {
 		t.Fatalf("rename failed: %v", err)
 	}
-	if got := readFile(t, oddPath); got != oddBefore {
-		t.Errorf("odd-title.md was rewritten by the rename:\n%s", got)
+	odd, err := storage.GetArticle("odd-title")
+	if err != nil {
+		t.Fatalf("the referrer should still be at odd-title: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(storage.ArticleDir, "something-else.md")); !os.IsNotExist(err) {
-		t.Errorf("healing must not move a referrer to the slug its title yields (stat error %v)", err)
+	if !strings.Contains(odd.Content, "[[Diagram Renamed]]") || odd.Title != "Something Else" {
+		t.Errorf("odd-title.md should be healed in place with its title kept, got title %q:\n%s", odd.Title, odd.Content)
 	}
-	if warnings := healWarnings(buf, "diagram-source", "odd-title.md"); len(warnings) != 1 || !strings.Contains(warnings[0], `its title "Something Else"`) {
-		t.Errorf("expected one warning naming odd-title.md and its title, got %q\nlog:\n%s", warnings, buf)
+	if odd.EditSummary != "Auto-healed internal link: 'diagram-source' renamed to 'diagram-renamed'" {
+		t.Errorf("unexpected edit summary %q", odd.EditSummary)
+	}
+	if history, err := storage.GetArticleHistory("odd-title"); err != nil || len(history) != 2 {
+		t.Errorf("odd-title should have its original state and the heal in its history, got %d versions (%v)", len(history), err)
+	}
+	for _, p := range []string{filepath.Join(storage.ArticleDir, "something-else.md"), filepath.Join(storage.HistoryDir, "something-else")} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("healing must not move a referrer to the slug its title yields (stat error %v)", err)
+		}
+	}
+	if warnings := healWarnings(buf, "diagram-source", "odd-title.md"); len(warnings) != 0 {
+		t.Errorf("a referrer healed in place needs no warning, got %q", warnings)
 	}
 
 	t.Run("unreadable referrer", func(t *testing.T) {
@@ -896,11 +906,13 @@ func TestMisplacedDocumentCannotBeOpenedOrWrittenBySlug(t *testing.T) {
 	expectNotFound(t, "UpdateArticleTags", err)
 	_, err = storage.SetStatus("bar-copy", "draft", 0, "")
 	expectNotFound(t, "SetStatus", err)
-	// Revert does not ask GetArticle first; the save refuses the file it would start from.
 	_, err = storage.RevertArticle("bar-copy", 1)
 	expectNotFound(t, "RevertArticle", err)
+	// The save refuses the file it would start from, for a caller that does not ask GetArticle first.
 	_, err = storage.SaveArticle("bar-copy", "Bar", "HIJACKED", "", "", "", "", nil, "")
 	expectNotFound(t, "SaveArticle from the slug", err)
+	_, err = storage.SaveArticleWithOverrides("bar-copy", "Bar", "HIJACKED", "", "", "", "", nil, "", ArticleOverrides{KeepSlug: true})
+	expectNotFound(t, "SaveArticleWithOverrides in place", err)
 	expectNotFound(t, "DeleteArticle", storage.DeleteArticle("bar-copy"))
 
 	// Nor may a create take the path the misplaced file holds.
@@ -934,10 +946,11 @@ func TestMisplacedDocumentIsNotFoundOverMCPAndREST(t *testing.T) {
 	unchanged := newCopiedArticleFixture(t, srv.Storage)
 
 	for name, call := range map[string]string{
-		"read_article":        `{"name":"read_article","arguments":{"slug":"bar-copy"}}`,
-		"edit_wiki_article":   `{"name":"edit_wiki_article","arguments":{"slug":"bar-copy","title":"Bar","content":"HIJACKED","loaded_version":1}}`,
-		"update_article_tags": `{"name":"update_article_tags","arguments":{"slug":"bar-copy","tags":["hijacked"],"loaded_version":1}}`,
-		"delete_wiki_article": `{"name":"delete_wiki_article","arguments":{"slug":"bar-copy"}}`,
+		"read_article":           `{"name":"read_article","arguments":{"slug":"bar-copy"}}`,
+		"edit_wiki_article":      `{"name":"edit_wiki_article","arguments":{"slug":"bar-copy","title":"Bar","content":"HIJACKED","loaded_version":1}}`,
+		"update_article_tags":    `{"name":"update_article_tags","arguments":{"slug":"bar-copy","tags":["hijacked"],"loaded_version":1}}`,
+		"delete_wiki_article":    `{"name":"delete_wiki_article","arguments":{"slug":"bar-copy"}}`,
+		"revert_article_version": `{"name":"revert_article_version","arguments":{"slug":"bar-copy","version":1}}`,
 	} {
 		resp := toolCall(t, srv, call)
 		if !resp.IsError || !strings.Contains(strings.ToLower(resp.Content[0].Text), "not found") {
@@ -954,6 +967,7 @@ func TestMisplacedDocumentIsNotFoundOverMCPAndREST(t *testing.T) {
 		{"PUT tags", http.MethodPut, `{"tags":["hijacked"]}`, srv.HandleUpdateArticleTags},
 		{"POST verify", http.MethodPost, "", srv.HandleVerifyArticle},
 		{"DELETE", http.MethodDelete, "", srv.HandleDeleteArticle},
+		{"POST revert", http.MethodPost, `{"version":1}`, srv.HandleRevertArticle},
 	} {
 		req := httptest.NewRequest(tc.method, "/api/articles/bar-copy", strings.NewReader(tc.body))
 		req.SetPathValue("slug", "bar-copy")

@@ -246,7 +246,8 @@ func (srv *Server) toolEditAgentSkill(args json.RawMessage) (interface{}, *JSONR
 	}
 	secretNote := secretWarning(warnedSecrets(newContent, newDescription, newSource))
 
-	art, err := srv.Storage.SaveArticleWithStatus(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type, eArgs.Status)
+	// Only an edit that supplies a title may rename the skill.
+	art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type, ArticleOverrides{Status: eArgs.Status, KeepSlug: eArgs.Title == nil})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent skill: %s", srv.clientError(err))}}}, nil
 	}

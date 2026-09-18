@@ -309,9 +309,12 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 		// exactly the corpus-wide data loss a bundle is supposed to prevent.
 		importKind := art.MemoryKind
 
+		// An update was matched to the article by slug, so it stays there whatever the bundle's
+		// title yields.
 		overrides := ArticleOverrides{
 			Status:     &importStatus,
 			MemoryKind: &importKind,
+			KeepSlug:   oldSlug != "",
 		}
 		if len(art.Sources) > 0 {
 			overrides.Sources = &art.Sources

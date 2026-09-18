@@ -265,7 +265,7 @@ func (srv *Server) toolAppendAgentMemory(args json.RawMessage) (interface{}, *JS
 	}
 	secretNote := secretWarning(warnedSecrets(aArgs.ContentToAppend, "", ""))
 
-	art, err := srv.Storage.SaveArticle(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, existing.Resource, summary, existing.Tags, existing.Type)
+	art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, existing.Resource, summary, existing.Tags, existing.Type, ArticleOverrides{KeepSlug: true})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending agent memory: %s", srv.clientError(err))}}}, nil
 	}
@@ -479,7 +479,8 @@ func (srv *Server) toolEditAgentMemory(args json.RawMessage) (interface{}, *JSON
 	}
 	secretNote := secretWarning(warnedSecrets(newContent, newDescription, newSource))
 
-	art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, newTitle, newContent, newDescription, newSource, newResource, summary, newTags, existing.Type, ArticleOverrides{MemoryKind: kindOverride})
+	// Only an edit that supplies a title may rename the memory.
+	art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, newTitle, newContent, newDescription, newSource, newResource, summary, newTags, existing.Type, ArticleOverrides{MemoryKind: kindOverride, KeepSlug: eArgs.Title == nil})
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent memory: %s", srv.clientError(err))}}}, nil
 	}

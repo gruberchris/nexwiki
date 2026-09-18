@@ -72,8 +72,10 @@ func (s *Storage) MigrateStatusToField() error {
 		if err != nil {
 			continue
 		}
-		if _, err := s.SaveArticleWithStatus(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource,
-			summary, remainingTags, art.Type, &status); err != nil {
+		// In place: moving a status out of the tags is no reason to move a document whose title,
+		// edited outside NexWiki, yields another slug.
+		if _, err := s.SaveArticleWithOverrides(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource,
+			summary, remainingTags, art.Type, ArticleOverrides{Status: &status, KeepSlug: true}); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Warning: status field migration failed for '%s': %v\n", art.Slug, err)
 			continue
 		}
