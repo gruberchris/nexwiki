@@ -495,7 +495,7 @@ func TestWikiHealthReportsMisplacedDocuments(t *testing.T) {
 	unreadableAt := strings.Index(text, "== Unreadable article files and folders")
 	misplacedAt := strings.Index(text, "== Misplaced documents")
 	orphansAt := strings.Index(text, "== Orphan pages")
-	if unreadableAt < 0 || orphansAt < 0 || !(unreadableAt < misplacedAt && misplacedAt < orphansAt) {
+	if unreadableAt < 0 || orphansAt < 0 || unreadableAt >= misplacedAt || misplacedAt >= orphansAt {
 		t.Errorf("misplaced documents should be listed after unreadable files and before the other categories:\n%s", text)
 	}
 

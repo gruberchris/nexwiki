@@ -261,7 +261,10 @@ func TestCloseIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStorage failed: %v", err)
 	}
-	if !closeStorage(t, s) || !closeStorage(t, s) {
+	if !closeStorage(t, s) {
+		t.FailNow()
+	}
+	if !closeStorage(t, s) {
 		t.FailNow()
 	}
 

@@ -116,7 +116,7 @@ func (c *articleCache) store(path string, info fs.FileInfo, meta Article) *artic
 	c.entries[path] = entry
 	// A successful parse forgets any earlier failure, so the file breaking again warns again. A
 	// misplaced record of this same version stays: see failureRecord.
-	if prev, ok := c.failures[path]; ok && !(prev.misplaced && prev.version.equal(fileVersion{modTime: entry.modTime, size: entry.size})) {
+	if prev, ok := c.failures[path]; ok && (!prev.misplaced || !prev.version.equal(fileVersion{modTime: entry.modTime, size: entry.size})) {
 		delete(c.failures, path)
 	}
 	c.mu.Unlock()

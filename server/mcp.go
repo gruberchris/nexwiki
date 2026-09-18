@@ -237,6 +237,9 @@ func (s *StdioMCPServer) Stop(ctx context.Context) error {
 	go func() {
 		defer close(idle)
 		s.dispatchMu.Lock()
+		// Re-observe stopped while holding the lock, mirroring dispatch: holding it
+		// proves no request is in progress, so it is released straight away.
+		_ = s.stopped.Load()
 		s.dispatchMu.Unlock()
 	}()
 	select {
@@ -739,21 +742,8 @@ func sendError(w io.Writer, code int, msg string, id interface{}) {
 }
 
 // MCPEndpointPath is where the Streamable HTTP transport is served. Exported because main.go
-// registers the route and EnableCORS has to recognize the path to advertise the right headers on a
-// preflight it answers before the mux ever runs.
+// registers the route.
 const MCPEndpointPath = "/api/mcp"
-
-// mcpAllowedRequestHeaders is the Access-Control-Allow-Headers value for the MCP endpoint.
-//
-// Mcp-Method and Mcp-Name are not optional extras: the 2026-07-28 revision requires a modern client
-// to send them on every POST, and a browser will not send a header the preflight did not allow. So
-// omitting them here rejected browser-hosted modern clients at the preflight, before a single
-// JSON-RPC message was exchanged — the request never reached the handler that would have validated
-// them. Mcp-Session-Id and Last-Event-ID remain for the initialize-based revisions, which still
-// define them; this server ignores both, but ignoring a header a client sends is not the same as
-// refusing the request that carries it.
-const mcpAllowedRequestHeaders = "Content-Type, Accept, Authorization, MCP-Protocol-Version, " +
-	"Mcp-Method, Mcp-Name, Mcp-Session-Id, Last-Event-ID"
 
 // HandleStreamableHTTP implements the Streamable HTTP transport (2025 Spec)
 // supporting GET (initiating SSE stream) and POST (synchronous JSON-RPC).

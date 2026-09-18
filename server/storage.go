@@ -2630,6 +2630,9 @@ func (s *Storage) CloseContext(ctx context.Context) error {
 				<-s.sweepDone
 			}
 			s.writeMu.Lock()
+			// Re-observe closed while holding the lock, mirroring the write entry points:
+			// holding it proves no write is in progress and none can start.
+			_ = s.closed.Load()
 			s.writeMu.Unlock()
 		}()
 		select {
