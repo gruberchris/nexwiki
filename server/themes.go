@@ -620,8 +620,8 @@ func (ts *ThemeStore) saveCustomThemesLocked(themes []Theme) error {
 	}
 
 	// Atomically, so a crash mid-write leaves the old file rather than a truncated one that fails
-	// every later load. Storage.writeMu is not needed: the temp file sweep never visits the data
-	// directory root, where this file lives.
+	// every later load. Storage.writeMu is not needed: the data directory root, where this file
+	// lives, is swept for leftovers only at startup, never alongside live writes.
 	return writeFileAtomic(ts.filePath, data, 0644)
 }
 

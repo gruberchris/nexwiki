@@ -416,6 +416,37 @@ func TestNewStorageRemovesLeftoverTempFiles(t *testing.T) {
 	}
 }
 
+// A custom theme save writes its file directly in the data directory root, so a crash mid-save
+// strands a temp file no tree sweep reaches; startup's root pass removes it. Files only, and
+// never recursive — the trees under the root own their own temp files, so one planted in a
+// subdirectory no sweep owns survives startup.
+func TestStartupSweepsRootTempFiles(t *testing.T) {
+	dataDir := t.TempDir()
+	root := plantFile(t, dataDir, atomicTempName(31))
+	nearMiss := plantFile(t, dataDir, ".nexwiki-ABC.tmp")
+	buried := plantFile(t, dataDir, "unclaimed/"+atomicTempName(32))
+	logs := captureLog(t)
+
+	storage, err := openStorage(t, dataDir)
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { closeStorage(t, storage) })
+
+	if _, err := os.Lstat(root); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("leftover temp file in the data directory root survived startup (err %v)", err)
+	}
+	if _, err := os.Lstat(nearMiss); err != nil {
+		t.Errorf("startup removed %s, which is not a writeFileAtomic temp file: %v", nearMiss, err)
+	}
+	if _, err := os.Lstat(buried); err != nil {
+		t.Errorf("the root sweep recursed into a subdirectory and removed %s: %v", buried, err)
+	}
+	if out := logs.String(); out != "Removed 1 leftover temp file(s) from interrupted writes\n" {
+		t.Errorf("want only the one root leftover counted, got %q", out)
+	}
+}
+
 // seedDefaultHome treats any entry in the article directory as an existing wiki, so the sweep has
 // to run first or a crash during the very first save would leave a wiki with no home page forever.
 func TestLeftoverTempFileDoesNotBlockHomeSeeding(t *testing.T) {

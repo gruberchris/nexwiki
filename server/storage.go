@@ -643,8 +643,13 @@ type Storage struct {
 	// index's exclusive lock holds any other off in NewStorage, and a -mcp-only sidecar that detects
 	// a running primary proxies to it instead of opening storage.
 	//
-	// removeLeftoverTempFiles takes it per directory so it never deletes the temp file of a save in
-	// progress, which is why every writeFileAtomic caller must hold it.
+	// The temp file sweep (removeLeftoverTempFiles) lists and cleans each directory under
+	// writeMu, so a writeFileAtomic caller writing into a tree that sweep walks alongside live
+	// saves — the history and asset trees — must hold it from creating its temp file to renaming
+	// it into place, or the sweep can delete the temp file of a save in progress. The article tree
+	// and the data directory root are swept only at startup, before any save can be in progress,
+	// so the sweep adds no requirement there: article writers hold writeMu for the serialization
+	// above, and ThemeStore's write into the root does not take it at all.
 	writeMu sync.Mutex
 
 	// sweepStop and sweepDone belong to the background temp file sweep NewStorage starts. Close
@@ -714,6 +719,14 @@ func NewStorage(dataDir string) (*Storage, error) {
 	// index. So no age threshold is needed, and one would miss the usual case: a crash followed by
 	// an immediate restart (a container restart policy), when the leftovers are youngest.
 	s.removeLeftoverTempFiles(nil, articleDir)
+
+	// The data directory root gets its own startup pass: a custom theme save writes its file
+	// directly in the root, so a crash mid-save can strand a temp file no tree sweep reaches.
+	// Files only and never recursive — the root's subdirectories are the trees above and the
+	// search index, which own their own temp files and their own sweeps. Like the article sweep
+	// this runs before any save can be in progress; see removeRootTempFiles for why it never
+	// joins the background sweep.
+	s.removeRootTempFiles()
 
 	// Before anything scans the article directory, and before seeding, which would take a probe left
 	// in it for an existing wiki. The probe is gone again when this returns.
@@ -1183,9 +1196,8 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	}
 
 	if oldSlug != "" {
-		oldPath := filepath.Join(s.ArticleDir, oldSlug+".md")
-
-		// If the slug has changed, rename files and move assets
+		// If the slug has changed, move the asset and history trees; the article file itself is
+		// swapped further down, only once the new state is durable at the new slug.
 		if oldSlug != newSlug {
 			renamedFromSlug = oldSlug
 			newPath := filepath.Join(s.ArticleDir, newSlug+".md")
@@ -1194,10 +1206,13 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 				return nil, fmt.Errorf("an article with slug '%s' already exists", newSlug)
 			}
 
-			// Rename physical Markdown file
-			if err := os.Rename(oldPath, newPath); err != nil && !os.IsNotExist(err) {
-				return nil, fmt.Errorf("failed to rename article file: %w", err)
-			}
+			// The article file is deliberately NOT renamed here. Readers do not take writeMu, so
+			// renaming it now would expose the new filename carrying the old slug and title —
+			// and for the whole tail of this save, since the search unindex and the history
+			// snapshot below run between the rename and the write of the new front matter.
+			// Instead the completed new file is written to newPath (writeFileAtomic, below),
+			// and only then is the superseded file under oldSlug removed: a reader sees the old
+			// state, briefly both complete states, then only the new one — never a mixed one.
 
 			// Remove old slug from search index
 			_ = s.UnindexArticle(oldSlug)
@@ -1224,10 +1239,14 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 
 	histFolder := filepath.Join(s.HistoryDir, newSlug)
 
-	// The version this save supersedes, read from the document's own front matter. After the rename
-	// block above, newSlug is where the previous state lives whichever slug it arrived under —
+	// The version this save supersedes, read from the document's own front matter. On a rename the
+	// previous state still lives under the old slug — the superseded file is removed only after
+	// the new one is written below; otherwise newSlug is where the previous state lives —
 	// including the case where a create collides with an existing title and oldSlug was never set.
 	activePath := filepath.Join(s.ArticleDir, newSlug+".md")
+	if renamedFromSlug != "" {
+		activePath = filepath.Join(s.ArticleDir, renamedFromSlug+".md")
+	}
 	prevVersion := 0
 	prevData, prevErr := os.ReadFile(activePath)
 	if prevErr == nil {
@@ -1435,6 +1454,16 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	filePath := filepath.Join(s.ArticleDir, newSlug+".md")
 	if err := writeFileAtomic(filePath, []byte(serialized), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write active article file: %w", err)
+	}
+
+	// A rename's superseded file is removed only now, with the new state durable at the new slug:
+	// before the write above a reader saw the complete old state, between the write and this remove
+	// it sees both complete states, and after it only the new one. Removing it any earlier would
+	// hand a reader the new filename before the new front matter exists — or neither file at all.
+	if renamedFromSlug != "" {
+		if err := os.Remove(filepath.Join(s.ArticleDir, renamedFromSlug+".md")); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("failed to remove superseded article file: %w", err)
+		}
 	}
 
 	// Write compressed history version to data/history/

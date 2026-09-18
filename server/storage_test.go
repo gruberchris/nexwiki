@@ -1,7 +1,9 @@
 package server
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -436,6 +438,123 @@ func TestListArticlesNeverSeesAPartialSave(t *testing.T) {
 
 	if n := misses.Load(); n > 0 {
 		t.Errorf("%d of %d concurrent scans did not list the article being saved", n, scans.Load())
+	}
+}
+
+// TestRenameNeverExposesNewFilenameWithOldFrontMatter is #155: a slug rename used to move the
+// article file to its new filename before the new front matter was written, and readers take no
+// lock — so throughout the rename's tail (the search unindex, the history snapshot) they saw the
+// new filename carrying the old slug and title. The completed new file is now written, by the same
+// atomic write every save uses, before the old one is removed, so a reader only ever sees the old
+// document, briefly both documents, then the new one. The readers here sample both candidate files
+// through the whole rename the way the directory scans read them, and hold every file they catch
+// to its filename's promise: present means complete and self-consistent.
+func TestRenameNeverExposesNewFilenameWithOldFrontMatter(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("removing a file is not atomic with respect to concurrent opens on Windows")
+	}
+	storage, err := openStorage(t, t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { closeStorage(t, storage) })
+	waitSweep(t, storage) // the renames below take writeMu, which a broken sweep could leave held
+
+	if _, err := storage.SaveArticle("", "Old Title", "shared body", "", "", "", "seed", nil, ""); err != nil {
+		t.Fatalf("seed SaveArticle failed: %v", err)
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for r := 0; r < 2; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Each file the rename touches must carry the slug and title its name promises
+			// whenever it exists. Absent is a complete state too — the old file before the save
+			// starts, the new one until the save writes it — but one that exists must parse.
+			promises := map[string][2]string{
+				"old-title.md": {"old-title", "Old Title"},
+				"new-title.md": {"new-title", "New Title"},
+			}
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				for name, want := range promises {
+					data, err := os.ReadFile(filepath.Join(storage.ArticleDir, name))
+					if errors.Is(err, fs.ErrNotExist) {
+						continue
+					}
+					if err != nil {
+						t.Errorf("reading articles/%s during the rename failed: %v", name, err)
+						return
+					}
+					art, err := parseArticleFile(data, false)
+					if err != nil {
+						t.Errorf("articles/%s existed but was not a complete document during the rename: %v", name, err)
+						return
+					}
+					if art.Slug != want[0] || art.Title != want[1] {
+						t.Errorf("articles/%s carried slug %q and title %q — the new filename exposed with the old document",
+							name, art.Slug, art.Title)
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	// Alternating title edits, so the readers see several rename windows in both directions.
+	const renames = 5
+	currentSlug := "old-title"
+	for i := 0; i < renames; i++ {
+		title, wantSlug := "New Title", "new-title"
+		if currentSlug == "new-title" {
+			title, wantSlug = "Old Title", "old-title"
+		}
+		art, err := storage.SaveArticle(currentSlug, title, "shared body", "", "", "", fmt.Sprintf("rename %d", i), nil, "")
+		if err != nil {
+			t.Errorf("SaveArticle %d failed: %v", i, err)
+			break
+		}
+		if art.Slug != wantSlug {
+			t.Errorf("SaveArticle %d landed on slug %q, want %q", i, art.Slug, wantSlug)
+			break
+		}
+		currentSlug = wantSlug
+	}
+	close(stop)
+	wg.Wait()
+
+	// The settled state: only the final slug's file remains, and the restructured sequence kept
+	// the version counter and its snapshots contiguous across the moves.
+	if _, err := os.Lstat(filepath.Join(storage.ArticleDir, "old-title.md")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the superseded file survived the rename (err %v)", err)
+	}
+	got, err := storage.GetArticle("new-title")
+	switch {
+	case err != nil:
+		t.Errorf("GetArticle(new-title) failed after the rename: %v", err)
+	case got == nil:
+		t.Errorf("GetArticle(new-title) returned neither an article nor an error")
+	case got.Title != "New Title" || got.Version != renames+1:
+		t.Errorf("final article = title %q version %d, want New Title / %d", got.Title, got.Version, renames+1)
+	}
+	history, err := storage.GetArticleHistory("new-title")
+	if err != nil {
+		t.Fatalf("GetArticleHistory failed: %v", err)
+	}
+	seen := make(map[int]bool, len(history))
+	for _, h := range history {
+		seen[h.Version] = true
+	}
+	for v := 1; v <= renames+1; v++ {
+		if !seen[v] {
+			t.Errorf("version %d missing from the renamed article's history, which has %d versions", v, len(history))
+		}
 	}
 }
 
