@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-09-18
+
 ### Added
 - **MCP Pagination on Every List Method**:
   - `tools/list`, `prompts/list`, `resources/list`, and `resources/templates/list` now accept a `cursor` and return a `nextCursor` while results remain, in both protocol eras.
@@ -522,7 +524,8 @@ Completes the memory-enforcement work begun in 0.14.0. That release moved three 
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/gruberchris/nexwiki/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/gruberchris/nexwiki/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/gruberchris/nexwiki/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/gruberchris/nexwiki/compare/v0.16.0...v0.17.0
