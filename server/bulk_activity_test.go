@@ -129,9 +129,18 @@ func TestHandleDeleteTagGloballyPublishesEachChangedDocument(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	var body map[string]string
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || len(body) != 1 || body["message"] != "tag deleted globally successfully" {
+	// The counts report what the sweep did: two rewritten, nothing skipped, nothing failed.
+	var body struct {
+		Message   string `json:"message"`
+		Rewritten int    `json:"rewritten"`
+		Skipped   int    `json:"skipped"`
+		Failed    int    `json:"failed"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Message != "tag deleted globally successfully" {
 		t.Errorf("response shape changed: %s", w.Body.String())
+	}
+	if body.Rewritten != 2 || body.Skipped != 0 || body.Failed != 0 {
+		t.Errorf("counts do not match the sweep: %+v", body)
 	}
 
 	want := []string{"tagged-one", "tagged-two"}
@@ -199,6 +208,23 @@ func TestHandleDeleteTagGloballyAnnouncesAPartialSweep(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected the failed sweep to report 500, got %d: %s", w.Code, w.Body.String())
+	}
+	// The failure exit carries the partial state: one document rewritten before the save failed,
+	// one failure, and the 500 names what stopped the sweep.
+	var body struct {
+		Error     string `json:"error"`
+		Rewritten int    `json:"rewritten"`
+		Skipped   int    `json:"skipped"`
+		Failed    int    `json:"failed"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid error body: %s", w.Body.String())
+	}
+	if body.Rewritten != 1 || body.Failed != 1 || body.Skipped != 0 {
+		t.Errorf("the partial state is not reported: %+v", body)
+	}
+	if !strings.Contains(body.Error, "broken-plan") {
+		t.Errorf("the error does not name the document that stopped the sweep: %q", body.Error)
 	}
 	if older, err := srv.Storage.GetArticle("older"); err != nil || !slices.Contains(older.Tags, "removable") {
 		t.Fatalf("the sweep was expected to stop before reaching 'older': %+v, %v", older, err)

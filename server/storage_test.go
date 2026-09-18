@@ -120,7 +120,7 @@ func TestStorageVersioning(t *testing.T) {
 		t.Fatalf("SaveArticle for tag delete test failed: %v", err)
 	}
 
-	err = storage.DeleteTagGlobally("delete-me")
+	_, err = storage.DeleteTagGlobally("delete-me")
 	if err != nil {
 		t.Fatalf("DeleteTagGlobally failed: %v", err)
 	}
@@ -137,8 +137,7 @@ func TestStorageVersioning(t *testing.T) {
 	}
 
 	// Verify that protected tool-managed memory-scope tags cannot be deleted globally
-	err = storage.DeleteTagGlobally("memory-nexwiki")
-	if err == nil {
+	if _, err = storage.DeleteTagGlobally("memory-nexwiki"); err == nil {
 		t.Errorf("Expected error deleting protected memory-scope tag, got nil")
 	}
 

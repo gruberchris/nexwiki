@@ -50,7 +50,7 @@ verified:
 
 ### 2. Removing and Deleting Tags
 * **Remove a tag from an article**: Click the tiny `×` on the tag badge in the Editor, then save the page.
-* **Delete a tag globally**: If you want to remove a tag from all articles in the wiki, click the tag badge in the **Filter by Tag** cloud in the sidebar, or issue a `DELETE /api/tags/{tag}` request. This will completely remove the tag from the front-matter of every article containing it.
+* **Delete a tag globally**: If you want to remove a tag from all articles in the wiki, click the tag badge in the **Filter by Tag** cloud in the sidebar, or issue a `DELETE /api/tags/{tag}` request. This will completely remove the tag from the front-matter of every article containing it. The sweep works document by document, so other edits are not blocked behind it; if it is interrupted (the server stops, or one document fails to save), the response reports how many documents were `rewritten`, `skipped`, and `failed`, and issuing the same request again finishes the remainder.
 * **Update tags programmatically**: Connected clients and AI agents can update tags using the `PUT /api/articles/{slug}/tags` API endpoint or the `update_article_tags` MCP tool. This performs a tag-only update without loading or rewriting the main page body, offering high speed and preventing accidental modifications to page contents.
 
 *Note: NexWiki does not allow global tag renaming. To rename a tag, apply the new tag name to the desired articles and delete the old tag.*

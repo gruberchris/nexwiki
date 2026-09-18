@@ -2747,33 +2747,99 @@ func (s *Storage) CleanupArchivedArticles() error {
 	return nil
 }
 
-// DeleteTagGlobally removes a tag from all articles in the wiki. Every case-insensitive variant
-// of the tag goes with it: a document carrying "Foo", "foo", and "FOO" is left with none of them,
-// all in the one rewrite. A document that cannot be opened is skipped with the warning
-// getArticleForScan logs, so one broken file neither fails the sweep nor silently keeps its tag.
-// Enforces validation: it returns an error if the tag is a tool-managed memory-scope tag.
-func (s *Storage) DeleteTagGlobally(tag string) error {
+// TagDeletionDoc is one document a global tag deletion rewrote, as the sweep saw it at the
+// moment of the rewrite. The metadata is captured under the write lock, from the save itself,
+// so a report entry means the sweep rewrote that document — never that some other writer's
+// change happens to look like one.
+type TagDeletionDoc struct {
+	Slug    string
+	Title   string
+	Type    string
+	Version int
+	Tags    []string
+}
+
+// TagDeletionFailure is the document whose failed save stopped a global tag deletion early.
+type TagDeletionFailure struct {
+	Slug string
+	Err  string
+}
+
+// TagDeletionReport is what a global tag deletion actually did. Rewritten holds one entry per
+// document the sweep rewrote; Skipped holds the documents it could not open and left alone,
+// warned about by getArticleForScan; Failed holds the document whose failed save stopped the
+// sweep (the first failure ends it, so at most one). A document carrying no variant of the tag
+// is in none of them: the sweep did nothing to it. A rerun that finds nothing to rewrite
+// returns an empty report, and rerunning after an interrupted sweep rewrites exactly the
+// documents that still carry the tag.
+type TagDeletionReport struct {
+	Tag       string
+	Rewritten []TagDeletionDoc
+	Failed    []TagDeletionFailure
+	Skipped   []string
+}
+
+// DeleteTagGlobally removes a tag from all articles in the wiki and reports what it did. Every
+// case-insensitive variant of the tag goes with it: a document carrying "Foo", "foo", and "FOO"
+// is left with none of them, all in the one rewrite. A document that cannot be opened is
+// skipped with the warning getArticleForScan logs, so one broken file neither fails the sweep
+// nor silently keeps its tag; the report names it. Enforces validation: it returns an error if
+// the tag is a tool-managed memory-scope tag.
+//
+// writeMu is taken per document, not held across the whole sweep. Each document's rewrite is
+// still atomic — re-read, saved, history snapshotted, and indexed under the one hold — but an
+// unrelated write (a web edit, an MCP write, the plan lifecycle worker) now waits out one
+// document rather than the whole corpus, and the sweep waits out one such write per document
+// rather than one per sweep. A document edited between two holds is re-read under the next
+// one, so a concurrent edit and the sweep never write the same document at once: whichever of
+// them holds the lock last decides the file, whole and uncorrupted either way.
+//
+// The sweep is not atomic across documents and does not pretend to be. One stopped by a
+// closing storage or a failed save returns the error alongside the report of what it had
+// already rewritten, and rerunning the deletion finishes the remainder: a document already
+// rewritten carries no variant of the tag, so the rerun leaves it alone, and one that still
+// does is rewritten then. The listing is a snapshot, so a document that gains the tag
+// mid-sweep is that rerun's to catch as well.
+func (s *Storage) DeleteTagGlobally(tag string) (*TagDeletionReport, error) {
 	tagLower := strings.ToLower(tag)
 	if strings.HasPrefix(tagLower, MemoryScopeTagPrefix) {
-		return fmt.Errorf("cannot delete protected memory-scope tag: %s", tag)
+		return nil, fmt.Errorf("cannot delete protected memory-scope tag: %s", tag)
 	}
 
-	// Held across the whole sweep so the operation is all-or-nothing with respect to other
-	// writers, rather than interleaving per-article saves with concurrent edits.
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	report := &TagDeletionReport{Tag: tag}
+
+	// Refused before the wiki is even listed, the way every write entry point refuses: a closed
+	// storage answers ErrStorageClosed whatever the corpus carries. The check that matters is
+	// the one under writeMu below; this one keeps the sweep from doing a listing's work for a
+	// storage that will refuse every document.
 	if s.closed.Load() {
-		return ErrStorageClosed
+		return report, ErrStorageClosed
 	}
-
 	articles, err := s.ListArticles()
 	if err != nil {
-		return err
+		return report, err
 	}
 
 	for _, artMeta := range articles {
+		// One document per hold of writeMu. The closed check under the lock is what turns the
+		// sweep away once Close has begun: closed is set before Close waits for writeMu, so any
+		// hold taken after that sees it, and the sweep stops between documents with the report
+		// of what it had already rewritten. At most the one document saved under the hold in
+		// progress when Close began lands after it.
+		s.writeMu.Lock()
+		if s.closed.Load() {
+			s.writeMu.Unlock()
+			log.Printf("Global deletion of tag '%s' stopped early: storage closed with %d %s rewritten; rerunning the deletion finishes the remainder",
+				tag, len(report.Rewritten), plural(len(report.Rewritten), "document", "documents"))
+			return report, ErrStorageClosed
+		}
+
+		// Re-read under the lock, not from the listing: a document edited since is seen as the
+		// edit left it, and the edit waits out this hold rather than interleaving with it.
 		art, ok := s.getArticleForScan(artMeta.Slug)
 		if !ok {
+			report.Skipped = append(report.Skipped, artMeta.Slug)
+			s.writeMu.Unlock()
 			continue
 		}
 
@@ -2787,13 +2853,31 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 			newTags = append(newTags, t)
 		}
 		if len(newTags) == len(art.Tags) {
+			// Carries no variant of the tag: already rewritten by an earlier run, or cleaned by
+			// the concurrent edit that bumped it since the listing. Nothing to rewrite, nothing
+			// to report.
+			s.writeMu.Unlock()
 			continue
 		}
 		// Save the updated article
-		if _, err = s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type, ArticleOverrides{KeepSlug: true}); err != nil {
-			return fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
+		saved, err := s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type, ArticleOverrides{KeepSlug: true})
+		s.writeMu.Unlock()
+		if err != nil {
+			report.Failed = append(report.Failed, TagDeletionFailure{Slug: art.Slug, Err: err.Error()})
+			log.Printf("Global deletion of tag '%s' stopped on article %s: %v; %d %s rewritten before the failure keep the tag removed, and a rerun finishes the remainder",
+				tag, art.Slug, err, len(report.Rewritten), plural(len(report.Rewritten), "document", "documents"))
+			return report, fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
 		}
+		// Recorded from the save itself, under the lock: this is the sweep's own account of
+		// what it rewrote, which is what the announcement announces and the report reports.
+		report.Rewritten = append(report.Rewritten, TagDeletionDoc{
+			Slug:    saved.Slug,
+			Title:   saved.Title,
+			Type:    saved.Type,
+			Version: saved.Version,
+			Tags:    saved.Tags,
+		})
 	}
 
-	return nil
+	return report, nil
 }

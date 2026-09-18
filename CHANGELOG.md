@@ -28,6 +28,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   - When a scan fails outright, the error text either tool returns no longer contains the article directory's absolute path on the server.
 - **Plan Lifecycle Worker Refuses to Delete Plans After an Incomplete Backlink Scan**:
   - The worker permanently deletes a long-archived plan only if no document links to it, but the backlink scan skipped files it could not read or parse, so a plan linked only from such a file looked unlinked. It now refuses whenever the scan skipped any file or folder, logs why and, outside dry-run mode, records a `delete-refused` activity event, as it already did for a plan that is still linked. Later sweeps check again.
+- **Global Tag Deletion No Longer Blocks Every Write for the Whole Sweep**:
+  - `DELETE /api/tags/{tag}` held the storage's write lock for the entire sweep — measured at about 63 ms per tagged document, about 200 s for 3,000 of them — so web edits, MCP writes, and the plan lifecycle worker all waited behind it, and an interrupted sweep left the tag removed from only some documents with no indication.
+  - The sweep now takes the write lock per document: each document's rewrite stays atomic (re-read, save, history snapshot, and index update under one hold), but other writes interleave, waiting out one document rather than the whole corpus. A document edited mid-sweep is re-read when the sweep reaches it, so the edit and the sweep never write the same document at once.
+  - The operation reports what it did: the REST response carries `rewritten`, `skipped`, and `failed` counts on the success and failure exits alike, a sweep stopped by a closing storage or a failed save logs what completed, and rerunning the deletion finishes the remainder — documents already rewritten are skipped, and deleting a tag nothing carries is a clean no-op.
+  - The per-document announcements no longer come from a pre-scan of carrier versions, which an edit landing mid-sweep could make announce a document the sweep never rewrote; they come from the sweep's own record of what it saved.
 
 ## [0.19.0] — 2026-09-18
 

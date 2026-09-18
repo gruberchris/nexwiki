@@ -192,7 +192,10 @@ func TestWritesAfterCloseAreRefused(t *testing.T) {
 			_, err := s.UpdateArticleTags(art.Slug, []string{"new-tag"}, art.Version, "")
 			return err
 		}},
-		{"DeleteTagGlobally", func() error { return s.DeleteTagGlobally("shared-tag") }},
+		{"DeleteTagGlobally", func() error {
+			_, err := s.DeleteTagGlobally("shared-tag")
+			return err
+		}},
 		{"DeleteArticle", func() error { return s.DeleteArticle(art.Slug) }}, // last: it would remove what the others edit
 	}
 	for _, op := range ops {

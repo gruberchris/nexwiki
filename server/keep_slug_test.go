@@ -161,7 +161,10 @@ func TestSavesThatAreNotTitleEditsKeepTheSlug(t *testing.T) {
 		{
 			name:  "DeleteTagGlobally",
 			setup: doc("tags:\n  - doomed\n  - kept\n"),
-			save:  func(t *testing.T, srv *Server) { noErr(t, srv.Storage.DeleteTagGlobally("doomed")) },
+			save: func(t *testing.T, srv *Server) {
+				_, err := srv.Storage.DeleteTagGlobally("doomed")
+				noErr(t, err)
+			},
 			check: func(t *testing.T, art *Article) {
 				if !reflect.DeepEqual(art.Tags, []string{"kept"}) {
 					t.Errorf("tags = %v, want [kept]", art.Tags)

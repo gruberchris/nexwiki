@@ -947,57 +947,49 @@ func (srv *Server) HandleDeleteTagGlobally(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Storage reports only whether the sweep succeeded, not which documents it rewrote, so note the
-	// version of each document carrying the tag first (in every case variant — the sweep removes
-	// them all in one rewrite). One whose version has since moved on was rewritten by the sweep;
-	// the rest were not changed and are not announced. The version is the test rather than the tag
-	// being gone: it says the sweep itself rewrote the document, not that some other state of its
-	// tags happens to match.
-	type carrier struct {
-		slug    string
-		version int
-	}
-	// Matched the way DeleteTagGlobally matches, so the two agree on which documents carry it.
-	tagLower := strings.ToLower(tag)
-	var carriers []carrier
-	if srv.EventBus != nil {
-		if articles, err := srv.Storage.ListArticles(); err == nil {
-			for _, a := range articles {
-				if slices.ContainsFunc(a.Tags, func(t string) bool { return strings.ToLower(t) == tagLower }) {
-					carriers = append(carriers, carrier{a.Slug, a.Version})
-				}
-			}
-		}
+	report, sweepErr := srv.Storage.DeleteTagGlobally(tag)
+	if report == nil {
+		// Unreachable — the memory-scope refusal was answered above — but a nil report must
+		// not take the counts down with it.
+		report = &TagDeletionReport{}
 	}
 
-	sweepErr := srv.Storage.DeleteTagGlobally(tag)
-
+	// Announced from the report the sweep itself kept — each rewritten document's metadata,
+	// captured under the write lock at its save — never from a pre-scan of carriers. The sweep
+	// now interleaves with other writers (see DeleteTagGlobally), so a document listed as a
+	// carrier can be edited before the sweep reaches it: its version moves, but the sweep
+	// rewrote nothing, and announcing on a version change would report a rewrite that never
+	// happened. A report entry cannot drift that way: what it lists is what was saved.
+	//
 	// Announced even when the sweep failed partway: the documents it had already rewritten stay
-	// rewritten, and the activity log is the audit trail for exactly that.
-	var swept []Article
-	for _, c := range carriers {
-		art, err := srv.Storage.GetArticle(c.slug)
-		if err != nil {
-			// A document that cannot be re-opened cannot be announced; the once-per-version
-			// warning names it (the sweep already warned for this version if it hit the same
-			// failure).
-			srv.Storage.reportScanReadFailure(c.slug, err)
-			continue
-		}
-		if art.Version == c.version {
-			continue
-		}
-		art.Content = ""
-		swept = append(swept, *art)
+	// rewritten, and the activity log is the audit trail for exactly that. MCP clients see the
+	// same per-document events through the bus — the activity history and the article
+	// subscriptions both carry one entry per rewritten document.
+	docs := make([]Article, 0, len(report.Rewritten))
+	for _, d := range report.Rewritten {
+		docs = append(docs, Article{Slug: d.Slug, Title: d.Title, Type: d.Type, Version: d.Version, Tags: d.Tags})
 	}
-	srv.publishBulkChanges("api", "delete_tag", "User", swept)
+	srv.publishBulkChanges("api", "delete_tag", "User", docs)
 
+	// The counts ride on the failure exit too, not just the success one: a sweep that stopped
+	// early is a partial operation, and writeError's lone "error" field would leave a client
+	// unable to see how far it got. The extra fields change nothing for readers of "error".
 	if sweepErr != nil {
-		writeError(w, http.StatusInternalServerError, srv.clientError(sweepErr))
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error":     srv.clientError(sweepErr),
+			"rewritten": len(report.Rewritten),
+			"skipped":   len(report.Skipped),
+			"failed":    len(report.Failed),
+		})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "tag deleted globally successfully"})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":   "tag deleted globally successfully",
+		"rewritten": len(report.Rewritten),
+		"skipped":   len(report.Skipped),
+		"failed":    len(report.Failed),
+	})
 }
 
 // publishBulkChanges announces the documents a bulk operation wrote — a web import or tag deletion,

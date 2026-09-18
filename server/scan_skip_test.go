@@ -252,13 +252,25 @@ func TestDeleteTagGloballyWarnsAndContinuesPastAnUnreadableDocument(t *testing.T
 	corruptBehindCache(t, s, "broken-doc")
 	buf := captureLog(t)
 
-	if err := s.DeleteTagGlobally("doomed"); err != nil {
+	report, err := s.DeleteTagGlobally("doomed")
+	if err != nil {
 		t.Fatalf("the sweep must survive one unreadable document: %v", err)
 	}
 	if art, err := s.GetArticle("tagged-doc"); err != nil || len(art.Tags) != 0 {
 		t.Errorf("the readable document kept its tag: %+v (%v)", art, err)
 	}
 	wantSkipWarning(t, buf, "broken-doc.md")
+	// The skipped document is in the report as well as the log: a caller that cannot see stderr
+	// still learns its tag was left in place.
+	if got := report.Skipped; len(got) != 1 || got[0] != "broken-doc" {
+		t.Errorf("the unreadable document is not reported as skipped: %v", got)
+	}
+	if len(report.Rewritten) != 1 || report.Rewritten[0].Slug != "tagged-doc" {
+		t.Errorf("the rewritten document is not reported: %+v", report.Rewritten)
+	}
+	if len(report.Failed) != 0 {
+		t.Errorf("nothing failed: %+v", report.Failed)
+	}
 }
 
 // The sweep removes every case-insensitive variant of the tag, in the one rewrite: matching only
@@ -270,8 +282,13 @@ func TestDeleteTagGloballyRemovesEveryCaseVariant(t *testing.T) {
 	writeArticleFile(t, s, "single-doc.md", "type: Wiki\ntitle: Single Doc\nslug: single-doc\nversion: 1\ntags:\n  - foo\n", "body\n", time.Now().Add(-time.Hour))
 
 	// Deleted in yet another casing than any the documents carry.
-	if err := s.DeleteTagGlobally("FOO"); err != nil {
+	report, err := s.DeleteTagGlobally("FOO")
+	if err != nil {
 		t.Fatalf("DeleteTagGlobally: %v", err)
+	}
+	if len(report.Rewritten) != 2 || len(report.Skipped) != 0 || len(report.Failed) != 0 {
+		t.Fatalf("both documents must be reported as rewritten: %+v (skipped %v, failed %v)",
+			report.Rewritten, report.Skipped, report.Failed)
 	}
 	for _, slug := range []string{"variant-doc", "single-doc"} {
 		art, err := s.GetArticle(slug)
