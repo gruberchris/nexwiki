@@ -31,6 +31,10 @@ func writeHistorySnapshot(t *testing.T, storage *Storage, slug string, version i
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
 	}
+	// Hold writeMu: the history temp-file sweep runs in the background alongside
+	// live saves, and a temp file mid-write looks exactly like a leftover.
+	storage.writeMu.Lock()
+	defer storage.writeMu.Unlock()
 	if err := writeGzippedFile(filepath.Join(dir, strconv.Itoa(version)+".md.gz"), []byte("---\n"+frontMatter+"---\n"+body)); err != nil {
 		t.Fatalf("writeGzippedFile failed: %v", err)
 	}
