@@ -297,24 +297,44 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		art.Type, art.Title, art.Slug, art.Version, art.CreatedAt.Format(time.RFC3339), art.Timestamp.Format(time.RFC3339),
 		descStr, resourceStr, sourceStr, sourcesStr, tagsStr, trustTierStr, compStr, staleWarning, art.Content)
 
-	// Append inbound links for graph discoverability; never fail the read over a scan error
+	// Append inbound links for graph discoverability; never fail the read over a scan error.
+	//
+	// The scan itself, not GetBacklinks: a read is one of the two places an agent checks what
+	// references a page before editing or deleting it, so the entries the walk skipped — unreadable
+	// files, misplaced documents — are reported in the structured output and the note below rather
+	// than letting a missing Linked from list read as "nothing references this" (#162).
 	links := []DocumentLink{}
-	if backlinks, blErr := srv.Storage.GetBacklinks(art.Slug); blErr == nil && len(backlinks) > 0 {
-		const maxShownBacklinks = 15
-		var refs []string
-		for i, bl := range backlinks {
-			// The structured payload carries every backlink. Only the prose is truncated,
-			// because that cap exists to keep a read from burying the article in a link list.
-			links = append(links, DocumentLink{Title: bl.Title, Slug: bl.Slug})
-			if i >= maxShownBacklinks {
-				continue
+	out := ArticleOutput{Article: *art, Backlinks: links}
+	if scan, blErr := srv.Storage.scanBacklinks(art.Slug); blErr == nil {
+		if backlinks := scan.backlinks; len(backlinks) > 0 {
+			const maxShownBacklinks = 15
+			var refs []string
+			for i, bl := range backlinks {
+				// The structured payload carries every backlink. Only the prose is truncated,
+				// because that cap exists to keep a read from burying the article in a link list.
+				links = append(links, DocumentLink{Title: bl.Title, Slug: bl.Slug})
+				if i >= maxShownBacklinks {
+					continue
+				}
+				refs = append(refs, fmt.Sprintf("%s (%s)", bl.Title, bl.Slug))
 			}
-			refs = append(refs, fmt.Sprintf("%s (%s)", bl.Title, bl.Slug))
+			if len(backlinks) > maxShownBacklinks {
+				refs = append(refs[:maxShownBacklinks], fmt.Sprintf("and %d more", len(backlinks)-maxShownBacklinks))
+			}
+			text += fmt.Sprintf("\n\n---\nLinked from: %s", strings.Join(refs, ", "))
 		}
-		if len(backlinks) > maxShownBacklinks {
-			refs = append(refs[:maxShownBacklinks], fmt.Sprintf("and %d more", len(backlinks)-maxShownBacklinks))
+		if note := skippedDocumentsNote(scan); note != "" {
+			// Inside the Linked from block when there is one, its own block otherwise: a note
+			// pasted onto the body's last line would read as article content.
+			if len(scan.backlinks) > 0 {
+				text += "\n" + note + "\n"
+			} else {
+				text += "\n\n---\n" + note + "\n"
+			}
 		}
-		text += fmt.Sprintf("\n\n---\nLinked from: %s", strings.Join(refs, ", "))
+		out.Backlinks = links
+		out.SkippedDocumentCount = skippedDocumentCount(scan)
+		out.SkippedDocuments = skippedDocuments(scan)
 	}
 
 	// The body ships in both content[0].text (for text-reading clients such as Claude Desktop,
@@ -331,7 +351,7 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 	// compatibility. Populating both guarantees interop across the entire MCP client ecosystem.
 	return ToolResponse{
 		Content:           []ToolContent{{Type: "text", Text: text}},
-		StructuredContent: ArticleOutput{Article: *art, Backlinks: links},
+		StructuredContent: out,
 	}, nil
 }
 
@@ -1037,10 +1057,15 @@ func (srv *Server) toolGetBacklinks(args json.RawMessage) (interface{}, *JSONRPC
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", bArgs.Slug)}}}, nil
 	}
 
-	backlinks, err := srv.Storage.GetBacklinks(target.Slug)
+	// The scan itself, not GetBacklinks: this tool is what an agent runs before a rename or a
+	// delete, so it reports what the walk skipped — unreadable entries and misplaced documents —
+	// instead of letting a short or empty list read as a complete answer (#162). The REST handler
+	// keeps GetBacklinks and its unchanged response.
+	scan, err := srv.Storage.scanBacklinks(target.Slug)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error scanning backlinks: %s", srv.clientError(err))}}}, nil
 	}
+	backlinks := scan.backlinks
 
 	var text string
 	if len(backlinks) == 0 {
@@ -1054,13 +1079,18 @@ func (srv *Server) toolGetBacklinks(args json.RawMessage) (interface{}, *JSONRPC
 			}
 		}
 	}
+	if note := skippedDocumentsNote(scan); note != "" {
+		text += "\n" + note + "\n"
+	}
 
 	return ToolResponse{
 		Content: []ToolContent{{Type: "text", Text: text}},
 		StructuredContent: BacklinksOutput{
-			Slug:      target.Slug,
-			Count:     len(backlinks),
-			Backlinks: nonNilDocuments(backlinks),
+			Slug:                 target.Slug,
+			Count:                len(backlinks),
+			Backlinks:            nonNilDocuments(backlinks),
+			SkippedDocumentCount: skippedDocumentCount(scan),
+			SkippedDocuments:     skippedDocuments(scan),
 		},
 	}, nil
 }
