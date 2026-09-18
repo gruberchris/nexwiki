@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -111,7 +112,8 @@ func (w *PlanLifecycleWorker) Run(ctx context.Context) {
 
 	w.sweep(ctx)
 
-	ticker := time.NewTicker(time.Duration(w.Cfg.IntervalDays) * 24 * time.Hour)
+	// Capped rather than wrapped: NewTicker panics on a duration that wrapped negative or to zero.
+	ticker := time.NewTicker(daysToDuration(w.Cfg.IntervalDays))
 	defer ticker.Stop()
 	for {
 		select {
@@ -167,6 +169,7 @@ func (w *PlanLifecycleWorker) sweep(ctx context.Context) {
 		}
 		age := now.Sub(art.StatusChangedAt)
 
+		// Strictly past each timer, so one set beyond what a duration holds never comes due.
 		switch art.Status {
 		case "completed", "superseded":
 			if w.Cfg.ArchiveAfterDays > 0 && age > daysToDuration(w.Cfg.ArchiveAfterDays) {
@@ -198,7 +201,21 @@ func (w *PlanLifecycleWorker) backfillStatus(art *Article) {
 	w.publish("edit", updated.Slug, updated.Title, updated, "article-edited")
 }
 
+// maxDurationDays is the most whole days a time.Duration holds: 106751, about 292 years.
+const maxDurationDays = int(math.MaxInt64 / (24 * time.Hour))
+
+// daysToDuration converts a day count from configuration or a tool argument to a duration. Past
+// maxDurationDays the product would wrap, usually negative, and every age exceeds a negative
+// threshold, so a delay of centuries meant as "never" would delete everything at once. It is capped
+// at the largest duration instead. Time.Sub saturates at that same value, so no measured age
+// exceeds a capped threshold: compared with >, it is never reached.
 func daysToDuration(days int) time.Duration {
+	switch {
+	case days > maxDurationDays:
+		return math.MaxInt64
+	case days < -maxDurationDays:
+		return math.MinInt64
+	}
 	return time.Duration(days) * 24 * time.Hour
 }
 

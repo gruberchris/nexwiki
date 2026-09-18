@@ -2670,7 +2670,9 @@ func (s *Storage) CleanupArchivedArticles() error {
 	var slugs []string
 	plans := 0
 	for _, art := range articles {
-		if art.ArchivedAt.IsZero() || time.Since(art.ArchivedAt) < time.Duration(delay)*24*time.Hour {
+		// Due only strictly past the delay, so a delay beyond what a duration holds never comes due,
+		// even for an archived_at so old that time.Since saturates at that same cap.
+		if art.ArchivedAt.IsZero() || time.Since(art.ArchivedAt) <= daysToDuration(delay) {
 			continue
 		}
 		if art.Type == ContentTypePlan {

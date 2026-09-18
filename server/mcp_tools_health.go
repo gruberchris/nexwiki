@@ -311,7 +311,9 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 	}
 
 	now := time.Now()
-	staleBefore := now.AddDate(0, 0, -staleDays)
+	// Not AddDate, which wraps for a day count past about 1e14 and can put the cutoff in the future,
+	// where every unfinished plan is stale. A capped count puts it some 292 years back.
+	staleBefore := now.Add(-daysToDuration(staleDays))
 	orphans := []HealthFinding{}
 	unsourced := []HealthFinding{}
 	unkinded := []HealthFinding{}
