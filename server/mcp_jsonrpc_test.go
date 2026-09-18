@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-// rpcReply is a JSON-RPC response decoded without losing its id: decoding the id into interface{}
+// jsonrpcReply is a JSON-RPC response decoded without losing its id: decoding the id into interface{}
 // would round it through float64, hiding exactly the corruption these tests look for.
-type rpcReply struct {
+type jsonrpcReply struct {
 	ID     json.RawMessage `json:"id"`
 	Result json.RawMessage `json:"result"`
 	Error  *JSONRPCError   `json:"error"`
@@ -212,7 +212,7 @@ func TestJSONRPCEnvelope(t *testing.T) {
 		if strings.Count(strings.TrimSpace(body), "\n") != 0 {
 			t.Fatalf("expected exactly one response, got:\n%.300s", body)
 		}
-		var reply rpcReply
+		var reply jsonrpcReply
 		if err := json.Unmarshal([]byte(body), &reply); err != nil {
 			t.Fatalf("response is not a JSON-RPC object: %v\n%.300s", err, body)
 		}
@@ -255,7 +255,7 @@ func TestJSONRPCBatchErrorNamesBatches(t *testing.T) {
 
 	_, httpBody := postMCP(t, srv, body, nil)
 	for transport, out := range map[string]string{"http": httpBody, "stdio": sendStdio(t, srv, body)} {
-		var reply rpcReply
+		var reply jsonrpcReply
 		if err := json.Unmarshal([]byte(out), &reply); err != nil || reply.Error == nil {
 			t.Fatalf("%s: expected one error response, got %s", transport, out)
 		}

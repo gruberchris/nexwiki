@@ -846,7 +846,6 @@ func TestProxyLogsFailedNotifications(t *testing.T) {
 		wantLog  string // empty when nothing may be logged
 	}{
 		{"403 from the Host check", refusingHost, "", notification, "notifications/initialized failed: primary answered HTTP 403 Forbidden: host not allowed"},
-		{"null id, which the primary treats as a notification", refusingHost, "", `{"jsonrpc":"2.0","id":null,"method":"notifications/initialized"}`, "HTTP 403 Forbidden"},
 		{"500 HTML error page", answering(http.StatusInternalServerError, "text/html", "<html><body>down</body></html>"), "", notification, "HTTP 500 Internal Server Error: response is not JSON (text/html)"},
 		{"empty 502", answering(http.StatusBadGateway, "", ""), "", notification, "HTTP 502 Bad Gateway: empty response body"},
 		{"transport failure", nil, closedEndpoint(), notification, "notifications/initialized failed: primary unreachable"},
@@ -946,9 +945,10 @@ func TestProxyAnswersUnreadableMessages(t *testing.T) {
 	assertJSONRPCResponse(t, lines[0], nil)
 }
 
-// TestProxyReaddressesAnErrorWithoutAnID pins that an error the primary could not address, because
-// it could not read an id the proxy did, reaches the client under that id with the primary's code
-// and message intact. With a null id a client cannot match it to the call, which then never ends.
+// TestProxyReaddressesAnErrorWithoutAnID pins that a request the primary rejects as a whole still
+// reaches the client under its own id: the primary keeps an id it could read even on a rejection,
+// and the reply relays with the primary's code and message intact. With a null id a client cannot
+// match the reply to the call, which then never ends.
 func TestProxyReaddressesAnErrorWithoutAnID(t *testing.T) {
 	_, proxy, out := proxyAgainstPrimary(t)
 	// A method that is not a string fails the primary's decoding as a whole, but the id still reads.
@@ -960,7 +960,7 @@ func TestProxyReaddressesAnErrorWithoutAnID(t *testing.T) {
 	}
 	msg := assertJSONRPCResponse(t, lines[0], "call-1")
 	errObj, _ := msg["error"].(map[string]interface{})
-	if errObj["code"] != float64(-32700) || errObj["message"] != "Parse error: invalid JSON" {
+	if errObj["code"] != float64(errCodeInvalidRequest) || errObj["message"] != `Invalid Request: "method" must be a string` {
 		t.Errorf("the primary's error was not kept: %s", lines[0])
 	}
 }
@@ -996,7 +996,7 @@ func TestProxyAnswersBatches(t *testing.T) {
 	t.Run("the primary rejects the batch", func(t *testing.T) {
 		_, proxy, out := proxyAgainstPrimary(t)
 		proxy.Run(strings.NewReader(batch + "\n"))
-		assertBatchErrors(t, out, -32700)
+		assertBatchErrors(t, out, errCodeInvalidRequest)
 	})
 
 	t.Run("403 from the Host check", func(t *testing.T) {

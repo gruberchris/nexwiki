@@ -146,7 +146,7 @@ func TestSymlinkedArticleDirectory(t *testing.T) {
 		resp := toolCall(t, srv, `{"name":"wiki_health","arguments":{}}`)
 		var out HealthOutput
 		decodeStructured(t, resp, &out)
-		if want := []UnreadableFile{{Path: "locked.md", Error: "open locked.md: permission denied"}}; !reflect.DeepEqual(out.UnreadableFiles, want) {
+		if want := []UnreadableFile{{Path: "locked.md", Error: "open articles/locked.md: permission denied"}}; !reflect.DeepEqual(out.UnreadableFiles, want) {
 			t.Errorf("UnreadableFiles = %+v, want %+v", out.UnreadableFiles, want)
 		}
 		if len(out.MisplacedDocuments) != 1 || out.MisplacedDocuments[0].Path != "sub/nested.md" {
@@ -169,7 +169,7 @@ func TestSymlinkedArticleDirectory(t *testing.T) {
 		lockSearch(t, elsewhere)
 		srv := NewServer(storage, "Test Wiki", "light", false, NewEventBus(), "1.0.0", "")
 		resp := toolCall(t, srv, `{"name":"get_wiki_statistics","arguments":{}}`)
-		want := "failed to list articles: article directory is not searchable: lstat home.md: permission denied"
+		want := "failed to list articles: article directory is not searchable: lstat articles/home.md: permission denied"
 		if !resp.IsError || len(resp.Content) != 1 || resp.Content[0].Text != want {
 			t.Errorf("get_wiki_statistics: got %+v, want an error reading %q", resp, want)
 		}
@@ -197,12 +197,13 @@ func TestSymlinkedArticleDirectory(t *testing.T) {
 			t.Error("a failed listing must leave the search index alone")
 		}
 		// The error names the directory as configured, not with the separator the walk added, so the
-		// client sees it as "." rather than as an empty path.
+		// client sees it as articles, the name relative to the data directory, rather than as an
+		// empty path.
 		srv := NewServer(storage, "Test Wiki", "light", false, NewEventBus(), "1.0.0", "")
 		resp := toolCall(t, srv, `{"name":"get_wiki_statistics","arguments":{}}`)
-		if !resp.IsError || len(resp.Content) != 1 || !strings.HasPrefix(resp.Content[0].Text, "failed to list articles: ") ||
-			!strings.Contains(resp.Content[0].Text, " .: ") {
-			t.Errorf("get_wiki_statistics: got %+v, want an error naming the article directory as .", resp)
+		want := "failed to list articles: lstat articles: no such file or directory"
+		if !resp.IsError || len(resp.Content) != 1 || resp.Content[0].Text != want {
+			t.Errorf("get_wiki_statistics: got %+v, want an error reading %q", resp, want)
 		}
 	})
 

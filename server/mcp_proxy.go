@@ -341,7 +341,8 @@ const maxProxyReasonBytes = 300
 // maxLogLabelBytes caps the method and id quoted from a client's message in a log line.
 const maxLogLabelBytes = 100
 
-// nullID is the id JSON-RPC gives the error answering a message whose own id could not be read.
+// nullID is the id JSON-RPC gives the error answering a message whose own id could not be read,
+// and the id the primary answers an id it rejects — null, fractional, or composite — with.
 var nullID = json.RawMessage("null")
 
 // proxiedMessage is what the proxy reads from a stdio message before forwarding it: what it may
@@ -349,8 +350,9 @@ var nullID = json.RawMessage("null")
 type proxiedMessage struct {
 	// ids holds the id of each request in the message awaiting a reply, in order, exactly as the
 	// client wrote it, so an error echoes a large integer id without rounding it. A message that is
-	// not a JSON object awaits an error under nullID. A notification awaits nothing, and neither does
-	// a message with a null id, which the primary treats as one.
+	// not a JSON object awaits an error under nullID, as does one whose id the primary rejects —
+	// null, fractional, or composite — because the primary answers those with a null id. A
+	// notification, which carries no id member, awaits nothing.
 	ids []json.RawMessage
 	// batch marks a JSON-RPC batch, whose reply is an array.
 	batch bool
@@ -381,15 +383,21 @@ func inspectMessage(payload []byte) proxiedMessage {
 	return msg
 }
 
-// awaitedID returns the id a single message awaits a reply under, if it awaits one.
+// awaitedID returns the id a single message awaits a reply under, if it awaits one. The id is judged
+// exactly as the primary judges it in UnmarshalJSON, so the two never disagree about which messages
+// are notifications: a member with the wrong case is no id, a present id the primary rejects is
+// answered by it with a null id, and only an absent id makes a notification.
 func awaitedID(raw []byte) (json.RawMessage, bool) {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil || fields == nil {
 		return nullID, true
 	}
 	id, hasID := fields["id"]
-	if !hasID || isJSONNull(id) {
+	if !hasID {
 		return nil, false
+	}
+	if !isValidRequestID(id) {
+		return nullID, true
 	}
 	return id, true
 }
