@@ -150,8 +150,11 @@ func (w *PlanLifecycleWorker) sweep(ctx context.Context) {
 		if meta.Type != ContentTypePlan {
 			continue
 		}
-		art, err := w.Storage.GetArticle(meta.Slug)
-		if err != nil {
+		// Skipped with the once-per-version warning getArticleForScan logs: a plan that will not
+		// open waits for the next sweep (or a person, whom the warning tells) rather than failing
+		// the sweep over every other plan.
+		art, ok := w.Storage.getArticleForScan(meta.Slug)
+		if !ok {
 			continue
 		}
 		// A plan written before the status field existed gets one here. The migration deliberately

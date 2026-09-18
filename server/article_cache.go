@@ -229,6 +229,48 @@ func (s *Storage) skipUnreadable(path string, info fs.FileInfo, err error) (Unre
 	return UnreadableFile{Path: rel, Error: err.Error()}, true
 }
 
+// getArticleForScan is the read the corpus-wide loops share: each enumerates the wiki — via
+// ListArticles or another listing's cached metadata — and then opens every document it listed in
+// full. The OKF export, the skills and plans listings, the status field migration, the plan
+// lifecycle worker, global tag deletion, and the bulk-change announcements all have this shape,
+// and every one skips a document that will not open rather than failing the whole operation.
+//
+// Skipping is right — one broken file must not cost an agent the whole listing, or the operator
+// the whole export — but silent is not: a document that vanishes from an export, a listing, or a
+// migration with nothing saying why is exactly the failure this read reports. A document that
+// cannot be opened is warned about once per file version, the way the walks warn (see
+// skipUnreadable), and skipped; one that is simply not there is skipped silently, for the reasons
+// loadForIndex gives: a file deleted since the listing is gone, not broken, and one that has
+// become misplaced since the listing is the walks' to report, as misplaced, for that version.
+func (s *Storage) getArticleForScan(slug string) (*Article, bool) {
+	art, err := s.GetArticle(slug)
+	if err == nil {
+		return art, true
+	}
+	s.reportScanReadFailure(slug, err)
+	return nil, false
+}
+
+// reportScanReadFailure warns about one document a corpus-wide loop could not open, the way
+// skipUnreadable warns for a walk: once per file version, naming the file and the error. Not
+// found is not reported — see getArticleForScan — and neither is a slug that names no file.
+func (s *Storage) reportScanReadFailure(slug string, err error) {
+	if errors.Is(err, errArticleNotFound) {
+		return
+	}
+	cleaned := Slugify(slug)
+	if cleaned == "" {
+		return
+	}
+	// os.Stat, which fingerprints a symlink by its target as the walks do (see walkFileInfo), so
+	// the loops and the walks record the same version and do not take turns warning. A directory,
+	// or a link to one, is no article to the walks, so it is not reported here either.
+	path := filepath.Join(s.ArticleDir, cleaned+".md")
+	if info, statErr := os.Stat(path); statErr == nil && !info.IsDir() {
+		s.skipUnreadable(path, info, err)
+	}
+}
+
 // skipMisplaced is the check every walk of the article directory makes once a file has parsed:
 // ListArticles, ScanLinkGraph, GetBacklinks, and findAssetReferrers. See isCanonical for the rule.
 // Listing a file that breaks it offered a document that could not be opened, searched, or exported,

@@ -948,10 +948,11 @@ func (srv *Server) HandleDeleteTagGlobally(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Storage reports only whether the sweep succeeded, not which documents it rewrote, so note the
-	// version of each document carrying the tag first. One whose version has since moved on was
-	// rewritten by the sweep; the rest were not changed and are not announced. The version is the
-	// test, not whether the tag is gone: a document carrying case variants of it ("removable" and
-	// "Removable") is rewritten with only one of them removed.
+	// version of each document carrying the tag first (in every case variant — the sweep removes
+	// them all in one rewrite). One whose version has since moved on was rewritten by the sweep;
+	// the rest were not changed and are not announced. The version is the test rather than the tag
+	// being gone: it says the sweep itself rewrote the document, not that some other state of its
+	// tags happens to match.
 	type carrier struct {
 		slug    string
 		version int
@@ -976,7 +977,14 @@ func (srv *Server) HandleDeleteTagGlobally(w http.ResponseWriter, r *http.Reques
 	var swept []Article
 	for _, c := range carriers {
 		art, err := srv.Storage.GetArticle(c.slug)
-		if err != nil || art.Version == c.version {
+		if err != nil {
+			// A document that cannot be re-opened cannot be announced; the once-per-version
+			// warning names it (the sweep already warned for this version if it hit the same
+			// failure).
+			srv.Storage.reportScanReadFailure(c.slug, err)
+			continue
+		}
+		if art.Version == c.version {
 			continue
 		}
 		art.Content = ""
@@ -1202,11 +1210,14 @@ func (srv *Server) HandleListSkills(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Load full article to parse description from content body
-		fullArt, err := srv.Storage.GetArticle(art.Slug)
+		// Load full article to parse description from content body. A read that fails still lists
+		// the skill — dropping it from the registry would hide it — but the skipped description is
+		// reported, once per file version, rather than swallowed.
 		desc := ""
-		if err == nil {
+		if fullArt, err := srv.Storage.GetArticle(art.Slug); err == nil {
 			desc = extractDescription(fullArt.Content)
+		} else {
+			srv.Storage.reportScanReadFailure(art.Slug, err)
 		}
 
 		rawURL := fmt.Sprintf("%s://%s/api/skills/%s/raw", scheme, r.Host, art.Slug)

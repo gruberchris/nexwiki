@@ -29,7 +29,9 @@ const statusFieldMigrationMarker = ".status-field-migration-v1"
 //     tag survives untouched, `archived` and `inbox` included: neither describes a document's
 //     state (one is the archival mechanism, the other marks a raw capture awaiting compilation).
 //
-// The sweep runs exactly once, gated by a marker file, and every change is logged to stderr.
+// The sweep runs once, gated by a marker file, and every change is logged to stderr. A document
+// the sweep had to skip suppresses the marker, so the sweep runs again on the next boot rather
+// than declaring itself done over a corpus it did not finish.
 func (s *Storage) MigrateStatusToField() error {
 	markerPath := filepath.Join(s.DataDir, statusFieldMigrationMarker)
 	if _, err := os.Stat(markerPath); err == nil {
@@ -44,7 +46,7 @@ func (s *Storage) MigrateStatusToField() error {
 	// Decide from the cached metadata pass (tags, type, status, and status_changed_at all live in
 	// the front matter); a document's body is only read when it actually needs the corrective
 	// write. A full-body scan here regressed boot time on large corpora.
-	migrated := 0
+	migrated, skipped := 0, 0
 	for _, meta := range metas {
 		status, remainingTags := ExtractLegacyStatus(meta.Type, meta.Tags)
 		if meta.Status != "" {
@@ -68,8 +70,10 @@ func (s *Storage) MigrateStatusToField() error {
 				status, strings.Join(meta.Tags, ","))
 		}
 
-		art, err := s.GetArticle(meta.Slug)
-		if err != nil {
+		// Skipped with the once-per-version warning getArticleForScan logs.
+		art, ok := s.getArticleForScan(meta.Slug)
+		if !ok {
+			skipped++
 			continue
 		}
 		// In place: moving a status out of the tags is no reason to move a document whose title,
@@ -77,10 +81,20 @@ func (s *Storage) MigrateStatusToField() error {
 		if _, err := s.SaveArticleWithOverrides(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource,
 			summary, remainingTags, art.Type, ArticleOverrides{Status: &status, KeepSlug: true}); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Warning: status field migration failed for '%s': %v\n", art.Slug, err)
+			skipped++
 			continue
 		}
 		_, _ = fmt.Fprintf(os.Stderr, "Status field migration: '%s' %s\n", art.Slug, summary)
 		migrated++
+	}
+
+	// The marker says the sweep is done, and a document that was skipped is still carrying its
+	// retired status tag: writing it anyway would freeze the corpus half-migrated forever, so the
+	// marker is suppressed and the sweep runs again on the next boot instead. A permanently broken
+	// file costs one pass per boot, which is the same posture the marker's own write failure takes.
+	if skipped > 0 {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: status field migration skipped %d document(s) it could not read or write; it will run again on the next boot\n", skipped)
+		return nil
 	}
 
 	if err := os.WriteFile(markerPath, []byte("status field migration v1 completed\n"), 0644); err != nil {

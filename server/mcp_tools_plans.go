@@ -425,8 +425,10 @@ func (srv *Server) toolListAgentPlans(args json.RawMessage) (interface{}, *JSONR
 	count := 0
 	matched := []Article{}
 	for _, artMeta := range articles {
-		art, err := srv.Storage.GetArticle(artMeta.Slug)
-		if err != nil {
+		// Skipped with the once-per-version warning getArticleForScan logs rather than silently
+		// dropped from the index.
+		art, ok := srv.Storage.getArticleForScan(artMeta.Slug)
+		if !ok {
 			continue
 		}
 

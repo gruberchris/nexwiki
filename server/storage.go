@@ -2134,23 +2134,7 @@ func (s *Storage) SyncSearchIndex() error {
 // misplaced; reported here it would be called unreadable, and for a file that changed after the
 // listing, that record would stand for the version and keep the right warning from ever appearing.
 func (s *Storage) loadForIndex(slug string) (*Article, bool) {
-	art, err := s.GetArticle(slug)
-	if err == nil {
-		return art, true
-	}
-	if errors.Is(err, errArticleNotFound) {
-		return nil, false
-	}
-	// Report the file GetArticle read. os.Stat, which fingerprints a symlink by its target as the walks
-	// do (see walkFileInfo), so the two record the same version and do not take turns warning. A
-	// directory, or a link to one, is no article to the walks, so it is not reported here either.
-	if cleaned := Slugify(slug); cleaned != "" {
-		path := filepath.Join(s.ArticleDir, cleaned+".md")
-		if info, statErr := os.Stat(path); statErr == nil && !info.IsDir() {
-			s.skipUnreadable(path, info, err)
-		}
-	}
-	return nil, false
+	return s.getArticleForScan(slug)
 }
 
 // SearchResult represents a single full-text query match.
@@ -2734,7 +2718,10 @@ func (s *Storage) CleanupArchivedArticles() error {
 	return nil
 }
 
-// DeleteTagGlobally removes a tag from all articles in the wiki.
+// DeleteTagGlobally removes a tag from all articles in the wiki. Every case-insensitive variant
+// of the tag goes with it: a document carrying "Foo", "foo", and "FOO" is left with none of them,
+// all in the one rewrite. A document that cannot be opened is skipped with the warning
+// getArticleForScan logs, so one broken file neither fails the sweep nor silently keeps its tag.
 // Enforces validation: it returns an error if the tag is a tool-managed memory-scope tag.
 func (s *Storage) DeleteTagGlobally(tag string) error {
 	tagLower := strings.ToLower(tag)
@@ -2756,28 +2743,26 @@ func (s *Storage) DeleteTagGlobally(tag string) error {
 	}
 
 	for _, artMeta := range articles {
-		art, err := s.GetArticle(artMeta.Slug)
-		if err != nil {
+		art, ok := s.getArticleForScan(artMeta.Slug)
+		if !ok {
 			continue
 		}
 
-		// Check if tag is present
-		tagIndex := -1
-		for i, t := range art.Tags {
+		// Every case-insensitive variant leaves in the one rewrite: matching only the first let a
+		// "global" deletion strand "Foo" behind because it also found "foo".
+		newTags := make([]string, 0, len(art.Tags))
+		for _, t := range art.Tags {
 			if strings.ToLower(t) == tagLower {
-				tagIndex = i
-				break
+				continue
 			}
+			newTags = append(newTags, t)
 		}
-
-		if tagIndex != -1 {
-			// Remove the tag
-			newTags := append(art.Tags[:tagIndex], art.Tags[tagIndex+1:]...)
-			// Save the updated article
-			_, err = s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type, ArticleOverrides{KeepSlug: true})
-			if err != nil {
-				return fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
-			}
+		if len(newTags) == len(art.Tags) {
+			continue
+		}
+		// Save the updated article
+		if _, err = s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type, ArticleOverrides{KeepSlug: true}); err != nil {
+			return fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
 		}
 	}
 

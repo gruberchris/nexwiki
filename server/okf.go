@@ -38,8 +38,10 @@ func (s *Storage) ExportOKFBundle() ([]byte, error) {
 	var full []*Article
 	pathForSlug := make(map[string]string)
 	for _, m := range metas {
-		a, err := s.GetArticle(m.Slug)
-		if err != nil {
+		// Skipped with the once-per-version warning getArticleForScan logs: a document that will
+		// not open leaves the bundle short by itself, not the export failed by one file.
+		a, ok := s.getArticleForScan(m.Slug)
+		if !ok {
 			continue
 		}
 		full = append(full, a)

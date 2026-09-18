@@ -212,10 +212,10 @@ func TestHandleDeleteTagGloballyAnnouncesAPartialSweep(t *testing.T) {
 	}
 }
 
-// TestHandleDeleteTagGloballyAnnouncesDocumentsKeepingACaseVariant covers a document carrying the
-// tag in two cases. The sweep removes only the first case-insensitive match, so the document is
-// rewritten but still carries the other variant; it changed, so it is announced all the same.
-func TestHandleDeleteTagGloballyAnnouncesDocumentsKeepingACaseVariant(t *testing.T) {
+// TestHandleDeleteTagGloballyRemovesEveryCaseVariant covers a document carrying the tag in two
+// cases. The sweep removes every case-insensitive variant in the one rewrite, so the document is
+// announced — it changed — and no variant survives it.
+func TestHandleDeleteTagGloballyRemovesEveryCaseVariant(t *testing.T) {
 	srv := newTestServer(t)
 	// Written directly, so the duplicate survives regardless of how a save normalizes tags.
 	doc := "---\ntype: Wiki\ntitle: Both Cases\nslug: both-cases\ntags:\n  - removable\n  - Removable\nversion: 1\n---\n# body\n"
@@ -233,8 +233,8 @@ func TestHandleDeleteTagGloballyAnnouncesDocumentsKeepingACaseVariant(t *testing
 	}
 
 	art, err := srv.Storage.GetArticle("both-cases")
-	if err != nil || art.Version != 2 || !slices.Contains(art.Tags, "Removable") {
-		t.Fatalf("expected a rewrite that keeps the other case variant, got %+v (%v)", art, err)
+	if err != nil || art.Version != 2 || slices.ContainsFunc(art.Tags, func(tag string) bool { return strings.EqualFold(tag, "removable") }) {
+		t.Fatalf("expected one rewrite with no case variant left, got %+v (%v)", art, err)
 	}
 	if ev := obs.activity(t)["both-cases"]; ev.Action != "edit" || ev.Tool != "delete_tag" {
 		t.Errorf("the rewritten document was not announced: %+v", ev)
