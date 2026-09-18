@@ -21,7 +21,11 @@ type JSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
-	ID      interface{}     `json:"id,omitempty"`
+	// ID is nil for a notification. A decoded request holds the id's JSON verbatim as a
+	// json.RawMessage, so it is echoed exactly: decoded into interface{}, every number became a
+	// float64 and an id past 2^53 came back rounded. It stays interface{} so a request built in Go
+	// can still use a plain value.
+	ID interface{} `json:"id,omitempty"`
 
 	// Headers carries the HTTP headers when the request arrived over Streamable HTTP, so the
 	// modern era can verify the mirrored metadata against the body, and so a legacy request can be
@@ -35,6 +39,124 @@ type JSONRPCRequest struct {
 	// client, whereas HTTP is sessionless and caching a handshake there would attribute one
 	// client's writes to another. handleRequest serves both, so the distinction has to be carried.
 	FromStdio bool `json:"-"`
+}
+
+// UnmarshalJSON decodes one JSON-RPC request. JSON that is well formed but is not a single valid
+// request is rejected with a *requestError, which carries the -32600 reply; malformed JSON never
+// gets here, as encoding/json reports it first, and that is what keeps -32700 for it alone.
+//
+// Member names match exactly. JSON-RPC's are case-sensitive, so "ID" is not an id but an unknown
+// member, which is ignored. A struct decode matched them case-insensitively, which also put the
+// primary at odds with the -mcp-only sidecar: it reads only an exact-case "id", so the two
+// disagreed about whether {"ID":7,...} was a request or a notification.
+func (r *JSONRPCRequest) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '[' {
+		return invalidRequest(nil, "batch requests are not supported; send each request as its own message")
+	}
+	if len(data) == 0 || data[0] != '{' {
+		return invalidRequest(nil, "expected a request object")
+	}
+
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return err
+	}
+
+	// An absent id is what makes a notification; `"id": null` is present, and rejected. The id is
+	// judged first so that every later rejection can still be matched to its request.
+	var id json.RawMessage
+	if rawID, present := members["id"]; present {
+		if !isValidRequestID(rawID) {
+			return invalidRequest(nil, `"id" must be a string or an integer`)
+		}
+		id = rawID
+	}
+	if version, ok := requestStringMember(members["jsonrpc"]); !ok || version != "2.0" {
+		return invalidRequest(id, `"jsonrpc" must be "2.0"`)
+	}
+	rawMethod, present := members["method"]
+	if !present {
+		return invalidRequest(id, `missing "method"`)
+	}
+	method, ok := requestStringMember(rawMethod)
+	if !ok {
+		return invalidRequest(id, `"method" must be a string`)
+	}
+
+	// Fields are set one by one rather than replacing *r, which would wipe the transport context.
+	r.JSONRPC = "2.0"
+	r.Method = method
+	r.Params = members["params"]
+	r.ID = nil
+	if id != nil {
+		// Only a present id is stored: a nil json.RawMessage in the interface is not == nil, and
+		// would turn every notification into a request.
+		r.ID = id
+	}
+	return nil
+}
+
+// isValidRequestID reports whether raw is an id MCP allows: a string or an integer. JSON-RPC 2.0
+// also permits null and fractions, but MCP rules both out. The check is lexical, so an integer too
+// wide for any Go type is still accepted, and echoed back exactly.
+func isValidRequestID(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	switch c := raw[0]; {
+	case c == '"':
+		return true
+	case c == '-' || (c >= '0' && c <= '9'):
+		return !bytes.ContainsAny(raw, ".eE")
+	default:
+		return false
+	}
+}
+
+// requestStringMember decodes a request member that must be a JSON string. It fails for a missing
+// member and for null, which decoding into a string would otherwise pass off as "".
+func requestStringMember(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 || raw[0] != '"' {
+		return "", false
+	}
+	var s string
+	return s, json.Unmarshal(raw, &s) == nil
+}
+
+// requestError is a message rejected before dispatch, with the error that answers it. id is the
+// request's id when it could be read and was valid, and nil otherwise, which JSON-RPC requires to
+// be answered as null.
+type requestError struct {
+	code    int
+	message string
+	id      interface{}
+}
+
+func (e *requestError) Error() string { return e.message }
+
+// invalidRequest builds the -32600 rejection. A missing id is stored as a true nil rather than a
+// nil json.RawMessage, so that e.id == nil means what it says.
+func invalidRequest(id json.RawMessage, detail string) *requestError {
+	e := &requestError{code: errCodeInvalidRequest, message: "Invalid Request: " + detail}
+	if id != nil {
+		e.id = id
+	}
+	return e
+}
+
+// decodeRequest parses one message from a transport, or returns the error that answers it: -32700
+// only when the bytes are not JSON at all, -32600 for JSON that is not a single valid request.
+func decodeRequest(data []byte) (JSONRPCRequest, *requestError) {
+	var req JSONRPCRequest
+	err := json.Unmarshal(data, &req)
+	if err == nil {
+		return req, nil
+	}
+	var rejected *requestError
+	if errors.As(err, &rejected) {
+		return req, rejected
+	}
+	return req, &requestError{code: errCodeParseError, message: "Parse error: invalid JSON"}
 }
 
 // JSONRPCResponse represents an outgoing response in the JSON-RPC 2.0 format.
@@ -134,9 +256,9 @@ func (s *StdioMCPServer) dispatch(line []byte) bool {
 		return false
 	}
 
-	var req JSONRPCRequest
-	if err := json.Unmarshal(line, &req); err != nil {
-		sendError(s.out, -32700, "Parse error: invalid JSON", nil)
+	req, rejected := decodeRequest(line)
+	if rejected != nil {
+		sendError(s.out, rejected.code, rejected.message, rejected.id)
 		return true
 	}
 	req.FromStdio = true
@@ -718,12 +840,15 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 		defer func() { _ = r.Body.Close() }()
 
-		var req JSONRPCRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			// Send JSON-RPC Parse Error Response
+		req, rejected := decodeRequest(body)
+		if rejected != nil {
+			// 400 on either era, for -32600 as for -32700. The era is read from a valid request's
+			// params, so a message rejected here has none; and 400 is both what the transport
+			// requires for input the server cannot accept and what the modern era uses for its
+			// own protocol failures.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			sendError(w, -32700, "Parse error: invalid JSON", nil)
+			sendError(w, rejected.code, rejected.message, rejected.id)
 			return
 		}
 

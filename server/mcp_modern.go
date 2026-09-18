@@ -32,11 +32,14 @@ const (
 	metaSubscriptionID     = "io.modelcontextprotocol/subscriptionId"
 )
 
-// MCP-defined error codes in the specification's reserved -32020..-32099 sub-range.
+// MCP-defined error codes in the specification's reserved -32020..-32099 sub-range, and the
+// standard JSON-RPC codes.
 const (
 	errCodeHeaderMismatch             = -32020
 	errCodeMissingClientCapability    = -32021
 	errCodeUnsupportedProtocolVersion = -32022
+	errCodeParseError                 = -32700
+	errCodeInvalidRequest             = -32600
 	errCodeMethodNotFound             = -32601
 	errCodeInvalidParams              = -32602
 	errCodeInternal                   = -32603
