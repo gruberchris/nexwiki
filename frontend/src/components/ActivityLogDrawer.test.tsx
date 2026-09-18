@@ -124,4 +124,31 @@ describe('ActivityLogDrawer', () => {
     expect(screen.queryByText('My Article')).toBeNull();
     expect(screen.queryByText('Verified Page')).toBeNull();
   });
+
+  // The server collapses a backlog it could not deliver into one "missed events" marker; the
+  // drawer must say the live list is incomplete and views were reloaded (#172).
+  it('shows the incomplete-reloaded notice after a missed-events marker', () => {
+    render(withSSEContext(<ActivityLogDrawer {...baseProps} />, { missedEvents: true }));
+
+    expect(screen.getByTestId('missed-events-notice')).toBeInTheDocument();
+    expect(screen.getByText(/were reloaded from the server/i)).toBeInTheDocument();
+    expect(screen.getByText(/may be incomplete/i)).toBeInTheDocument();
+  });
+
+  it('hides the notice when no events were missed', () => {
+    render(withSSEContext(<ActivityLogDrawer {...baseProps} />, { activityLog: sampleLogEvents }));
+
+    expect(screen.queryByTestId('missed-events-notice')).toBeNull();
+  });
+
+  it('dismisses the missed-events notice', async () => {
+    const acknowledgeMissedEvents = vi.fn();
+    render(
+      withSSEContext(<ActivityLogDrawer {...baseProps} />, { missedEvents: true, acknowledgeMissedEvents })
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+
+    expect(acknowledgeMissedEvents).toHaveBeenCalled();
+  });
 });

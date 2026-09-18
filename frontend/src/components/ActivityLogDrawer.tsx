@@ -1,5 +1,5 @@
 import React, { useRef, useState, useMemo } from 'react';
-import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu, History, Clock } from 'lucide-react';
+import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu, History, Clock, AlertTriangle } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useClickOutside } from '../hooks/useClickOutside';
@@ -22,7 +22,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
   onClose,
   onNavigate,
 }) => {
-  const { activityLog, isConnected } = useSSE();
+  const { activityLog, isConnected, missedEvents, acknowledgeMissedEvents } = useSSE();
   const [activeSource, setActiveSource] = useState<SourceFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilterHelp, setShowFilterHelp] = useState(false);
@@ -274,6 +274,28 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
             inputClassName="bg-themeBgSecondary shadow-xs"
           />
         </div>
+
+        {/* Missed-events notice: the live stream fell behind a bulk change and dropped events,
+            so the wiki was reloaded and this list may be incomplete for that moment. */}
+        {missedEvents && (
+          <div
+            role="status"
+            data-testid="missed-events-notice"
+            className="mx-5 mt-4 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-start gap-2 text-[11px] text-amber-700 dark:text-amber-400 select-none"
+          >
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span className="flex-1">
+              Some live events were missed during a bulk change (the stream fell behind) and views
+              were reloaded from the server — this list may be incomplete.
+            </span>
+            <button
+              onClick={acknowledgeMissedEvents}
+              className="shrink-0 font-bold underline decoration-amber-500/40 hover:decoration-amber-500 cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Scrollable Events Queue */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">

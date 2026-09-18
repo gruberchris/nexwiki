@@ -18,11 +18,22 @@ type LogEvent struct {
 	Slug      string    `json:"slug"`
 	Title     string    `json:"title"`
 	Agent     string    `json:"agent"` // e.g. "Claude Desktop", "User"
+	// Version is the document revision the event acted on, for writes that know it: the version
+	// the save produced, or for a delete the version that was removed. It qualifies the dedup key
+	// so two legitimate changes to one document inside the window both survive, while the same
+	// save announced twice still collapses (#173). Zero — omitted from the wire and the durable
+	// log — means the event is not tied to a revision: reads, lifecycle actions.
+	Version int `json:"version,omitempty"`
 }
+
+// UpdateTypeMissed is the WikiUpdate a subscriber receives in place of a collapsed backlog after
+// its buffer overflowed. It names no document; it says per-document updates were missed and the
+// only honest state is the durable one, and the subscriber is expected to re-sync.
+const UpdateTypeMissed = "updates-missed"
 
 // WikiUpdate represents a real-time update payload broadcasted to clients to synchronize counts and listings.
 type WikiUpdate struct {
-	Type           string   `json:"type"` // "article-added", "article-edited", "article-removed"
+	Type           string   `json:"type"` // "article-added", "article-edited", "article-removed", or UpdateTypeMissed
 	Slug           string   `json:"slug"`
 	Title          string   `json:"title"`
 	Tags           []string `json:"tags"`

@@ -229,6 +229,17 @@ export const App: React.FC = () => {
   // Synchronize list/stats reactively over SSE (Phase 6)
   useWikiUpdates((update) => {
     console.log('SSE Update received:', update);
+    // The missed-events marker: the live stream dropped updates it could not deliver, so the
+    // open article may be stale even though no slug arrived with the marker. Reload both the
+    // list and the article through the same coalesced path as an ordinary update.
+    if (update.type === 'updates-missed') {
+      reloadArticlesForUpdates();
+      if (routeInfo.route === 'article' && routeInfo.slug) {
+        void fetchArticleContent(routeInfo.slug);
+      }
+      return;
+    }
+
     // Refresh articles listing dynamically
     reloadArticlesForUpdates();
 

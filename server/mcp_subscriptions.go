@@ -126,6 +126,22 @@ func (srv *Server) subscriptionClosed(subscriptionID interface{}) map[string]int
 func wikiUpdateNotifications(update WikiUpdate, filter subscriptionFilter, subscriptionID interface{}) []map[string]interface{} {
 	var out []map[string]interface{}
 
+	// The overflow marker names no document: the subscriber's buffer filled, its backlog was
+	// collapsed, and per-document updates were missed. The honest response is a re-sync prompt
+	// through the notification types this filter asked for — one updated per subscribed resource,
+	// so its holder re-reads them, and a list_changed for list watchers. Nothing is sent the
+	// filter did not request.
+	if update.Type == UpdateTypeMissed {
+		for _, uri := range filter.ResourceSubscriptions {
+			out = append(out, notificationEnvelope("notifications/resources/updated", subscriptionID,
+				map[string]interface{}{"uri": uri}))
+		}
+		if filter.ResourcesListChanged {
+			out = append(out, notificationEnvelope("notifications/resources/list_changed", subscriptionID, nil))
+		}
+		return out
+	}
+
 	uri := articleResourceURI(update.Slug)
 	if update.Slug != "" && filter.wants(uri) {
 		out = append(out, notificationEnvelope("notifications/resources/updated", subscriptionID,

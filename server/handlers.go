@@ -337,7 +337,7 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity("api", "create", "", art.Slug, art.Title, "User")
+		srv.EventBus.PublishActivityVersion("api", "create", "", art.Slug, art.Title, "User", art.Version)
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
 			dir := getArticleDirectory(art.Type)
@@ -445,7 +445,7 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity("api", "edit", "", art.Slug, art.Title, "User")
+		srv.EventBus.PublishActivityVersion("api", "edit", "", art.Slug, art.Title, "User", art.Version)
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
 			dir := getArticleDirectory(art.Type)
@@ -514,7 +514,7 @@ func (srv *Server) HandleVerifyArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity("api", "verify", "", saved.Slug, saved.Title, "User")
+		srv.EventBus.PublishActivityVersion("api", "verify", "", saved.Slug, saved.Title, "User", saved.Version)
 		// Verifying saves a new revision and changes the trust tier, so open tabs reload it like
 		// any other edit.
 		articles, err := srv.Storage.ListArticles()
@@ -587,7 +587,7 @@ func (srv *Server) HandleUpdateArticleTags(w http.ResponseWriter, r *http.Reques
 	}
 
 	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity("api", "edit", "update_tags", art.Slug, art.Title, "User")
+		srv.EventBus.PublishActivityVersion("api", "edit", "update_tags", art.Slug, art.Title, "User", art.Version)
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
 			dir := getArticleDirectory(art.Type)
@@ -633,7 +633,10 @@ func (srv *Server) HandleDeleteArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity("api", "delete", "", slug, existing.Title, "User")
+		// A delete saves no revision, so the event carries the version that was removed: it still
+		// tells a second legitimate change to the same slug (delete, recreate, delete again)
+		// apart from the first.
+		srv.EventBus.PublishActivityVersion("api", "delete", "", slug, existing.Title, "User", existing.Version)
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
 			dir := getArticleDirectory(existing.Type)
@@ -908,7 +911,7 @@ func (srv *Server) HandleRevertArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity("api", "revert", "", art.Slug, art.Title, "User")
+		srv.EventBus.PublishActivityVersion("api", "revert", "", art.Slug, art.Title, "User", art.Version)
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
 			dir := getArticleDirectory(art.Type)
@@ -1022,7 +1025,7 @@ func (srv *Server) publishBulkChanges(source, tool, agent string, docs []Article
 		if art.Version == 1 {
 			action, updateType = "create", "article-added"
 		}
-		srv.EventBus.PublishActivity(source, action, tool, art.Slug, art.Title, agent)
+		srv.EventBus.PublishActivityVersion(source, action, tool, art.Slug, art.Title, agent, art.Version)
 		if listErr != nil {
 			continue
 		}

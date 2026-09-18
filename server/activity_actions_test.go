@@ -37,7 +37,10 @@ func TestActivityEnumsCoverLoggedValues(t *testing.T) {
 	} {
 		t.Run(tc.param, func(t *testing.T) {
 			tracer := newLiteralTracer(t)
+			// Every publish entry point a caller can name: PublishActivity for events without a
+			// revision, PublishActivityVersion for saves. Both share the dedup and the log.
 			tracer.followArgument("PublishActivity", tc.arg)
+			tracer.followArgument("PublishActivityVersion", tc.arg)
 			if len(tracer.values) == 0 {
 				t.Fatal("found no logged values at all; the source scan is broken")
 			}

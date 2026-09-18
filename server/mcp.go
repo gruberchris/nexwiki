@@ -540,19 +540,33 @@ func (srv *Server) logMCPToolCall(params json.RawMessage, agent string) {
 		slug = Slugify(common.Title)
 	}
 
-	// Determine category and title if it's a mutation
-	title := common.Title
-	if title == "" && slug != "" {
+	// The article as the successful call left it. A mutation just saved a new revision, so its
+	// version is the revision the event keys its dedup on — two quick edits of the same document
+	// both stay attributed (#173), while one save announced twice still collapses. A read touched
+	// nothing, so it stays unversioned; a delete left nothing to read back.
+	var written *Article
+	if slug != "" {
 		if art, err := srv.Storage.GetArticle(slug); err == nil {
-			title = art.Title
+			written = art
 		}
+	}
+
+	// The title for the event: the argument the caller named the document by, or the stored one
+	// when it did not.
+	title := common.Title
+	if title == "" && written != nil {
+		title = written.Title
 	}
 
 	if agent == "" {
 		agent = DefaultAgentName
 	}
 
-	srv.EventBus.PublishActivity("mcp", action, tool, slug, title, agent)
+	version := 0
+	if action != "read" && written != nil {
+		version = written.Version
+	}
+	srv.EventBus.PublishActivityVersion("mcp", action, tool, slug, title, agent, version)
 
 	// If it's a mutation, broadcast a WikiUpdate to sync all clients!
 	if action != "read" {
@@ -560,11 +574,9 @@ func (srv *Server) logMCPToolCall(params json.RawMessage, agent string) {
 		if err == nil {
 			var targetTags []string
 			targetType := ContentTypeWiki
-			if slug != "" {
-				if art, err := srv.Storage.GetArticle(slug); err == nil {
-					targetTags = art.Tags
-					targetType = art.Type
-				}
+			if written != nil {
+				targetTags = written.Tags
+				targetType = written.Type
 			}
 
 			dir := getArticleDirectory(targetType)

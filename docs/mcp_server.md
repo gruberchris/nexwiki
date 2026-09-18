@@ -298,23 +298,9 @@ notifications/resources/list_changed         sub=77
 
 Every message carries `io.modelcontextprotocol/subscriptionId` in `_meta` so concurrent subscriptions can be demultiplexed.
 
-**Subscriptions work on stdio too.** The specification defines `subscriptionId` precisely because stdio multiplexes every subscription onto one channel, so the shape is supported by design — NexWiki serialises stdout behind a single lock and runs each subscription in its own goroutine, exactly as the sidecar proxy already did.
+**Overflow markers:** a bulk write (an OKF import, a global tag deletion) can outpace a subscription's buffer. Rather than silently drop notifications, the stream collapses the backlog and prompts a re-sync through the notification types you asked for: you receive `notifications/resources/updated` for each subscribed resource (and `notifications/resources/list_changed` if you requested it) with no document change behind them. Treat such a burst as the signal that per-document updates were missed — re-read the subscribed resources, and re-list if you watch the list. The durable state (the article store and the activity log via `get_recent_activity`) is always complete; only the live stream fell behind.
 
-| Transport | Cancel a subscription with |
-|---|---|
-| Streamable HTTP | close the response stream |
-| stdio | `notifications/cancelled` naming the `subscriptions/listen` request id |
-
-Either way the server answers the long-lived request with a `resultType: "complete"` result carrying the subscription id, so a client can tell a deliberate close from a dropped transport. **A stream that ends without that response was a disconnect, and the client should re-subscribe.**
-
-```bash
-# on stdio, end subscription 77
-{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":77}}
-```
-
-> Earlier versions stubbed this out on stdio: the acknowledgment was sent and nothing followed. That was worse than it sounds — the acknowledgment is a *notification* and carries no id, so the client sat waiting on a response to the long-lived request that was never coming, and only a timeout ended it.
-
-A stdio **sidecar next to a running web server** gets subscriptions the same way it always has, by proxying to the primary and relaying the stream. See [Sidecar proxy mode](#-sidecar-proxy-mode) below.
+> **Transport:** a *standalone* stdio server cannot hold subscriptions open — its loop is strictly request/response on one channel — so it acknowledges and closes gracefully. A stdio **sidecar next to a running web server does** get live subscriptions, because it proxies to the primary and relays the stream. See [Sidecar proxy mode](#-sidecar-proxy-mode) below.
 
 ## 🔀 Sidecar proxy mode
 
