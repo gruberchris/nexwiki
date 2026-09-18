@@ -34,6 +34,8 @@ docker run -d \
 
 Open your browser to `http://localhost:5808` to view the initial seeded homepage.
 
+> The seed only happens when the article directory is empty, and a document is only served at the path its own slug dictates: a `home.md` whose front matter declares a different slug is not served at the home path (the dashboard 404s) and is never reseeded, because a document is only valid at `articles/<slug>.md`.
+
 ---
 
 ### 2. Advanced `docker run` Invocation
@@ -149,7 +151,7 @@ All configuration options supported by NexWiki can be passed into the container 
 | `NEXWIKI_THEME` | `default` | Initial active color palette (`default`, `midnight`, `forest`, `nordic`, etc.) |
 | `NEXWIKI_THEME_SCHEDULING` | `false` | Enable automatic annual seasonal theme swapping |
 | `NEXWIKI_BIND` | `0.0.0.0` | Default interface inside containers (do not change unless binding specific bridge IPs) |
-| `NEXWIKI_ALLOWED_ORIGINS` | Loopback only | Comma-separated DNS origins allowed to access the API from browsers |
+| `NEXWIKI_ALLOWED_ORIGINS` | Loopback only | Comma-separated origins allowed to reach the API from browsers; each listed origin's hostname is also an accepted `Host` header value |
 | `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Startup sweep retention for archived articles |
 | `NEXWIKI_PLAN_LIFECYCLE_INTERVAL_DAYS` | `1` | Background sweep frequency for AI plan transitions |
 | `NEXWIKI_PLAN_ARCHIVE_AFTER_DAYS` | `90` | Days until completed plans are archived |
@@ -157,6 +159,8 @@ All configuration options supported by NexWiki can be passed into the container 
 | `NEXWIKI_PLAN_LIFECYCLE_DRY_RUN` | `false` | Enable dry-run logging without executing plan status changes |
 | `NEXWIKI_SECRET_SCAN` | `refuse` | Credential scanner disposition (`refuse`, `warn`, or `off`) |
 | `NEXWIKI_ACTIVITY_MAX_ARCHIVES` | unlimited | Retention count for rotated activity archives |
+
+> **Host header validation:** NexWiki accepts a request only when its `Host` header is an IP address, `localhost` (or `*.localhost`), the configured `NEXWIKI_BIND` hostname, or the hostname of an origin listed in `NEXWIKI_ALLOWED_ORIGINS`; anything else gets `403`. When another container or a browser reaches the wiki by a Docker service name (e.g. `http://nexwiki:5808`), `host.docker.internal`, an mDNS `.local` name, Tailscale MagicDNS, or Kubernetes service DNS, list that origin in `NEXWIKI_ALLOWED_ORIGINS` — for example `NEXWIKI_ALLOWED_ORIGINS=http://nexwiki:5808` — or those clients receive `403`.
 
 ### 2. Entrypoint and Trailing Arguments
 The official `Dockerfile` defines:

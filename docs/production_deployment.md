@@ -58,6 +58,11 @@ For multiple domains, separate them with commas:
 NEXWIKI_ALLOWED_ORIGINS="https://wiki.yourdomain.com,https://notes.internal.net"
 ```
 
+### Host Header Validation
+NexWiki also validates the `Host` header of every request, before origin checks and handlers run: accepted values are IP literals, `localhost` and `*.localhost`, the configured `-bind`/`NEXWIKI_BIND` hostname, and the hostname of every origin listed in `NEXWIKI_ALLOWED_ORIGINS` (setting `NEXWIKI_ALLOWED_ORIGINS="*"` accepts any Host). Any other Host is refused with `403 Forbidden` and a hint pointing at `NEXWIKI_ALLOWED_ORIGINS`.
+
+> **Migration note:** clients that reach NexWiki by a hostname rather than an IP or `localhost` must have that origin listed in `NEXWIKI_ALLOWED_ORIGINS`, or their requests receive `403`. This covers setups using Docker service names (e.g. `http://nexwiki:5808`), `host.docker.internal`, `.local` mDNS names, Tailscale MagicDNS hostnames, or Kubernetes service DNS names — list the origin those clients use, and its hostname is accepted as a `Host` value too.
+
 ---
 
 ## 🚦 4. Reverse Proxy Setup

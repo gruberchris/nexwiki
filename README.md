@@ -71,7 +71,7 @@ Start the server and automatically open the application in your default web brow
 nexwiki -launch-in-browser
 ```
 
-On first launch, NexWiki automatically creates its data directory (`articles/`, `assets/`, `history/`, and search index) in your OS standard directory (`~/.config/nexwiki/nexwiki-data` on macOS/Linux, `%AppData%\nexwiki\nexwiki-data` on Windows, or `/app/data` in Docker) and seeds an initial homepage.
+On first launch, NexWiki automatically creates its data directory (`articles/`, `assets/`, `history/`, and search index) in your OS standard directory (`~/.config/nexwiki/nexwiki-data` on macOS/Linux, `%AppData%\nexwiki\nexwiki-data` on Windows, or `/app/data` in Docker) and seeds an initial homepage. The seed only happens when the article directory is empty, and a document is only served at the path its own slug dictates — a `home.md` whose front matter declares a different slug is not served at the home path (the dashboard 404s) and is never reseeded, because a document is only valid at `articles/<slug>.md`.
 
 > 📘 For advanced CLI flags, environment variables, manual downloads, and production Docker Compose setups, see the [Install Scripts Guide](docs/install_scripts_guide.md), [Configuration Guide](docs/configuration.md), and [Docker Deployment Guide](docs/docker_deployment.md).
 
@@ -102,7 +102,7 @@ claude mcp add --transport http nexwiki http://localhost:5808/api/mcp
 ```
 
 ### Stdio Subprocess
-When running headless without the web interface:
+To run a stdio MCP server alongside your running web instance — or standalone, opening the data directory itself when no web server is found:
 
 ```json
 {
