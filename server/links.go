@@ -484,16 +484,16 @@ func (s *Storage) scanBacklinksToEach(targetSlugs []string) (map[string]backlink
 	}
 
 	if len(byTarget) > 0 {
-		err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, walkErr error) error {
+		err := filepath.WalkDir(s.articleWalkRoot(), func(path string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return s.skipWalkError(path, d, walkErr, reportAll)
 			}
 			if d.IsDir() || filepath.Ext(path) != ".md" {
 				return nil
 			}
-			info, err := d.Info()
-			if err != nil {
-				return s.skipWalkError(path, d, err, reportAll)
+			info, ok, err := s.walkFileInfo(path, d, reportAll)
+			if !ok {
+				return err
 			}
 
 			_, meta, err := s.cachedMeta(path, info)

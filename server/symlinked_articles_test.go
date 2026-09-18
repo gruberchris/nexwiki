@@ -547,3 +547,147 @@ func TestSymlinkToDirectoryIsNotAnArticle(t *testing.T) {
 		t.Errorf("a link to a directory must not be warned about:\n%s", buf)
 	}
 }
+
+// TestSymlinkedCorpusKeepsAutoDeleteBacklinkGuard pins that the backlink scan behind startup
+// auto-delete follows symlinks like every other walk. scanBacklinksToEach was the one walk still
+// handed the article directory raw: through a symlinked root its corpus looked empty, so every
+// archived document came back unlinked and the guard would have deleted a linked one, and a
+// symlinked article file it fingerprinted by the link, so an edit to the target never reached the
+// scan and a document that had just been linked still looked unlinked. The unlinked archived
+// document beside the linked one is the control that the guard still deletes, so a kept document
+// is the backlink's doing and not a broken scan.
+func TestSymlinkedCorpusKeepsAutoDeleteBacklinkGuard(t *testing.T) {
+	t.Run("symlinked article directory", func(t *testing.T) {
+		t.Setenv(envAutoDeleteArchived, "")
+		dataDir := t.TempDir()
+		seed, err := NewStorage(dataDir)
+		if err != nil {
+			t.Fatalf("NewStorage failed: %v", err)
+		}
+		saveArchived(t, seed, "Linked Archive", "# kept")
+		saveArchived(t, seed, "Free Archive", "# gone")
+		if _, err := seed.SaveArticle("", "Wiki Pointer", "See [[Linked Archive]].", "", "", "", "", nil, ContentTypeWiki); err != nil {
+			t.Fatalf("seed linker: %v", err)
+		}
+		for _, slug := range []string{"linked-archive", "free-archive"} {
+			backdateArchived(t, seed.ArticleDir, slug, 31, time.Now())
+		}
+		if err := seed.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+
+		// Move the article directory elsewhere and link it back in its place, then start the wiki
+		// again: NewStorage runs the guard, and through the link it must see the corpus the
+		// lookups do.
+		articleDir := filepath.Join(dataDir, "articles")
+		elsewhere := filepath.Join(t.TempDir(), "moved-articles")
+		if err := os.Rename(articleDir, elsewhere); err != nil {
+			t.Fatalf("Rename failed: %v", err)
+		}
+		symlinkOrSkip(t, elsewhere, articleDir)
+
+		t.Setenv(envAutoDeleteArchived, "30")
+		buf := captureLog(t)
+		s, err := NewStorage(dataDir)
+		if err != nil {
+			t.Fatalf("NewStorage over a symlinked article directory failed: %v", err)
+		}
+		t.Cleanup(func() { _ = s.Close() })
+
+		if !exists(t, s, "linked-archive") {
+			t.Error("an archived article linked through the symlinked article directory must not be auto-deleted")
+		}
+		if len(logLines(buf, "Warning: not auto-deleting archived article 'linked-archive'", "still linked from 1 document: wiki-pointer")) != 1 {
+			t.Errorf("the kept article must be warned about naming its linker, got %q", buf.String())
+		}
+		if exists(t, s, "free-archive") {
+			t.Error("an unlinked archived article must still be deleted through the symlinked article directory")
+		}
+		if len(logLines(buf, "Deleted archived article: free-archive (archived at: ")) != 1 {
+			t.Errorf("the deletion must leave its audit line, got %q", buf.String())
+		}
+
+		// The batched scan itself, not only the guard built on it, must see the backlink — and
+		// nothing else: a scan that reported the corpus unreadable would keep documents for the
+		// wrong reason.
+		scans, err := s.scanBacklinksToEach([]string{"linked-archive"})
+		if err != nil {
+			t.Fatalf("scanBacklinksToEach failed: %v", err)
+		}
+		scan := scans["linked-archive"]
+		if len(scan.backlinks) != 1 || scan.backlinks[0].Slug != "wiki-pointer" {
+			t.Errorf("scan for linked-archive = %+v, want wiki-pointer as its one backlink", scan)
+		}
+		if reasons := scan.incompleteReasons(); len(reasons) != 0 {
+			t.Errorf("a readable corpus through a symlinked root must scan completely, got %v", reasons)
+		}
+	})
+
+	t.Run("symlinked article file", func(t *testing.T) {
+		t.Setenv(envAutoDeleteArchived, "")
+		s, err := NewStorage(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewStorage failed: %v", err)
+		}
+		t.Cleanup(func() { _ = s.Close() })
+		saveArchived(t, s, "Linked Archive", "# kept")
+		saveArchived(t, s, "Free Archive", "# gone")
+		if _, err := s.SaveArticle("", "Wiki Pointer", "No links yet.", "", "", "", "", nil, ContentTypeWiki); err != nil {
+			t.Fatalf("seed linker: %v", err)
+		}
+
+		// Move the linker out and link it back in its place. Nothing is due yet.
+		target := filepath.Join(t.TempDir(), "wiki-pointer.md")
+		link := filepath.Join(s.ArticleDir, "wiki-pointer.md")
+		if err := os.Rename(link, target); err != nil {
+			t.Fatalf("Rename failed: %v", err)
+		}
+		symlinkOrSkip(t, target, link)
+
+		t.Setenv(envAutoDeleteArchived, "30")
+		scans, err := s.scanBacklinksToEach([]string{"linked-archive", "free-archive"})
+		if err != nil {
+			t.Fatalf("scanBacklinksToEach failed: %v", err)
+		}
+		for slug, scan := range scans {
+			if len(scan.backlinks) != 0 || len(scan.incompleteReasons()) != 0 {
+				t.Fatalf("fixture: scan for %s = %+v, want nothing yet", slug, scan)
+			}
+		}
+
+		// An edit to the target is the version the scan must read: the link's own fingerprint
+		// never changes, and a scan that cached by it would keep serving the body before the edit
+		// and let the guard delete a document that has just been linked.
+		writeWithMtime(t, target, []byte("---\ntitle: Wiki Pointer\nslug: wiki-pointer\n---\nSee [[Linked Archive]].\n"), time.Now())
+		scans, err = s.scanBacklinksToEach([]string{"linked-archive", "free-archive"})
+		if err != nil {
+			t.Fatalf("scanBacklinksToEach failed: %v", err)
+		}
+		if scan := scans["linked-archive"]; len(scan.backlinks) != 1 || scan.backlinks[0].Slug != "wiki-pointer" {
+			t.Errorf("scan for linked-archive after the target gained its link = %+v, want wiki-pointer as its one backlink", scan)
+		}
+		if scan := scans["free-archive"]; len(scan.backlinks) != 0 || len(scan.incompleteReasons()) != 0 {
+			t.Errorf("scan for free-archive = %+v, want nothing", scan)
+		}
+
+		// The guard decides on that scan: the linked document is kept, the unlinked one deleted.
+		backdateArchived(t, s.ArticleDir, "linked-archive", 31, time.Now())
+		backdateArchived(t, s.ArticleDir, "free-archive", 31, time.Now().Add(-time.Minute))
+		buf := captureLog(t)
+		if err := s.CleanupArchivedArticles(); err != nil {
+			t.Fatalf("CleanupArchivedArticles failed: %v", err)
+		}
+		if !exists(t, s, "linked-archive") {
+			t.Error("an archived article linked through a symlinked article file must not be auto-deleted")
+		}
+		if len(logLines(buf, "Warning: not auto-deleting archived article 'linked-archive'", "still linked from 1 document: wiki-pointer")) != 1 {
+			t.Errorf("the kept article must be warned about naming its linker, got %q", buf.String())
+		}
+		if exists(t, s, "free-archive") {
+			t.Error("an unlinked archived article must still be deleted")
+		}
+		if len(logLines(buf, "Deleted archived article: free-archive (archived at: ")) != 1 {
+			t.Errorf("the deletion must leave its audit line, got %q", buf.String())
+		}
+	})
+}
