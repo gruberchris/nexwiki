@@ -24,6 +24,9 @@ import (
 // NexWiki's own writes would serve stale content the moment someone edited a file outside the app,
 // which is a worse failure than the cost it saves. A stat is far cheaper than an open, read, and
 // YAML parse, so unchanged files still cost almost nothing.
+//
+// Every writer fingerprints a path the same way, by what reading it reads: a symlink's target, and a
+// regular file itself. See walkFileInfo.
 type articleCache struct {
 	mu      sync.Mutex
 	entries map[string]*articleCacheEntry
@@ -33,6 +36,11 @@ type articleCache struct {
 	// and is recorded under the zero fileVersion. See Storage.skipUnreadable, Storage.skipWalkError,
 	// and Storage.skipMisplaced.
 	failures map[string]failureRecord
+
+	// parseHook, when not nil, is called with the path of every file cachedMeta reads and parses
+	// because it had no fresh entry. Only tests set it, before using the storage, to count the
+	// parses the cache failed to save.
+	parseHook func(path string)
 }
 
 // fileVersion identifies one version of a file on disk by the same modification time and size that
@@ -207,6 +215,7 @@ func (c *articleCache) prune(seen map[string]bool) {
 // It reports false for a file that vanished mid-walk: a rename or delete racing the scan leaves a
 // file that is gone, not broken, and reporting it would name a file that isn't there. The Lstat
 // tells that apart from a dangling symlink, which fails the same way but is still in the directory.
+// info is nil for a dangling symlink, which has no target to fingerprint (see walkFileInfo).
 func (s *Storage) skipUnreadable(path string, info fs.FileInfo, err error) (UnreadableFile, bool) {
 	if errors.Is(err, fs.ErrNotExist) {
 		if _, statErr := os.Lstat(path); errors.Is(statErr, fs.ErrNotExist) {
@@ -365,7 +374,7 @@ func detectCaseInsensitive(dir string) bool {
 }
 
 // skipWalkError is the per-entry error handling the article walks share for an entry they could
-// not get as far as reading: a directory WalkDir could not list, or a file DirEntry.Info could not
+// not get as far as reading: a directory WalkDir could not list, or a file walkFileInfo could not
 // stat. Call it with the WalkDir callback's path and entry, and return what it returns: nil to
 // skip a file, fs.SkipDir to skip a directory's subtree, or an error to fail the scan.
 //
@@ -387,7 +396,13 @@ func detectCaseInsensitive(dir string) bool {
 // gone, not broken. Any other failure is warned about once while it lasts, like skipUnreadable, and
 // passed to report, when that is not nil, with a directory's path ending in /.
 func (s *Storage) skipWalkError(path string, d fs.DirEntry, err error, report func(UnreadableFile)) error {
-	if path == s.ArticleDir {
+	if s.isArticleRoot(path) {
+		// For a symlinked directory the OS error names the root the walk was given, separator and all
+		// (see articleWalkRoot). Name the directory as configured, so the error reads as a real
+		// directory's does and client-facing path hiding turns it into "." rather than an empty path.
+		if pathErr, ok := err.(*fs.PathError); ok && pathErr.Path != s.ArticleDir && s.isArticleRoot(pathErr.Path) {
+			return &fs.PathError{Op: pathErr.Op, Path: s.ArticleDir, Err: pathErr.Err}
+		}
 		return err
 	}
 	// WalkDir passes a nil entry only for the root, so d is set from here on.
@@ -449,6 +464,85 @@ func (s *Storage) articleDirSearchable() bool {
 	return !errors.Is(err, fs.ErrPermission)
 }
 
+// articleWalkRoot is the root every walk of the article directory hands filepath.WalkDir: ArticleDir,
+// with a trailing separator when it is a symlink.
+//
+// WalkDir lstats its root, so given a symlinked article directory as it is, it visited the link and
+// never descended, and the wiki looked empty: no listings or link graph, and a boot index sync that
+// dropped every search entry as an orphan. A trailing separator has that lstat resolve the last
+// element, as POSIX path resolution requires and Go's Lstat does on Windows too, and WalkDir drops the
+// separator again joining each name onto the root. So the walk still produces exactly the paths a
+// lookup builds with filepath.Join(ArticleDir, ...), and a link retargeted while the server runs is
+// followed on the next walk. The separator costs each entry directly under the root two allocations,
+// cleaning the joined path, so a real directory, which needs none, is walked as it always was, for
+// the price of one lstat per walk.
+//
+// Resolving the directory once at startup would have had the walks produce other paths than the
+// lookups, so cache keys, isCanonical, articleRelPath, and the root checks would all have had to
+// switch to the resolved form, and errors would name wherever the link points, which the client-facing
+// path hiding does not know when that is outside the data directory.
+func (s *Storage) articleWalkRoot() string {
+	// A root that cannot be lstat'd is walked as it is, and WalkDir fails on it the same way.
+	if info, err := os.Lstat(s.ArticleDir); err != nil || info.Mode()&fs.ModeSymlink == 0 {
+		return s.ArticleDir
+	}
+	return s.ArticleDir + string(filepath.Separator)
+}
+
+// isArticleRoot reports whether path names the article directory as a walk does: ArticleDir, or the
+// root articleWalkRoot gives a symlinked one.
+func (s *Storage) isArticleRoot(path string) bool {
+	n := len(s.ArticleDir)
+	return path == s.ArticleDir || (len(path) == n+1 && os.IsPathSeparator(path[n]) && path[:n] == s.ArticleDir)
+}
+
+// walkFileInfo is how every walk of the article directory stats a .md entry it reached. It returns the
+// fingerprint the walk caches the file and records its warnings under, or false when the walk is to
+// skip the entry and return the error.
+//
+// A symlink is fingerprinted by its target. The link's own modification time and size do not change
+// when its target is edited, including by NexWiki's own saves, which writeFileAtomic makes through the
+// link, so a walk that fingerprinted the link served the old metadata and links until a restart. The
+// lookups that share the cache (metaBySlug, deleteArticleLocked, and loadForIndex's failure record)
+// stat through the link, and a fingerprint that differed from theirs under the same key had each
+// replace the other's entry, re-parsing the file on every call. For a regular file, DirEntry.Info
+// answers as os.Stat does, so it keeps the one stat it always had.
+//
+// A link whose target is missing is still in the directory, so it goes through skipUnreadable, which
+// reports it like any other file that cannot be read and tells it from a link deleted mid-walk. Any
+// other failure to stat a target goes through skipWalkError, as a regular file's does. A link to a
+// directory is not an article whatever its name, and WalkDir does not descend through it, so it is
+// skipped without a word.
+func (s *Storage) walkFileInfo(path string, d fs.DirEntry, report func(UnreadableFile)) (fs.FileInfo, bool, error) {
+	if d.Type()&fs.ModeSymlink == 0 {
+		info, err := d.Info()
+		if err != nil {
+			// On Unix, Info stats the directory the entry was listed from joined to its name, which
+			// directly under a symlinked root doubles the separator articleWalkRoot added. Name the
+			// entry by its walk path, so the error reads as a real directory's does and path hiding
+			// recognizes it.
+			if pathErr, ok := err.(*fs.PathError); ok && pathErr.Path != path {
+				err = &fs.PathError{Op: pathErr.Op, Path: path, Err: pathErr.Err}
+			}
+			return nil, false, s.skipWalkError(path, d, err, report)
+		}
+		return info, true, nil
+	}
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		if file, reported := s.skipUnreadable(path, nil, err); reported && report != nil {
+			report(file)
+		}
+		return nil, false, nil
+	case err != nil:
+		return nil, false, s.skipWalkError(path, d, err, report)
+	case info.IsDir():
+		return nil, false, nil
+	}
+	return info, true, nil
+}
+
 // articleRelPath names a path under the article directory the way warnings and reports do:
 // relative and slash-separated.
 func (s *Storage) articleRelPath(path string) string {
@@ -467,6 +561,9 @@ func (s *Storage) cachedMeta(path string, info fs.FileInfo) (*articleCacheEntry,
 		return entry, &meta, nil
 	}
 
+	if s.cache.parseHook != nil {
+		s.cache.parseHook(path)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, err

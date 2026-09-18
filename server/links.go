@@ -290,16 +290,16 @@ func (s *Storage) ScanLinkGraph() (*LinkGraph, error) {
 	}
 
 	var order []string
-	err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(s.articleWalkRoot(), func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return s.skipWalkError(path, d, walkErr, report)
 		}
 		if d.IsDir() || filepath.Ext(path) != ".md" {
 			return nil
 		}
-		info, err := d.Info()
-		if err != nil {
-			return s.skipWalkError(path, d, err, report)
+		info, ok, err := s.walkFileInfo(path, d, report)
+		if !ok {
+			return err
 		}
 		_, meta, err := s.cachedMeta(path, info)
 		if err != nil {
@@ -401,16 +401,16 @@ func (s *Storage) scanBacklinks(targetSlug string) (backlinkScan, error) {
 	// Walk the article directory directly rather than going through ListArticles and then
 	// re-reading each file: link targets are cached alongside metadata, so an unchanged wiki
 	// costs one stat per file instead of a full read and Markdown scan.
-	err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(s.articleWalkRoot(), func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return s.skipWalkError(path, d, walkErr, report)
 		}
 		if d.IsDir() || filepath.Ext(path) != ".md" {
 			return nil
 		}
-		info, err := d.Info()
-		if err != nil {
-			return s.skipWalkError(path, d, err, report)
+		info, ok, err := s.walkFileInfo(path, d, report)
+		if !ok {
+			return err
 		}
 
 		_, meta, err := s.cachedMeta(path, info)
@@ -732,16 +732,16 @@ func (s *Storage) findAssetReferrers(oldSlug string) ([]string, []MisplacedDocum
 
 	var slugs []string
 	var misplacedDocs []MisplacedDocument
-	err := filepath.WalkDir(s.ArticleDir, func(p string, d fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(s.articleWalkRoot(), func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return s.skipWalkError(p, d, walkErr, nil)
 		}
 		if d.IsDir() || filepath.Ext(p) != ".md" {
 			return nil
 		}
-		info, err := d.Info()
-		if err != nil {
-			return s.skipWalkError(p, d, err, nil)
+		info, ok, err := s.walkFileInfo(p, d, nil)
+		if !ok {
+			return err
 		}
 		// Skip rather than fail the whole scan. Leaving a file out loses no healing, since
 		// healRenamedLinks could not read or parse it to rewrite it either, but any embeds in it are

@@ -849,7 +849,7 @@ func (s *Storage) ListArticles() ([]Article, error) {
 	// stat: the prune below then keeps the failure on record, so it warns once rather than on every
 	// listing.
 	seen := make(map[string]bool)
-	err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(s.articleWalkRoot(), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			seen[path] = true
 			return s.skipWalkError(path, d, err, nil)
@@ -859,9 +859,9 @@ func (s *Storage) ListArticles() ([]Article, error) {
 		}
 
 		seen[path] = true
-		info, err := d.Info()
-		if err != nil {
-			return s.skipWalkError(path, d, err, nil)
+		info, ok, err := s.walkFileInfo(path, d, nil)
+		if !ok {
+			return err
 		}
 
 		// Served from cache when the file is unchanged; a stat beats an open + YAML parse.
@@ -920,6 +920,8 @@ func (s *Storage) metaBySlug(slug string) (*Article, error) {
 	}
 
 	filePath := filepath.Join(s.ArticleDir, cleanedSlug+".md")
+	// os.Stat, which fingerprints a symlink by its target, as walkFileInfo does. A walk that shares
+	// this cache entry and fingerprinted it differently would have the two re-parse it in turn.
 	info, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -2139,11 +2141,12 @@ func (s *Storage) loadForIndex(slug string) (*Article, bool) {
 	if errors.Is(err, errArticleNotFound) {
 		return nil, false
 	}
-	// Report the file GetArticle read. Lstat, as the walks' DirEntry.Info does, so a symlinked
-	// file gets the same fingerprint here as in a walk and the two do not take turns warning.
+	// Report the file GetArticle read. os.Stat, which fingerprints a symlink by its target as the walks
+	// do (see walkFileInfo), so the two record the same version and do not take turns warning. A
+	// directory, or a link to one, is no article to the walks, so it is not reported here either.
 	if cleaned := Slugify(slug); cleaned != "" {
 		path := filepath.Join(s.ArticleDir, cleaned+".md")
-		if info, statErr := os.Lstat(path); statErr == nil {
+		if info, statErr := os.Stat(path); statErr == nil && !info.IsDir() {
 			s.skipUnreadable(path, info, err)
 		}
 	}
