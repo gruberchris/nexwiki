@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unsafe"
 )
 
 // TestDataDirHiderHide pins how an error reaching a client names paths: relative to the data
@@ -149,11 +152,15 @@ func TestDataDirHiderHide(t *testing.T) {
 					err:  "open " + absRel + ": permission denied",
 					want: "open .: permission denied",
 				},
-				// Only a path under it is matched in relative form: the bare name could be an
-				// ordinary word, and naming it reveals nothing about where the server keeps it.
+				// With a separator in it the bare relative form is recognizably a path, and it is
+				// the data directory as much as the absolute form is.
 				{
 					err:  "open " + rel + ": permission denied",
-					want: "open " + rel + ": permission denied",
+					want: "open .: permission denied",
+				},
+				{
+					err:  "open " + rel + "-old: permission denied",
+					want: "open " + rel + "-old: permission denied",
 				},
 				// Nor is the relative form matched partway through some other path.
 				{
@@ -165,6 +172,79 @@ func TestDataDirHiderHide(t *testing.T) {
 					t.Errorf("-data %q: got %q, want %q", dataDir, got, tc.want)
 				}
 			}
+		}
+	})
+
+	// Hiding the bare relative directory turns on whether it is recognizably a path: one with a
+	// separator is, while a single name such as "data" could as well be an ordinary word, and
+	// naming it reveals nothing about where the server keeps it.
+	t.Run("a bare relative data directory", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		nested := j("..", "..", "srv", "wiki")
+		for _, tc := range []struct {
+			name, dataDir, err, want string
+		}{
+			{
+				name:    "with a separator, the directory itself",
+				dataDir: nested,
+				err:     "open " + nested + ": permission denied",
+				want:    "open .: permission denied",
+			},
+			{
+				name:    "with a separator, at the end of the text",
+				dataDir: nested,
+				err:     "cannot walk " + nested,
+				want:    "cannot walk .",
+			},
+			{
+				name:    "with a separator, in quotes",
+				dataDir: nested,
+				err:     `cannot walk "` + nested + `"`,
+				want:    `cannot walk "."`,
+			},
+			{
+				name:    "with a separator, a path under it",
+				dataDir: nested,
+				err:     "open " + j(nested, "articles", "x.md") + ": permission denied",
+				want:    "open " + j("articles", "x.md") + ": permission denied",
+			},
+			{
+				name:    "with a separator, a sibling is left alone",
+				dataDir: nested,
+				err:     "open " + nested + "-old: permission denied",
+				want:    "open " + nested + "-old: permission denied",
+			},
+			{
+				// Concatenated, since Join would clean the .. away.
+				name:    "with a separator, inside a longer path is left alone",
+				dataDir: nested,
+				err:     "open " + sep + "mnt" + sep + nested + ": permission denied",
+				want:    "open " + sep + "mnt" + sep + nested + ": permission denied",
+			},
+			{
+				name:    "a single name is left alone",
+				dataDir: "data",
+				err:     "open data: permission denied",
+				want:    "open data: permission denied",
+			},
+			{
+				name:    "a single name as a word is left alone",
+				dataDir: "data",
+				err:     "yaml: unmarshal errors: cannot unmarshal data into string",
+				want:    "yaml: unmarshal errors: cannot unmarshal data into string",
+			},
+			{
+				name:    "a single name, a path under it",
+				dataDir: "data",
+				err:     "open " + j("data", "articles") + ": permission denied",
+				want:    "open articles: permission denied",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				if got := newDataDirHider(tc.dataDir).hide(tc.err); got != tc.want {
+					t.Errorf("-data %q: got %q, want %q", tc.dataDir, got, tc.want)
+				}
+			})
 		}
 	})
 
@@ -197,6 +277,62 @@ func TestDataDirHiderHide(t *testing.T) {
 		}
 	})
 
+	// Where one form of the data directory starts another, both can match at one position, and only
+	// the longer leaves a path relative to the data directory. The resolved form can start the
+	// absolute one, for a data directory that links to the directory it sits in, and the absolute
+	// form can start the resolved one wherever the link target's name runs on past the link's in a
+	// character that can also end a path.
+	t.Run("forms that overlap", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("creating symlinks needs privileges on Windows")
+		}
+		for _, tc := range []struct {
+			name string
+			// target is the directory the data directory links to, relative to the one both sit
+			// in; "." is that directory itself.
+			target string
+		}{
+			{name: "a link to the directory it sits in", target: "."},
+			{name: "a link to a sibling named on past a space", target: "wiki 2"},
+			{name: "a link to a sibling named on past a comma", target: "wiki,v2"},
+			{name: "a link to a sibling named on past a colon", target: "wiki:real"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				// Resolved first, so the temp directory's own links (/var on macOS) cannot keep
+				// one form from starting the other.
+				base, err := filepath.EvalSymlinks(t.TempDir())
+				if err != nil {
+					t.Fatalf("EvalSymlinks failed: %v", err)
+				}
+				target := j(base, tc.target)
+				if err := os.MkdirAll(target, 0755); err != nil {
+					t.Skipf("this filesystem does not allow a directory named %q: %v", tc.target, err)
+				}
+				link := j(base, "wiki")
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatalf("Symlink failed: %v", err)
+				}
+				resolved, err := filepath.EvalSymlinks(link)
+				if err != nil || resolved != target {
+					t.Fatalf("EvalSymlinks(%q) = %q, %v; want %q", link, resolved, err, target)
+				}
+
+				hider := newDataDirHider(link)
+				for _, c := range []struct{ err, want string }{
+					{err: "open " + j(link, "articles", "x.md") + ": permission denied", want: "open " + j("articles", "x.md") + ": permission denied"},
+					{err: "lstat " + link + ": permission denied", want: "lstat .: permission denied"},
+					{err: "open " + j(resolved, "articles", "x.md") + ": permission denied", want: "open " + j("articles", "x.md") + ": permission denied"},
+					{err: "lstat " + resolved + ": permission denied", want: "lstat .: permission denied"},
+					{err: "rename " + j(resolved, "a.tmp") + " " + j(resolved, "a") + ": permission denied", want: "rename a.tmp a: permission denied"},
+				} {
+					if got := hider.hide(c.err); got != c.want {
+						t.Errorf("got %q, want %q", got, c.want)
+					}
+				}
+			})
+		}
+	})
+
 	// A data directory at the filesystem root contains every path, so there is nothing it could
 	// hide without mangling paths that are not the wiki's.
 	t.Run("a root data directory", func(t *testing.T) {
@@ -205,6 +341,26 @@ func TestDataDirHiderHide(t *testing.T) {
 			t.Errorf("got %q, want the text unchanged", got)
 		}
 	})
+}
+
+// TestDataDirHiderHideReturnsUnmatchedTextUncopied pins that text in which nothing is replaced,
+// which is most error text, comes back as the very string passed in: whether it names no form of
+// the data directory at all, or names one only where no path starts or ends.
+func TestDataDirHiderHideReturnsUnmatchedTextUncopied(t *testing.T) {
+	t.Chdir(t.TempDir())
+	abs := filepath.Join(t.TempDir(), "data")
+	for _, tc := range []struct{ dataDir, text string }{
+		{dataDir: abs, text: "invalid format: missing front matter header marker"},
+		{dataDir: abs, text: "open " + filepath.Join(t.TempDir(), "articles") + ": permission denied"},
+		{dataDir: abs, text: "open " + abs + "-old: permission denied"},
+		{dataDir: abs, text: "open " + string(filepath.Separator) + "mnt" + filepath.Join(abs, "articles") + ": permission denied"},
+		{dataDir: "data", text: "yaml: cannot unmarshal !!str `" + filepath.Join("metadata", "y") + "` into []string"},
+	} {
+		got := newDataDirHider(tc.dataDir).hide(tc.text)
+		if got != tc.text || unsafe.StringData(got) != unsafe.StringData(tc.text) {
+			t.Errorf("-data %q: hide(%q) returned a copy, %q", tc.dataDir, tc.text, got)
+		}
+	}
 }
 
 // lockListing leaves a directory searchable but not listable for the rest of the test: execute
@@ -303,6 +459,8 @@ func TestUnlistableArticleDirErrorsHideDataDir(t *testing.T) {
 				`{"name":"list_agent_plans","arguments":{}}`,
 				`{"name":"list_agent_memories","arguments":{}}`,
 				`{"name":"list_agent_skills","arguments":{}}`,
+				`{"name":"wiki_health","arguments":{}}`,
+				`{"name":"get_wiki_statistics","arguments":{}}`,
 			} {
 				resp := toolCall(t, srv, call)
 				if !resp.IsError || len(resp.Content) != 1 {
@@ -394,4 +552,128 @@ func TestImportOKFBundleReadErrorHidesDataDir(t *testing.T) {
 		t.Fatalf("import_okf_bundle: expected one error block, got %+v", resp)
 	}
 	assertHidesDataDir(t, srv, "import_okf_bundle", resp.Content[0].Text, "Error reading bundle at 'missing.zip': open missing.zip:")
+}
+
+// importWarnings imports bundle every way a client can, through Storage, the import_okf_bundle MCP
+// tool, and the REST endpoint, and returns the warnings each reports, keyed by which it was.
+func importWarnings(t *testing.T, srv *Server, bundle []byte) map[string][]string {
+	t.Helper()
+	got := make(map[string][]string)
+
+	report, err := srv.Storage.ImportOKFBundle(bundle)
+	if err != nil {
+		t.Fatalf("ImportOKFBundle failed: %v", err)
+	}
+	got["ImportOKFBundle"] = report.Warnings
+
+	if err := os.WriteFile(filepath.Join(srv.Storage.DataDir, "bundle.zip"), bundle, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	resp := toolCall(t, srv, `{"name":"import_okf_bundle","arguments":{"path":"bundle.zip"}}`)
+	if resp.IsError || len(resp.Content) != 1 {
+		t.Fatalf("import_okf_bundle: expected one text block, got %+v", resp)
+	}
+	for _, line := range strings.Split(resp.Content[0].Text, "\n") {
+		if warning, ok := strings.CutPrefix(line, "Warning: "); ok {
+			got["import_okf_bundle"] = append(got["import_okf_bundle"], warning)
+		}
+	}
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("file", "bundle.zip")
+	if err != nil {
+		t.Fatalf("CreateFormFile failed: %v", err)
+	}
+	if _, err := fw.Write(bundle); err != nil {
+		t.Fatalf("writing the form file failed: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("closing the form failed: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/okf/import", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+	srv.HandleImportOKFBundle(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST /api/okf/import: status %d: %s", w.Code, w.Body.String())
+	}
+	var restReport OKFImportReport
+	if err := json.Unmarshal(w.Body.Bytes(), &restReport); err != nil {
+		t.Fatalf("POST /api/okf/import: response is not a report: %v\n%s", err, w.Body.String())
+	}
+	got["POST /api/okf/import"] = restReport.Warnings
+	return got
+}
+
+// newRelativeDataDirServer returns a server on a data directory given relative to a fresh working
+// directory, as -data dataDir would be.
+func newRelativeDataDirServer(t *testing.T, dataDir string) *Server {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	storage, err := NewStorage(dataDir)
+	if err != nil {
+		t.Fatalf("NewStorage failed: %v", err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	return NewServer(storage, "Test Wiki", "light", false, NewEventBus(), "1.0.0", "")
+}
+
+// TestOKFImportWarningsKeepEntryNames pins that an import warning names the bundle entry exactly as
+// the bundle does. Only the error in a warning names server paths, and hiding the data directory in
+// the whole warning cut the front off an entry in a folder named like a relative data directory.
+func TestOKFImportWarningsKeepEntryNames(t *testing.T) {
+	srv := newRelativeDataDirServer(t, "wiki")
+	captureLog(t)
+
+	bundle := okfBundle(t, map[string]string{"wiki/broken.md": "---\ntitle: [unclosed\n---\nbody\n"})
+	for via, warnings := range importWarnings(t, srv, bundle) {
+		if len(warnings) != 1 || !strings.HasPrefix(warnings[0], "wiki/broken.md: not a valid OKF concept document: ") {
+			t.Errorf("%s: want one warning naming wiki/broken.md, got %q", via, warnings)
+		}
+	}
+}
+
+// TestOKFImportSaveFailureWarningHidesDataDir pins that the error in a warning about a document that
+// failed to save, which names the path the OS failed on, hides the data directory, while the entry
+// name in front of it is left as the bundle has it.
+func TestOKFImportSaveFailureWarningHidesDataDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory modes do not stop writes on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to directories whatever their mode")
+	}
+
+	for _, variant := range []struct {
+		name   string
+		newSrv func(*testing.T) *Server
+	}{
+		{name: "absolute data directory", newSrv: newMCPServer},
+		{name: "relative data directory", newSrv: func(t *testing.T) *Server { return newRelativeDataDirServer(t, "wiki") }},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
+			srv := variant.newSrv(t)
+			captureLog(t)
+			if err := os.Chmod(srv.Storage.ArticleDir, 0555); err != nil {
+				t.Fatalf("Chmod failed: %v", err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(srv.Storage.ArticleDir, 0755) })
+
+			const entry = "wiki/fresh.md"
+			bundle := okfBundle(t, map[string]string{entry: "---\ntitle: Fresh\ntype: Wiki\n---\n# Fresh\n"})
+			for via, warnings := range importWarnings(t, srv, bundle) {
+				if len(warnings) != 1 {
+					t.Errorf("%s: want one warning, got %q", via, warnings)
+					continue
+				}
+				cause, ok := strings.CutPrefix(warnings[0], entry+": save failed: ")
+				if !ok {
+					t.Errorf("%s: want a save failure naming %s, got %q", via, entry, warnings[0])
+					continue
+				}
+				assertHidesDataDir(t, srv, via, cause, "open articles"+string(filepath.Separator))
+			}
+		})
+	}
 }

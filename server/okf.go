@@ -202,6 +202,11 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 	}
 
 	report := &OKFImportReport{}
+	// The report goes to a client verbatim, so an error in a warning has the data directory hidden
+	// as clientError hides it. Only the error: the entry name is the bundle's own, and a relative
+	// -data such as "wiki" would otherwise cut the front off an entry named wiki/foo.md.
+	hider := newDataDirHider(s.DataDir)
+	errText := func(err error) string { return hider.hide(err.Error()) }
 	var totalDecompressed int64
 	entriesSeen := 0
 	for _, f := range zr.File {
@@ -231,7 +236,7 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 
 		rc, err := f.Open()
 		if err != nil {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v", f.Name, err))
+			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %s", f.Name, errText(err)))
 			continue
 		}
 		// Read at most one byte beyond the cap so an oversized entry is detectable, and bound the
@@ -239,7 +244,7 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 		raw, err := io.ReadAll(io.LimitReader(rc, maxBundleEntryBytes+1))
 		_ = rc.Close()
 		if err != nil {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v", f.Name, err))
+			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %s", f.Name, errText(err)))
 			continue
 		}
 		if len(raw) > maxBundleEntryBytes {
@@ -252,7 +257,7 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 
 		art, err := parseArticleFile(raw, true)
 		if err != nil {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: not a valid OKF concept document: %v", f.Name, err))
+			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: not a valid OKF concept document: %s", f.Name, errText(err)))
 			report.Skipped++
 			continue
 		}
@@ -349,7 +354,7 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 
 		saved, err := s.SaveArticleWithOverrides(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, normalizeType(art.Type), overrides)
 		if err != nil {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: save failed: %v", f.Name, err))
+			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: save failed: %s", f.Name, errText(err)))
 			continue
 		}
 		report.Imported++

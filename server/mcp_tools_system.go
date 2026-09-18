@@ -32,7 +32,7 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	// number every other tool reports. Link scanning below deliberately does include home.
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: errorForClient(srv.Storage.ArticleDir, err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
 	}
 
 	// One cached pass replaces the read-every-file-in-full loop this used to run: the graph is
@@ -40,7 +40,7 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	// what the two tools share is those per-file caches, so neither rereads unchanged files.
 	graph, err := srv.Storage.ScanLinkGraph()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning WikiLinks: " + errorForClient(srv.Storage.ArticleDir, err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning WikiLinks: " + srv.clientError(err)}}}, nil
 	}
 
 	var respText string
@@ -371,10 +371,8 @@ func (srv *Server) toolImportOkfBundle(args json.RawMessage) (interface{}, *JSON
 	if len(report.MissingType) > 0 {
 		respText += fmt.Sprintf("Documents defaulted to Wiki (missing/unknown type): %s\n", strings.Join(report.MissingType, ", "))
 	}
-	// A warning can carry the error of a document that failed to save.
-	hider := newDataDirHider(srv.Storage.DataDir)
 	for _, wmsg := range report.Warnings {
-		respText += "Warning: " + hider.hide(wmsg) + "\n"
+		respText += "Warning: " + wmsg + "\n"
 	}
 	return ToolResponse{
 		Content: []ToolContent{{Type: "text", Text: respText}},

@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -762,14 +761,14 @@ func TestWikiHealthUnreadableFileAloneNeedsAttention(t *testing.T) {
 // errors do ("Access is denied."), does not double up with the one the remedy sentence adds, and
 // that only the prose is trimmed.
 func TestWikiHealthProseDropsTheErrorsOwnPeriod(t *testing.T) {
-	const osErr = "open locked.md: Access is denied."
+	const osErr = `open articles\locked.md: Access is denied.`
 	out := HealthOutput{
 		UnreadableFileCount: 1,
 		UnreadableFiles:     []UnreadableFile{{Path: "locked.md", Error: osErr}},
 	}
 
 	text := renderHealthReport(out)
-	if want := "- locked.md — open locked.md: Access is denied. Fix its front matter"; !strings.Contains(text, want) {
+	if want := `- locked.md — open articles\locked.md: Access is denied. Fix its front matter`; !strings.Contains(text, want) {
 		t.Errorf("prose is missing %q:\n%s", want, text)
 	}
 	if strings.Contains(text, "denied..") {
@@ -853,10 +852,12 @@ func TestWikiStatisticsCountsUnreadableFiles(t *testing.T) {
 	assertMatchesOutputSchema(t, resp, getWikiStatisticsTool.Output)
 }
 
-// TestUnreadableForClientHidesArticleDir pins that an error handed to an MCP client names the file
-// by its relative path, never by where the wiki lives on the server's disk.
-func TestUnreadableForClientHidesArticleDir(t *testing.T) {
-	abs := filepath.Join(t.TempDir(), "data", "articles")
+// TestUnreadableForClientHidesDataDir pins that an error handed to an MCP client names paths
+// relative to the data directory, as every other tool's errors do, never by where the wiki lives
+// on the server's disk, and that each entry's path, relative to the article directory, is kept.
+func TestUnreadableForClientHidesDataDir(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "data")
+	articles := filepath.Join(abs, "articles")
 	sep := string(filepath.Separator)
 
 	for _, tc := range []struct {
@@ -866,92 +867,99 @@ func TestUnreadableForClientHidesArticleDir(t *testing.T) {
 			name: "a top-level file",
 			dir:  abs,
 			path: "x.md",
-			err:  "open " + filepath.Join(abs, "x.md") + ": permission denied",
-			want: "open x.md: permission denied",
+			err:  "open " + filepath.Join(articles, "x.md") + ": permission denied",
+			want: "open " + filepath.Join("articles", "x.md") + ": permission denied",
 		},
 		{
-			name: "a nested file keeps its slash-separated path",
+			name: "a nested file",
 			dir:  abs,
 			path: "notes/x.md",
-			err:  "open " + filepath.Join(abs, "notes", "x.md") + ": permission denied",
-			want: "open notes/x.md: permission denied",
+			err:  "open " + filepath.Join(articles, "notes", "x.md") + ": permission denied",
+			want: "open " + filepath.Join("articles", "notes", "x.md") + ": permission denied",
 		},
 		{
-			name: "a directory that could not be listed is named as reported",
+			name: "a directory that could not be listed is named as the OS named it",
 			dir:  abs,
 			path: "notes/",
-			err:  "open " + filepath.Join(abs, "notes") + ": permission denied",
-			want: "open notes/: permission denied",
+			err:  "open " + filepath.Join(articles, "notes") + ": permission denied",
+			want: "open " + filepath.Join("articles", "notes") + ": permission denied",
 		},
 		{
-			name: "a path inside a reported directory keeps single separators",
+			name: "a path inside a reported directory",
 			dir:  abs,
 			path: "notes/",
-			err:  "lstat " + filepath.Join(abs, "notes", "x.md") + ": input/output error",
-			want: "lstat notes/x.md: input/output error",
+			err:  "lstat " + filepath.Join(articles, "notes", "x.md") + ": input/output error",
+			want: "lstat " + filepath.Join("articles", "notes", "x.md") + ": input/output error",
 		},
 		{
-			name: "a sibling of a reported directory is not joined to it",
+			name: "a sibling of a reported directory",
 			dir:  abs,
 			path: "notes/",
-			err:  "open " + filepath.Join(abs, "notes-old", "x.md") + ": permission denied",
-			want: "open " + filepath.Join("notes-old", "x.md") + ": permission denied",
+			err:  "open " + filepath.Join(articles, "notes-old", "x.md") + ": permission denied",
+			want: "open " + filepath.Join("articles", "notes-old", "x.md") + ": permission denied",
 		},
 		{
 			name: "a trailing separator on the configured directory",
 			dir:  abs + sep,
 			path: "x.md",
-			err:  "open " + filepath.Join(abs, "x.md") + ": permission denied",
-			want: "open x.md: permission denied",
+			err:  "open " + filepath.Join(articles, "x.md") + ": permission denied",
+			want: "open " + filepath.Join("articles", "x.md") + ": permission denied",
 		},
 		{
-			name: "another path under the directory",
+			name: "another path under the article directory",
 			dir:  abs,
 			path: "x.md",
-			err:  "readlink " + filepath.Join(abs, "other.md") + ": invalid argument",
-			want: "readlink other.md: invalid argument",
+			err:  "readlink " + filepath.Join(articles, "other.md") + ": invalid argument",
+			want: "readlink " + filepath.Join("articles", "other.md") + ": invalid argument",
 		},
 		{
-			name: "the bare directory",
+			name: "the article directory",
+			dir:  abs,
+			path: "x.md",
+			err:  "lstat " + articles + ": permission denied",
+			want: "lstat articles: permission denied",
+		},
+		{
+			name: "the article directory at the end of the text",
+			dir:  abs,
+			path: "x.md",
+			err:  "cannot walk " + articles,
+			want: "cannot walk articles",
+		},
+		{
+			name: "the article directory in quotes",
+			dir:  abs,
+			path: "x.md",
+			err:  `cannot walk "` + articles + `": permission denied`,
+			want: `cannot walk "articles": permission denied`,
+		},
+		{
+			name: "the article directory before whitespace",
+			dir:  abs,
+			path: "x.md",
+			err:  "walking " + articles + " failed",
+			want: "walking articles failed",
+		},
+		{
+			name: "the data directory",
 			dir:  abs,
 			path: "x.md",
 			err:  "lstat " + abs + ": permission denied",
 			want: "lstat .: permission denied",
 		},
 		{
-			name: "the bare directory at the end of the text",
-			dir:  abs,
-			path: "x.md",
-			err:  "cannot walk " + abs,
-			want: "cannot walk .",
-		},
-		{
-			name: "the bare directory in quotes",
-			dir:  abs,
-			path: "x.md",
-			err:  `cannot walk "` + abs + `": permission denied`,
-			want: `cannot walk ".": permission denied`,
-		},
-		{
-			name: "the bare directory before whitespace",
-			dir:  abs,
-			path: "x.md",
-			err:  "walking " + abs + " failed",
-			want: "walking . failed",
-		},
-		{
-			name: "a sibling directory whose name starts with the directory's is left alone",
+			name: "a sibling of the data directory is left alone",
 			dir:  abs,
 			path: "x.md",
 			err:  "open " + abs + "-old: permission denied",
 			want: "open " + abs + "-old: permission denied",
 		},
 		{
-			name: "a file in a sibling directory is left alone",
+			name: "a file in a sibling of the data directory is left alone",
 			dir:  abs,
 			path: "x.md",
-			err:  "open " + filepath.Join(abs+"-old", "x.md") + ": permission denied",
-			want: "open " + filepath.Join(abs+"-old", "x.md") + ": permission denied",
+			err:  "open " + filepath.Join(abs+"-old", "articles", "x.md") + ": permission denied",
+			want: "open " + filepath.Join(abs+"-old", "articles", "x.md") + ": permission denied",
 		},
 		{
 			name: "a sibling at the end of the text is left alone",
@@ -977,29 +985,33 @@ func TestUnreadableForClientHidesArticleDir(t *testing.T) {
 	}
 
 	// A data directory given relative to the working directory yields relative walk paths, and
-	// both that form and its absolute form must come out relative to the article directory.
-	t.Run("a relative article directory", func(t *testing.T) {
+	// both that form and its absolute form must come out relative to the data directory.
+	t.Run("a relative data directory", func(t *testing.T) {
 		t.Chdir(t.TempDir())
-		rel := filepath.Join("data", "articles")
+		const rel = "data"
 		absRel, err := filepath.Abs(rel)
 		if err != nil {
 			t.Fatalf("Abs failed: %v", err)
 		}
 		files := []UnreadableFile{
-			{Path: "x.md", Error: "open " + filepath.Join(rel, "x.md") + ": permission denied"},
-			{Path: "x.md", Error: "open " + filepath.Join(absRel, "x.md") + ": permission denied"},
-			// Only the file's own path is matched in relative form, so text that merely contains
-			// the directory's name survives.
-			{Path: "x.md", Error: "yaml: cannot unmarshal !!str `" + rel + sep + "y` into []string"},
+			{Path: "x.md", Error: "open " + filepath.Join(rel, "articles", "x.md") + ": permission denied"},
+			{Path: "x.md", Error: "open " + filepath.Join(absRel, "articles", "x.md") + ": permission denied"},
+			{Path: "notes/", Error: "open " + filepath.Join(rel, "articles", "notes") + ": permission denied"},
+			// A single relative name is matched only as the start of a path, so text that merely
+			// contains the directory's name survives.
+			{Path: "x.md", Error: "yaml: cannot unmarshal !!str `metadata" + sep + "y` into []string"},
+			{Path: "x.md", Error: "yaml: unknown field data"},
 		}
 		got := unreadableForClient(rel, files)
 		for i, want := range []string{
-			"open x.md: permission denied",
-			"open x.md: permission denied",
-			files[2].Error,
+			"open " + filepath.Join("articles", "x.md") + ": permission denied",
+			"open " + filepath.Join("articles", "x.md") + ": permission denied",
+			"open " + filepath.Join("articles", "notes") + ": permission denied",
+			files[3].Error,
+			files[4].Error,
 		} {
-			if got[i].Error != want {
-				t.Errorf("entry %d: got %q, want %q", i, got[i].Error, want)
+			if got[i].Path != files[i].Path || got[i].Error != want {
+				t.Errorf("entry %d: got %+v, want path %q and error %q", i, got[i], files[i].Path, want)
 			}
 		}
 	})
@@ -1009,9 +1021,9 @@ func TestUnreadableForClientHidesArticleDir(t *testing.T) {
 	}
 }
 
-// TestWikiHealthUnreadableErrorHidesArticleDir is the end-to-end case the sanitizing exists for: a
+// TestWikiHealthUnreadableErrorHidesDataDir is the end-to-end case the sanitizing exists for: a
 // permission error from the OS names the absolute path it failed to open.
-func TestWikiHealthUnreadableErrorHidesArticleDir(t *testing.T) {
+func TestWikiHealthUnreadableErrorHidesDataDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("mode 0 does not stop reads on Windows")
 	}
@@ -1038,7 +1050,8 @@ func TestWikiHealthUnreadableErrorHidesArticleDir(t *testing.T) {
 	if len(out.UnreadableFiles) != 1 || out.UnreadableFiles[0].Path != "locked.md" {
 		t.Fatalf("expected locked.md to be reported, got %+v", out.UnreadableFiles)
 	}
-	if got, want := out.UnreadableFiles[0].Error, "open locked.md: permission denied"; got != want {
+	// Named as read_article names the same failure, relative to the data directory.
+	if got, want := out.UnreadableFiles[0].Error, "open articles/locked.md: permission denied"; got != want {
 		t.Errorf("error = %q, want %q", got, want)
 	}
 	encoded, err := json.Marshal(resp)
@@ -1074,7 +1087,7 @@ func TestWikiHealthReportsUnreadableDirectory(t *testing.T) {
 	if out.UnreadableFileCount != 2 || len(out.UnreadableFiles) != 2 || out.UnreadableFiles[1].Path != "locked/" {
 		t.Fatalf("expected broken.md and locked/ to be reported, got count %d and %+v", out.UnreadableFileCount, out.UnreadableFiles)
 	}
-	if got, want := out.UnreadableFiles[1].Error, "open locked/: permission denied"; got != want {
+	if got, want := out.UnreadableFiles[1].Error, "open articles/locked: permission denied"; got != want {
 		t.Errorf("error = %q, want %q", got, want)
 	}
 	encoded, err := json.Marshal(resp)
@@ -1087,7 +1100,7 @@ func TestWikiHealthReportsUnreadableDirectory(t *testing.T) {
 
 	text := resp.Content[0].Text
 	for _, want := range []string{
-		"- locked/ — open locked/: permission denied. Fix what keeps the directory from being listed (usually its permissions) so the articles in it are scanned.\n",
+		"- locked/ — open articles/locked: permission denied. Fix what keeps the directory from being listed (usually its permissions) so the articles in it are scanned.\n",
 		"- broken.md — invalid format: front matter is not valid YAML",
 		"Fix its front matter or file permissions, or delete the file.\n",
 	} {
@@ -1111,52 +1124,10 @@ func TestWikiHealthReportsUnreadableDirectory(t *testing.T) {
 	}
 }
 
-// TestErrorForClientHidesArticleDir pins the sanitizing of an error that stopped a whole scan, which
-// is about no one file: walking the article directory fails with the OS naming the directory or a
-// subdirectory by absolute path.
-func TestErrorForClientHidesArticleDir(t *testing.T) {
-	abs := filepath.Join(t.TempDir(), "data", "articles")
-
-	for _, tc := range []struct {
-		name, dir, err, want string
-	}{
-		{
-			name: "the directory itself",
-			dir:  abs,
-			err:  "failed to list articles: open " + abs + ": permission denied",
-			want: "failed to list articles: open .: permission denied",
-		},
-		{
-			name: "a subdirectory",
-			dir:  abs,
-			err:  "open " + filepath.Join(abs, "notes") + ": permission denied",
-			want: "open notes: permission denied",
-		},
-		{
-			name: "a sibling directory",
-			dir:  abs,
-			err:  "open " + abs + "-old: permission denied",
-			want: "open " + abs + "-old: permission denied",
-		},
-		{
-			// With no file to match, the relative form has nothing it can safely replace.
-			name: "a relative directory",
-			dir:  filepath.Join("data", "articles"),
-			err:  "open " + filepath.Join("data", "articles") + ": permission denied",
-			want: "open " + filepath.Join("data", "articles") + ": permission denied",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := errorForClient(tc.dir, errors.New(tc.err)); got != tc.want {
-				t.Errorf("got %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestScanErrorsHideArticleDir is the end-to-end case for errorForClient: when the article directory
-// cannot be read or searched, both tools that scan it fail, and neither error may reveal where it is.
-func TestScanErrorsHideArticleDir(t *testing.T) {
+// TestScanErrorsHideDataDir pins the error text of a scan that fails outright: when the article
+// directory cannot be read or searched, both tools that scan it fail, and neither error may reveal
+// where it is. Paths are named relative to the data directory, as in every other tool's errors.
+func TestScanErrorsHideDataDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("directory modes do not stop reads on Windows")
 	}
@@ -1170,10 +1141,10 @@ func TestScanErrorsHideArticleDir(t *testing.T) {
 		// cause is the sanitized error both tools report after their own prefix.
 		cause string
 	}{
-		{name: "unreadable", apply: lockDir, cause: "open .: permission denied"},
+		{name: "unreadable", apply: lockDir, cause: "open articles: permission denied"},
 		// The walk lists the directory and fails on the first article it stats, which in a fresh
 		// wiki is the seeded home page. The error has to say the directory is what needs fixing.
-		{name: "not searchable", apply: lockSearch, cause: "article directory is not searchable: lstat home.md: permission denied"},
+		{name: "not searchable", apply: lockSearch, cause: "article directory is not searchable: lstat articles/home.md: permission denied"},
 	} {
 		t.Run(lock.name, func(t *testing.T) {
 			srv := newMCPServer(t)

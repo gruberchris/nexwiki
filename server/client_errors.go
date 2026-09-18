@@ -1,6 +1,7 @@
 package server
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -63,43 +64,73 @@ func newDataDirHider(dataDir string) dataDirHider {
 		}
 		seen[form] = true
 		reps = append(reps, dataDirReplacement{old: form + string(filepath.Separator)})
-		// The bare directory only in absolute form: a short relative one such as "data" is as
-		// likely to be an ordinary word in the error text.
-		if filepath.IsAbs(form) {
+		// The bare directory only where it is recognizably a path: a single relative name such as
+		// "data" is as likely to be an ordinary word in the error text.
+		if filepath.IsAbs(form) || strings.ContainsRune(form, filepath.Separator) {
 			reps = append(reps, dataDirReplacement{old: form, new: ".", bare: true})
 		}
 	}
-	// Longest first, so where two forms match at one position the fuller path wins.
+	// hide takes the first replacement that matches. Where two match at one position one starts the
+	// other, and the longer names the fuller path, so it goes first. The order they were built in
+	// does not ensure that: a bare form ends wherever pathEndsAt says a path does, including at
+	// characters a directory name may hold, so for a data directory /srv/wiki linked to "/srv/wiki 2"
+	// the bare /srv/wiki, built first, would make "/srv/wiki 2/articles" into ". 2/articles".
 	sort.SliceStable(reps, func(i, j int) bool { return len(reps[i].old) > len(reps[j].old) })
 	return dataDirHider{reps: reps}
 }
 
 // hide returns text with the data directory hidden.
 func (h dataDirHider) hide(text string) string {
-	if len(h.reps) == 0 {
+	// Most errors name no path under the data directory, and those go back as they are, uncopied.
+	if !h.mentionedIn(text) {
 		return text
 	}
 
-	// One left-to-right pass that never rescans what it has already replaced.
+	// One left-to-right pass that never rescans what it has already replaced. Text is copied only
+	// up to each replacement, so a form that never sits at path boundaries costs no copy either.
 	var b strings.Builder
+	done := 0 // text[:done] has been written to b
+	replaced := false
 	for i := 0; i < len(text); {
-		matched := false
-		if pathStartsAt(text, i) {
-			for _, r := range h.reps {
-				if strings.HasPrefix(text[i:], r.old) && (!r.bare || pathEndsAt(text, i+len(r.old))) {
-					b.WriteString(r.new)
-					i += len(r.old)
-					matched = true
-					break
-				}
-			}
-		}
-		if !matched {
-			b.WriteByte(text[i])
+		r, ok := h.replacementAt(text, i)
+		if !ok {
 			i++
+			continue
+		}
+		b.WriteString(text[done:i])
+		b.WriteString(r.new)
+		i += len(r.old)
+		done = i
+		replaced = true
+	}
+	if !replaced {
+		return text
+	}
+	b.WriteString(text[done:])
+	return b.String()
+}
+
+// replacementAt returns the replacement that applies to the path starting at text[i], if any.
+func (h dataDirHider) replacementAt(text string, i int) (dataDirReplacement, bool) {
+	if !pathStartsAt(text, i) {
+		return dataDirReplacement{}, false
+	}
+	for _, r := range h.reps {
+		if strings.HasPrefix(text[i:], r.old) && (!r.bare || pathEndsAt(text, i+len(r.old))) {
+			return r, true
 		}
 	}
-	return b.String()
+	return dataDirReplacement{}, false
+}
+
+// mentionedIn reports whether text contains any string h replaces, wherever it sits.
+func (h dataDirHider) mentionedIn(text string) bool {
+	for _, r := range h.reps {
+		if strings.Contains(text, r.old) {
+			return true
+		}
+	}
+	return false
 }
 
 // pathStartsAt reports whether a path could start at text[i]: at the start of the text, or after
@@ -112,4 +143,15 @@ func pathStartsAt(text string, i int) bool {
 	}
 	r, _ := utf8.DecodeLastRuneInString(text[:i])
 	return unicode.IsSpace(r) || strings.ContainsRune("\"'`([{<=:,;", r)
+}
+
+// pathEndsAt reports whether a path running up to text[i] ends there. A separator, whitespace, or
+// the punctuation that closes a path in error text ends it. Anything else is taken to continue the
+// name, since a file name may legally hold it.
+func pathEndsAt(text string, i int) bool {
+	if i == len(text) {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(text[i:])
+	return (r < utf8.RuneSelf && os.IsPathSeparator(uint8(r))) || unicode.IsSpace(r) || strings.ContainsRune(":;,\"'`)]}", r)
 }

@@ -1426,11 +1426,6 @@ func (srv *Server) HandleImportOKFBundle(w http.ResponseWriter, r *http.Request)
 	}
 	// Only the documents the import saved: skipped, refused, and failed entries changed nothing.
 	srv.publishBulkChanges("api", "okf_import", "User", report.saved)
-	// A warning can carry the error of a document that failed to save.
-	hider := newDataDirHider(srv.Storage.DataDir)
-	for i, warning := range report.Warnings {
-		report.Warnings[i] = hider.hide(warning)
-	}
 	writeJSON(w, http.StatusOK, report)
 }
 
