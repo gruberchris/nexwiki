@@ -19,19 +19,19 @@ import (
 	"github.com/blevesearch/bleve/v2"
 )
 
-// lockedBuffer is a log sink safe to read while something else might still be logging.
-type lockedBuffer struct {
+// logCaptureBuffer is a log sink safe to read while something else might still be logging.
+type logCaptureBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
 }
 
-func (b *lockedBuffer) Write(p []byte) (int, error) {
+func (b *logCaptureBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.Write(p)
 }
 
-func (b *lockedBuffer) String() string {
+func (b *logCaptureBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
@@ -39,9 +39,9 @@ func (b *lockedBuffer) String() string {
 
 // captureLog redirects the standard logger into a buffer for the rest of the test, with flags
 // cleared so each line starts with the message itself.
-func captureLog(t *testing.T) *lockedBuffer {
+func captureLog(t *testing.T) *logCaptureBuffer {
 	t.Helper()
-	buf := &lockedBuffer{}
+	buf := &logCaptureBuffer{}
 	prevOut, prevFlags := log.Writer(), log.Flags()
 	log.SetOutput(buf)
 	log.SetFlags(0)
@@ -53,7 +53,7 @@ func captureLog(t *testing.T) *lockedBuffer {
 }
 
 // unreadableWarnings returns the logged warning lines that name relPath.
-func unreadableWarnings(t *testing.T, buf *lockedBuffer, relPath string) []string {
+func unreadableWarnings(t *testing.T, buf *logCaptureBuffer, relPath string) []string {
 	t.Helper()
 	var lines []string
 	for _, line := range strings.Split(buf.String(), "\n") {
