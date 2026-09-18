@@ -34,7 +34,7 @@ func writeArticleFile(t *testing.T, storage *Storage, relPath, frontMatter, body
 }
 
 // misplacedWarnings returns the logged warnings that report relPath as misplaced.
-func misplacedWarnings(t *testing.T, buf *lockedBuffer, relPath string) []string {
+func misplacedWarnings(t *testing.T, buf *logCaptureBuffer, relPath string) []string {
 	t.Helper()
 	return unreadableWarnings(t, buf, "misplaced article file "+relPath+":")
 }
@@ -598,7 +598,7 @@ func articleTree(t *testing.T, storage *Storage) []string {
 }
 
 // healWarnings returns the logged warnings about not healing references to oldSlug in relPath.
-func healWarnings(buf *lockedBuffer, oldSlug, relPath string) []string {
+func healWarnings(buf *logCaptureBuffer, oldSlug, relPath string) []string {
 	var lines []string
 	for _, line := range strings.Split(buf.String(), "\n") {
 		if strings.HasPrefix(line, "Warning: not healing references to renamed article '"+oldSlug+"' in ") && strings.Contains(line, " "+relPath+":") {

@@ -27,8 +27,8 @@ func modernHeaders(method string) http.Header {
 	return http.Header{"Mcp-Protocol-Version": {ModernProtocolVersion}, "Mcp-Method": {method}}
 }
 
-// postMCP sends one body through the Streamable HTTP handler, returning the status and body.
-func postMCP(t *testing.T, srv *Server, body string, headers http.Header) (int, string) {
+// postJSONRPC sends one body through the Streamable HTTP handler, returning the status and body.
+func postJSONRPC(t *testing.T, srv *Server, body string, headers http.Header) (int, string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/mcp", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -235,7 +235,7 @@ func TestJSONRPCEnvelope(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run("http/"+tc.name, func(t *testing.T) {
-			status, body := postMCP(t, srv, tc.body, tc.headers)
+			status, body := postJSONRPC(t, srv, tc.body, tc.headers)
 			if status != tc.status {
 				t.Errorf("status = %d, want %d (%.300s)", status, tc.status, strings.TrimSpace(body))
 			}
@@ -253,7 +253,7 @@ func TestJSONRPCBatchErrorNamesBatches(t *testing.T) {
 	srv := newMCPServer(t)
 	body := `[{"jsonrpc":"2.0","id":1,"method":"tools/list"},{"jsonrpc":"2.0","id":2,"method":"tools/list"}]`
 
-	_, httpBody := postMCP(t, srv, body, nil)
+	_, httpBody := postJSONRPC(t, srv, body, nil)
 	for transport, out := range map[string]string{"http": httpBody, "stdio": sendStdio(t, srv, body)} {
 		var reply jsonrpcReply
 		if err := json.Unmarshal([]byte(out), &reply); err != nil || reply.Error == nil {
@@ -326,7 +326,7 @@ func TestSubscriptionIDRoundTrips(t *testing.T) {
 	}
 
 	t.Run("http", func(t *testing.T) {
-		_, out := postMCP(t, srv, body, nil)
+		_, out := postJSONRPC(t, srv, body, nil)
 		var messages []message
 		scanner := bufio.NewScanner(strings.NewReader(out))
 		for scanner.Scan() {
@@ -349,12 +349,24 @@ func TestSubscriptionIDRoundTrips(t *testing.T) {
 	})
 
 	t.Run("stdio", func(t *testing.T) {
-		ack := decode(t, strings.TrimSpace(sendStdio(t, srv, body)))
+		out := strings.TrimSpace(sendStdio(t, srv, body))
+		lines := strings.Split(out, "\n")
+		if len(lines) != 2 {
+			t.Fatalf("expected an acknowledgment and a closing result, got:\n%s", out)
+		}
+		ack := decode(t, strings.TrimSpace(lines[0]))
 		if ack.Method != "notifications/subscriptions/acknowledged" {
 			t.Fatalf("expected the acknowledgment, got method %q", ack.Method)
 		}
 		if got := string(ack.Params.Meta[metaSubscriptionID]); got != id {
 			t.Errorf("acknowledgment subscription id = %s, want %s", got, id)
+		}
+		closing := decode(t, strings.TrimSpace(lines[1]))
+		if got := string(closing.ID); got != id {
+			t.Errorf("closing result id = %s, want %s", got, id)
+		}
+		if got := string(closing.Result.Meta[metaSubscriptionID]); got != id {
+			t.Errorf("closing result subscription id = %s, want %s", got, id)
 		}
 	})
 }

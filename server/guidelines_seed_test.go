@@ -109,7 +109,7 @@ func TestSeedAgentGuidelinesLeavesADanglingSymlinkAlone(t *testing.T) {
 
 // assertSeedWarnedWithoutWriting checks the log for a warning naming the guidelines file and for the
 // absence of the line a successful seed logs.
-func assertSeedWarnedWithoutWriting(t *testing.T, logs *lockedBuffer) {
+func assertSeedWarnedWithoutWriting(t *testing.T, logs *logCaptureBuffer) {
 	t.Helper()
 	rel := filepath.Join("articles", AgentGuidelinesSlug+".md")
 	var warned bool

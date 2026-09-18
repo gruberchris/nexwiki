@@ -217,7 +217,7 @@ func TestLifecycleWorkerHugeIntervalRuns(t *testing.T) {
 			if strconv.Itoa(cfg.IntervalDays) != value {
 				t.Fatalf("interval = %d days, want %s as set", cfg.IntervalDays, value)
 			}
-			out := &lockedBuffer{}
+			out := &logCaptureBuffer{}
 			w := &PlanLifecycleWorker{Storage: newLifecycleStorage(t), Cfg: cfg, Log: out}
 
 			// Canceled up front: Run still sweeps once and starts its ticker before it sees that.

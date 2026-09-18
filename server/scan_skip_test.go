@@ -51,7 +51,7 @@ func corruptBehindCache(t *testing.T, storage *Storage, slug string) {
 }
 
 // wantSkipWarning fails unless exactly one warning naming relPath was logged.
-func wantSkipWarning(t *testing.T, buf *lockedBuffer, relPath string) {
+func wantSkipWarning(t *testing.T, buf *logCaptureBuffer, relPath string) {
 	t.Helper()
 	if lines := unreadableWarnings(t, buf, relPath); len(lines) != 1 {
 		t.Errorf("expected exactly one skip warning for %s, got %d: %v", relPath, len(lines), lines)

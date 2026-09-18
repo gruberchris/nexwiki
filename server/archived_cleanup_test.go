@@ -56,7 +56,7 @@ func exists(t *testing.T, s *Storage, slug string) bool {
 }
 
 // logLines returns the captured log lines containing every fragment.
-func logLines(buf *lockedBuffer, fragments ...string) []string {
+func logLines(buf *logCaptureBuffer, fragments ...string) []string {
 	var lines []string
 	for _, line := range strings.Split(buf.String(), "\n") {
 		matched := line != ""

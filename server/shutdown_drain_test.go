@@ -324,7 +324,7 @@ func TestCloseContextClosesIndexAtDeadline(t *testing.T) {
 
 // cancelOnLog is a worker log that cancels the worker's context on the first line containing match.
 type cancelOnLog struct {
-	lockedBuffer
+	logCaptureBuffer
 	match  string
 	cancel context.CancelFunc
 }
@@ -333,7 +333,7 @@ func (c *cancelOnLog) Write(p []byte) (int, error) {
 	if strings.Contains(string(p), c.match) {
 		c.cancel()
 	}
-	return c.lockedBuffer.Write(p)
+	return c.logCaptureBuffer.Write(p)
 }
 
 // runWorker runs w.Run(ctx) in a goroutine and returns a channel closed when Run returns.
@@ -350,7 +350,7 @@ func runWorker(w *PlanLifecycleWorker, ctx context.Context) <-chan struct{} {
 // shutdown waits on before closing storage.
 func TestLifecycleWorkerRunReturnsAfterCancel(t *testing.T) {
 	s := newLifecycleStorage(t)
-	out := &lockedBuffer{}
+	out := &logCaptureBuffer{}
 	w := &PlanLifecycleWorker{Storage: s, Cfg: PlanLifecycleConfig{IntervalDays: 1, ArchiveAfterDays: 90}, Log: out}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -409,7 +409,7 @@ func TestLifecycleWorkerStopsBetweenPlansOnCancel(t *testing.T) {
 type stdioHarness struct {
 	stdio  *StdioMCPServer
 	in     *io.PipeWriter
-	out    *lockedBuffer
+	out    *logCaptureBuffer
 	served chan struct{}
 }
 
@@ -419,7 +419,7 @@ func startStdio(t *testing.T, srv *Server) *stdioHarness {
 	// it too.
 	waitSweep(t, srv.Storage)
 	pr, pw := io.Pipe()
-	h := &stdioHarness{in: pw, out: &lockedBuffer{}, served: make(chan struct{})}
+	h := &stdioHarness{in: pw, out: &logCaptureBuffer{}, served: make(chan struct{})}
 	h.stdio = NewStdioMCPServer(srv, pr, h.out)
 	go func() {
 		defer close(h.served)
