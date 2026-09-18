@@ -1,6 +1,12 @@
 package server
 
-import "log"
+import (
+	"errors"
+	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
+)
 
 // AgentGuidelinesSlug is the fixed slug of the centralized governance skill that the MCP
 // tool-description hooks in mcp.go instruct agents to load before any create operation.
@@ -109,9 +115,23 @@ These rules bound every other rule on this page. Orientation is a prerequisite, 
 // it does not already exist, so the MCP tool-description hooks resolve out of the box.
 // It is idempotent: if the article is already present (as a skill or any type) it does
 // nothing. Errors are logged but never fatal — seeding is a convenience, not a requirement.
+//
+// Only a file that is genuinely absent is seeded. One that exists but cannot be read or parsed is
+// still the user's, perhaps with a typo in its front matter, and seeding over it would replace their
+// rules with the default; it gets a warning instead. Lstat, so a symlink whose target is missing
+// counts as present rather than being replaced.
 func (srv *Server) SeedAgentGuidelinesIfMissing() {
-	if _, err := srv.Storage.GetArticle(AgentGuidelinesSlug); err == nil {
+	name := AgentGuidelinesSlug + ".md"
+	rel := filepath.Join("articles", name)
+	if _, err := os.Lstat(filepath.Join(srv.Storage.ArticleDir, name)); err == nil {
+		if _, err := srv.Storage.GetArticle(AgentGuidelinesSlug); err != nil {
+			log.Printf("Warning: not seeding the %s skill: %s exists but could not be loaded, so it was left as it is: %v",
+				AgentGuidelinesSlug, rel, err)
+		}
 		return // already exists — leave the user's version untouched
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		log.Printf("Warning: not seeding the %s skill: could not check whether %s exists: %v", AgentGuidelinesSlug, rel, err)
+		return
 	}
 
 	_, err := srv.Storage.SaveArticle(

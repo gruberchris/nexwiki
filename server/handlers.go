@@ -164,7 +164,7 @@ func (srv *Server) HandleGetConfig(w http.ResponseWriter, _ *http.Request) {
 func (srv *Server) HandleListArticles(w http.ResponseWriter, _ *http.Request) {
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, articles)
@@ -180,7 +180,7 @@ func (srv *Server) HandleGetArticle(w http.ResponseWriter, r *http.Request) {
 
 	art, err := srv.Storage.GetArticle(slug)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, srv.clientError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, art)
@@ -327,12 +327,17 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 	// Regular article creation always produces a Wiki document; reserved types are tool-only.
 	art, err := srv.Storage.SaveArticleWithOverrides("", req.Title, req.Content, description, source, resource, req.EditSummary, cleanedTags, ContentTypeWiki, overrides)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, errMisplacedOccupant) {
+			// The path is taken, just not by a document, so the check above could not see it.
+			status = http.StatusConflict
+		}
+		writeError(w, status, srv.clientError(err))
 		return
 	}
 
 	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity("api", "create", "", art.Slug, art.Title, "User")
+		srv.EventBus.PublishActivityVersion("api", "create", "", art.Slug, art.Title, "User", art.Version)
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
 			dir := getArticleDirectory(art.Type)
@@ -435,12 +440,12 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "article not found")
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
 	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity("api", "edit", "", art.Slug, art.Title, "User")
+		srv.EventBus.PublishActivityVersion("api", "edit", "", art.Slug, art.Title, "User", art.Version)
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
 			dir := getArticleDirectory(art.Type)
@@ -488,6 +493,7 @@ func (srv *Server) HandleVerifyArticle(w http.ResponseWriter, r *http.Request) {
 
 	overrides := ArticleOverrides{
 		Verified: &updatedVerified,
+		KeepSlug: true,
 	}
 
 	saved, err := srv.Storage.SaveArticleWithOverrides(
@@ -503,20 +509,36 @@ func (srv *Server) HandleVerifyArticle(w http.ResponseWriter, r *http.Request) {
 		overrides,
 	)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
 	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity("api", "verify", "", saved.Slug, saved.Title, "User")
+		srv.EventBus.PublishActivityVersion("api", "verify", "", saved.Slug, saved.Title, "User", saved.Version)
+		// Verifying saves a new revision and changes the trust tier, so open tabs reload it like
+		// any other edit.
+		articles, err := srv.Storage.ListArticles()
+		if err == nil {
+			dir := getArticleDirectory(saved.Type)
+			dirCount := 0
+			for _, a := range articles {
+				if getArticleDirectory(a.Type) == dir {
+					dirCount++
+				}
+			}
+			srv.EventBus.PublishWikiUpdate(WikiUpdate{
+				Type:           "article-edited",
+				Slug:           saved.Slug,
+				Title:          saved.Title,
+				Tags:           saved.Tags,
+				Directory:      dir,
+				TotalCount:     len(articles),
+				DirectoryCount: dirCount,
+			})
+		}
 	}
 
 	writeJSON(w, http.StatusOK, saved)
-}
-
-// RegisterRoutes registers all API routes on the provided ServeMux.
-func (srv *Server) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/articles/{slug}/verify", srv.HandleVerifyArticle)
 }
 
 // HandleUpdateArticleTags updates only the tags of an existing article.
@@ -558,14 +580,14 @@ func (srv *Server) HandleUpdateArticleTags(w http.ResponseWriter, r *http.Reques
 		summary = "Updated article tags"
 	}
 
-	art, err := srv.Storage.SaveArticle(slug, existing.Title, existing.Content, existing.Description, existing.Source, existing.Resource, summary, cleanedTags, existing.Type)
+	art, err := srv.Storage.SaveArticleWithOverrides(slug, existing.Title, existing.Content, existing.Description, existing.Source, existing.Resource, summary, cleanedTags, existing.Type, ArticleOverrides{KeepSlug: true})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
 	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity("api", "edit", "update_tags", art.Slug, art.Title, "User")
+		srv.EventBus.PublishActivityVersion("api", "edit", "update_tags", art.Slug, art.Title, "User", art.Version)
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
 			dir := getArticleDirectory(art.Type)
@@ -606,12 +628,15 @@ func (srv *Server) HandleDeleteArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := srv.Storage.DeleteArticle(slug); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
 	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity("api", "delete", "", slug, existing.Title, "User")
+		// A delete saves no revision, so the event carries the version that was removed: it still
+		// tells a second legitimate change to the same slug (delete, recreate, delete again)
+		// apart from the first.
+		srv.EventBus.PublishActivityVersion("api", "delete", "", slug, existing.Title, "User", existing.Version)
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
 			dir := getArticleDirectory(existing.Type)
@@ -704,7 +729,7 @@ func (srv *Server) HandleUploadAsset(w http.ResponseWriter, r *http.Request) {
 
 	url, err := srv.Storage.SaveAsset(slug, header.Filename, fileBytes)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -723,7 +748,7 @@ func (srv *Server) HandleGetAsset(w http.ResponseWriter, r *http.Request) {
 
 	filePath, err := srv.Storage.GetAssetPath(slug, filename)
 	if err != nil {
-		writeError(w, http.StatusForbidden, err.Error())
+		writeError(w, http.StatusForbidden, srv.clientError(err))
 		return
 	}
 
@@ -757,7 +782,7 @@ func (srv *Server) HandleSearchArticles(w http.ResponseWriter, r *http.Request) 
 	query := r.URL.Query().Get("q")
 	results, err := srv.Storage.SearchArticles(query)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, results)
@@ -779,7 +804,7 @@ func (srv *Server) HandleGetBacklinks(w http.ResponseWriter, r *http.Request) {
 
 	backlinks, err := srv.Storage.GetBacklinks(target.Slug)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 	if backlinks == nil {
@@ -798,7 +823,7 @@ func (srv *Server) HandleGetArticleHistory(w http.ResponseWriter, r *http.Reques
 
 	history, err := srv.Storage.GetArticleHistory(slug)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, srv.attributeHistory(Slugify(slug), history))
@@ -847,7 +872,7 @@ func (srv *Server) HandleGetArticleVersion(w http.ResponseWriter, r *http.Reques
 
 	art, err := srv.Storage.GetArticleVersion(slug, version)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, srv.clientError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, art)
@@ -874,14 +899,19 @@ func (srv *Server) HandleRevertArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Revert takes no loaded version, so there is no conflict to report.
 	art, err := srv.Storage.RevertArticle(slug, req.Version)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	switch {
+	case errors.Is(err, errArticleNotFound), errors.Is(err, errVersionNotFound):
+		writeError(w, http.StatusNotFound, srv.clientError(err))
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
 	if srv.EventBus != nil {
-		srv.EventBus.PublishActivity("api", "revert", "", art.Slug, art.Title, "User")
+		srv.EventBus.PublishActivityVersion("api", "revert", "", art.Slug, art.Title, "User", art.Version)
 		articles, err := srv.Storage.ListArticles()
 		if err == nil {
 			dir := getArticleDirectory(art.Type)
@@ -920,12 +950,96 @@ func (srv *Server) HandleDeleteTagGlobally(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := srv.Storage.DeleteTagGlobally(tag); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	report, sweepErr := srv.Storage.DeleteTagGlobally(tag)
+	if report == nil {
+		// Unreachable — the memory-scope refusal was answered above — but a nil report must
+		// not take the counts down with it.
+		report = &TagDeletionReport{}
+	}
+
+	// Announced from the report the sweep itself kept — each rewritten document's metadata,
+	// captured under the write lock at its save — never from a pre-scan of carriers. The sweep
+	// now interleaves with other writers (see DeleteTagGlobally), so a document listed as a
+	// carrier can be edited before the sweep reaches it: its version moves, but the sweep
+	// rewrote nothing, and announcing on a version change would report a rewrite that never
+	// happened. A report entry cannot drift that way: what it lists is what was saved.
+	//
+	// Announced even when the sweep failed partway: the documents it had already rewritten stay
+	// rewritten, and the activity log is the audit trail for exactly that. MCP clients see the
+	// same per-document events through the bus — the activity history and the article
+	// subscriptions both carry one entry per rewritten document.
+	docs := make([]Article, 0, len(report.Rewritten))
+	for _, d := range report.Rewritten {
+		docs = append(docs, Article{Slug: d.Slug, Title: d.Title, Type: d.Type, Version: d.Version, Tags: d.Tags})
+	}
+	srv.publishBulkChanges("api", "delete_tag", "User", docs)
+
+	// The counts ride on the failure exit too, not just the success one: a sweep that stopped
+	// early is a partial operation, and writeError's lone "error" field would leave a client
+	// unable to see how far it got. The extra fields change nothing for readers of "error".
+	if sweepErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error":     srv.clientError(sweepErr),
+			"rewritten": len(report.Rewritten),
+			"skipped":   len(report.Skipped),
+			"failed":    len(report.Failed),
+		})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "tag deleted globally successfully"})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":   "tag deleted globally successfully",
+		"rewritten": len(report.Rewritten),
+		"skipped":   len(report.Skipped),
+		"failed":    len(report.Failed),
+	})
+}
+
+// publishBulkChanges announces the documents a bulk operation wrote — a web import or tag deletion,
+// or an MCP import — as the single-document writes are announced: an activity event attributed to
+// source and agent, and a live wiki update, for each.
+//
+// One event per document rather than one summary, for the reasons the activity log exists. Each
+// document gets its own revision, and get_article_history credits a revision by finding an event
+// for its slug, so a slug-less summary would leave all of them unattributed. MCP clients subscribe
+// to individual article URIs, and only a per-slug update notifies them. And the action filter keeps
+// its meaning: an import that creates ten documents is ten creates.
+//
+// The listing behind the counts is read once for the batch, not once per document as the
+// single-document handlers do, which would make a large import quadratic.
+func (srv *Server) publishBulkChanges(source, tool, agent string, docs []Article) {
+	if srv.EventBus == nil || len(docs) == 0 {
+		return
+	}
+	articles, listErr := srv.Storage.ListArticles()
+	dirCounts := make(map[string]int)
+	for _, a := range articles {
+		dirCounts[getArticleDirectory(a.Type)]++
+	}
+
+	for _, art := range docs {
+		// A document's first revision is version 1, and any later save supersedes an existing
+		// document, so the version tells a create from a replacement — including an import whose
+		// title lands on a slug that already exists.
+		action, updateType := "edit", "article-edited"
+		if art.Version == 1 {
+			action, updateType = "create", "article-added"
+		}
+		srv.EventBus.PublishActivityVersion(source, action, tool, art.Slug, art.Title, agent, art.Version)
+		if listErr != nil {
+			continue
+		}
+		dir := getArticleDirectory(art.Type)
+		srv.EventBus.PublishWikiUpdate(WikiUpdate{
+			Type:           updateType,
+			Slug:           art.Slug,
+			Title:          art.Title,
+			Tags:           art.Tags,
+			Directory:      dir,
+			TotalCount:     len(articles),
+			DirectoryCount: dirCounts[dir],
+		})
+	}
 }
 
 // HandleGetThemes serves all default and custom themes to the client.
@@ -966,33 +1080,31 @@ func (srv *Server) HandleSaveTheme(w http.ResponseWriter, r *http.Request) {
 
 	newTheme.Custom = true // enforce custom
 
-	customThemes, err := srv.Storage.ThemeStore.LoadCustomThemes()
-	if err != nil {
+	err := srv.Storage.ThemeStore.UpdateCustomThemes(func(customThemes []Theme) ([]Theme, error) {
+		// Check if updating an existing custom theme or adding a new one
+		for i, t := range customThemes {
+			if strings.EqualFold(t.Name, newTheme.Name) {
+				customThemes[i] = newTheme
+				return customThemes, nil
+			}
+		}
+		return append(customThemes, newTheme), nil
+	})
+	switch {
+	case errors.Is(err, errLoadCustomThemes):
 		writeError(w, http.StatusInternalServerError, "failed to load custom themes")
 		return
-	}
-
-	// Check if updating an existing custom theme or adding a new one
-	found := false
-	for i, t := range customThemes {
-		if strings.EqualFold(t.Name, newTheme.Name) {
-			customThemes[i] = newTheme
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		customThemes = append(customThemes, newTheme)
-	}
-
-	if err := srv.Storage.ThemeStore.SaveCustomThemes(customThemes); err != nil {
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, "failed to save custom theme")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, newTheme)
 }
+
+// errThemeNotFound is how HandleDeleteTheme's update reports that no custom theme has the name, so
+// nothing is saved and the handler answers 404.
+var errThemeNotFound = errors.New("theme not found")
 
 // HandleDeleteTheme deletes a custom theme by name.
 func (srv *Server) HandleDeleteTheme(w http.ResponseWriter, r *http.Request) {
@@ -1010,28 +1122,29 @@ func (srv *Server) HandleDeleteTheme(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	customThemes, err := srv.Storage.ThemeStore.LoadCustomThemes()
-	if err != nil {
+	err := srv.Storage.ThemeStore.UpdateCustomThemes(func(customThemes []Theme) ([]Theme, error) {
+		var updatedThemes []Theme
+		found := false
+		for _, t := range customThemes {
+			if strings.EqualFold(t.Name, themeName) {
+				found = true
+				continue
+			}
+			updatedThemes = append(updatedThemes, t)
+		}
+		if !found {
+			return nil, errThemeNotFound
+		}
+		return updatedThemes, nil
+	})
+	switch {
+	case errors.Is(err, errLoadCustomThemes):
 		writeError(w, http.StatusInternalServerError, "failed to load custom themes")
 		return
-	}
-
-	var updatedThemes []Theme
-	found := false
-	for _, t := range customThemes {
-		if strings.EqualFold(t.Name, themeName) {
-			found = true
-			continue
-		}
-		updatedThemes = append(updatedThemes, t)
-	}
-
-	if !found {
+	case errors.Is(err, errThemeNotFound):
 		writeError(w, http.StatusNotFound, "theme not found")
 		return
-	}
-
-	if err := srv.Storage.ThemeStore.SaveCustomThemes(updatedThemes); err != nil {
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, "failed to save updated custom themes")
 		return
 	}
@@ -1077,7 +1190,7 @@ func extractDescription(content string) string {
 func (srv *Server) HandleListSkills(w http.ResponseWriter, r *http.Request) {
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -1092,11 +1205,14 @@ func (srv *Server) HandleListSkills(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Load full article to parse description from content body
-		fullArt, err := srv.Storage.GetArticle(art.Slug)
+		// Load full article to parse description from content body. A read that fails still lists
+		// the skill — dropping it from the registry would hide it — but the skipped description is
+		// reported, once per file version, rather than swallowed.
 		desc := ""
-		if err == nil {
+		if fullArt, err := srv.Storage.GetArticle(art.Slug); err == nil {
 			desc = extractDescription(fullArt.Content)
+		} else {
+			srv.Storage.reportScanReadFailure(art.Slug, err)
 		}
 
 		rawURL := fmt.Sprintf("%s://%s/api/skills/%s/raw", scheme, r.Host, art.Slug)
@@ -1124,7 +1240,7 @@ func (srv *Server) HandleGetSkill(w http.ResponseWriter, r *http.Request) {
 
 	art, err := srv.Storage.GetArticle(slug)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, srv.clientError(err))
 		return
 	}
 
@@ -1166,7 +1282,7 @@ func (srv *Server) HandleGetSkillRaw(w http.ResponseWriter, r *http.Request) {
 
 	art, err := srv.Storage.GetArticle(cleanedSlug)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, srv.clientError(err))
 		return
 	}
 
@@ -1198,7 +1314,7 @@ type WikiStats struct {
 func (srv *Server) HandleGetWikiStats(w http.ResponseWriter, _ *http.Request) {
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 
@@ -1280,7 +1396,7 @@ func (srv *Server) HandleActivityStream(w http.ResponseWriter, r *http.Request) 
 func (srv *Server) HandleExportOKFBundle(w http.ResponseWriter, _ *http.Request) {
 	data, err := srv.Storage.ExportOKFBundle()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 	fileName := fmt.Sprintf("nexwiki-okf-%s.zip", time.Now().UTC().Format("2006-01-02"))
@@ -1311,9 +1427,11 @@ func (srv *Server) HandleImportOKFBundle(w http.ResponseWriter, r *http.Request)
 
 	report, err := srv.Storage.ImportOKFBundle(data)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, srv.clientError(err))
 		return
 	}
+	// Only the documents the import saved: skipped, refused, and failed entries changed nothing.
+	srv.publishBulkChanges("api", "okf_import", "User", report.saved)
 	writeJSON(w, http.StatusOK, report)
 }
 
@@ -1345,7 +1463,7 @@ func (srv *Server) HandleGetActivityLog(w http.ResponseWriter, r *http.Request) 
 
 	events, err := ReadActivityLogBefore(ActivityLogPath(srv.Storage.DataDir), before, limit, q.Get("action"), q.Get("source"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
 	}
 	if events == nil {

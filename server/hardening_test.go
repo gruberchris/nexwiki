@@ -307,7 +307,7 @@ func TestApplySecurityHeaders(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/articles", nil)
+	req := newLoopbackRequest(http.MethodGet, "/api/articles", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -328,7 +328,7 @@ func TestApplySecurityHeaders(t *testing.T) {
 	}
 
 	// 3. EnableCORS middleware check (rejected origin)
-	reqForbidden := httptest.NewRequest(http.MethodGet, "/api/articles", nil)
+	reqForbidden := newLoopbackRequest(http.MethodGet, "/api/articles", nil)
 	reqForbidden.Header.Set("Origin", "http://unauthorized.evil.com")
 	wForbidden := httptest.NewRecorder()
 	handler.ServeHTTP(wForbidden, reqForbidden)

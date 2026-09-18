@@ -72,7 +72,7 @@ Open your global Claude Desktop configuration:
 
 Add a custom instruction rule prompting the agent to fetch the guidelines:
 
-> ⚠️ **`-mcp-only` is required** on any stdio config. A normal launch binds the web port or halts; `docker exec` bypasses the image ENTRYPOINT, so `-mcp-only` and `-data` must both be passed explicitly or the subprocess collides with the container's own web server.
+> ⚠️ **`-mcp-only` is required** on any stdio config. A normal launch binds the web port or halts; `docker exec` bypasses the image ENTRYPOINT, so `-mcp-only` and `-data` must both be passed explicitly. Without `-mcp-only`, the subprocess starts as a second web server and exits. Pointed at the container's `/app/data`, it waits 15 seconds for the search index lock and exits with `Fatal: could not open the search index`; pointed at a different data directory (e.g., with `-data` omitted), it exits with `Fatal: could not bind web server`.
 
 ```json
 {

@@ -65,9 +65,9 @@ To prevent name collisions, improve system modularity, and establish unified sys
 ### 🔀 Process Model: Bind-or-Halt vs. `-mcp-only`
 A **normal launch is the web server**: it binds the configured port or halts (it never silently falls back). It also owns the durable activity log.
 
-To run a **stdio MCP server next to an already-running web primary** — which is exactly what a Claude Desktop subprocess does — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`). That skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server it forwards activity events to it; with no web server it persists the log itself.
+To run a **stdio MCP server next to an already-running web primary** — which is exactly what a Claude Desktop subprocess does — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`). That skips the port bind entirely. If it detects a running NexWiki web server on its `-port`, it proxies all MCP traffic to it and never opens the data directory; with no web server, it opens the data directory itself, serves all tools from the in-process storage layer, and persists the activity log directly.
 
-> ⚠️ **Every stdio client config below must pass `-mcp-only`.** Without it, the spawned process tries to bind the web port, collides with your running instance, and exits with `Fatal: could not bind web server`.
+> ⚠️ **Every stdio client config below must pass `-mcp-only`.** Without it, the spawned process starts as a second web server and exits. Pointed at your running instance's data directory, it waits 15 seconds for the search index lock and exits with `Fatal: could not open the search index`; pointed at a different data directory, it exits with `Fatal: could not bind web server`.
 
 > **A sidecar beside a running web server now proxies to it.** Only one process can own the data directory (the search index holds an exclusive lock), so the sidecar forwards MCP traffic to the primary instead of opening storage — and relays the primary's subscription stream, which is how its client gets live notifications when it has no `EventBus` of its own. A standalone stdio server serves subscriptions directly.
 
@@ -126,7 +126,7 @@ Guides the agent to collaboratively outline a new development plan with the user
 
 ## 🔌 Connecting Popular AI Clients
 
-> **Prefer Streamable HTTP.** It reuses the single running server process, avoids spawning extra binaries, and completely sidesteps search-index file lock contention. Use stdio only when you are not running the web interface, or when your client cannot speak HTTP.
+> **Prefer Streamable HTTP.** It reuses the single running server process and avoids spawning extra binaries. Stdio (`-mcp-only`) also works: with the web server running, each stdio process proxies to it; without one, the process opens the data directory itself, and a web server started on that directory meanwhile fails with a lock error. See [docs/mcp_server.md](./docs/mcp_server.md#-connecting-clients).
 
 ### 1. Claude Desktop
 
@@ -159,7 +159,7 @@ If you run NexWiki via Docker with the container name `personal-wiki`:
   }
 }
 ```
-`docker exec` bypasses the image ENTRYPOINT, so `-mcp-only` and `-data` must be passed explicitly — otherwise the process inherits the `:5808` default and collides with the container's own web server.
+`docker exec` bypasses the image ENTRYPOINT, so `-mcp-only` and `-data` must be passed explicitly. Without `-mcp-only`, the process starts as a second web server and exits. Pointed at the container's `/app/data`, it waits 15 seconds for the search index lock and exits with `Fatal: could not open the search index`; pointed at a different data directory (e.g., with `-data` omitted), it exits with `Fatal: could not bind web server` on the `:5808` default.
 
 #### Option C: Stdio via Local Go Binary
 If you compiled the binary on your local machine:
@@ -211,8 +211,9 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 # Define the server parameters.
-# -mcp-only is required: it skips the web port bind so this subprocess
-# does not collide with the container's own running web server.
+# -mcp-only is required: it detects the container's running web server and
+# proxies MCP traffic to it. Without it, this subprocess starts as a second web
+# server, waits 15 seconds for the search index lock on /app/data, and exits.
 server_params = StdioServerParameters(
     command="docker",
     args=["exec", "-i", "personal-wiki", "/app/nexwiki", "-mcp-only", "-data", "/app/data"]

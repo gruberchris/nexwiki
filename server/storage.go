@@ -3,12 +3,14 @@ package server
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
@@ -621,6 +624,11 @@ type Storage struct {
 	// edits made outside NexWiki are still picked up. See article_cache.go.
 	cache *articleCache
 
+	// caseInsensitive records whether the article directory's filesystem ignores case in file names,
+	// detected once by NewStorage. It decides how the walks compare a filename to its slug. See
+	// isCanonical and detectCaseInsensitive.
+	caseInsensitive bool
+
 	// writeMu serializes every mutation of the article tree. Writers arrive concurrently from
 	// the HTTP API, the in-process MCP goroutine, and the Streamable HTTP transport; without
 	// this, two writers can both scan the history directory, compute the same next version
@@ -635,15 +643,27 @@ type Storage struct {
 	// index's exclusive lock holds any other off in NewStorage, and a -mcp-only sidecar that detects
 	// a running primary proxies to it instead of opening storage.
 	//
-	// removeLeftoverTempFiles takes it per directory so it never deletes the temp file of a save in
-	// progress, which is why every writeFileAtomic caller must hold it.
+	// The temp file sweep (removeLeftoverTempFiles) lists and cleans each directory under
+	// writeMu, so a writeFileAtomic caller writing into a tree that sweep walks alongside live
+	// saves — the history and asset trees — must hold it from creating its temp file to renaming
+	// it into place, or the sweep can delete the temp file of a save in progress. The article tree
+	// and the data directory root are swept only at startup, before any save can be in progress,
+	// so the sweep adds no requirement there: article writers hold writeMu for the serialization
+	// above, and ThemeStore's write into the root does not take it at all.
 	writeMu sync.Mutex
 
 	// sweepStop and sweepDone belong to the background temp file sweep NewStorage starts. Close
 	// closes sweepStop and waits on sweepDone, so the sweep never touches the data directory after
-	// Close returns.
+	// Close returns. A CloseContext that gives up at its deadline returns without that guarantee.
 	sweepStop chan struct{}
 	sweepDone chan struct{}
+
+	// closed is set as Close begins. Every write entry point checks it right after taking writeMu
+	// and returns ErrStorageClosed before touching the disk, so a write arriving during shutdown
+	// cannot leave a file the closed index never saw. It is set before Close waits for writeMu, not
+	// under it, so a writer queued behind the one Close waits for cannot slip in ahead of Close, and
+	// a Close that gives up waiting still turns later writers away.
+	closed atomic.Bool
 }
 
 // NewStorage initializes and returns a Storage manager, ensuring required subdirectories exist.
@@ -700,6 +720,18 @@ func NewStorage(dataDir string) (*Storage, error) {
 	// an immediate restart (a container restart policy), when the leftovers are youngest.
 	s.removeLeftoverTempFiles(nil, articleDir)
 
+	// The data directory root gets its own startup pass: a custom theme save writes its file
+	// directly in the root, so a crash mid-save can strand a temp file no tree sweep reaches.
+	// Files only and never recursive — the root's subdirectories are the trees above and the
+	// search index, which own their own temp files and their own sweeps. Like the article sweep
+	// this runs before any save can be in progress; see removeRootTempFiles for why it never
+	// joins the background sweep.
+	s.removeRootTempFiles()
+
+	// Before anything scans the article directory, and before seeding, which would take a probe left
+	// in it for an existing wiki. The probe is gone again when this returns.
+	s.caseInsensitive = detectCaseInsensitive(articleDir)
+
 	// Seed standard 'home' page if no articles exist
 	if err := s.seedDefaultHome(); err != nil {
 		_ = index.Close()
@@ -712,7 +744,9 @@ func NewStorage(dataDir string) (*Storage, error) {
 		_, _ = fmt.Fprintf(os.Stderr, "Warning: status field migration failed: %v\n", err)
 	}
 
-	// Cleanup archived articles that have exceeded their retention period
+	// Cleanup archived articles that have exceeded their retention period. Never fatal, even for an
+	// invalid setting: an error here means nothing more was deleted, which is the safe outcome, and
+	// an optional retention sweep is no reason to keep the wiki from starting.
 	if err := s.CleanupArchivedArticles(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to cleanup archived articles: %v\n", err)
 	}
@@ -774,23 +808,53 @@ func openSearchIndex(indexPath string, timeout time.Duration) (bleve.Index, erro
 	}
 }
 
+// Slugify's patterns, compiled once. Compiling them on every call cost ~8µs, and link scans call
+// Slugify for every link in every body they read.
+var (
+	slugDisallowedChars = regexp.MustCompile(`[^a-z0-9\s-_]`)
+	slugHyphenRuns      = regexp.MustCompile(`-+`)
+)
+
 // Slugify standardizes title strings into valid URL-safe and file-safe slug formats.
 func Slugify(title string) string {
 	slug := strings.ToLower(title)
 	// Replace non-alphanumeric characters with spaces
-	reg := regexp.MustCompile(`[^a-z0-9\s-_]`)
-	slug = reg.ReplaceAllString(slug, "")
+	slug = slugDisallowedChars.ReplaceAllString(slug, "")
 	// Replace spaces and underscores with hyphens
 	slug = strings.ReplaceAll(slug, " ", "-")
 	slug = strings.ReplaceAll(slug, "_", "-")
 	// Replace multiple hyphens with a single hyphen
-	regHyphen := regexp.MustCompile(`-+`)
-	slug = regHyphen.ReplaceAllString(slug, "-")
+	slug = slugHyphenRuns.ReplaceAllString(slug, "-")
 	return strings.Trim(slug, "-")
 }
 
+// isSlugForm reports whether Slugify(s) == s, without running Slugify: the article walks ask it of
+// every file on every scan. It must agree with Slugify exactly, quirks included, and
+// TestIsSlugFormAgreesWithSlugify holds it to that. Slugify keeps lowercase ASCII letters, digits,
+// hyphens, and the whitespace \s matches, and turns spaces and underscores into hyphens, so its
+// output is those characters less the space, with no hyphen at either end or next to another.
+func isSlugForm(s string) bool {
+	if strings.HasPrefix(s, "-") || strings.HasSuffix(s, "-") {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case 'a' <= c && c <= 'z', '0' <= c && c <= '9', c == '\t', c == '\n', c == '\f', c == '\r':
+		case c == '-':
+			if s[i-1] == '-' {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // ListArticles reads all Markdown files and returns metadata sorted by updated time (newest first).
-// The "home" article is excluded from listings (reserved for the Hero dashboard).
+// The "home" article is excluded from listings (reserved for the Hero dashboard), and so is every
+// misplaced document: one not stored as <slug>.md directly in the article directory (see
+// skipMisplaced).
 func (s *Storage) ListArticles() ([]Article, error) {
 	var articles []Article
 
@@ -798,7 +862,7 @@ func (s *Storage) ListArticles() ([]Article, error) {
 	// stat: the prune below then keeps the failure on record, so it warns once rather than on every
 	// listing.
 	seen := make(map[string]bool)
-	err := filepath.WalkDir(s.ArticleDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(s.articleWalkRoot(), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			seen[path] = true
 			return s.skipWalkError(path, d, err, nil)
@@ -808,9 +872,9 @@ func (s *Storage) ListArticles() ([]Article, error) {
 		}
 
 		seen[path] = true
-		info, err := d.Info()
-		if err != nil {
-			return s.skipWalkError(path, d, err, nil)
+		info, ok, err := s.walkFileInfo(path, d, nil)
+		if !ok {
+			return err
 		}
 
 		// Served from cache when the file is unchanged; a stat beats an open + YAML parse.
@@ -818,6 +882,11 @@ func (s *Storage) ListArticles() ([]Article, error) {
 		if err != nil {
 			// Skip malformed or unreadable files rather than failing the whole listing.
 			s.skipUnreadable(path, info, err)
+			return nil
+		}
+		// Checked before the home exclusion, so a listing alone reports a misplaced file that declares
+		// slug home.
+		if _, misplaced := s.skipMisplaced(path, info, art.Slug); misplaced {
 			return nil
 		}
 
@@ -845,8 +914,18 @@ func (s *Storage) ListArticles() ([]Article, error) {
 	return articles, nil
 }
 
+// errArticleNotFound is what a slug lookup or write returns for a slug with no document: no file at
+// <slug>.md, or one declaring another slug. The two are indistinguishable to a caller on purpose,
+// since a misplaced file is not a document; wiki_health is where it is reported.
+var errArticleNotFound = errors.New("article not found")
+
+func articleNotFound(slug string) error {
+	return fmt.Errorf("%w: %s", errArticleNotFound, slug)
+}
+
 // metaBySlug returns cached metadata for one slug, reading the file only when it has changed.
-// Callers that need the Markdown body must use GetArticle.
+// Callers that need the Markdown body must use GetArticle. Like GetArticle, it answers not found
+// for a misplaced file.
 func (s *Storage) metaBySlug(slug string) (*Article, error) {
 	cleanedSlug := Slugify(slug)
 	if cleanedSlug == "" {
@@ -854,19 +933,35 @@ func (s *Storage) metaBySlug(slug string) (*Article, error) {
 	}
 
 	filePath := filepath.Join(s.ArticleDir, cleanedSlug+".md")
+	// os.Stat, which fingerprints a symlink by its target, as walkFileInfo does. A walk that shares
+	// this cache entry and fingerprinted it differently would have the two re-parse it in turn.
 	info, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("article not found: %s", slug)
+			return nil, articleNotFound(slug)
 		}
 		return nil, err
 	}
 
 	_, meta, err := s.cachedMeta(filePath, info)
-	return meta, err
+	if err != nil {
+		return nil, err
+	}
+	if meta.Slug != cleanedSlug {
+		return nil, articleNotFound(slug)
+	}
+	return meta, nil
 }
 
 // GetArticle reads and parses a single article by slug.
+//
+// A file at <slug>.md that declares another slug, such as a copy, is misplaced, and not found
+// exactly like a missing file. Every read by slug, and the edit, re-tag, status change, and delete
+// entry points, start here, so nothing can open such a file by its filename and then save it under
+// its declared slug, over another article. The save and DeleteArticle check again for themselves.
+//
+// The path is built from the slug, so the declared slug is all there is to compare: see
+// isCanonical for why that agrees with the walks on any filesystem.
 func (s *Storage) GetArticle(slug string) (*Article, error) {
 	cleanedSlug := Slugify(slug)
 	if cleanedSlug == "" {
@@ -877,12 +972,19 @@ func (s *Storage) GetArticle(slug string) (*Article, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("article not found: %s", slug)
+			return nil, articleNotFound(slug)
 		}
 		return nil, err
 	}
 
-	return parseArticleFile(data, true)
+	art, err := parseArticleFile(data, true)
+	if err != nil {
+		return nil, err
+	}
+	if art.Slug != cleanedSlug {
+		return nil, articleNotFound(slug)
+	}
+	return art, nil
 }
 
 // SaveArticle writes article Markdown to disk, handling potential slug changes and compressing a copy in gzip version history.
@@ -892,9 +994,10 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, desc
 	return s.SaveArticleWithStatus(oldSlug, title, content, description, source, resource, editSummary, tags, articleType, nil)
 }
 
-// ArticleOverrides carries the write-time fields that are classifications rather than content.
+// ArticleOverrides carries the write-time fields that are classifications rather than content, and
+// whether the save may rename the document.
 //
-// Every field is omitted-means-preserve: a nil pointer says "leave it alone", so an ordinary save
+// Every classification field is omitted-means-preserve: a nil pointer says "leave it alone", so an ordinary save
 // — a body edit, a rename, a tag change, a link heal — cannot silently reclassify a document.
 // Only a caller that genuinely means to change one passes a value.
 //
@@ -902,6 +1005,14 @@ func (s *Storage) SaveArticle(oldSlug string, title string, content string, desc
 // reached ten, and WS5 of the memory-enforcement plan adds a third classification (`change_kind`)
 // on the same path. A struct absorbs that; an eleventh string parameter does not.
 type ArticleOverrides struct {
+	// KeepSlug saves an existing document back under the slug it was loaded from, whatever its
+	// title slugifies to. Only an explicit title edit may rename a document: a title edited outside
+	// NexWiki can leave a canonical document at articles/<slug>.md with a title that yields another
+	// slug, and a status change, re-tag, append, revert, or link heal must not move it (breaking
+	// links to it, or colliding with the article at the other slug). Every save that is not a title
+	// edit sets it. A create has no slug to keep, so it derives one from the title regardless.
+	KeepSlug bool
+
 	// Status moves a plan or skill through its lifecycle. A status change is a state transition,
 	// not a content edit, which is why SaveArticle takes none at all.
 	Status *string
@@ -933,6 +1044,9 @@ func (s *Storage) SaveArticleWithStatus(oldSlug string, title string, content st
 func (s *Storage) SaveArticleWithOverrides(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string, overrides ArticleOverrides) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return nil, ErrStorageClosed
+	}
 	return s.saveArticleLocked(oldSlug, title, content, description, source, resource, editSummary, tags, articleType, overrides)
 }
 
@@ -941,6 +1055,9 @@ func (s *Storage) SaveArticleWithOverrides(oldSlug string, title string, content
 func (s *Storage) SetStatus(slug string, status string, loadedVersion int, editSummary string) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return nil, ErrStorageClosed
+	}
 
 	art, err := s.GetArticle(slug)
 	if err != nil {
@@ -952,12 +1069,23 @@ func (s *Storage) SetStatus(slug string, status string, loadedVersion int, editS
 	if editSummary == "" {
 		editSummary = fmt.Sprintf("Status changed to '%s'", NormalizeStatus(status))
 	}
-	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, art.Tags, art.Type, ArticleOverrides{Status: &status})
+	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, art.Tags, art.Type, ArticleOverrides{Status: &status, KeepSlug: true})
 }
+
+// errMisplacedOccupant is what a create returns when a misplaced file already holds the path it
+// would write, so handlers can answer it as a conflict. The error wrapping it names the path.
+var errMisplacedOccupant = errors.New("a misplaced file already occupies")
 
 // saveArticleLocked is SaveArticle's body. The caller must hold writeMu.
 func (s *Storage) saveArticleLocked(oldSlug string, title string, content string, description string, source string, resource string, editSummary string, tags []string, articleType string, overrides ArticleOverrides) (*Article, error) {
 	newSlug := Slugify(title)
+	keepSlug := overrides.KeepSlug && oldSlug != ""
+	if keepSlug {
+		newSlug = Slugify(oldSlug)
+		if newSlug == "" {
+			return nil, fmt.Errorf("invalid slug")
+		}
+	}
 	if newSlug == "" {
 		return nil, fmt.Errorf("article title must contain valid characters to generate a slug")
 	}
@@ -978,6 +1106,13 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 		if err == nil {
 			existingArt, parseErr := parseArticleFile(existingData, false)
 			if parseErr == nil {
+				// A save that starts from a slug must not start from a misplaced file: loaded by its
+				// filename and saved under its declared slug, it would overwrite another article. Most
+				// callers ask GetArticle first, which refuses one, so this covers those that do not
+				// (RevertArticle) and a file that changed in between.
+				if existingArt.Slug != oldSlug {
+					return nil, articleNotFound(oldSlug)
+				}
 				// Preserve the existing document class unless the caller explicitly supplied one.
 				if articleType == "" {
 					resolvedType = existingArt.Type
@@ -1007,7 +1142,15 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 					Executor:        existingArt.Executor,
 					Attester:        existingArt.Attester,
 				}
+			} else if keepSlug {
+				return nil, parseErr
 			}
+		} else if keepSlug {
+			// A save in place updates a document; with none to update it would create one.
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, articleNotFound(oldSlug)
+			}
+			return nil, err
 		}
 	}
 
@@ -1053,9 +1196,8 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	}
 
 	if oldSlug != "" {
-		oldPath := filepath.Join(s.ArticleDir, oldSlug+".md")
-
-		// If the slug has changed, rename files and move assets
+		// If the slug has changed, move the asset and history trees; the article file itself is
+		// swapped further down, only once the new state is durable at the new slug.
 		if oldSlug != newSlug {
 			renamedFromSlug = oldSlug
 			newPath := filepath.Join(s.ArticleDir, newSlug+".md")
@@ -1064,10 +1206,13 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 				return nil, fmt.Errorf("an article with slug '%s' already exists", newSlug)
 			}
 
-			// Rename physical Markdown file
-			if err := os.Rename(oldPath, newPath); err != nil && !os.IsNotExist(err) {
-				return nil, fmt.Errorf("failed to rename article file: %w", err)
-			}
+			// The article file is deliberately NOT renamed here. Readers do not take writeMu, so
+			// renaming it now would expose the new filename carrying the old slug and title —
+			// and for the whole tail of this save, since the search unindex and the history
+			// snapshot below run between the rename and the write of the new front matter.
+			// Instead the completed new file is written to newPath (writeFileAtomic, below),
+			// and only then is the superseded file under oldSlug removed: a reader sees the old
+			// state, briefly both complete states, then only the new one — never a mixed one.
 
 			// Remove old slug from search index
 			_ = s.UnindexArticle(oldSlug)
@@ -1093,17 +1238,27 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 	}
 
 	histFolder := filepath.Join(s.HistoryDir, newSlug)
-	_ = os.MkdirAll(histFolder, 0755)
 
-	// The version this save supersedes, read from the document's own front matter. After the rename
-	// block above, newSlug is where the previous state lives whichever slug it arrived under —
+	// The version this save supersedes, read from the document's own front matter. On a rename the
+	// previous state still lives under the old slug — the superseded file is removed only after
+	// the new one is written below; otherwise newSlug is where the previous state lives —
 	// including the case where a create collides with an existing title and oldSlug was never set.
 	activePath := filepath.Join(s.ArticleDir, newSlug+".md")
+	if renamedFromSlug != "" {
+		activePath = filepath.Join(s.ArticleDir, renamedFromSlug+".md")
+	}
 	prevVersion := 0
 	prevData, prevErr := os.ReadFile(activePath)
 	if prevErr == nil {
 		if prevArt, err := parseArticleFile(prevData, false); err == nil {
 			prevVersion = prevArt.Version
+			// A create whose path a misplaced file already holds would overwrite that file, which is
+			// not a document but may be the only copy of what is in it. Only a create can get here
+			// with one: an update was checked above, and a rename refused an occupied target.
+			// Refused before this save touches the history directory, so it leaves nothing behind.
+			if oldSlug == "" && prevArt.Slug != newSlug {
+				return nil, fmt.Errorf("%w articles/%s.md; move or delete it first (wiki_health lists it)", errMisplacedOccupant, newSlug)
+			}
 		}
 	}
 
@@ -1134,6 +1289,8 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 			nextVersion = 2
 		}
 	}
+
+	_ = os.MkdirAll(histFolder, 0755)
 
 	// Archive the state being superseded if no snapshot of it exists, so the timeline the version
 	// numbers promise has an entry to revert to. This covers a document whose history was pruned as
@@ -1299,6 +1456,16 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 		return nil, fmt.Errorf("failed to write active article file: %w", err)
 	}
 
+	// A rename's superseded file is removed only now, with the new state durable at the new slug:
+	// before the write above a reader saw the complete old state, between the write and this remove
+	// it sees both complete states, and after it only the new one. Removing it any earlier would
+	// hand a reader the new filename before the new front matter exists — or neither file at all.
+	if renamedFromSlug != "" {
+		if err := os.Remove(filepath.Join(s.ArticleDir, renamedFromSlug+".md")); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("failed to remove superseded article file: %w", err)
+		}
+	}
+
 	// Write compressed history version to data/history/
 	histFilePath := filepath.Join(histFolder, fmt.Sprintf("%d.md.gz", nextVersion))
 	if err := writeGzippedFile(histFilePath, []byte(serialized)); err != nil {
@@ -1329,18 +1496,29 @@ func (s *Storage) saveArticleLocked(oldSlug string, title string, content string
 // question. GetBacklinks reports documents that *link* to oldSlug; a document that merely embeds
 // one of its images has no link and no backlink, so findAssetReferrers finds it separately. The
 // renamed document's own body is handled in saveArticleLocked, not here.
+//
+// Every write goes back to the file it read; anything else would turn healing a link into creating a
+// duplicate document or overwriting a different one. A referrer is saved in place (KeepSlug), so one
+// whose title was edited outside NexWiki and no longer yields its slug is healed where it is rather
+// than moved. A misplaced referrer, or one that cannot be read or saved, is logged, naming the file,
+// and left for a person to fix.
 func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 	candidates := map[string]bool{}
-	backlinks, err := s.GetBacklinks(oldSlug)
+	// Keyed by path, since a misplaced document can both link to the article and embed its assets.
+	misplaced := map[string]MisplacedDocument{}
+	backlinks, err := s.scanBacklinks(oldSlug)
 	if err != nil {
 		// A failed backlink scan is not a reason to skip asset healing too: the two scans are
 		// independent, and half the healing beats none.
 		_, _ = fmt.Fprintf(os.Stderr, "Warning: link-heal scan failed after renaming '%s'→'%s': %v\n", oldSlug, newSlug, err)
 	}
-	for _, bl := range backlinks {
+	for _, bl := range backlinks.backlinks {
 		candidates[bl.Slug] = true
 	}
-	referrers, err := s.findAssetReferrers(oldSlug)
+	for _, doc := range backlinks.misplaced {
+		misplaced[doc.Path] = doc
+	}
+	referrers, misplacedReferrers, err := s.findAssetReferrers(oldSlug)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "Warning: asset-heal scan failed after renaming '%s'→'%s': %v\n", oldSlug, newSlug, err)
 	}
@@ -1349,6 +1527,22 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 		if slug != newSlug {
 			candidates[slug] = true
 		}
+	}
+	for _, doc := range misplacedReferrers {
+		misplaced[doc.Path] = doc
+	}
+
+	// A misplaced document is not where its slug says, so saving it under that slug would write a
+	// different file. It is left as it is, and named, because it still points at the old slug.
+	paths := make([]string, 0, len(misplaced))
+	for path := range misplaced {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		doc := misplaced[path]
+		log.Printf("Warning: not healing references to renamed article '%s' in misplaced article file %s: %s; update it by hand",
+			oldSlug, doc.Path, doc.problem(s.caseInsensitive))
 	}
 
 	slugs := make([]string, 0, len(candidates))
@@ -1360,6 +1554,7 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 	for _, slug := range slugs {
 		linker, err := s.GetArticle(slug)
 		if err != nil {
+			log.Printf("Warning: not healing references to renamed article '%s' in %s.md: %v", oldSlug, slug, err)
 			continue
 		}
 		rewritten, wikiChanged := RewriteWikiLinks(linker.Content, oldSlug, newTitle)
@@ -1369,8 +1564,11 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 			continue
 		}
 		summary := fmt.Sprintf("Auto-healed internal link: '%s' renamed to '%s'", oldSlug, newSlug)
-		if _, err := s.saveArticleLocked(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type, ArticleOverrides{}); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to heal links in '%s' after rename: %v\n", linker.Slug, err)
+		// GetArticle only returns the document stored at <slug>.md, having refused the file if it
+		// became misplaced since the scan, and KeepSlug writes that same file back even when its
+		// title yields another slug.
+		if _, err := s.saveArticleLocked(linker.Slug, linker.Title, rewritten, linker.Description, linker.Source, linker.Resource, summary, linker.Tags, linker.Type, ArticleOverrides{KeepSlug: true}); err != nil {
+			log.Printf("Warning: not healing references to renamed article '%s' in %s.md: %v", oldSlug, slug, err)
 		}
 	}
 }
@@ -1379,6 +1577,9 @@ func (s *Storage) healRenamedLinks(oldSlug, newSlug, newTitle string) {
 func (s *Storage) DeleteArticle(slug string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return ErrStorageClosed
+	}
 	return s.deleteArticleLocked(slug)
 }
 
@@ -1391,6 +1592,15 @@ func (s *Storage) deleteArticleLocked(slug string) error {
 
 	// 1. Delete the Markdown file
 	filePath := filepath.Join(s.ArticleDir, cleanedSlug+".md")
+	// A misplaced file is not the document with this slug, so it is not found and nothing is removed:
+	// not the file, which a person removes by hand as wiki_health says, and not the history and
+	// assets under this slug, which may belong to what the file used to be. No listing shows it, so
+	// nothing offers to delete it.
+	if info, err := os.Stat(filePath); err == nil {
+		if _, meta, err := s.cachedMeta(filePath, info); err == nil && meta.Slug != cleanedSlug {
+			return articleNotFound(slug)
+		}
+	}
 	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to delete article file: %w", err)
 	}
@@ -1418,6 +1628,9 @@ func (s *Storage) SaveAsset(slug string, filename string, fileData []byte) (stri
 	// Shares writeMu with SaveArticle, which renames asset directories on slug changes.
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return "", ErrStorageClosed
+	}
 
 	cleanedSlug := Slugify(slug)
 	if cleanedSlug == "" {
@@ -1881,30 +2094,7 @@ func (s *Storage) SyncSearchIndex() error {
 		batch = s.SearchIndex.NewBatch()
 	}
 
-	// load reads one document in full for indexing. One that will not load is skipped rather than
-	// failing boot. Its slug still counts as valid (home's always does, and any other document's
-	// because it was listed), so any index entry it already has is kept, but that entry is not
-	// refreshed, and a document with none stays out of search. The skip is reported like any other
-	// unreadable file so neither happens without a trace.
-	load := func(slug string) (*Article, bool) {
-		art, err := s.GetArticle(slug)
-		if err == nil {
-			return art, true
-		}
-		// Report the file GetArticle read. Lstat, as the walks' DirEntry.Info does, so a symlinked
-		// file gets the same fingerprint here as in a walk and the two do not take turns warning.
-		// With no file at that path there is nothing to name: it vanished after the listing, or
-		// its front-matter slug does not match its filename, which is not a read failure.
-		if cleaned := Slugify(slug); cleaned != "" {
-			path := filepath.Join(s.ArticleDir, cleaned+".md")
-			if info, statErr := os.Lstat(path); statErr == nil {
-				s.skipUnreadable(path, info, err)
-			}
-		}
-		return nil, false
-	}
-
-	if homeArt, ok := load("home"); ok {
+	if homeArt, ok := s.loadForIndex("home"); ok {
 		if err := batch.Index(homeArt.Slug, homeArt); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to index 'home' article: %v\n", err)
 		}
@@ -1912,7 +2102,7 @@ func (s *Storage) SyncSearchIndex() error {
 
 	for _, item := range articles {
 		validSlugs[item.Slug] = true
-		art, ok := load(item.Slug)
+		art, ok := s.loadForIndex(item.Slug)
 		if !ok {
 			continue
 		}
@@ -1959,6 +2149,21 @@ func (s *Storage) SyncSearchIndex() error {
 	newCount, _ := s.SearchIndex.DocCount()
 	_, _ = fmt.Fprintf(os.Stderr, "Boot synchronization complete. Search index contains %d articles.\n", newCount)
 	return nil
+}
+
+// loadForIndex reads one document in full for SyncSearchIndex. One that will not load is skipped
+// rather than failing boot. Its slug still counts as valid (home's always does, and any other
+// document's because it was listed), so any index entry it already has is kept, but that entry is
+// not refreshed, and a document with none stays out of search. The skip is reported like any other
+// unreadable file so neither happens without a trace.
+//
+// A slug with no document is skipped silently. That is a file that vanished after the listing, a
+// home page that was never there, or a misplaced file, such as a home.md declaring another slug or
+// a listed document whose slug has changed since. A misplaced file is reported by the walks, as
+// misplaced; reported here it would be called unreadable, and for a file that changed after the
+// listing, that record would stand for the version and keep the right warning from ever appearing.
+func (s *Storage) loadForIndex(slug string) (*Article, bool) {
+	return s.getArticleForScan(slug)
 }
 
 // SearchResult represents a single full-text query match.
@@ -2252,10 +2457,15 @@ type ArticleEdit struct {
 // performing them separately lets a concurrent writer land in between, so the guard passes and
 // the other session's edit is silently overwritten anyway.
 //
-// The document type is immutable here; regular edits never relabel a reserved OKF class.
+// The document type is immutable here; regular edits never relabel a reserved OKF class. This is the
+// title edit, so the slug follows edit.Title, as the web editor expects when it opens the saved
+// article at the slug the title yields.
 func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return nil, ErrStorageClosed
+	}
 
 	existing, err := s.GetArticle(slug)
 	if err != nil {
@@ -2301,26 +2511,47 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 		})
 }
 
-// RevertArticle rolls the current active document back to the content of a historical version.
+// errVersionNotFound is what RevertArticle returns when the document has no snapshot of the
+// requested version.
+var errVersionNotFound = errors.New("version not found")
+
+// RevertArticle rolls the current active document back to the content of a historical version,
+// saved as a new version.
+//
+// It restores the version's body, description, source, resource, tags, sources, stale_after, and
+// verifications. It keeps what identifies the document and what state it is in as they are now: the
+// title, and with it the slug, so a revert never moves the article and breaks links to it; the type,
+// which ordinary edits never relabel either; the memory kind; and the lifecycle status, a state
+// transition with its own clock, so undoing an edit to a completed plan's body does not send it back
+// to draft.
 func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return nil, ErrStorageClosed
+	}
 
-	histArt, err := s.GetArticleVersion(slug, version)
+	// First, so a missing or misplaced document is not found whether or not history exists under
+	// its slug.
+	current, err := s.GetArticle(slug)
 	if err != nil {
+		return nil, err
+	}
+	histArt, err := s.GetArticleVersion(current.Slug, version)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s has no version %d", errVersionNotFound, current.Slug, version)
+		}
 		return nil, err
 	}
 
 	summary := fmt.Sprintf("Reverted to version %d", version)
-	// A revision written before status became a field carries it as a tag, so lift it out rather
-	// than let a revert resurrect a tag set that validation now rejects. A revision that already
-	// has the field keeps it.
-	status, tags := ExtractLegacyStatus(histArt.Type, histArt.Tags)
-	if histArt.Status != "" {
-		status = histArt.Status
-	}
-	return s.saveArticleLocked(slug, histArt.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, tags, histArt.Type, ArticleOverrides{
-		Status:     &status,
+	// A revision written before status became a field carries it as a tag. The status is not
+	// restored, but the tag must still go, or the revert would bring back a tag set that validation
+	// now rejects.
+	_, tags := ExtractLegacyStatus(current.Type, histArt.Tags)
+	return s.saveArticleLocked(current.Slug, current.Title, histArt.Content, histArt.Description, histArt.Source, histArt.Resource, summary, tags, current.Type, ArticleOverrides{
+		KeepSlug:   true,
 		Sources:    &histArt.Sources,
 		StaleAfter: &histArt.StaleAfter,
 		Verified:   &histArt.Verified,
@@ -2333,6 +2564,9 @@ func (s *Storage) RevertArticle(slug string, version int) (*Article, error) {
 func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion int, editSummary string) (*Article, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if s.closed.Load() {
+		return nil, ErrStorageClosed
+	}
 
 	art, err := s.GetArticle(slug)
 	if err != nil {
@@ -2351,6 +2585,7 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 	}
 
 	return s.saveArticleLocked(slug, art.Title, art.Content, art.Description, art.Source, art.Resource, editSummary, tags, art.Type, ArticleOverrides{
+		KeepSlug:   true,
 		Sources:    &art.Sources,
 		StaleAfter: &art.StaleAfter,
 		Verified:   &art.Verified,
@@ -2358,18 +2593,54 @@ func (s *Storage) UpdateArticleTags(slug string, tags []string, loadedVersion in
 	})
 }
 
+// ErrStorageClosed is returned by a write that reaches storage after Close has begun. The write is
+// refused before it touches the disk.
+var ErrStorageClosed = errors.New("storage is closed")
+
 // Close releases resources held by the Storage, including the Bleve search index.
 // It is safe to call multiple times; only the first invocation performs the close.
 //
-// It stops the background temp file sweep and waits for it, so it must not be called while
-// holding writeMu: a sweep waiting on that lock would never return.
+// Before closing the index it turns new writes away and waits for a write in progress and for the
+// background temp file sweep, so no write lands on disk without reaching the index. It takes
+// writeMu to wait, so it must not be called while holding writeMu: it would wait on itself.
 func (s *Storage) Close() error {
+	return s.CloseContext(context.Background())
+}
+
+// CloseContext is Close with its waits bounded by ctx. When ctx ends first, it logs and closes the
+// index anyway, leaving the overrunning write or sweep to finish on its own. Shutdown runs against
+// a supervisor's kill deadline, and an index closed under an overrunning write only refuses that
+// write's update (the file is on disk, and the next startup's SyncSearchIndex indexes it), whereas
+// one still open at SIGKILL risks corruption.
+func (s *Storage) CloseContext(ctx context.Context) error {
 	var err error
 	s.closeOnce.Do(func() {
+		s.closed.Store(true)
 		if s.sweepStop != nil {
 			close(s.sweepStop)
-			<-s.sweepDone
 		}
+
+		// Waited on in a goroutine so ctx can bound it. The sweep is waited on without holding
+		// writeMu, which it takes per directory. Once writeMu has been taken after closed was set, no
+		// write is in progress and none can start, so it is released straight away.
+		idle := make(chan struct{})
+		go func() {
+			defer close(idle)
+			if s.sweepDone != nil {
+				<-s.sweepDone
+			}
+			s.writeMu.Lock()
+			// Re-observe closed while holding the lock, mirroring the write entry points:
+			// holding it proves no write is in progress and none can start.
+			_ = s.closed.Load()
+			s.writeMu.Unlock()
+		}()
+		select {
+		case <-idle:
+		case <-ctx.Done():
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: closing the search index while a write or the temp file sweep is still running (%v); the next startup's index sync picks up anything it missed\n", ctx.Err())
+		}
+
 		if s.SearchIndex != nil {
 			err = s.SearchIndex.Close()
 		}
@@ -2377,8 +2648,17 @@ func (s *Storage) Close() error {
 	return err
 }
 
-// CleanupArchivedArticles removes articles that have been tagged as archived
-// and whose archive time has elapsed based on the configured delay.
+// CleanupArchivedArticles permanently deletes the documents archived for longer than
+// NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS. Like the plan lifecycle worker's deletion it runs with
+// no human in the loop, so it applies the same backlink guard (see deletePlan): a document that is
+// still linked, or that a scan which skipped unreadable entries or found misplaced linkers cannot
+// show unlinked, is kept with a warning and checked again at the next startup.
+//
+// Plans are left to that worker. It archives them itself and deletes them on its own timer, which
+// this one would otherwise override.
+//
+// A failed delete is logged and the rest go ahead. It returns an error only when cleanup cannot
+// proceed at all: an invalid setting, a failed listing or backlink scan, or closed storage.
 func (s *Storage) CleanupArchivedArticles() error {
 	// Get the configured delay from environment variable
 	delayStr := os.Getenv("NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS")
@@ -2402,71 +2682,205 @@ func (s *Storage) CleanupArchivedArticles() error {
 		return fmt.Errorf("failed to list articles for cleanup: %w", err)
 	}
 
-	// Check each article
+	var due []Article
+	var slugs []string
+	plans := 0
 	for _, art := range articles {
-		// Skip if not archived
-		if art.ArchivedAt.IsZero() {
+		// Due only strictly past the delay, so a delay beyond what a duration holds never comes due,
+		// even for an archived_at so old that time.Since saturates at that same cap.
+		if art.ArchivedAt.IsZero() || time.Since(art.ArchivedAt) <= daysToDuration(delay) {
+			continue
+		}
+		if art.Type == ContentTypePlan {
+			plans++
+			continue
+		}
+		due = append(due, art)
+		slugs = append(slugs, art.Slug)
+	}
+	// One line rather than one per plan: a plan the worker keeps is counted at every startup.
+	if plans > 0 {
+		log.Printf("Archived article cleanup: leaving %d archived %s to the plan lifecycle worker", plans, plural(plans, "plan", "plans"))
+	}
+	if len(due) == 0 {
+		return nil
+	}
+
+	// One walk for every due document rather than one each. Nothing else writes while NewStorage runs
+	// this, so the only change to the links it found is this cleanup's own deletions, accounted for
+	// below.
+	scans, err := s.scanBacklinksToEach(slugs)
+	if err != nil {
+		return fmt.Errorf("backlink check for archived article cleanup failed, so nothing was deleted: %w", err)
+	}
+
+	deleted := make(map[string]bool)
+	for _, art := range due {
+		scan := scans[art.Slug]
+		var linkers []string
+		for _, bl := range scan.backlinks {
+			// Deleted earlier in this cleanup: its link went with it, so a scan made now, as
+			// deletePlan's is, would not find it.
+			if !deleted[bl.Slug] {
+				linkers = append(linkers, bl.Slug)
+			}
+		}
+		var reasons []string
+		if n := len(linkers); n > 0 {
+			reasons = append(reasons, fmt.Sprintf("still linked from %d %s: %s", n, plural(n, "document", "documents"), strings.Join(linkers, ", ")))
+		}
+		reasons = append(reasons, scan.incompleteReasons()...)
+		if len(reasons) > 0 {
+			log.Printf("Warning: not auto-deleting archived article '%s' (archived at: %s): %s. The next startup checks it again.",
+				art.Slug, art.ArchivedAt.Format(time.RFC3339), strings.Join(reasons, "; "))
 			continue
 		}
 
-		// Calculate if the delay has elapsed
-		elapsed := time.Since(art.ArchivedAt)
-		if elapsed >= time.Duration(delay)*24*time.Hour {
-			// Delete the article
-			err = s.DeleteArticle(art.Slug)
-			if err != nil {
-				return fmt.Errorf("failed to delete archived article %s: %w", art.Slug, err)
+		if err := s.DeleteArticle(art.Slug); err != nil {
+			if errors.Is(err, ErrStorageClosed) {
+				return fmt.Errorf("archived article cleanup stopped: %w", err)
 			}
-			_, _ = fmt.Fprintf(os.Stderr, "Deleted archived article: %s (archived at: %s)\n", art.Slug, art.ArchivedAt.Format(time.RFC3339))
+			log.Printf("Warning: failed to delete archived article '%s', continuing with the rest: %v", art.Slug, err)
+			continue
 		}
+		deleted[art.Slug] = true
+		log.Printf("Deleted archived article: %s (archived at: %s)", art.Slug, art.ArchivedAt.Format(time.RFC3339))
 	}
 
 	return nil
 }
 
-// DeleteTagGlobally removes a tag from all articles in the wiki.
-// Enforces validation: it returns an error if the tag is a tool-managed memory-scope tag.
-func (s *Storage) DeleteTagGlobally(tag string) error {
+// TagDeletionDoc is one document a global tag deletion rewrote, as the sweep saw it at the
+// moment of the rewrite. The metadata is captured under the write lock, from the save itself,
+// so a report entry means the sweep rewrote that document — never that some other writer's
+// change happens to look like one.
+type TagDeletionDoc struct {
+	Slug    string
+	Title   string
+	Type    string
+	Version int
+	Tags    []string
+}
+
+// TagDeletionFailure is the document whose failed save stopped a global tag deletion early.
+type TagDeletionFailure struct {
+	Slug string
+	Err  string
+}
+
+// TagDeletionReport is what a global tag deletion actually did. Rewritten holds one entry per
+// document the sweep rewrote; Skipped holds the documents it could not open and left alone,
+// warned about by getArticleForScan; Failed holds the document whose failed save stopped the
+// sweep (the first failure ends it, so at most one). A document carrying no variant of the tag
+// is in none of them: the sweep did nothing to it. A rerun that finds nothing to rewrite
+// returns an empty report, and rerunning after an interrupted sweep rewrites exactly the
+// documents that still carry the tag.
+type TagDeletionReport struct {
+	Tag       string
+	Rewritten []TagDeletionDoc
+	Failed    []TagDeletionFailure
+	Skipped   []string
+}
+
+// DeleteTagGlobally removes a tag from all articles in the wiki and reports what it did. Every
+// case-insensitive variant of the tag goes with it: a document carrying "Foo", "foo", and "FOO"
+// is left with none of them, all in the one rewrite. A document that cannot be opened is
+// skipped with the warning getArticleForScan logs, so one broken file neither fails the sweep
+// nor silently keeps its tag; the report names it. Enforces validation: it returns an error if
+// the tag is a tool-managed memory-scope tag.
+//
+// writeMu is taken per document, not held across the whole sweep. Each document's rewrite is
+// still atomic — re-read, saved, history snapshotted, and indexed under the one hold — but an
+// unrelated write (a web edit, an MCP write, the plan lifecycle worker) now waits out one
+// document rather than the whole corpus, and the sweep waits out one such write per document
+// rather than one per sweep. A document edited between two holds is re-read under the next
+// one, so a concurrent edit and the sweep never write the same document at once: whichever of
+// them holds the lock last decides the file, whole and uncorrupted either way.
+//
+// The sweep is not atomic across documents and does not pretend to be. One stopped by a
+// closing storage or a failed save returns the error alongside the report of what it had
+// already rewritten, and rerunning the deletion finishes the remainder: a document already
+// rewritten carries no variant of the tag, so the rerun leaves it alone, and one that still
+// does is rewritten then. The listing is a snapshot, so a document that gains the tag
+// mid-sweep is that rerun's to catch as well.
+func (s *Storage) DeleteTagGlobally(tag string) (*TagDeletionReport, error) {
 	tagLower := strings.ToLower(tag)
 	if strings.HasPrefix(tagLower, MemoryScopeTagPrefix) {
-		return fmt.Errorf("cannot delete protected memory-scope tag: %s", tag)
+		return nil, fmt.Errorf("cannot delete protected memory-scope tag: %s", tag)
 	}
 
-	// Held across the whole sweep so the operation is all-or-nothing with respect to other
-	// writers, rather than interleaving per-article saves with concurrent edits.
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	report := &TagDeletionReport{Tag: tag}
 
+	// Refused before the wiki is even listed, the way every write entry point refuses: a closed
+	// storage answers ErrStorageClosed whatever the corpus carries. The check that matters is
+	// the one under writeMu below; this one keeps the sweep from doing a listing's work for a
+	// storage that will refuse every document.
+	if s.closed.Load() {
+		return report, ErrStorageClosed
+	}
 	articles, err := s.ListArticles()
 	if err != nil {
-		return err
+		return report, err
 	}
 
 	for _, artMeta := range articles {
-		art, err := s.GetArticle(artMeta.Slug)
-		if err != nil {
+		// One document per hold of writeMu. The closed check under the lock is what turns the
+		// sweep away once Close has begun: closed is set before Close waits for writeMu, so any
+		// hold taken after that sees it, and the sweep stops between documents with the report
+		// of what it had already rewritten. At most the one document saved under the hold in
+		// progress when Close began lands after it.
+		s.writeMu.Lock()
+		if s.closed.Load() {
+			s.writeMu.Unlock()
+			log.Printf("Global deletion of tag '%s' stopped early: storage closed with %d %s rewritten; rerunning the deletion finishes the remainder",
+				tag, len(report.Rewritten), plural(len(report.Rewritten), "document", "documents"))
+			return report, ErrStorageClosed
+		}
+
+		// Re-read under the lock, not from the listing: a document edited since is seen as the
+		// edit left it, and the edit waits out this hold rather than interleaving with it.
+		art, ok := s.getArticleForScan(artMeta.Slug)
+		if !ok {
+			report.Skipped = append(report.Skipped, artMeta.Slug)
+			s.writeMu.Unlock()
 			continue
 		}
 
-		// Check if tag is present
-		tagIndex := -1
-		for i, t := range art.Tags {
+		// Every case-insensitive variant leaves in the one rewrite: matching only the first let a
+		// "global" deletion strand "Foo" behind because it also found "foo".
+		newTags := make([]string, 0, len(art.Tags))
+		for _, t := range art.Tags {
 			if strings.ToLower(t) == tagLower {
-				tagIndex = i
-				break
+				continue
 			}
+			newTags = append(newTags, t)
 		}
-
-		if tagIndex != -1 {
-			// Remove the tag
-			newTags := append(art.Tags[:tagIndex], art.Tags[tagIndex+1:]...)
-			// Save the updated article
-			_, err = s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type, ArticleOverrides{})
-			if err != nil {
-				return fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
-			}
+		if len(newTags) == len(art.Tags) {
+			// Carries no variant of the tag: already rewritten by an earlier run, or cleaned by
+			// the concurrent edit that bumped it since the listing. Nothing to rewrite, nothing
+			// to report.
+			s.writeMu.Unlock()
+			continue
 		}
+		// Save the updated article
+		saved, err := s.saveArticleLocked(art.Slug, art.Title, art.Content, art.Description, art.Source, art.Resource, fmt.Sprintf("Removed tag '%s' globally", tag), newTags, art.Type, ArticleOverrides{KeepSlug: true})
+		s.writeMu.Unlock()
+		if err != nil {
+			report.Failed = append(report.Failed, TagDeletionFailure{Slug: art.Slug, Err: err.Error()})
+			log.Printf("Global deletion of tag '%s' stopped on article %s: %v; %d %s rewritten before the failure keep the tag removed, and a rerun finishes the remainder",
+				tag, art.Slug, err, len(report.Rewritten), plural(len(report.Rewritten), "document", "documents"))
+			return report, fmt.Errorf("failed to update article %s during global tag deletion: %w", art.Slug, err)
+		}
+		// Recorded from the save itself, under the lock: this is the sweep's own account of
+		// what it rewrote, which is what the announcement announces and the report reports.
+		report.Rewritten = append(report.Rewritten, TagDeletionDoc{
+			Slug:    saved.Slug,
+			Title:   saved.Title,
+			Type:    saved.Type,
+			Version: saved.Version,
+			Tags:    saved.Tags,
+		})
 	}
 
-	return nil
+	return report, nil
 }

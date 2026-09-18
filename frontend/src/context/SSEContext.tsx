@@ -7,6 +7,7 @@ export const SSEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activityLog, setActivityLog] = useState<LogEvent[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isConnected, setIsConnected] = useState(false);
+  const [missedEvents, setMissedEvents] = useState(false);
 
   // Keep a ref to unread buffering
   const unreadBufferRef = useRef<number>(0);
@@ -109,6 +110,24 @@ export const SSEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           console.error('Failed to parse SSE wiki-update:', err);
         }
       });
+
+      // The server replaces a backlog it could not deliver with one "missed events" marker: the
+      // live stream fell behind (a bulk write outpaced the buffer) and dropped events on the way.
+      // Reload through the same window event a wiki update rides, so the existing coalesced-reload
+      // path picks it up, and flag it so the activity drawer can say its list is incomplete.
+      eventSource.addEventListener('missed-events', () => {
+        setMissedEvents(true);
+        const marker: WikiUpdate = {
+          type: 'updates-missed',
+          slug: '',
+          title: '',
+          tags: [],
+          directory: 'wiki',
+          total_count: 0,
+          directory_count: 0,
+        };
+        window.dispatchEvent(new CustomEvent('nexwiki-update', { detail: marker }));
+      });
     };
 
     const handleRefresh = () => {
@@ -141,8 +160,14 @@ export const SSEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setUnreadCount(0);
   };
 
+  const acknowledgeMissedEvents = () => {
+    setMissedEvents(false);
+  };
+
   return (
-    <SSEContext.Provider value={{ activityLog, unreadCount, resetUnreadCount, isConnected }}>
+    <SSEContext.Provider
+      value={{ activityLog, unreadCount, resetUnreadCount, isConnected, missedEvents, acknowledgeMissedEvents }}
+    >
       {children}
     </SSEContext.Provider>
   );

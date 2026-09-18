@@ -7,6 +7,8 @@ export const mockSSEContext: SSEContextType = {
   unreadCount: 0,
   resetUnreadCount: () => {},
   isConnected: true,
+  missedEvents: false,
+  acknowledgeMissedEvents: () => {},
 };
 
 export function withSSEContext(ui: React.ReactElement, ctx: Partial<SSEContextType> = {}): React.ReactElement {

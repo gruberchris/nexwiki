@@ -38,8 +38,10 @@ func (s *Storage) ExportOKFBundle() ([]byte, error) {
 	var full []*Article
 	pathForSlug := make(map[string]string)
 	for _, m := range metas {
-		a, err := s.GetArticle(m.Slug)
-		if err != nil {
+		// Skipped with the once-per-version warning getArticleForScan logs: a document that will
+		// not open leaves the bundle short by itself, not the export failed by one file.
+		a, ok := s.getArticleForScan(m.Slug)
+		if !ok {
 			continue
 		}
 		full = append(full, a)
@@ -184,6 +186,11 @@ type OKFImportReport struct {
 	Skipped     int      `json:"skipped"`
 	MissingType []string `json:"missing_type"`
 	Warnings    []string `json:"warnings"`
+
+	// saved holds the metadata of each document the import wrote, in bundle order and without its
+	// body, so a caller can announce every change it made. Unexported, so it is not part of the
+	// report a client receives.
+	saved []Article
 }
 
 // ImportOKFBundle walks a zipped OKF bundle, parsing each non-reserved .md as an OKF concept
@@ -197,6 +204,11 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 	}
 
 	report := &OKFImportReport{}
+	// The report goes to a client verbatim, so an error in a warning has the data directory hidden
+	// as clientError hides it. Only the error: the entry name is the bundle's own, and a relative
+	// -data such as "wiki" would otherwise cut the front off an entry named wiki/foo.md.
+	hider := newDataDirHider(s.DataDir)
+	errText := func(err error) string { return hider.hide(err.Error()) }
 	var totalDecompressed int64
 	entriesSeen := 0
 	for _, f := range zr.File {
@@ -226,7 +238,7 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 
 		rc, err := f.Open()
 		if err != nil {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v", f.Name, err))
+			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %s", f.Name, errText(err)))
 			continue
 		}
 		// Read at most one byte beyond the cap so an oversized entry is detectable, and bound the
@@ -234,7 +246,7 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 		raw, err := io.ReadAll(io.LimitReader(rc, maxBundleEntryBytes+1))
 		_ = rc.Close()
 		if err != nil {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v", f.Name, err))
+			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %s", f.Name, errText(err)))
 			continue
 		}
 		if len(raw) > maxBundleEntryBytes {
@@ -247,7 +259,7 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 
 		art, err := parseArticleFile(raw, true)
 		if err != nil {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: not a valid OKF concept document: %v", f.Name, err))
+			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: not a valid OKF concept document: %s", f.Name, errText(err)))
 			report.Skipped++
 			continue
 		}
@@ -304,9 +316,12 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 		// exactly the corpus-wide data loss a bundle is supposed to prevent.
 		importKind := art.MemoryKind
 
+		// An update was matched to the article by slug, so it stays there whatever the bundle's
+		// title yields.
 		overrides := ArticleOverrides{
 			Status:     &importStatus,
 			MemoryKind: &importKind,
+			KeepSlug:   oldSlug != "",
 		}
 		if len(art.Sources) > 0 {
 			overrides.Sources = &art.Sources
@@ -339,11 +354,15 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 			overrides.Attester = art.Attester
 		}
 
-		if _, err := s.SaveArticleWithOverrides(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, normalizeType(art.Type), overrides); err != nil {
-			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: save failed: %v", f.Name, err))
+		saved, err := s.SaveArticleWithOverrides(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, normalizeType(art.Type), overrides)
+		if err != nil {
+			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: save failed: %s", f.Name, errText(err)))
 			continue
 		}
 		report.Imported++
+		meta := *saved
+		meta.Content = ""
+		report.saved = append(report.saved, meta)
 	}
 
 	return report, nil

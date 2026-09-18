@@ -155,7 +155,7 @@ That sequence exercises every piece of the system: the ingest skill, overview + 
 * **`since` formats**: `get_recent_activity` accepts Go durations (`30m`, `24h`, `168h` for a week) or RFC3339 timestamps.
 * **Descriptions pay rent**: the one-line `description` field is what makes `get_context_overview` powerful. Encourage agents (via the guidelines skill) to set it on everything they create; add them yourself in the editor's description input when writing manually.
 * **Sources keep knowledge auditable**: a `source` can be a URL, a document reference, or simply `"conversation with Chris, 2026-06-11"`. Six months later, provenance is the difference between trusting and re-verifying a note.
-* **Stdio fallback**: if you must use stdio transport (no running web server), remember each stdio client spawns its own process — don't combine it with a running server on the same data directory, or Bleve lock contention can occur.
+* **Stdio fallback**: each stdio client spawns its own `nexwiki -mcp-only` process. If the web server is already running, that process proxies to it. Otherwise it opens the data directory itself, and a web server started on that directory while it runs exits with a search-index lock error — so start the web server first. See [Connecting Clients](./mcp_server.md#-connecting-clients).
 
 ---
 

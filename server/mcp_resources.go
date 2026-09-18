@@ -74,7 +74,8 @@ func legacyResourceCapability() map[string]interface{} {
 func (srv *Server) listResources(cursor string) (interface{}, *JSONRPCError) {
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		return nil, &JSONRPCError{Code: errCodeInternal, Message: "failed to list articles: " + err.Error()}
+		// ListArticles' error already says it failed to list articles.
+		return nil, &JSONRPCError{Code: errCodeInternal, Message: srv.clientError(err)}
 	}
 	if home, err := srv.Storage.GetArticle("home"); err == nil {
 		articles = append([]Article{*home}, articles...)

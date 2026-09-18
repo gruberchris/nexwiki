@@ -3,13 +3,10 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 )
 
 // This file holds wiki_health, the maintenance tool. Everything it reports is something the wiki
@@ -63,6 +60,14 @@ type HealthFinding struct {
 	Detail string `json:"detail"`
 }
 
+// MisplacedDocumentFinding is a misplaced document as wiki_health reports it: where the file is, the
+// slug it declares, and a fix that is safe to follow. See misplacedRemedy.
+type MisplacedDocumentFinding struct {
+	Path   string `json:"path"`
+	Slug   string `json:"slug"`
+	Remedy string `json:"remedy"`
+}
+
 // HealthOutput is the wiki_health payload. Counts are reported separately from the item lists
 // because the lists are capped: a wiki with 400 orphans should say so without returning 400 items.
 type HealthOutput struct {
@@ -77,6 +82,14 @@ type HealthOutput struct {
 	// with broken front matter would not exist as far as the report could tell.
 	UnreadableFileCount int              `json:"unreadable_file_count"`
 	UnreadableFiles     []UnreadableFile `json:"unreadable_files"`
+
+	// MisplacedDocumentCount and MisplacedDocuments report documents that parse but are not stored
+	// as <slug>.md directly in the article directory: one in a subfolder, a copy whose filename
+	// differs from its slug, or one whose slug is not in slug form. Every scan leaves one out and no
+	// lookup finds one, so like an unreadable file it is missing from listings, search, export,
+	// total_documents, and every other category.
+	MisplacedDocumentCount int                        `json:"misplaced_document_count"`
+	MisplacedDocuments     []MisplacedDocumentFinding `json:"misplaced_documents"`
 
 	OrphanCount     int             `json:"orphan_count"`
 	Orphans         []HealthFinding `json:"orphans"`
@@ -166,6 +179,12 @@ func healthOutputSchema() map[string]interface{} {
 		"error": schemaOf("string", "Why the file could not be read or parsed, or the directory could not be listed."),
 	}, "path", "error")
 
+	misplaced := schemaObject(map[string]interface{}{
+		"path":   schemaOf("string", "Path relative to the article directory, slash-separated."),
+		"slug":   schemaOf("string", "The document's slug, declared in its front matter or derived from its title. A document belongs at <slug>.md directly in the article directory, with a slug of lowercase letters, digits, and hyphens."),
+		"remedy": schemaOf("string", "How to fix it without overwriting another file: it never suggests moving the document to a path another file already holds."),
+	}, "path", "slug", "remedy")
+
 	return schemaObject(map[string]interface{}{
 		"total_documents":            schemaOf("integer", "Documents scanned, including the home dashboard."),
 		"stale_days":                 schemaOf("integer", "Age threshold applied to in-flight plans."),
@@ -173,6 +192,8 @@ func healthOutputSchema() map[string]interface{} {
 		"truncated":                  schemaOf("boolean", "True when a category hit the limit and its list is shorter than its count."),
 		"unreadable_file_count":      schemaOf("integer", "Entries in unreadable_files: article files that could not be read or parsed, plus directories that could not be listed, each directory counted once however many articles it holds. None of them are in total_documents or any other check."),
 		"unreadable_files":           schemaArrayOf(unreadable, "Unreadable article files and unlistable directories (path ending in /), sorted by path, up to the limit."),
+		"misplaced_document_count":   schemaOf("integer", "Documents not stored as <slug>.md directly in the article directory: in a subfolder, under a filename that differs from their slug (case included), or with a slug not in slug form. Listings, search, and export leave them out, they cannot be opened or edited by slug, and none of them are in total_documents or any other check."),
+		"misplaced_documents":        schemaArrayOf(misplaced, "Misplaced documents, sorted by path, up to the limit."),
 		"orphan_count":               schemaOf("integer", "Documents no other document links to."),
 		"orphans":                    schemaArrayOf(finding, "Orphaned documents, up to the limit."),
 		"broken_link_count":          schemaOf("integer", "Internal links with no destination, in either link form."),
@@ -200,6 +221,7 @@ func healthOutputSchema() map[string]interface{} {
 		"plan_status_census":         planStatusCensusSchema(),
 	}, "total_documents", "stale_days", "limit", "truncated",
 		"unreadable_file_count", "unreadable_files",
+		"misplaced_document_count", "misplaced_documents",
 		"orphan_count", "orphans", "broken_link_count", "broken_links",
 		"unsourced_memory_count", "unsourced_memories",
 		"unkinded_memory_count", "unkinded_memories",
@@ -213,7 +235,7 @@ func healthOutputSchema() map[string]interface{} {
 var wikiHealthTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "wiki_health",
-		"description": "Audit the knowledge base for maintenance work: article files that cannot be read or parsed (such as malformed front matter) and article folders that cannot be listed, orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source' or without a 'memory_kind', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
+		"description": "Audit the knowledge base for maintenance work: article files that cannot be read or parsed (such as malformed front matter) and article folders that cannot be listed, documents stored somewhere other than articles/<slug>.md (in a subfolder, copied under another filename, or with a slug not in slug form), which cannot be opened and which listings, search, and every other check leave out, orphan pages nothing links to, broken internal links (both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links), agent memories recorded without a 'source' or without a 'memory_kind', in-flight plans that have gone stale, skills nothing points an agent at, memories nothing has read or edited in months, and near-duplicate memories in the same scope that may have drifted apart. Use it at the start of a maintenance session, or before a big reorganization, to find what needs attention without reading every document.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -267,7 +289,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 
 	graph, err := srv.Storage.ScanLinkGraph()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning the wiki: " + errorForClient(srv.Storage.ArticleDir, err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning the wiki: " + srv.clientError(err)}}}, nil
 	}
 
 	slugs := make([]string, 0, len(graph.Meta))
@@ -285,7 +307,9 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 	}
 
 	now := time.Now()
-	staleBefore := now.AddDate(0, 0, -staleDays)
+	// Not AddDate, which wraps for a day count past about 1e14 and can put the cutoff in the future,
+	// where every unfinished plan is stale. A capped count puts it some 292 years back.
+	staleBefore := now.Add(-daysToDuration(staleDays))
 	orphans := []HealthFinding{}
 	unsourced := []HealthFinding{}
 	unkinded := []HealthFinding{}
@@ -418,6 +442,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		StaleDays:              staleDays,
 		Limit:                  limit,
 		UnreadableFileCount:    len(graph.Unreadable),
+		MisplacedDocumentCount: len(graph.Misplaced),
 		UnreferencedSkillCount: len(unreferencedSkills),
 		OrphanCount:            len(orphans),
 		BrokenLinkCount:        len(graph.Broken),
@@ -463,12 +488,174 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		out.UnreadableFiles = out.UnreadableFiles[:limit]
 		out.Truncated = true
 	}
-	out.UnreadableFiles = unreadableForClient(srv.Storage.ArticleDir, out.UnreadableFiles)
+	out.UnreadableFiles = unreadableForClient(srv.Storage.DataDir, out.UnreadableFiles)
+	// Paths are relative by construction, so unlike an unreadable file's OS error there is nothing
+	// here that could name the server's directory.
+	out.MisplacedDocuments = misplacedFindings(graph, limit, srv.Storage.caseInsensitive)
+	if len(graph.Misplaced) > limit {
+		out.Truncated = true
+	}
 
 	return ToolResponse{
 		Content:           []ToolContent{{Type: "text", Text: renderHealthReport(out)}},
 		StructuredContent: out,
 	}, nil
+}
+
+// misplacedFindings returns the first limit misplaced documents in graph, each with its remedy.
+//
+// Whether a remedy's destination is free is decided against the whole scan, not just the documents
+// reported, and so are competing claims on one. articles/<slug>.md is taken by a document with that
+// slug, and also by an unreadable or misplaced file stored under that name, none of which a
+// suggestion may overwrite. And a destination that is free now is only safe to suggest to one
+// document: two copies of an unzipped bundle each told to move to articles/bar.md would, followed
+// together, leave one of them overwritten.
+func misplacedFindings(graph *LinkGraph, limit int, caseInsensitive bool) []MisplacedDocumentFinding {
+	key := func(name string) string {
+		if caseInsensitive {
+			return asciiLower(name)
+		}
+		return name
+	}
+	nonDocuments := make(map[string]string, len(graph.Unreadable)+len(graph.Misplaced))
+	for _, f := range graph.Unreadable {
+		nonDocuments[key(f.Path)] = f.Path
+	}
+	for _, d := range graph.Misplaced {
+		nonDocuments[key(d.Path)] = d.Path
+	}
+	// A document's own file does not take the slug its filename offers: it is already there.
+	occupiedFor := func(d MisplacedDocument) func(slug string) bool {
+		return func(slug string) bool {
+			if _, ok := graph.Meta[slug]; ok {
+				return true
+			}
+			holder, ok := nonDocuments[key(slug+".md")]
+			return ok && holder != d.Path
+		}
+	}
+
+	// Destinations are slugs, which are already lowercase, so they need no key of their own.
+	claims := map[string]int{}
+	for _, d := range graph.Misplaced {
+		if dest, ok := misplacedDestination(d, caseInsensitive, occupiedFor(d)); ok {
+			claims[dest]++
+		}
+	}
+
+	docs := graph.Misplaced
+	if len(docs) > limit {
+		docs = docs[:limit]
+	}
+	findings := make([]MisplacedDocumentFinding, 0, len(docs))
+	for _, d := range docs {
+		findings = append(findings, MisplacedDocumentFinding{
+			Path:   d.Path,
+			Slug:   d.Slug,
+			Remedy: misplacedRemedy(d, caseInsensitive, occupiedFor(d), func(slug string) int { return claims[slug] }),
+		})
+	}
+	return findings
+}
+
+// misplacedShape is what a remedy for a misplaced document is worked out from.
+type misplacedShape struct {
+	stem     string // the filename without .md
+	topLevel bool   // directly in the article directory, not in a subdirectory
+	target   string // the slug it can have: Slugify of its slug, empty when there is none
+	// inPlace is true when the file is already stored as articles/<target>.md, so only its slug is
+	// wrong and fixing it moves nothing.
+	inPlace bool
+}
+
+func shapeOf(d MisplacedDocument, caseInsensitive bool) misplacedShape {
+	dir, file := path.Split(d.Path)
+	sh := misplacedShape{
+		stem:     strings.TrimSuffix(file, ".md"),
+		topLevel: dir == "",
+		target:   Slugify(d.Slug),
+	}
+	if sh.topLevel && sh.target != "" {
+		if caseInsensitive {
+			sh.inPlace = asciiEqualFold(sh.stem, sh.target)
+		} else {
+			sh.inPlace = sh.stem == sh.target
+		}
+	}
+	return sh
+}
+
+// misplacedDestination reports the slug whose articles/<slug>.md a remedy for d would put it at, by
+// moving it, renaming it, or changing its slug and moving it, if its remedy does any of those. One
+// whose destination is taken is told not to move, and one already there moves nothing.
+func misplacedDestination(d MisplacedDocument, caseInsensitive bool, occupied func(slug string) bool) (string, bool) {
+	sh := shapeOf(d, caseInsensitive)
+	if sh.target == "" || sh.inPlace || occupied(sh.target) {
+		return "", false
+	}
+	return sh.target, true
+}
+
+// misplacedRemedy says how to fix a misplaced document, as a sentence for the report. occupied
+// reports whether articles/<slug>.md already holds some other file, claims how many misplaced
+// documents' remedies would otherwise put a file there, and caseInsensitive is how the article
+// directory compares names (see Storage.isCanonical).
+//
+// Moving a document to where its slug says it belongs is only suggested when nothing is there and
+// no other misplaced document is told the same. The usual misplaced file is a copy, cp bar.md
+// bar-copy.md, still declaring slug bar, and moving it to articles/bar.md would overwrite the real
+// document: the data loss the misplaced rule exists to prevent. What is left then is giving it a slug
+// of its own, its filename's where that is free and in slug form, or deleting it.
+func misplacedRemedy(d MisplacedDocument, caseInsensitive bool, occupied func(slug string) bool, claims func(slug string) int) string {
+	sh := shapeOf(d, caseInsensitive)
+	target := sh.target
+
+	// ownSlug is a slug the document could take without moving: its filename, where that is one.
+	ownSlug := ""
+	if sh.topLevel {
+		candidate := sh.stem
+		if caseInsensitive {
+			candidate = asciiLower(sh.stem)
+		}
+		if candidate != "" && candidate != target && isSlugForm(candidate) && !occupied(candidate) {
+			ownSlug = candidate
+		}
+	}
+	const deleteIt = "or delete it if it's a copy."
+
+	var fix string
+	switch {
+	case target == "":
+		if ownSlug != "" {
+			return fmt.Sprintf("Change its slug to %q to match its filename, %s", ownSlug, deleteIt)
+		}
+		return "Give it an unused slug of lowercase letters, digits, and hyphens and store it as articles/<slug>.md, " + deleteIt
+	case sh.inPlace:
+		// Only the slug is out of slug form; the file is already where the corrected one lives.
+		fix = fmt.Sprintf("Change its slug to %q to match its filename", target)
+	case occupied(target):
+		if ownSlug != "" {
+			return fmt.Sprintf("articles/%s.md already exists, so do not move it there. Change its slug to %q to match its filename, %s", target, ownSlug, deleteIt)
+		}
+		return fmt.Sprintf("articles/%s.md already exists, so do not move it there. Delete it if it's a copy, or give it an unused slug and store it as articles/<slug>.md.", target)
+	case claims(target) > 1:
+		contested := fmt.Sprintf("%d misplaced documents claim articles/%s.md: move at most one there, and delete or re-slug the others", claims(target), target)
+		if ownSlug != "" {
+			contested += fmt.Sprintf(" (this one could take the slug %q to match its filename)", ownSlug)
+		}
+		return contested + "."
+	case target != d.Slug:
+		fix = fmt.Sprintf("Change its slug to %q and move it to articles/%s.md", target, target)
+	case sh.topLevel && asciiEqualFold(sh.stem, target):
+		// Reachable only where case matters: elsewhere this file would be in place.
+		fix = fmt.Sprintf("Rename it to articles/%s.md, in lowercase", target)
+	default:
+		fix = fmt.Sprintf("Move it to articles/%s.md", target)
+	}
+	if ownSlug != "" {
+		fix += fmt.Sprintf(" (or change its slug to %q to match its filename)", ownSlug)
+	}
+	return fix + ", " + deleteIt
 }
 
 // isFinished reports whether a plan's status says its life is over.
@@ -513,113 +700,17 @@ func capFindings(findings []HealthFinding, limit int, truncated bool) ([]HealthF
 }
 
 // unreadableForClient returns a copy of a scan's unreadable files whose errors no longer reveal
-// where the wiki lives on the server. An OS read error embeds the path the scan opened, which sits
-// under the article directory, and that absolute path is the server's business, not an MCP
-// client's. Each error names the file by the relative path its entry already carries instead.
-func unreadableForClient(articleDir string, files []UnreadableFile) []UnreadableFile {
-	hider := newArticleDirHider(articleDir)
+// where the wiki lives on the server. An OS error names the path it failed on, and that comes out
+// relative to the data directory, as in every other tool's errors, so a file that cannot be read
+// says the same here as from read_article. Each entry's path stays relative to the article
+// directory, as documented.
+func unreadableForClient(dataDir string, files []UnreadableFile) []UnreadableFile {
+	hider := newDataDirHider(dataDir)
 	out := make([]UnreadableFile, 0, len(files))
 	for _, f := range files {
-		out = append(out, UnreadableFile{Path: f.Path, Error: hider.hide(f.Error, f.Path)})
+		out = append(out, UnreadableFile{Path: f.Path, Error: hider.hide(f.Error)})
 	}
 	return out
-}
-
-// errorForClient is the text of an error that stopped a whole-wiki operation, with the article
-// directory hidden as unreadableForClient hides it. When the article directory itself cannot be
-// opened, the OS error names it.
-func errorForClient(articleDir string, err error) string {
-	return newArticleDirHider(articleDir).hide(err.Error(), "")
-}
-
-// articleDirHider rewrites text so it names paths relative to the article directory rather than
-// where that directory sits on the server's disk.
-type articleDirHider struct {
-	dirs []string
-}
-
-// pathReplacement is one string articleDirHider swaps out. A bounded one only matches where a path
-// ends, so it cannot replace the front of a longer name.
-type pathReplacement struct {
-	old, new string
-	bounded  bool
-}
-
-func newArticleDirHider(articleDir string) articleDirHider {
-	// The scan opens paths joined onto ArticleDir as configured, which may be relative, so both
-	// that form and the absolute one are scrubbed.
-	dirs := []string{filepath.Clean(articleDir)}
-	if abs, err := filepath.Abs(articleDir); err == nil && abs != dirs[0] {
-		dirs = append(dirs, abs)
-	}
-	return articleDirHider{dirs: dirs}
-}
-
-// hide returns text with the article directory hidden. relPath, when not empty, is the
-// slash-separated path of the file the text is about, or of the directory when it ends in /.
-func (h articleDirHider) hide(text, relPath string) string {
-	// Where several replacements match at one position the earliest wins, so the file's full path
-	// goes before the directory it sits in, and a directory with its separator before the bare one.
-	var reps []pathReplacement
-	if relPath != "" {
-		for _, dir := range h.dirs {
-			full := filepath.Join(dir, filepath.FromSlash(relPath))
-			if !strings.HasSuffix(relPath, "/") {
-				reps = append(reps, pathReplacement{old: full, new: relPath})
-				continue
-			}
-			// A directory's relPath brings its own trailing separator, which Join dropped, so a path
-			// inside the directory has its separator replaced rather than doubled (dir//x.md). The
-			// bare directory must end where its name does, or a sibling would become dir/-old.
-			reps = append(reps,
-				pathReplacement{old: full + string(filepath.Separator), new: relPath},
-				pathReplacement{old: full, new: relPath, bounded: true})
-		}
-	}
-	// Any other mention of the directory goes too, but only in absolute form: a short relative
-	// directory such as "articles" could match ordinary error text. Swapping a path's directory
-	// prefix leaves a valid relative path whatever follows, but the bare directory becoming "."
-	// does not, so that one is bounded: /srv/data/articles-old must not become .-old.
-	for _, dir := range h.dirs {
-		if filepath.IsAbs(dir) {
-			reps = append(reps,
-				pathReplacement{old: dir + string(filepath.Separator)},
-				pathReplacement{old: dir, new: ".", bounded: true})
-		}
-	}
-	if len(reps) == 0 {
-		return text
-	}
-
-	// One left-to-right pass that never rescans what it has already replaced.
-	var b strings.Builder
-	for i := 0; i < len(text); {
-		matched := false
-		for _, r := range reps {
-			if strings.HasPrefix(text[i:], r.old) && (!r.bounded || pathEndsAt(text, i+len(r.old))) {
-				b.WriteString(r.new)
-				i += len(r.old)
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			b.WriteByte(text[i])
-			i++
-		}
-	}
-	return b.String()
-}
-
-// pathEndsAt reports whether a path running up to text[i] ends there. A separator, whitespace, or
-// the punctuation that closes a path in error text ends it. Anything else is taken to continue the
-// name, since a file name may legally hold it.
-func pathEndsAt(text string, i int) bool {
-	if i == len(text) {
-		return true
-	}
-	r, _ := utf8.DecodeRuneInString(text[i:])
-	return (r < utf8.RuneSelf && os.IsPathSeparator(uint8(r))) || unicode.IsSpace(r) || strings.ContainsRune(":;,\"'`)]}", r)
 }
 
 // renderHealthReport writes the prose from the same value the structured payload carries, so the
@@ -629,6 +720,7 @@ func renderHealthReport(out HealthOutput) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "NexWiki Health Report (%d documents scanned)\n\n", out.TotalDocuments)
 	fmt.Fprintf(&b, "- Unreadable article files and folders (skipped by every check): %d\n", out.UnreadableFileCount)
+	fmt.Fprintf(&b, "- Misplaced documents (not at articles/<slug>.md, skipped by every check): %d\n", out.MisplacedDocumentCount)
 	fmt.Fprintf(&b, "- Orphan pages: %d\n", out.OrphanCount)
 	fmt.Fprintf(&b, "- Broken internal links: %d\n", out.BrokenLinkCount)
 	fmt.Fprintf(&b, "- Memories with no source: %d\n", out.UnsourcedCount)
@@ -666,7 +758,7 @@ func renderHealthReport(out HealthOutput) string {
 		b.WriteString("\n")
 	}
 
-	needsAttention := out.UnreadableFileCount + out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount + out.UnkindedCount + out.ContestedCount +
+	needsAttention := out.UnreadableFileCount + out.MisplacedDocumentCount + out.OrphanCount + out.BrokenLinkCount + out.UnsourcedCount + out.UnkindedCount + out.ContestedCount +
 		out.StalePlanCount + out.StaleConceptCount + out.ColdMemoryCount + out.DuplicateCount + out.UnreferencedSkillCount
 	if needsAttention == 0 {
 		b.WriteString("\nNothing needs attention — the wiki is healthy. 🎉\n")
@@ -686,8 +778,8 @@ func renderHealthReport(out HealthOutput) string {
 		}
 	}
 
-	// Unreadable files come first: every other category is blind to them, so fixing one can change
-	// what the rest of the report says.
+	// Unreadable files and misplaced documents come first: every other category is blind to them,
+	// so fixing one can change what the rest of the report says.
 	if out.UnreadableFileCount > 0 {
 		fmt.Fprintf(&b, "\n== Unreadable article files and folders (%d) ==\n", out.UnreadableFileCount)
 		for _, f := range out.UnreadableFiles {
@@ -706,6 +798,17 @@ func renderHealthReport(out HealthOutput) string {
 		}
 		if len(out.UnreadableFiles) < out.UnreadableFileCount {
 			fmt.Fprintf(&b, "  ... and %d more; raise 'limit' to see them.\n", out.UnreadableFileCount-len(out.UnreadableFiles))
+		}
+	}
+
+	if out.MisplacedDocumentCount > 0 {
+		fmt.Fprintf(&b, "\n== Misplaced documents (%d) ==\n", out.MisplacedDocumentCount)
+		for _, d := range out.MisplacedDocuments {
+			fmt.Fprintf(&b, "- %s (slug %q) — not a document, so no listing, search, lookup, or check includes it. %s\n",
+				d.Path, d.Slug, d.Remedy)
+		}
+		if len(out.MisplacedDocuments) < out.MisplacedDocumentCount {
+			fmt.Fprintf(&b, "  ... and %d more; raise 'limit' to see them.\n", out.MisplacedDocumentCount-len(out.MisplacedDocuments))
 		}
 	}
 

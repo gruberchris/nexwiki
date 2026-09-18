@@ -771,6 +771,8 @@ func postMCP(t *testing.T, srv *Server, method string, body string, headers map[
 	handler := EnableCORS(LimitRequestBodies(mux))
 
 	req := httptest.NewRequest(method, MCPEndpointPath, strings.NewReader(body))
+	// httptest defaults Host to example.com, which EnableCORS rejects as a DNS name.
+	req.Host = loopbackHost
 	req.Header.Set("Content-Type", "application/json")
 	for name, value := range headers {
 		req.Header.Set(name, value)

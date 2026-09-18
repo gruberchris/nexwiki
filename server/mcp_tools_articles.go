@@ -105,7 +105,7 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		MemoryKind:      memoryKind,
 	})
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
 	}
 
 	// Describe the applied facets so the agent can tell "no such knowledge" from "my filter
@@ -223,7 +223,7 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 
 	art, err := srv.Storage.GetArticle(readArgs.Slug)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error loading article '%s': %v", readArgs.Slug, err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error loading article '%s': %s", readArgs.Slug, srv.clientError(err))}}}, nil
 	}
 
 	// Return tags in read metadata
@@ -297,24 +297,44 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		art.Type, art.Title, art.Slug, art.Version, art.CreatedAt.Format(time.RFC3339), art.Timestamp.Format(time.RFC3339),
 		descStr, resourceStr, sourceStr, sourcesStr, tagsStr, trustTierStr, compStr, staleWarning, art.Content)
 
-	// Append inbound links for graph discoverability; never fail the read over a scan error
+	// Append inbound links for graph discoverability; never fail the read over a scan error.
+	//
+	// The scan itself, not GetBacklinks: a read is one of the two places an agent checks what
+	// references a page before editing or deleting it, so the entries the walk skipped — unreadable
+	// files, misplaced documents — are reported in the structured output and the note below rather
+	// than letting a missing Linked from list read as "nothing references this" (#162).
 	links := []DocumentLink{}
-	if backlinks, blErr := srv.Storage.GetBacklinks(art.Slug); blErr == nil && len(backlinks) > 0 {
-		const maxShownBacklinks = 15
-		var refs []string
-		for i, bl := range backlinks {
-			// The structured payload carries every backlink. Only the prose is truncated,
-			// because that cap exists to keep a read from burying the article in a link list.
-			links = append(links, DocumentLink{Title: bl.Title, Slug: bl.Slug})
-			if i >= maxShownBacklinks {
-				continue
+	out := ArticleOutput{Article: *art, Backlinks: links}
+	if scan, blErr := srv.Storage.scanBacklinks(art.Slug); blErr == nil {
+		if backlinks := scan.backlinks; len(backlinks) > 0 {
+			const maxShownBacklinks = 15
+			var refs []string
+			for i, bl := range backlinks {
+				// The structured payload carries every backlink. Only the prose is truncated,
+				// because that cap exists to keep a read from burying the article in a link list.
+				links = append(links, DocumentLink{Title: bl.Title, Slug: bl.Slug})
+				if i >= maxShownBacklinks {
+					continue
+				}
+				refs = append(refs, fmt.Sprintf("%s (%s)", bl.Title, bl.Slug))
 			}
-			refs = append(refs, fmt.Sprintf("%s (%s)", bl.Title, bl.Slug))
+			if len(backlinks) > maxShownBacklinks {
+				refs = append(refs[:maxShownBacklinks], fmt.Sprintf("and %d more", len(backlinks)-maxShownBacklinks))
+			}
+			text += fmt.Sprintf("\n\n---\nLinked from: %s", strings.Join(refs, ", "))
 		}
-		if len(backlinks) > maxShownBacklinks {
-			refs = append(refs[:maxShownBacklinks], fmt.Sprintf("and %d more", len(backlinks)-maxShownBacklinks))
+		if note := skippedDocumentsNote(scan); note != "" {
+			// Inside the Linked from block when there is one, its own block otherwise: a note
+			// pasted onto the body's last line would read as article content.
+			if len(scan.backlinks) > 0 {
+				text += "\n" + note + "\n"
+			} else {
+				text += "\n\n---\n" + note + "\n"
+			}
 		}
-		text += fmt.Sprintf("\n\n---\nLinked from: %s", strings.Join(refs, ", "))
+		out.Backlinks = links
+		out.SkippedDocumentCount = skippedDocumentCount(scan)
+		out.SkippedDocuments = skippedDocuments(scan)
 	}
 
 	// The body ships in both content[0].text (for text-reading clients such as Claude Desktop,
@@ -331,7 +351,7 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 	// compatibility. Populating both guarantees interop across the entire MCP client ecosystem.
 	return ToolResponse{
 		Content:           []ToolContent{{Type: "text", Text: text}},
-		StructuredContent: ArticleOutput{Article: *art, Backlinks: links},
+		StructuredContent: out,
 	}, nil
 }
 
@@ -352,7 +372,7 @@ var listArticlesTool = toolDef{
 func (srv *Server) toolListArticles(args json.RawMessage) (interface{}, *JSONRPCError) {
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
 	}
 
 	var text string
@@ -539,7 +559,7 @@ func (srv *Server) toolCreateWikiArticle(args json.RawMessage) (interface{}, *JS
 
 	art, err := srv.Storage.SaveArticleWithOverrides("", cArgs.Title, cArgs.Content, cArgs.Description, cArgs.Source, cArgs.Resource, cArgs.EditSummary, tags, ContentTypeWiki, overrides)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating article: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating article: %s", srv.clientError(err))}}}, nil
 	}
 
 	respText := fmt.Sprintf("Success! Article '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\n",
@@ -730,7 +750,7 @@ func (srv *Server) toolEditWikiArticle(args json.RawMessage) (interface{}, *JSON
 	case err != nil && strings.Contains(err.Error(), "article not found"):
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", eArgs.Slug)}}}, nil
 	case err != nil:
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing article: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing article: %s", srv.clientError(err))}}}, nil
 	}
 
 	respText := fmt.Sprintf("Success! Article '%s' (slug: %s) updated successfully.\nNew Version: %d\nLast Edited: %s\n",
@@ -807,7 +827,7 @@ func (srv *Server) toolUpdateArticleTags(args json.RawMessage) (interface{}, *JS
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: versionConflictMessage("article", uArgs.Slug, disk, uArgs.LoadedVersion)}}}, nil
 	}
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error updating tags: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error updating tags: %s", srv.clientError(err))}}}, nil
 	}
 
 	respText := fmt.Sprintf("Success! Article '%s' tags updated successfully.\nNew Version: %d\nTags: %s\n",
@@ -857,7 +877,7 @@ func (srv *Server) toolDeleteWikiArticle(args json.RawMessage) (interface{}, *JS
 
 	err = srv.Storage.DeleteArticle(dArgs.Slug)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error deleting article: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error deleting article: %s", srv.clientError(err))}}}, nil
 	}
 
 	respText := fmt.Sprintf("Success! Article with slug '%s' has been permanently deleted from disk along with all history backups and media assets.\n", dArgs.Slug)
@@ -898,7 +918,7 @@ func (srv *Server) toolGetArticleHistory(args json.RawMessage) (interface{}, *JS
 
 	history, err := srv.Storage.GetArticleHistory(hArgs.Slug)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error loading history for '%s': %v", hArgs.Slug, err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error loading history for '%s': %s", hArgs.Slug, srv.clientError(err))}}}, nil
 	}
 
 	// A revision listing exists to answer "which version do I revert to, and why", so the
@@ -992,7 +1012,7 @@ func (srv *Server) toolRevertArticleVersion(args json.RawMessage) (interface{}, 
 
 	art, err := srv.Storage.RevertArticle(rArgs.Slug, rArgs.Version)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Revert failed: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Revert failed: %s", srv.clientError(err))}}}, nil
 	}
 
 	respText := fmt.Sprintf("Success! Article '%s' reverted successfully to version %d.\nNew active version: %d\nLast Edited: %s\n",
@@ -1037,10 +1057,15 @@ func (srv *Server) toolGetBacklinks(args json.RawMessage) (interface{}, *JSONRPC
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", bArgs.Slug)}}}, nil
 	}
 
-	backlinks, err := srv.Storage.GetBacklinks(target.Slug)
+	// The scan itself, not GetBacklinks: this tool is what an agent runs before a rename or a
+	// delete, so it reports what the walk skipped — unreadable entries and misplaced documents —
+	// instead of letting a short or empty list read as a complete answer (#162). The REST handler
+	// keeps GetBacklinks and its unchanged response.
+	scan, err := srv.Storage.scanBacklinks(target.Slug)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error scanning backlinks: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error scanning backlinks: %s", srv.clientError(err))}}}, nil
 	}
+	backlinks := scan.backlinks
 
 	var text string
 	if len(backlinks) == 0 {
@@ -1054,13 +1079,18 @@ func (srv *Server) toolGetBacklinks(args json.RawMessage) (interface{}, *JSONRPC
 			}
 		}
 	}
+	if note := skippedDocumentsNote(scan); note != "" {
+		text += "\n" + note + "\n"
+	}
 
 	return ToolResponse{
 		Content: []ToolContent{{Type: "text", Text: text}},
 		StructuredContent: BacklinksOutput{
-			Slug:      target.Slug,
-			Count:     len(backlinks),
-			Backlinks: nonNilDocuments(backlinks),
+			Slug:                 target.Slug,
+			Count:                len(backlinks),
+			Backlinks:            nonNilDocuments(backlinks),
+			SkippedDocumentCount: skippedDocumentCount(scan),
+			SkippedDocuments:     skippedDocuments(scan),
 		},
 	}, nil
 }
@@ -1115,7 +1145,7 @@ func (srv *Server) toolGetContextOverview(args json.RawMessage) (interface{}, *J
 
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
 	}
 
 	grouped := make(map[string][]Article)

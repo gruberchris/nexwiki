@@ -72,10 +72,11 @@ When modifying the React frontend, rebuilding the entire Go binary for each chan
 │       Listens on: http://localhost:5173  │       │       Listens on: http://localhost:5808  │
 └──────────────────┬───────────────────┘       └──────────────────┬───────────────────┘
                    │                                              │
-                   │ (Browser UI with Hot-Reloading)             │ (REST & MCP API Endpoints)
-                   └───────────────────────┬──────────────────────┘
-                                           ▼
-                               User Browser on :5173
+                   │ (Browser UI with Hot-Reloading)             │ (REST & MCP API Endpoints,
+                   ▼                                              │  plus frontend/dist when it exists)
+       User Browser on :5173                                       ▼
+       (relative /api fetches stay on                          User Browser on :5808
+        :5173 — UI only, no data)                          (the full app with real data)
 ```
 
 ### Step-by-Step Instructions:
@@ -96,8 +97,8 @@ When modifying the React frontend, rebuilding the entire Go binary for each chan
 
 3. **Open Browser to `http://localhost:5173`**
    * Edit any `.tsx`, `.ts`, or `.css` file in `frontend/src/` — changes reflect instantly in your browser.
-   * **CORS Middleware Support**: NexWiki's backend includes built-in CORS middleware that automatically permits requests originating from `http://localhost:5173`.
-   * **Live Disk Serving**: If `frontend/dist/` exists on disk, the Go backend dynamically serves assets directly from disk instead of embedded memory, allowing you to test production builds without recompiling Go.
+   * **Relative Fetches, No Vite Proxy**: the frontend's API calls are relative (`fetch('/api/...')`) and the Vite dev server proxies nothing, so the page at `:5173` does not reach the Go backend — its API calls are answered by Vite's SPA fallback, not JSON. Use `:5173` for UI-only iteration; the backend's CORS policy does allow loopback origins like `http://localhost:5173`, but nothing in the frontend sends a cross-origin request.
+   * **Live Disk Serving**: If `frontend/dist/` exists on disk, the Go backend dynamically serves assets directly from disk instead of embedded memory, allowing you to test production builds without recompiling Go. Open `http://localhost:5808` for the full app against real data — run `npm run build` to refresh what the backend serves.
 
 ---
 

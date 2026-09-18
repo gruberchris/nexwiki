@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,10 +21,15 @@ type JSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
-	ID      interface{}     `json:"id,omitempty"`
+	// ID is nil for a notification. A decoded request holds the id's JSON verbatim as a
+	// json.RawMessage, so it is echoed exactly: decoded into interface{}, every number became a
+	// float64 and an id past 2^53 came back rounded. It stays interface{} so a request built in Go
+	// can still use a plain value.
+	ID interface{} `json:"id,omitempty"`
 
 	// Headers carries the HTTP headers when the request arrived over Streamable HTTP, so the
-	// modern era can verify the mirrored metadata against the body. Nil on stdio.
+	// modern era can verify the mirrored metadata against the body, and so a legacy request can be
+	// attributed to the client name a sidecar forwards (see clientNameHeader). Nil on stdio.
 	Headers http.Header `json:"-"`
 	// IsModern records that the request opted into the per-request-metadata era, which decides
 	// whether protocol errors surface as HTTP failures or ride inside a 200 response.
@@ -31,6 +39,124 @@ type JSONRPCRequest struct {
 	// client, whereas HTTP is sessionless and caching a handshake there would attribute one
 	// client's writes to another. handleRequest serves both, so the distinction has to be carried.
 	FromStdio bool `json:"-"`
+}
+
+// UnmarshalJSON decodes one JSON-RPC request. JSON that is well formed but is not a single valid
+// request is rejected with a *requestError, which carries the -32600 reply; malformed JSON never
+// gets here, as encoding/json reports it first, and that is what keeps -32700 for it alone.
+//
+// Member names match exactly. JSON-RPC's are case-sensitive, so "ID" is not an id but an unknown
+// member, which is ignored. A struct decode matched them case-insensitively, which also put the
+// primary at odds with the -mcp-only sidecar: it reads only an exact-case "id", so the two
+// disagreed about whether {"ID":7,...} was a request or a notification.
+func (r *JSONRPCRequest) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '[' {
+		return invalidRequest(nil, "batch requests are not supported; send each request as its own message")
+	}
+	if len(data) == 0 || data[0] != '{' {
+		return invalidRequest(nil, "expected a request object")
+	}
+
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return err
+	}
+
+	// An absent id is what makes a notification; `"id": null` is present, and rejected. The id is
+	// judged first so that every later rejection can still be matched to its request.
+	var id json.RawMessage
+	if rawID, present := members["id"]; present {
+		if !isValidRequestID(rawID) {
+			return invalidRequest(nil, `"id" must be a string or an integer`)
+		}
+		id = rawID
+	}
+	if version, ok := requestStringMember(members["jsonrpc"]); !ok || version != "2.0" {
+		return invalidRequest(id, `"jsonrpc" must be "2.0"`)
+	}
+	rawMethod, present := members["method"]
+	if !present {
+		return invalidRequest(id, `missing "method"`)
+	}
+	method, ok := requestStringMember(rawMethod)
+	if !ok {
+		return invalidRequest(id, `"method" must be a string`)
+	}
+
+	// Fields are set one by one rather than replacing *r, which would wipe the transport context.
+	r.JSONRPC = "2.0"
+	r.Method = method
+	r.Params = members["params"]
+	r.ID = nil
+	if id != nil {
+		// Only a present id is stored: a nil json.RawMessage in the interface is not == nil, and
+		// would turn every notification into a request.
+		r.ID = id
+	}
+	return nil
+}
+
+// isValidRequestID reports whether raw is an id MCP allows: a string or an integer. JSON-RPC 2.0
+// also permits null and fractions, but MCP rules both out. The check is lexical, so an integer too
+// wide for any Go type is still accepted, and echoed back exactly.
+func isValidRequestID(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	switch c := raw[0]; {
+	case c == '"':
+		return true
+	case c == '-' || (c >= '0' && c <= '9'):
+		return !bytes.ContainsAny(raw, ".eE")
+	default:
+		return false
+	}
+}
+
+// requestStringMember decodes a request member that must be a JSON string. It fails for a missing
+// member and for null, which decoding into a string would otherwise pass off as "".
+func requestStringMember(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 || raw[0] != '"' {
+		return "", false
+	}
+	var s string
+	return s, json.Unmarshal(raw, &s) == nil
+}
+
+// requestError is a message rejected before dispatch, with the error that answers it. id is the
+// request's id when it could be read and was valid, and nil otherwise, which JSON-RPC requires to
+// be answered as null.
+type requestError struct {
+	code    int
+	message string
+	id      interface{}
+}
+
+func (e *requestError) Error() string { return e.message }
+
+// invalidRequest builds the -32600 rejection. A missing id is stored as a true nil rather than a
+// nil json.RawMessage, so that e.id == nil means what it says.
+func invalidRequest(id json.RawMessage, detail string) *requestError {
+	e := &requestError{code: errCodeInvalidRequest, message: "Invalid Request: " + detail}
+	if id != nil {
+		e.id = id
+	}
+	return e
+}
+
+// decodeRequest parses one message from a transport, or returns the error that answers it: -32700
+// only when the bytes are not JSON at all, -32600 for JSON that is not a single valid request.
+func decodeRequest(data []byte) (JSONRPCRequest, *requestError) {
+	var req JSONRPCRequest
+	err := json.Unmarshal(data, &req)
+	if err == nil {
+		return req, nil
+	}
+	var rejected *requestError
+	if errors.As(err, &rejected) {
+		return req, rejected
+	}
+	return req, &requestError{code: errCodeParseError, message: "Parse error: invalid JSON"}
 }
 
 // JSONRPCResponse represents an outgoing response in the JSON-RPC 2.0 format.
@@ -65,11 +191,88 @@ type ToolResponse struct {
 	// omitempty keeps every prose-only tool byte-identical on the wire, so clients that predate
 	// structured output see no change at all.
 	StructuredContent interface{} `json:"structuredContent,omitempty"`
+
+	// bulk is set by a tool that writes many documents in one call, which no single slug can
+	// describe in the activity log. executeToolCall logs one event per document from it instead of
+	// the per-call entry. Unexported, so it never reaches the wire.
+	bulk *bulkWrite
 }
 
-// StartMCPServer runs the stdio MCP JSON-RPC protocol loop in a non-blocking background goroutine.
-func (srv *Server) StartMCPServer() {
-	scanner := bufio.NewScanner(os.Stdin)
+// bulkWrite lists the documents a bulk tool call wrote, each as its metadata without the body. An
+// empty list means the call wrote nothing, so nothing is logged.
+type bulkWrite struct {
+	docs []Article
+}
+
+// StdioMCPServer is the stdio MCP JSON-RPC loop. Serve runs it; Stop ends it at a request boundary,
+// which shutdown needs before closing storage, since a request dispatched after that would write to
+// closed storage.
+type StdioMCPServer struct {
+	srv *Server
+	in  io.Reader
+	out io.Writer
+
+	// dispatchMu is held while a request is handled, and stopped is checked under it, so Stop can
+	// wait for the request in progress by taking the lock. stopped is set before Stop takes the lock,
+	// for the reason Storage.closed is: a Stop that gives up waiting still blocks later requests.
+	dispatchMu sync.Mutex
+	stopped    atomic.Bool
+}
+
+// NewStdioMCPServer returns a stdio loop serving srv, reading requests from in and writing responses
+// to out (os.Stdin and os.Stdout in production). It does not start reading until Serve is called.
+func NewStdioMCPServer(srv *Server, in io.Reader, out io.Writer) *StdioMCPServer {
+	return &StdioMCPServer{srv: srv, in: in, out: out}
+}
+
+// Stop ends dispatch: a request being handled finishes, and no later request is handled. It waits
+// for that request until ctx ends, returning ctx's error if it gave up.
+//
+// It cannot make Serve return. A blocked read on stdin cannot be interrupted portably, so the loop
+// stays parked in it until a line or EOF arrives, and then returns without handling the line. That
+// is harmless: Stop is only called on the way out of the process.
+func (s *StdioMCPServer) Stop(ctx context.Context) error {
+	s.stopped.Store(true)
+	idle := make(chan struct{})
+	go func() {
+		defer close(idle)
+		s.dispatchMu.Lock()
+		// Re-observe stopped while holding the lock, mirroring dispatch: holding it
+		// proves no request is in progress, so it is released straight away.
+		_ = s.stopped.Load()
+		s.dispatchMu.Unlock()
+	}()
+	select {
+	case <-idle:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// dispatch handles one request line, reporting false, without handling it, once Stop has been
+// called.
+func (s *StdioMCPServer) dispatch(line []byte) bool {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	if s.stopped.Load() {
+		return false
+	}
+
+	req, rejected := decodeRequest(line)
+	if rejected != nil {
+		sendError(s.out, rejected.code, rejected.message, rejected.id)
+		return true
+	}
+	req.FromStdio = true
+	s.srv.handleRequest(s.out, &req)
+	return true
+}
+
+// Serve runs the loop until its input ends or reading fails. After Stop, it returns at the next line
+// it reads, without handling that line.
+func (s *StdioMCPServer) Serve() {
+	scanner := bufio.NewScanner(s.in)
 	// A tool call carrying a whole article body easily exceeds bufio's default 64 KB line cap, and
 	// exceeding it is not recoverable: Scan returns false, the loop below ends, and the stdio
 	// server stops answering for the rest of the process's life.
@@ -80,10 +283,6 @@ func (srv *Server) StartMCPServer() {
 	// the app looked healthy while its MCP channel was permanently dead — and the agent that sent
 	// the article got no response at all, not even an error, and the article was never written.
 	scanner.Buffer(make([]byte, 0, 64*1024), MaxStdioLineBytes)
-	// Every write to stdout goes through one lock, because subscription goroutines write here too.
-	// See syncLineWriter.
-	writer := newSyncLineWriter(os.Stdout)
-	srv.stdioOut = writer
 
 	_, _ = fmt.Fprintf(os.Stderr, "Always-on stdio MCP server loop successfully started in background!\n")
 
@@ -93,16 +292,9 @@ func (srv *Server) StartMCPServer() {
 		if len(line) == 0 {
 			continue
 		}
-
-		var req JSONRPCRequest
-		if err := json.Unmarshal(line, &req); err != nil {
-			sendError(writer, -32700, "Parse error: invalid JSON", nil)
-			continue
+		if !s.dispatch(line) {
+			return
 		}
-		req.FromStdio = true
-
-		// Handle request methods
-		srv.handleRequest(writer, &req)
 	}
 
 	// The loop above cannot resume after a scanner failure, so tell the client rather than going
@@ -110,7 +302,7 @@ func (srv *Server) StartMCPServer() {
 	// channel from a slow one.
 	if err := scanner.Err(); err != nil && err != io.EOF {
 		if errors.Is(err, bufio.ErrTooLong) {
-			sendError(writer, -32700, fmt.Sprintf(
+			sendError(s.out, -32700, fmt.Sprintf(
 				"Request exceeded the %d MB stdio line limit; the stdio channel has closed. Use the HTTP transport for payloads this large.",
 				MaxStdioLineBytes>>20), nil)
 		}
@@ -228,7 +420,7 @@ func (srv *Server) handleRequest(w io.Writer, req *JSONRPCRequest) int {
 		result, rpcErr = listTools(env.Cursor)
 
 	case "tools/call":
-		result, rpcErr = srv.executeToolCall(req.Params, srv.resolveAgent(env))
+		result, rpcErr = srv.executeToolCall(req.Params, srv.resolveAgent(req, env))
 
 	case "prompts/list":
 		result, rpcErr = listPrompts(env.Cursor)
@@ -268,7 +460,7 @@ func (srv *Server) dispatchModern(req *JSONRPCRequest, env paramsEnvelope) (inte
 		return nil, rpcErr
 	}
 
-	payload, rpcErr := srv.handleModernMethod(req.Method, env)
+	payload, rpcErr := srv.handleModernMethod(req, env)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -301,6 +493,25 @@ func (srv *Server) writeResponse(w io.Writer, req *JSONRPCRequest, result interf
 	return status
 }
 
+// mcpToolAction maps a tool name to the activity-log action its successful call is recorded as.
+//
+// A revert is its own action, as it is for the web UI's revert: filtering the log on "revert" must
+// find an agent's reverts too, rather than only the ones made in a browser.
+func mcpToolAction(tool string) string {
+	switch {
+	case strings.HasPrefix(tool, "create_"):
+		return "create"
+	case strings.HasPrefix(tool, "revert_"):
+		return "revert"
+	case strings.HasPrefix(tool, "edit_"), strings.HasPrefix(tool, "append_"), strings.HasPrefix(tool, "update_"):
+		return "edit"
+	case strings.HasPrefix(tool, "delete_"):
+		return "delete"
+	default:
+		return "read"
+	}
+}
+
 // logMCPToolCall logs a successfully executed MCP tool call and publishes it, attributed to agent.
 func (srv *Server) logMCPToolCall(params json.RawMessage, agent string) {
 	if srv.EventBus == nil {
@@ -324,36 +535,41 @@ func (srv *Server) logMCPToolCall(params json.RawMessage, agent string) {
 	}
 	_ = json.Unmarshal(args.Arguments, &common)
 
-	action := "read"
 	tool := args.Name
-	if strings.HasPrefix(tool, "create_") {
-		action = "create"
-	} else if strings.HasPrefix(tool, "edit_") || strings.HasPrefix(tool, "append_") || strings.HasPrefix(tool, "revert_") || strings.HasPrefix(tool, "update_") {
-		action = "edit"
-	} else if strings.HasPrefix(tool, "delete_") {
-		action = "delete"
-	}
+	action := mcpToolAction(tool)
 
 	slug := common.Slug
 	if slug == "" && common.Title != "" {
 		slug = Slugify(common.Title)
 	}
 
-	// Determine category and title if it's a mutation
-	title := common.Title
-	if title == "" && slug != "" {
+	// The article as the successful call left it. A mutation just saved a new revision, so its
+	// version is the revision the event keys its dedup on — two quick edits of the same document
+	// both stay attributed (#173), while one save announced twice still collapses. A read touched
+	// nothing, so it stays unversioned; a delete left nothing to read back.
+	var written *Article
+	if slug != "" {
 		if art, err := srv.Storage.GetArticle(slug); err == nil {
-			title = art.Title
+			written = art
 		}
+	}
+
+	// The title for the event: the argument the caller named the document by, or the stored one
+	// when it did not.
+	title := common.Title
+	if title == "" && written != nil {
+		title = written.Title
 	}
 
 	if agent == "" {
 		agent = DefaultAgentName
 	}
 
-	srv.EventBus.PublishActivity("mcp", action, tool, slug, title, agent)
-
-	// When running as a mcp-only sidecar alongside a web server, forward the event to it.
+	version := 0
+	if action != "read" && written != nil {
+		version = written.Version
+	}
+	srv.EventBus.PublishActivityVersion("mcp", action, tool, slug, title, agent, version)
 
 	// If it's a mutation, broadcast a WikiUpdate to sync all clients!
 	if action != "read" {
@@ -361,11 +577,9 @@ func (srv *Server) logMCPToolCall(params json.RawMessage, agent string) {
 		if err == nil {
 			var targetTags []string
 			targetType := ContentTypeWiki
-			if slug != "" {
-				if art, err := srv.Storage.GetArticle(slug); err == nil {
-					targetTags = art.Tags
-					targetType = art.Type
-				}
+			if written != nil {
+				targetTags = written.Tags
+				targetType = written.Type
 			}
 
 			dir := getArticleDirectory(targetType)
@@ -414,7 +628,17 @@ func memoryScopeTags(tags []string) []string {
 func (srv *Server) executeToolCall(params json.RawMessage, agent string) (interface{}, *JSONRPCError) {
 	result, rpcErr := srv.executeToolCallInternal(params)
 	if rpcErr == nil && !isToolError(result) {
-		srv.logMCPToolCall(params, agent)
+		if resp, ok := result.(ToolResponse); ok && resp.bulk != nil {
+			// Logged per document, as the web equivalent is. The per-call entry would have no slug,
+			// and its action would be guessed from the tool name: an import was logged as a read.
+			var call struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(params, &call)
+			srv.publishBulkChanges("mcp", call.Name, agent, resp.bulk.docs)
+		} else {
+			srv.logMCPToolCall(params, agent)
+		}
 		result = srv.applyLookupDamper(params, agent, result)
 	}
 	return result, rpcErr
@@ -518,42 +742,18 @@ func sendError(w io.Writer, code int, msg string, id interface{}) {
 }
 
 // MCPEndpointPath is where the Streamable HTTP transport is served. Exported because main.go
-// registers the route and EnableCORS has to recognize the path to advertise the right headers on a
-// preflight it answers before the mux ever runs.
+// registers the route.
 const MCPEndpointPath = "/api/mcp"
-
-// mcpAllowedRequestHeaders is the Access-Control-Allow-Headers value for the MCP endpoint.
-//
-// Mcp-Method and Mcp-Name are not optional extras: the 2026-07-28 revision requires a modern client
-// to send them on every POST, and a browser will not send a header the preflight did not allow. So
-// omitting them here rejected browser-hosted modern clients at the preflight, before a single
-// JSON-RPC message was exchanged — the request never reached the handler that would have validated
-// them. Mcp-Session-Id and Last-Event-ID remain for the initialize-based revisions, which still
-// define them; this server ignores both, but ignoring a header a client sends is not the same as
-// refusing the request that carries it.
-const mcpAllowedRequestHeaders = "Content-Type, Accept, Authorization, MCP-Protocol-Version, " +
-	"Mcp-Method, Mcp-Name, Mcp-Session-Id, Last-Event-ID"
 
 // HandleStreamableHTTP implements the Streamable HTTP transport (2025 Spec)
 // supporting GET (initiating SSE stream) and POST (synchronous JSON-RPC).
+//
+// It must only be served behind EnableCORS, as main.go mounts it. Every MCP tool — including
+// delete_wiki_article and export_okf_bundle — is reachable here with no authentication, so an
+// unvalidated origin is full read/write access to the knowledge base. The Origin check lives in
+// EnableCORS alone so the two cannot drift apart: the middleware answers preflights and rejects
+// origins before the handler runs, so a second copy here could never take effect.
 func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) {
-	// Validate the browser Origin before doing anything else. Every MCP tool — including
-	// delete_wiki_article and export_okf_bundle — is reachable here with no authentication,
-	// so an unvalidated origin is full read/write access to the knowledge base.
-	applySecurityHeaders(w)
-	allowOrigin, originOK := originAllowed(r.Header.Get("Origin"), r.Host)
-	if !originOK {
-		applyCORSHeaders(w, "", "GET, POST, OPTIONS", mcpAllowedRequestHeaders)
-		http.Error(w, "origin not allowed; set "+AllowedOriginsEnv+" to permit it", http.StatusForbidden)
-		return
-	}
-	applyCORSHeaders(w, allowOrigin, "GET, POST, OPTIONS", mcpAllowedRequestHeaders)
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	switch r.Method {
 	case http.MethodGet:
 		// Verify accept header supports text/event-stream
@@ -642,12 +842,15 @@ func (srv *Server) HandleStreamableHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 		defer func() { _ = r.Body.Close() }()
 
-		var req JSONRPCRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			// Send JSON-RPC Parse Error Response
+		req, rejected := decodeRequest(body)
+		if rejected != nil {
+			// 400 on either era, for -32600 as for -32700. The era is read from a valid request's
+			// params, so a message rejected here has none; and 400 is both what the transport
+			// requires for input the server cannot accept and what the modern era uses for its
+			// own protocol failures.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			sendError(w, -32700, "Parse error: invalid JSON", nil)
+			sendError(w, rejected.code, rejected.message, rejected.id)
 			return
 		}
 

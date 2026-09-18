@@ -10,6 +10,19 @@ NexWiki is designed for **a single user on a trusted machine or private network*
 
 Multi-user support with accounts and per-user permissions is planned as a separate, explicitly enterprise-oriented variant. It does not exist today.
 
+## Request Host validation
+
+Every request's `Host` header must name this NexWiki instance; a request with any other Host is refused with `403` before origin checks and handlers run — reads included, since with no authentication a cross-site read is exfiltration. Accepted:
+
+- **IP literals** — loopback or not, IPv4 or IPv6 (brackets and zones allowed), which keeps LAN, Docker port publishing, and loopback access working.
+- **`localhost` and `*.localhost`** — reserved for loopback and cannot be registered.
+- **The configured `-bind` / `NEXWIKI_BIND` hostname** — the name the operator chose.
+- **The hostname of any origin listed in `NEXWIKI_ALLOWED_ORIGINS`** — so a reverse proxy that forwards the public Host keeps working.
+
+Setting `NEXWIKI_ALLOWED_ORIGINS="*"` accepts any Host as well — the same escape hatch and warning as below. An empty or malformed Host is refused too, and the rejection message quotes a sanitized Host and points at `NEXWIKI_ALLOWED_ORIGINS`.
+
+If clients reach NexWiki by a hostname other than an IP or `localhost` — a Docker service name, `host.docker.internal`, an mDNS `.local` name, Tailscale MagicDNS, or Kubernetes service DNS — list that origin (e.g. `http://nexwiki:5808`) in `NEXWIKI_ALLOWED_ORIGINS`, or those clients receive `403`.
+
 ## Browser origin protection
 
 Because NexWiki is unauthenticated and typically runs on `localhost`, any website you visit in the same browser could otherwise reach it. NexWiki therefore validates the browser `Origin` header on every request and rejects unknown origins with `403`. Allowed by default:
@@ -26,7 +39,7 @@ NEXWIKI_ALLOWED_ORIGINS="https://wiki.example.com"
 
 Multiple origins are comma-separated. Setting `NEXWIKI_ALLOWED_ORIGINS="*"` restores the old permissive behavior — **this is unsafe on any machine that also browses the web** and exists only as an escape hatch.
 
-DNS names are deliberately not auto-trusted via the same-origin rule: that would let a DNS-rebinding attack satisfy `Origin == Host` and reach your wiki.
+DNS names are deliberately not auto-trusted by either rule. The Host check refuses a DNS name that merely resolves to this server before any handler runs, and the same-origin rule does not treat `Origin == Host` as a match for a listed origin's hostname — its browser origins must match the listed origin exactly, scheme and port included. A page on a rebound DNS name therefore cannot read the wiki: its requests are rejected with `403`.
 
 ## Other hardening in place
 

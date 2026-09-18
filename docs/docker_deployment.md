@@ -34,6 +34,8 @@ docker run -d \
 
 Open your browser to `http://localhost:5808` to view the initial seeded homepage.
 
+> The seed only happens when the article directory is empty, and a document is only served at the path its own slug dictates: a `home.md` whose front matter declares a different slug is not served at the home path (the dashboard 404s) and is never reseeded, because a document is only valid at `articles/<slug>.md`.
+
 ---
 
 ### 2. Advanced `docker run` Invocation
@@ -119,16 +121,22 @@ NexWiki persists all state on disk inside the `/app/data` directory. When runnin
 /app/data/
 ├── articles/           # All wiki pages, memories, plans, and skills (.md files)
 ├── assets/             # Uploaded media (images, diagrams) grouped by article slug
+├── history/            # Gzipped version snapshots (.md.gz files) grouped by article slug
 ├── search.bleve/       # Bleve full-text indexing engine database
 ├── activity.jsonl      # Real-time append-only activity audit trail
-└── custom_themes.json  # UI-customized themes palette (created on theme save)
+├── activity-*.jsonl    # Rotated activity log archives (or activity.jsonl.<N>)
+├── custom_themes.json  # UI-customized themes palette (created on theme save)
+└── okf-export-*.zip    # OKF bundles written by the export_okf_bundle MCP tool
 ```
 
 ### Storage Details:
 * **`articles/`**: Contains raw markdown files with OKF v0.2 YAML front matter. These files are human-readable, version-controlled, and can be backed up or edited with external text editors.
 * **`assets/`**: Uploaded attachments are segregated into folders matching article slugs (e.g., `assets/project-phoenix/diagram.png`).
+* **`history/`**: Every save writes a gzip-compressed snapshot of that version to a folder matching the article slug (e.g., `history/project-phoenix/3.md.gz`). Version history and revert read these snapshots, so include `history/` in backups to keep earlier versions restorable.
 * **`search.bleve/`**: The local search database holds an exclusive file lock while running. NexWiki handles graceful shutdown (`SIGTERM` / `SIGINT`), flushing and closing the Bleve database safely within Docker's 10-second shutdown window.
-* **`activity.jsonl`**: Rotates automatically into timestamped `activity-<UTC>.jsonl` archives whenever the active log exceeds 10 MB. Archived logs are retained according to `NEXWIKI_ACTIVITY_MAX_ARCHIVES`.
+* **`activity.jsonl`**: Rotates automatically into timestamped `activity-<UTC>.jsonl` archives (or `activity.jsonl.<N>` if an archive with that timestamp already exists) whenever the active log exceeds 10 MB. Archived logs are retained according to `NEXWIKI_ACTIVITY_MAX_ARCHIVES`.
+* **`okf-export-<UTC>.zip`**: Each `export_okf_bundle` call writes a bundle here and returns its path. NexWiki never deletes these, so remove exports you no longer need. The web UI's OKF export (`GET /api/okf/export`) downloads the bundle instead of writing it here.
+* **Temporary files**: `.nexwiki-<n>.tmp` files can appear briefly in `articles/`, `history/`, and `assets/` while a save is in progress, or be left behind by a crash. NexWiki removes leftovers at startup; see [Article Files on Disk](./production_deployment.md#article-files-on-disk).
 
 ---
 
@@ -143,7 +151,7 @@ All configuration options supported by NexWiki can be passed into the container 
 | `NEXWIKI_THEME` | `default` | Initial active color palette (`default`, `midnight`, `forest`, `nordic`, etc.) |
 | `NEXWIKI_THEME_SCHEDULING` | `false` | Enable automatic annual seasonal theme swapping |
 | `NEXWIKI_BIND` | `0.0.0.0` | Default interface inside containers (do not change unless binding specific bridge IPs) |
-| `NEXWIKI_ALLOWED_ORIGINS` | Loopback only | Comma-separated DNS origins allowed to access the API from browsers |
+| `NEXWIKI_ALLOWED_ORIGINS` | Loopback only | Comma-separated origins allowed to reach the API from browsers; each listed origin's hostname is also an accepted `Host` header value |
 | `NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS` | `0` (disabled) | Startup sweep retention for archived articles |
 | `NEXWIKI_PLAN_LIFECYCLE_INTERVAL_DAYS` | `1` | Background sweep frequency for AI plan transitions |
 | `NEXWIKI_PLAN_ARCHIVE_AFTER_DAYS` | `90` | Days until completed plans are archived |
@@ -151,6 +159,8 @@ All configuration options supported by NexWiki can be passed into the container 
 | `NEXWIKI_PLAN_LIFECYCLE_DRY_RUN` | `false` | Enable dry-run logging without executing plan status changes |
 | `NEXWIKI_SECRET_SCAN` | `refuse` | Credential scanner disposition (`refuse`, `warn`, or `off`) |
 | `NEXWIKI_ACTIVITY_MAX_ARCHIVES` | unlimited | Retention count for rotated activity archives |
+
+> **Host header validation:** NexWiki accepts a request only when its `Host` header is an IP address, `localhost` (or `*.localhost`), the configured `NEXWIKI_BIND` hostname, or the hostname of an origin listed in `NEXWIKI_ALLOWED_ORIGINS`; anything else gets `403`. When another container or a browser reaches the wiki by a Docker service name (e.g. `http://nexwiki:5808`), `host.docker.internal`, an mDNS `.local` name, Tailscale MagicDNS, or Kubernetes service DNS, list that origin in `NEXWIKI_ALLOWED_ORIGINS` — for example `NEXWIKI_ALLOWED_ORIGINS=http://nexwiki:5808` — or those clients receive `403`.
 
 ### 2. Entrypoint and Trailing Arguments
 The official `Dockerfile` defines:
@@ -189,7 +199,7 @@ If you want to run an MCP client (such as Claude Desktop) on your host machine a
 ```
 
 ### Why `-mcp-only` Is Essential:
-`docker exec` spawns a secondary process inside the container. If that secondary process attempts to start a web server, it will fail when attempting to bind port `5808`. Passing `-mcp-only` instructs the binary to run strictly as a JSON-RPC stdio server. It detects the running primary web process and proxies MCP calls to it, preventing Bleve database lock collisions.
+`docker exec` spawns a secondary process inside the container. If that secondary process attempts to start a web server on the same `/app/data`, it waits 15 seconds for the search index lock the primary holds, then exits with `Fatal: could not open the search index` (with a different data directory, it fails binding port `5808` instead). Passing `-mcp-only` instructs the binary to run strictly as a JSON-RPC stdio server. It detects the running primary web process and proxies MCP calls to it, preventing Bleve database lock collisions.
 
 ---
 

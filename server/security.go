@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -54,10 +56,125 @@ func hostnameOnly(authority string) string {
 	return strings.Trim(authority, "[]")
 }
 
-// isIPLiteral reports whether the authority's host is a bare IP address rather than a DNS name.
-// DNS-rebinding attacks require a resolvable hostname, so an IP-literal Host cannot be rebound.
-func isIPLiteral(authority string) bool {
-	return net.ParseIP(hostnameOnly(authority)) != nil
+// parseHostHeader splits a Host header value into its lower-cased hostname, without port or IPv6
+// brackets, and reports whether that hostname is an IP literal (a zone is allowed). ok is false for
+// an empty or malformed value: brackets around anything but an IPv6 address, or a non-numeric port.
+func parseHostHeader(authority string) (hostname string, isIP bool, ok bool) {
+	name, port := authority, ""
+	switch {
+	case strings.HasPrefix(authority, "["):
+		end := strings.IndexByte(authority, ']')
+		if end < 0 {
+			return "", false, false
+		}
+		name, port = authority[1:end], authority[end+1:]
+		if port != "" {
+			if port[0] != ':' {
+				return "", false, false
+			}
+			port = port[1:]
+		}
+		if addr, err := netip.ParseAddr(name); err != nil || !addr.Is6() {
+			return "", false, false
+		}
+	case strings.Count(authority, ":") > 1:
+		// An IPv6 address sent without brackets, which leaves no room for a port. Checked below.
+	case strings.Contains(authority, ":"):
+		i := strings.LastIndexByte(authority, ':')
+		name, port = authority[:i], authority[i+1:]
+	}
+	for _, c := range port {
+		if c < '0' || c > '9' {
+			return "", false, false
+		}
+	}
+	if name == "" {
+		return "", false, false
+	}
+	name = strings.ToLower(name)
+	_, err := netip.ParseAddr(name)
+	if err != nil && strings.Contains(name, ":") {
+		return "", false, false // colons outside brackets that don't form an IPv6 address
+	}
+	return name, err == nil, true
+}
+
+// hostAllowed decides whether a request's Host header names this NexWiki instance.
+//
+// originAllowed only sees requests that carry an Origin, and browsers omit it on same-origin GET
+// and HEAD requests. The Host header is always the name the client used, so requiring a trusted
+// name there keeps a DNS name that merely resolves to this server from reaching it. Allowed:
+//
+//  1. Any Host when NEXWIKI_ALLOWED_ORIGINS includes the "*" opt-out.
+//  2. An IP literal, loopback or not (IPv4, or IPv6 with optional brackets and zone). Rebinding
+//     needs a DNS name, and this keeps LAN, Docker port publishing, and loopback access working.
+//  3. localhost and *.localhost, which are reserved for loopback and can't be registered.
+//  4. The server's own -bind / NEXWIKI_BIND hostname, which the operator chose (bindHost, already
+//     lower-cased and without brackets).
+//  5. The hostname of any origin listed in NEXWIKI_ALLOWED_ORIGINS, so a reverse proxy that
+//     forwards the public Host keeps working.
+//
+// Names are compared case-insensitively and without the port, but otherwise exactly: a trailing
+// dot ("localhost.") is not stripped, as origins are compared the same way. An empty or malformed
+// Host is rejected.
+func hostAllowed(host, bindHost string) bool {
+	allowList, wildcard := configuredOrigins()
+	if wildcard { // rule 1
+		return true
+	}
+	name, isIP, ok := parseHostHeader(host)
+	if !ok {
+		return false
+	}
+	if intrinsicHost(name, isIP, bindHost) { // rules 2 to 4
+		return true
+	}
+	for _, origin := range allowList { // rule 5
+		if u, err := url.Parse(origin); err == nil && u.Hostname() == name {
+			return true
+		}
+	}
+	return false
+}
+
+// intrinsicHost reports whether a parsed Host name is trusted on its own, whatever
+// NEXWIKI_ALLOWED_ORIGINS lists: an IP literal, localhost or *.localhost, or the bind hostname
+// (rules 2 to 4 of hostAllowed).
+func intrinsicHost(name string, isIP bool, bindHost string) bool {
+	return isIP || name == "localhost" || strings.HasSuffix(name, ".localhost") ||
+		(bindHost != "" && name == bindHost)
+}
+
+// hostIntrinsicallyAllowed is hostAllowed without the wildcard opt-in and without the hostnames
+// of listed origins: it accepts a Host only for what it is.
+func hostIntrinsicallyAllowed(host, bindHost string) bool {
+	name, isIP, ok := parseHostHeader(host)
+	return ok && intrinsicHost(name, isIP, bindHost)
+}
+
+// maxQuotedValueBytes bounds how much of a rejected Host or Origin header is quoted back in the
+// error.
+const maxQuotedValueBytes = 100
+
+// quoteClientValue renders a client-supplied header value for an error message: printable ASCII
+// only, truncated, and quoted, so the value can't inject control characters or bulk into the
+// response.
+func quoteClientValue(value string) string {
+	var b strings.Builder
+	for i := 0; i < len(value) && b.Len() < maxQuotedValueBytes; i++ {
+		if c := value[i]; c > ' ' && c < 0x7f {
+			b.WriteByte(c)
+		}
+	}
+	return strconv.Quote(b.String())
+}
+
+// hostRejectedMessage explains a rejected Host to the operator, who is the one able to fix it.
+func hostRejectedMessage(host string) string {
+	return "host not allowed: " + quoteClientValue(host) + ". NexWiki is unauthenticated and only answers " +
+		"requests addressed to localhost, an IP address, or its -bind hostname by default. To serve it " +
+		"under a domain name, for example behind a reverse proxy, add the site's origin " +
+		"(such as https://wiki.example.com) to " + AllowedOriginsEnv + "."
 }
 
 // originAllowed decides whether a browser Origin may talk to this NexWiki instance.
@@ -68,16 +185,20 @@ func isIPLiteral(authority string) bool {
 // localhost — the DNS-rebinding class the MCP spec requires local servers to reject. The rules:
 //
 //  1. No Origin header — a non-browser client (curl, an MCP SDK, a native app). Allowed;
-//     browsers always send Origin on cross-origin and on non-GET same-origin requests.
+//     browsers always send Origin on cross-origin and on non-GET same-origin requests. The
+//     same-origin GETs that carry none are covered by hostAllowed, which EnableCORS checks first.
 //  2. Loopback origin — the wiki's own UI and the Vite dev server on :5173. Allowed.
 //  3. Exactly listed in NEXWIKI_ALLOWED_ORIGINS. Allowed.
-//  4. Same-origin as the request's Host, but only when that Host is loopback or a bare IP
-//     (e.g. reaching the wiki from a phone at http://192.168.1.50:5808). A DNS name is
-//     excluded here because rebinding would otherwise satisfy Origin == Host; reverse-proxy
-//     deployments must name their domain in NEXWIKI_ALLOWED_ORIGINS.
+//  4. Same-origin as the request's Host (host:port compared without the scheme), when that Host
+//     is allowed on its own (hostIntrinsicallyAllowed): localhost or *.localhost, an IP literal
+//     (e.g. reaching the wiki from a phone at http://192.168.1.50:5808), or the bind hostname
+//     (bindHost). Any other DNS name is excluded, so a name that merely resolves to this server
+//     can't satisfy Origin == Host. That includes the hostname of a listed origin: the Host check
+//     lets its requests through, but its browser origins must match rule 3 exactly, scheme and
+//     port included.
 //
 // Anything else is rejected. Returns the origin to echo back, or "" when it must be blocked.
-func originAllowed(origin, host string) (string, bool) {
+func originAllowed(origin, host, bindHost string) (string, bool) {
 	allowList, wildcard := configuredOrigins()
 	if wildcard {
 		return "*", true
@@ -100,8 +221,7 @@ func originAllowed(origin, host string) (string, bool) {
 			return origin, true
 		}
 	}
-	if host != "" && strings.EqualFold(parsed.Host, host) && // rule 4
-		(isLoopbackHost(hostnameOnly(host)) || isIPLiteral(host)) {
+	if host != "" && strings.EqualFold(parsed.Host, host) && hostIntrinsicallyAllowed(host, bindHost) { // rule 4
 		return origin, true
 	}
 
@@ -116,54 +236,98 @@ func applySecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
 }
 
+// corsAllowedMethods are the methods an allowed browser origin may use across the REST API and
+// /api/mcp.
+const corsAllowedMethods = "GET, POST, PUT, DELETE, OPTIONS"
+
+// corsAllowedHeaders is the explicit set of request headers an allowed browser origin may send. A
+// header missing here fails the preflight before the request reaches any handler, so it must name
+// everything NexWiki reads or requires. It is never "*" or an echo of
+// Access-Control-Request-Headers: the list is the contract, and a blind echo would make it
+// meaningless.
+//
+// Mcp-Session-Id and Last-Event-ID are deliberately absent. NexWiki issues no session and writes
+// no SSE event ids, so a conforming client has nothing to send back, and neither header is read.
+//
+// No Access-Control-Expose-Headers is sent either: every response header an MCP client reads
+// (Content-Type, to tell a JSON reply from an SSE stream) is CORS-safelisted. A protocol header
+// added to responses later, such as Mcp-Session-Id, must be exposed or browser JavaScript can't
+// see it.
+var corsAllowedHeaders = strings.Join([]string{
+	"Content-Type",  // JSON bodies from the web UI and MCP clients aren't a safelisted type
+	"Authorization", // NexWiki has no auth of its own, but a reverse proxy in front of it may
+	"Accept",        // read by the MCP GET stream; long or unusual values lose safelisted status
+	// Mirrored from the body and rejected when missing (validateModernHeaders): the first two on
+	// every modern-era request, Mcp-Name only on those that name a target (methodsWithNameHeader).
+	// Legacy HTTP clients also send MCP-Protocol-Version after initialize.
+	"MCP-Protocol-Version",
+	"Mcp-Method",
+	"Mcp-Name",
+	// Client attribution over HTTP, which has no session to remember an initialize handshake.
+	clientNameHeader,
+}, ", ")
+
 // applyCORSHeaders echoes the validated origin (never "*" unless explicitly opted in) and
-// marks the response as origin-dependent so shared caches do not cross-serve it.
+// marks the response as origin-dependent so shared caches do not cross-serve it. With no origin
+// to echo (a rejected origin, or a non-browser client) only Vary is set: the Allow-* headers
+// grant nothing without Allow-Origin, so sending them would only advertise the header surface.
 func applyCORSHeaders(w http.ResponseWriter, allowOrigin, methods, headers string) {
 	w.Header().Set("Vary", "Origin")
-	if allowOrigin != "" {
-		w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
+	if allowOrigin == "" {
+		return
 	}
+	w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
 	w.Header().Set("Access-Control-Allow-Methods", methods)
 	w.Header().Set("Access-Control-Allow-Headers", headers)
 }
 
-// restAllowedRequestHeaders is the Access-Control-Allow-Headers value for the REST API.
-const restAllowedRequestHeaders = "Content-Type, Authorization"
-
-// allowedRequestHeadersFor picks the Access-Control-Allow-Headers value for a request path.
-//
-// This middleware answers every preflight itself and returns before the mux runs, so the MCP
-// handler's own CORS headers never reach a browser's OPTIONS request — the endpoint has to be
-// recognized here or its requirements are invisible. That is not a theoretical gap: a modern MCP
-// client MUST send Mcp-Method and Mcp-Name on every POST, and a browser will not send a header the
-// preflight did not allow, so advertising only the REST set refused those clients outright.
-func allowedRequestHeadersFor(path string) string {
-	if path == MCPEndpointPath {
-		return mcpAllowedRequestHeaders
-	}
-	return restAllowedRequestHeaders
+// corsConfig is what EnableCORS knows about the server beyond the environment.
+type corsConfig struct {
+	bindHost string // lower-cased, without brackets
 }
 
-// EnableCORS validates the browser Origin against originAllowed, echoing back only origins that
-// pass, and applies the baseline security headers. Rejected origins get 403 before reaching any
-// handler — including reads, since with no authentication a cross-site read is exfiltration.
-func EnableCORS(next http.Handler) http.Handler {
+// CORSOption configures EnableCORS.
+type CORSOption func(*corsConfig)
+
+// WithBindHost passes the host the web server is bound to (-bind / NEXWIKI_BIND). When it is a DNS
+// name, requests addressed to that name are accepted, so clients that reach the server by the name
+// it was bound to, such as the -launch-in-browser readiness poll, keep working.
+func WithBindHost(host string) CORSOption {
+	return func(c *corsConfig) {
+		c.bindHost = strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
+	}
+}
+
+// EnableCORS checks the request's Host against hostAllowed, then validates the browser Origin
+// against originAllowed, echoing back only origins that pass, and applies the baseline security
+// headers. Either rejection is a 403 before any handler runs — including reads, since with no
+// authentication a cross-site read is exfiltration.
+func EnableCORS(next http.Handler, opts ...CORSOption) http.Handler {
+	var cfg corsConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		applySecurityHeaders(w)
 
-		allowedHeaders := allowedRequestHeadersFor(r.URL.Path)
+		// Before the Origin, which a same-origin GET doesn't carry: a request to a DNS name the
+		// server doesn't trust is refused whatever its Origin, preflights included.
+		if !hostAllowed(r.Host, cfg.bindHost) {
+			writeError(w, http.StatusForbidden, hostRejectedMessage(r.Host))
+			return
+		}
 
 		origin := r.Header.Get("Origin")
-		allowOrigin, ok := originAllowed(origin, r.Host)
+		allowOrigin, ok := originAllowed(origin, r.Host, cfg.bindHost)
 		if !ok {
-			applyCORSHeaders(w, "", "GET, POST, PUT, DELETE, OPTIONS", allowedHeaders)
+			applyCORSHeaders(w, "", "", "")
 			writeError(w, http.StatusForbidden,
-				"origin not allowed: "+origin+". NexWiki is unauthenticated and only accepts same-origin "+
+				"origin not allowed: "+quoteClientValue(origin)+". NexWiki is unauthenticated and only accepts same-origin "+
 					"and loopback browser requests by default. Set "+AllowedOriginsEnv+" to permit this origin.")
 			return
 		}
 
-		applyCORSHeaders(w, allowOrigin, "GET, POST, PUT, DELETE, OPTIONS", allowedHeaders)
+		applyCORSHeaders(w, allowOrigin, corsAllowedMethods, corsAllowedHeaders)
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -101,14 +102,18 @@ func (w *PlanLifecycleWorker) logf(format string, args ...interface{}) {
 // Run sweeps once immediately, then on the configured interval, until ctx is canceled.
 // It sweeps at startup because a daily ticker alone means a server restarted every morning
 // never fires.
+//
+// Cancellation stops a sweep in progress between plans, never inside a save, and Run returns once
+// it has: shutdown waits for that return before closing storage.
 func (w *PlanLifecycleWorker) Run(ctx context.Context) {
 	w.logf(
 		"Plan lifecycle worker: sweeping every %dd (archive completed/superseded after %dd, delete archived after %dd, dry-run=%t)\n",
 		w.Cfg.IntervalDays, w.Cfg.ArchiveAfterDays, w.Cfg.DeleteAfterDays, w.Cfg.DryRun)
 
-	w.Sweep()
+	w.sweep(ctx)
 
-	ticker := time.NewTicker(time.Duration(w.Cfg.IntervalDays) * 24 * time.Hour)
+	// Capped rather than wrapped: NewTicker panics on a duration that wrapped negative or to zero.
+	ticker := time.NewTicker(daysToDuration(w.Cfg.IntervalDays))
 	defer ticker.Stop()
 	for {
 		select {
@@ -116,7 +121,7 @@ func (w *PlanLifecycleWorker) Run(ctx context.Context) {
 			w.logf("Plan lifecycle worker: stopped\n")
 			return
 		case <-ticker.C:
-			w.Sweep()
+			w.sweep(ctx)
 		}
 	}
 }
@@ -124,6 +129,12 @@ func (w *PlanLifecycleWorker) Run(ctx context.Context) {
 // Sweep applies every due transition once. Each write takes the storage lock per article rather
 // than holding it across the whole sweep, so an agent mid-edit is never blocked behind a scan.
 func (w *PlanLifecycleWorker) Sweep() {
+	w.sweep(context.Background())
+}
+
+// sweep is Sweep, stopping before the next plan once ctx is canceled. A sweep over a large wiki can
+// outlast the shutdown deadline, and each plan's transition is complete on its own.
+func (w *PlanLifecycleWorker) sweep(ctx context.Context) {
 	metas, err := w.Storage.ListArticles()
 	if err != nil {
 		w.logf("Plan lifecycle worker: listing failed: %v\n", err)
@@ -132,11 +143,18 @@ func (w *PlanLifecycleWorker) Sweep() {
 	now := w.now()
 
 	for _, meta := range metas {
+		if ctx.Err() != nil {
+			w.logf("Plan lifecycle worker: canceled mid-sweep; the next sweep picks up the plans it did not reach\n")
+			return
+		}
 		if meta.Type != ContentTypePlan {
 			continue
 		}
-		art, err := w.Storage.GetArticle(meta.Slug)
-		if err != nil {
+		// Skipped with the once-per-version warning getArticleForScan logs: a plan that will not
+		// open waits for the next sweep (or a person, whom the warning tells) rather than failing
+		// the sweep over every other plan.
+		art, ok := w.Storage.getArticleForScan(meta.Slug)
+		if !ok {
 			continue
 		}
 		// A plan written before the status field existed gets one here. The migration deliberately
@@ -154,6 +172,7 @@ func (w *PlanLifecycleWorker) Sweep() {
 		}
 		age := now.Sub(art.StatusChangedAt)
 
+		// Strictly past each timer, so one set beyond what a duration holds never comes due.
 		switch art.Status {
 		case "completed", "superseded":
 			if w.Cfg.ArchiveAfterDays > 0 && age > daysToDuration(w.Cfg.ArchiveAfterDays) {
@@ -185,7 +204,21 @@ func (w *PlanLifecycleWorker) backfillStatus(art *Article) {
 	w.publish("edit", updated.Slug, updated.Title, updated, "article-edited")
 }
 
+// maxDurationDays is the most whole days a time.Duration holds: 106751, about 292 years.
+const maxDurationDays = int(math.MaxInt64 / (24 * time.Hour))
+
+// daysToDuration converts a day count from configuration or a tool argument to a duration. Past
+// maxDurationDays the product would wrap, usually negative, and every age exceeds a negative
+// threshold, so a delay of centuries meant as "never" would delete everything at once. It is capped
+// at the largest duration instead. Time.Sub saturates at that same value, so no measured age
+// exceeds a capped threshold: compared with >, it is never reached.
 func daysToDuration(days int) time.Duration {
+	switch {
+	case days > maxDurationDays:
+		return math.MaxInt64
+	case days < -maxDurationDays:
+		return math.MinInt64
+	}
 	return time.Duration(days) * 24 * time.Hour
 }
 
@@ -214,25 +247,26 @@ func (w *PlanLifecycleWorker) archivePlan(art *Article, fromStatus string) {
 //
 // A backlink scan that skipped entries it could not read, parse, or list is refused the same way: a
 // document with broken front matter or in an unreadable folder may be exactly the one that links
-// here, and the scan cannot say. Each later sweep checks again, and deletes the plan only if a
-// complete scan finds no backlinks.
+// here, and the scan cannot say. So is a misplaced document that does link here (one not stored as
+// <slug>.md directly in the article directory): the wiki does not list it, so it is no backlink,
+// but deleting the plan would still break its link. Each later sweep checks again, and deletes the
+// plan only if a complete scan finds no backlinks and no misplaced document linking here.
 func (w *PlanLifecycleWorker) deletePlan(art *Article) {
-	backlinks, skipped, err := w.Storage.getBacklinksWithSkipped(art.Slug)
+	scan, err := w.Storage.scanBacklinks(art.Slug)
 	if err != nil {
 		w.logf("Plan lifecycle worker: backlink check failed for '%s'; not deleting: %v\n", art.Slug, err)
 		return
 	}
-	if len(backlinks) > 0 {
+	if len(scan.backlinks) > 0 {
 		var linkers []string
-		for _, bl := range backlinks {
+		for _, bl := range scan.backlinks {
 			linkers = append(linkers, bl.Slug)
 		}
 		w.refuseDelete(art, fmt.Sprintf("still linked from: %s. Remove the links or delete it by hand.", strings.Join(linkers, ", ")))
 		return
 	}
-	if len(skipped) > 0 {
-		w.refuseDelete(art, fmt.Sprintf("the backlink scan skipped %d unreadable %s that may link to it. Later sweeps check again; wiki_health lists what to fix.",
-			len(skipped), plural(len(skipped), "entry", "entries")))
+	if reasons := scan.incompleteReasons(); len(reasons) > 0 {
+		w.refuseDelete(art, strings.Join(reasons, ", and ")+". Later sweeps check again; wiki_health lists what to fix.")
 		return
 	}
 	if w.Cfg.DryRun {

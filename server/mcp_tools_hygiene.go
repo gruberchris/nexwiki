@@ -296,7 +296,9 @@ type coldMemoryScan struct {
 // exactly what a good memory looks like. Only a memory nobody has touched at all is a candidate
 // for review.
 func scanColdMemories(logPath string, memories []Article, coldDays int) coldMemoryScan {
-	cutoff := time.Now().AddDate(0, 0, -coldDays)
+	// Not AddDate, which wraps for a day count past about 1e14 and can put the cutoff in the future,
+	// where every memory is cold. A capped count puts it some 292 years back, before any log starts.
+	cutoff := time.Now().Add(-daysToDuration(coldDays))
 
 	events, err := ReadActivityLogFiltered(logPath, ActivityFilter{})
 	if err != nil || len(events) == 0 {

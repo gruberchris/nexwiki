@@ -1,5 +1,5 @@
 import React, { useRef, useState, useMemo } from 'react';
-import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu, History } from 'lucide-react';
+import { X, Sparkles, Terminal, Activity, ArrowRight, User, Search, Cpu, History, Clock, AlertTriangle } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useClickOutside } from '../hooks/useClickOutside';
@@ -15,14 +15,14 @@ interface ActivityLogDrawerProps {
   onNavigate: (slug: string) => void;
 }
 
-type SourceFilter = 'all' | 'api' | 'mcp';
+type SourceFilter = 'all' | LogEvent['source'];
 
 export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
   isOpen,
   onClose,
   onNavigate,
 }) => {
-  const { activityLog, isConnected } = useSSE();
+  const { activityLog, isConnected, missedEvents, acknowledgeMissedEvents } = useSSE();
   const [activeSource, setActiveSource] = useState<SourceFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilterHelp, setShowFilterHelp] = useState(false);
@@ -117,13 +117,32 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
         return 'bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-450';
       case 'delete':
         return 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-450';
+      case 'verify':
+        return 'bg-teal-500/10 border-teal-500/20 text-teal-600 dark:text-teal-400';
+      case 'delete-refused':
+        return 'bg-orange-500/10 border-orange-500/20 text-orange-600 dark:text-orange-400';
       case 'read':
       default:
         return 'bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-450';
     }
   };
 
+  // Badge text for an action. The raw value is still what the filter matches, so only the display
+  // changes: 'delete-refused' reads as two words.
+  const getActionLabel = (action: string) => action.replace(/-/g, ' ');
+
   const getSourceIcon = (source: string) => {
+    if (source.toLowerCase() === 'lifecycle') {
+      return (
+        <span
+          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold bg-violet-500/10 border border-violet-500/20 text-violet-600 dark:text-violet-400 shadow-xs select-none"
+          title="Plan lifecycle worker (unattended)"
+        >
+          <Clock size={10} />
+          <span>Lifecycle</span>
+        </span>
+      );
+    }
     if (source.toLowerCase() === 'mcp') {
       return (
         <span
@@ -233,6 +252,17 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
               <Cpu size={12} />
               <span>MCP Server</span>
             </button>
+            <button
+              onClick={() => setActiveSource('lifecycle')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                activeSource === 'lifecycle'
+                  ? 'bg-violet-500/10 border-violet-500/30 text-violet-600 dark:text-violet-400 shadow-xs ring-1 ring-violet-500/20'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-850'
+              }`}
+            >
+              <Clock size={12} />
+              <span>Lifecycle</span>
+            </button>
           </div>
 
           <FilterInput
@@ -244,6 +274,28 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
             inputClassName="bg-themeBgSecondary shadow-xs"
           />
         </div>
+
+        {/* Missed-events notice: the live stream fell behind a bulk change and dropped events,
+            so the wiki was reloaded and this list may be incomplete for that moment. */}
+        {missedEvents && (
+          <div
+            role="status"
+            data-testid="missed-events-notice"
+            className="mx-5 mt-4 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-start gap-2 text-[11px] text-amber-700 dark:text-amber-400 select-none"
+          >
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span className="flex-1">
+              Some live events were missed during a bulk change (the stream fell behind) and views
+              were reloaded from the server — this list may be incomplete.
+            </span>
+            <button
+              onClick={acknowledgeMissedEvents}
+              className="shrink-0 font-bold underline decoration-amber-500/40 hover:decoration-amber-500 cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Scrollable Events Queue */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
@@ -296,7 +348,7 @@ export const ActivityLogDrawer: React.FC<ActivityLogDrawerProps> = ({
                     <div className="flex items-center gap-1.5">
                       {getSourceIcon(event.source)}
                       <span className={`text-[10px] px-2 py-0.2 rounded border font-bold uppercase tracking-wider ${getActionBadge(event.action)}`}>
-                        {event.action}
+                        {getActionLabel(event.action)}
                       </span>
                     </div>
                     <span className="text-[9px] font-semibold text-slate-400 dark:text-slate-550">

@@ -15,6 +15,7 @@ import { HistoryDrawer } from './components/HistoryDrawer';
 import { ThemeManagerModal } from './components/ThemeManagerModal';
 import { useSSE } from './hooks/useSSE';
 import { useWikiUpdates } from './hooks/useWikiUpdates';
+import { useCoalescedCallback } from './hooks/useCoalescedCallback';
 import { useTheme } from './hooks/useTheme';
 import { useArticleActions } from './hooks/useArticleActions';
 import { useRouter, parseRoute } from './hooks/useRouter';
@@ -40,6 +41,10 @@ import {
   CheckCircle,
   AlertTriangle
 } from 'lucide-react';
+
+// How long the article list waits for a burst of live updates to go quiet before reloading again.
+// See useCoalescedCallback.
+const WIKI_UPDATE_RELOAD_DELAY_MS = 250;
 
 // Simple check to identify new page creation urls
 function isNewRequest(path: string): boolean {
@@ -215,11 +220,28 @@ export const App: React.FC = () => {
     }
   };
 
+  // A bulk write (an OKF import, a global tag deletion) sends one update per document, so reloads of
+  // the list are coalesced rather than repeated for each.
+  const reloadArticlesForUpdates = useCoalescedCallback(() => {
+    void fetchArticles();
+  }, WIKI_UPDATE_RELOAD_DELAY_MS);
+
   // Synchronize list/stats reactively over SSE (Phase 6)
   useWikiUpdates((update) => {
     console.log('SSE Update received:', update);
+    // The missed-events marker: the live stream dropped updates it could not deliver, so the
+    // open article may be stale even though no slug arrived with the marker. Reload both the
+    // list and the article through the same coalesced path as an ordinary update.
+    if (update.type === 'updates-missed') {
+      reloadArticlesForUpdates();
+      if (routeInfo.route === 'article' && routeInfo.slug) {
+        void fetchArticleContent(routeInfo.slug);
+      }
+      return;
+    }
+
     // Refresh articles listing dynamically
-    void fetchArticles();
+    reloadArticlesForUpdates();
 
     // If currently reading the updated article, refresh its body content
     if (routeInfo.route === 'article' && routeInfo.slug === update.slug && update.type === 'article-edited') {

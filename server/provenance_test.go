@@ -2,9 +2,15 @@ package server
 
 import (
 	"encoding/json"
+	"io"
+	"math/rand/v2"
+	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // modernEnv builds a params envelope carrying modern `_meta` clientInfo, the way a 2026-07-28
@@ -25,7 +31,7 @@ func TestNexWikiNameNeverBecomesTheAgent(t *testing.T) {
 	srv := newTestServer(t)
 	srv.WikiName = "My Personal Brain"
 
-	got := srv.resolveAgent(paramsEnvelope{})
+	got := srv.resolveAgent(&JSONRPCRequest{}, paramsEnvelope{})
 	if strings.Contains(got, "My Personal Brain") {
 		t.Fatalf("agent resolved to %q — the wiki's own name leaked into attribution again", got)
 	}
@@ -38,18 +44,38 @@ func TestResolveAgentPrefersModernClientInfo(t *testing.T) {
 	srv := newTestServer(t)
 	srv.AgentName = "Configured Fallback"
 	srv.stdioClient.set("Stdio Client 1.0")
+	env := modernEnv(t, `{"name":"Claude Desktop","version":"1.4.2"}`)
 
-	got := srv.resolveAgent(modernEnv(t, `{"name":"Claude Desktop","version":"1.4.2"}`))
-	if got != "Claude Desktop 1.4.2" {
-		t.Errorf("agent = %q, want the per-request clientInfo to win", got)
+	if got := srv.resolveAgent(&JSONRPCRequest{FromStdio: true}, env); got != "Claude Desktop 1.4.2" {
+		t.Errorf("stdio: agent = %q, want the per-request clientInfo to win", got)
+	}
+	httpReq := &JSONRPCRequest{Headers: forwardedName("Sidecar Client")}
+	if got := srv.resolveAgent(httpReq, env); got != "Claude Desktop 1.4.2" {
+		t.Errorf("http: agent = %q, want the per-request clientInfo to beat a forwarded name", got)
 	}
 }
 
+// forwardedName builds the headers a sidecar sends for a client name, encoded as it encodes them.
+func forwardedName(name string) http.Header {
+	return rawClientNameHeader(encodeHeaderValue(name))
+}
+
+// rawClientNameHeader sets the header to exactly value, as a hostile or careless client might.
+func rawClientNameHeader(value string) http.Header {
+	h := http.Header{}
+	if value != "" {
+		h.Set(clientNameHeader, value)
+	}
+	return h
+}
+
 func TestResolveAgentFallbackOrder(t *testing.T) {
+	stdioReq := &JSONRPCRequest{FromStdio: true}
 	tests := []struct {
 		name       string
 		stdio      string
 		configured string
+		req        *JSONRPCRequest
 		env        paramsEnvelope
 		want       string
 	}{
@@ -57,26 +83,84 @@ func TestResolveAgentFallbackOrder(t *testing.T) {
 			name:       "stdio handshake beats configured name",
 			stdio:      "Claude Desktop 1.4.2",
 			configured: "Configured Fallback",
+			req:        stdioReq,
 			want:       "Claude Desktop 1.4.2",
+		},
+		{
+			name:       "forwarded sidecar name beats configured name",
+			configured: "Configured Fallback",
+			req:        &JSONRPCRequest{Headers: forwardedName("reviewer")},
+			want:       "reviewer",
+		},
+		{
+			name:       "a non-ASCII forwarded name is decoded",
+			configured: "Configured Fallback",
+			req:        &JSONRPCRequest{Headers: forwardedName("Réviseur 日本")},
+			want:       "Réviseur 日本",
+		},
+		{
+			// A web primary serves stdio too. Its stdio client's handshake says nothing about who
+			// sent an HTTP request, so crediting it would attribute one client's writes to another.
+			name:       "stdio handshake is not used for an HTTP request",
+			stdio:      "Claude Desktop 1.4.2",
+			configured: "Configured Fallback",
+			req:        &JSONRPCRequest{Headers: http.Header{}},
+			want:       "Configured Fallback",
+		},
+		{
+			name:       "a forwarded name that sanitizes to nothing falls through",
+			configured: "Configured Fallback",
+			req:        &JSONRPCRequest{Headers: rawClientNameHeader("\x1b\u200e \t")},
+			want:       "Configured Fallback",
 		},
 		{
 			name:       "configured name is used when nobody identifies themselves",
 			configured: "Automation Script",
+			req:        stdioReq,
 			want:       "Automation Script",
 		},
 		{
 			name: "anonymous caller falls back to the default",
+			req:  &JSONRPCRequest{},
 			want: DefaultAgentName,
+		},
+		{
+			name:       "a configured name of control and zero-width characters falls back to the default",
+			configured: "\x01\x1b\u200b\u200e\ufeff",
+			req:        &JSONRPCRequest{Headers: http.Header{}},
+			want:       DefaultAgentName,
+		},
+		{
+			name:       "a configured name that sanitizes to nothing falls back to the default on stdio too",
+			configured: "\x7f\u2060\u200d",
+			req:        stdioReq,
+			want:       DefaultAgentName,
+		},
+		{
+			// Past maxAgentNameScanBytes of junk, the real text is never reached.
+			name:       "a configured name whose text lies beyond the scan bound falls back to the default",
+			configured: strings.Repeat("\u200b", maxAgentNameScanBytes/3+1) + "Automation Script",
+			req:        &JSONRPCRequest{},
+			want:       DefaultAgentName,
 		},
 		{
 			name:       "empty modern clientInfo falls through rather than blanking attribution",
 			configured: "Automation Script",
+			req:        &JSONRPCRequest{},
 			env:        modernEnv(t, `{"name":""}`),
 			want:       "Automation Script",
 		},
 		{
+			name:       "empty modern clientInfo falls through to a forwarded name",
+			configured: "Automation Script",
+			req:        &JSONRPCRequest{Headers: forwardedName("reviewer")},
+			env:        modernEnv(t, `{"name":""}`),
+			want:       "reviewer",
+		},
+		{
 			name:       "malformed modern clientInfo falls through rather than failing",
 			configured: "Automation Script",
+			req:        &JSONRPCRequest{},
 			env:        modernEnv(t, `"not-an-object"`),
 			want:       "Automation Script",
 		},
@@ -89,10 +173,43 @@ func TestResolveAgentFallbackOrder(t *testing.T) {
 			if tc.stdio != "" {
 				srv.stdioClient.set(tc.stdio)
 			}
-			if got := srv.resolveAgent(tc.env); got != tc.want {
+			if got := srv.resolveAgent(tc.req, tc.env); got != tc.want {
 				t.Errorf("agent = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestForwardedClientNameIsSanitized covers the header's hostile inputs. The value is self-reported
+// and lands in a durable log the UI renders, so it gets the same treatment as clientInfo: no
+// control or invisible format characters, no invalid UTF-8, and a length ceiling — including when
+// the characters arrive hidden inside the Base64 sentinel, which a raw-header check would miss.
+func TestForwardedClientNameIsSanitized(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"plain name", "reviewer", "reviewer"},
+		{"surrounding space is trimmed", "  reviewer  ", "reviewer"},
+		{"escape sequences are stripped", "evil\x1b[31mred", "evil[31mred"},
+		{"bidi overrides are stripped", "abc\u202edcba", "abcdcba"},
+		{"control characters inside Base64 are stripped", "=?base64?" + base64Encode("line1\nline2\x00\x7f") + "?=", "line1 line2"},
+		{"invalid UTF-8 is dropped", "ok\xff\xfename", "okname"},
+		{"absent", "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := forwardedClientName(rawClientNameHeader(tc.raw)); got != tc.want {
+				t.Errorf("forwardedClientName(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+
+	long := forwardedClientName(forwardedName(strings.Repeat("日", 200)))
+	if len(long) > maxAgentNameBytes || !utf8.ValidString(long) || long == "" {
+		t.Errorf("a long name must be cut to at most %d bytes on a rune boundary, got %d bytes (valid UTF-8: %t)",
+			maxAgentNameBytes, len(long), utf8.ValidString(long))
 	}
 }
 
@@ -111,8 +228,11 @@ func TestLegacyInitializeCapturesClientOnStdioOnly(t *testing.T) {
 		srv.handleRequest(&out, &JSONRPCRequest{
 			JSONRPC: "2.0", Method: "initialize", ID: 1, Params: initParams, FromStdio: true,
 		})
-		if got := srv.resolveAgent(paramsEnvelope{}); got != "Cursor 0.9" {
+		if got := srv.resolveAgent(&JSONRPCRequest{FromStdio: true}, paramsEnvelope{}); got != "Cursor 0.9" {
 			t.Errorf("agent = %q, want %q after a stdio handshake", got, "Cursor 0.9")
+		}
+		if got := srv.resolveAgent(&JSONRPCRequest{Headers: http.Header{}}, paramsEnvelope{}); got != DefaultAgentName {
+			t.Errorf("agent = %q, want %q — a stdio handshake must not credit HTTP callers", got, DefaultAgentName)
 		}
 	})
 
@@ -122,7 +242,7 @@ func TestLegacyInitializeCapturesClientOnStdioOnly(t *testing.T) {
 		srv.handleRequest(&out, &JSONRPCRequest{
 			JSONRPC: "2.0", Method: "initialize", ID: 1, Params: initParams, // FromStdio false
 		})
-		if got := srv.resolveAgent(paramsEnvelope{}); got != DefaultAgentName {
+		if got := srv.resolveAgent(&JSONRPCRequest{Headers: http.Header{}}, paramsEnvelope{}); got != DefaultAgentName {
 			t.Errorf("agent = %q, want %q — an HTTP handshake must not be cached for later callers",
 				got, DefaultAgentName)
 		}
@@ -167,6 +287,126 @@ func TestAgentNameIsBounded(t *testing.T) {
 	}
 }
 
+// referenceAgentName is truncateAgentName as it was before it was made linear: the behavior the
+// rewrite must keep. Its rune-at-a-time trim is quadratic, so it is only ever fed short inputs.
+func referenceAgentName(name string) string {
+	name = strings.ToValidUTF8(name, "")
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			return ' '
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			return -1
+		}
+		return r
+	}, name)
+	name = strings.TrimSpace(name)
+	if len(name) > maxAgentNameBytes {
+		trimmed := []rune(name)
+		for len(string(trimmed)) > maxAgentNameBytes {
+			trimmed = trimmed[:len(trimmed)-1]
+		}
+		name = string(trimmed)
+	}
+	return name
+}
+
+// TestTruncateAgentNameMatchesReference pins that the linear sanitizer produces exactly what the
+// original did: on hand-picked cases around the byte cap and every class of stripped character,
+// and on generated inputs up to the scan bound mixing all of them.
+func TestTruncateAgentNameMatchesReference(t *testing.T) {
+	pad := func(n int) string { return strings.Repeat("a", n) }
+	cases := []string{
+		"", "   ", "Claude Desktop 1.4.2", "  padded  ", "Evil\nClient", "tab\there", "cr\rlf",
+		"esc\x1b[31mred", "nul\x00byte", "del\x7f", "nel\u0085x", "bidi\u202eoverride", "zero\u200bwidth",
+		"bom\ufeffx", "nbsp\u00a0inside", "\u00a0nbsp at ends\u00a0", "literal \ufffd kept", "bad\xffbyte",
+		"truncated \xc3", "surrogate \xed\xa0\x80 half", "日本語 クライアント", "emoji 🙂 client",
+		pad(119), pad(120), pad(121), pad(119) + "é", pad(118) + "日", pad(119) + "日", pad(117) + "🙂",
+		pad(118) + "🙂x", pad(119) + " x", pad(120) + "   ", "  " + pad(125), pad(119) + "\u202e" + "bb",
+		"\n\n" + pad(200), strings.Repeat("日", 200), strings.Repeat("🙂", 100),
+		// Longer than the scan bound, but ordinary: the result depends only on the start.
+		"Claude Desktop " + strings.Repeat("x", 10_000), strings.Repeat("日", 5000), strings.Repeat(" ", 100) + pad(5000),
+	}
+	for _, in := range cases {
+		if got, want := truncateAgentName(in), referenceAgentName(in); got != want {
+			t.Errorf("truncateAgentName(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	pieces := []string{"a", "Z", "7", " ", "-", "\n", "\r", "\t", "\x00", "\x1b", "\x7f", "\u0085", "\u00a0",
+		"\u200b", "\u202e", "\ufeff", "\u2028", "é", "日", "🙂", "\ufffd", "\xff", "\xc3", "\xe6\x97", "\xed\xa0\x80"}
+	rng := rand.New(rand.NewPCG(1, 2))
+	for i := 0; i < 3000; i++ {
+		var b strings.Builder
+		size := rng.IntN(maxAgentNameScanBytes)
+		for b.Len() < size {
+			b.WriteString(pieces[rng.IntN(len(pieces))])
+		}
+		in := b.String()
+		if len(in) > maxAgentNameScanBytes {
+			in = in[:maxAgentNameScanBytes]
+		}
+		if got, want := truncateAgentName(in), referenceAgentName(in); got != want {
+			t.Fatalf("generated input %q: got %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestAgentNameSanitizingTimeIsBounded is the regression guard for sanitizing in time proportional
+// to the square of the input. Every entry point for a self-reported name is fed 1 MB and 8 MB: 8 MB
+// is the most an MCP request body may carry, and 1 MB the most a request header may, so the header
+// entry points stop there. Each must finish far inside the budget, which includes decoding the JSON
+// or Base64 around the name; the quadratic version took minutes for a few hundred kilobytes. The
+// work runs on its own goroutine so a regression fails at the deadline instead of hanging the suite.
+func TestAgentNameSanitizingTimeIsBounded(t *testing.T) {
+	// Generous: the slowest case, decoding the 8 MB initialize JSON under -race, can take about a
+	// second on a loaded machine, while a quadratic regression takes minutes.
+	const budget = 10 * time.Second
+	within := func(t *testing.T, name string, run func() string) {
+		t.Helper()
+		done := make(chan string, 1)
+		start := time.Now()
+		go func() { done <- run() }()
+		select {
+		case got := <-done:
+			if len(got) == 0 || len(got) > maxAgentNameBytes || !utf8.ValidString(got) {
+				t.Errorf("%s: got a %d-byte name (valid UTF-8: %t)", name, len(got), utf8.ValidString(got))
+			}
+			t.Logf("%s: %v", name, time.Since(start))
+		case <-time.After(budget):
+			t.Fatalf("%s: sanitizing did not finish within %v", name, budget)
+		}
+	}
+
+	srv := newTestServer(t)
+	for _, size := range []int{1 << 20, 8 << 20} {
+		// A name of multi-byte runes, so the rune boundary at the cap is exercised too. The JSON
+		// documents carry an ASCII one of the same size instead: decoding megabytes of multi-byte
+		// JSON under -race costs more than the sanitizing being measured, and makes the budget flaky.
+		name := strings.Repeat("日", (size-64)/3)
+		clientJSON := `{"name":"` + strings.Repeat("A", size-64) + `","version":"1.0"}`
+		env := modernEnv(t, clientJSON)
+		initParams := json.RawMessage(`{"clientInfo":` + clientJSON + `}`)
+		label := func(entry string) string { return entry + "/" + strconv.Itoa(size>>20) + "MB" }
+
+		within(t, label("sanitizer"), func() string { return truncateAgentName(name) })
+		if size <= 1<<20 {
+			within(t, label("header"), func() string { return forwardedClientName(rawClientNameHeader(name)) })
+			within(t, label("Base64 header"), func() string { return forwardedClientName(forwardedName(name)) })
+		}
+		within(t, label("_meta clientInfo"), func() string { return srv.resolveAgent(&JSONRPCRequest{}, env) })
+		within(t, label("initialize clientInfo"), func() string {
+			var identity agentIdentity
+			identity.rememberInitialize(initParams)
+			return identity.get()
+		})
+		within(t, label("-agent-name"), func() string {
+			return (&Server{AgentName: name}).resolveAgent(&JSONRPCRequest{}, paramsEnvelope{})
+		})
+		within(t, label("sidecar -agent-name"), func() string { return NewMCPProxy("http://127.0.0.1:1/api/mcp", name, io.Discard).agentName })
+	}
+}
+
 func utf8Valid(s string) bool {
 	for _, r := range s {
 		if r == '�' {
@@ -185,6 +425,39 @@ func TestResolveConfiguredAgentNameEnvWins(t *testing.T) {
 	t.Setenv("NEXWIKI_AGENT_NAME", "")
 	if got := ResolveConfiguredAgentName("From Flag"); got != "From Flag" {
 		t.Errorf("got %q, want the flag when the env var is unset", got)
+	}
+}
+
+// TestResolveConfiguredAgentNameIgnoresAnEnvValueThatSanitizesToNothing pins that an env value
+// made only of characters the sanitizer strips doesn't displace a usable flag: every consumer
+// sanitizes the result, so it would resolve to DefaultAgentName instead of the flag's name.
+func TestResolveConfiguredAgentNameIgnoresAnEnvValueThatSanitizesToNothing(t *testing.T) {
+	for _, env := range []string{
+		"\u200b\u200e",         // zero-width space and left-to-right mark: format characters
+		" \x1b\x07 ",           // control characters between spaces
+		"\t\u2060\n",           // a word joiner between whitespace
+		"\u200b \u202e \u00a0", // format characters separated by spaces
+	} {
+		t.Run(strconv.QuoteToASCII(env), func(t *testing.T) {
+			t.Setenv("NEXWIKI_AGENT_NAME", env)
+			got := ResolveConfiguredAgentName("From Flag")
+			if got != "From Flag" {
+				t.Fatalf("got %q, want the flag when the env var sanitizes to nothing", got)
+			}
+			srv := &Server{AgentName: got}
+			if agent := srv.resolveAgent(&JSONRPCRequest{}, paramsEnvelope{}); agent != "From Flag" {
+				t.Errorf("resolveAgent = %q, want the flag's name", agent)
+			}
+			if proxied := NewMCPProxy("http://127.0.0.1:1/api/mcp", got, io.Discard).agentName; proxied != "From Flag" {
+				t.Errorf("sidecar agent name = %q, want the flag's name", proxied)
+			}
+		})
+	}
+
+	// A name with visible text still wins, surrounded by stripped characters or not.
+	t.Setenv("NEXWIKI_AGENT_NAME", "\u200bFrom Env ")
+	if got := truncateAgentName(ResolveConfiguredAgentName("From Flag")); got != "From Env" {
+		t.Errorf("got %q, want the environment variable's visible name to take precedence", got)
 	}
 }
 

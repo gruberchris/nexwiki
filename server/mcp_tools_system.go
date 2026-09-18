@@ -16,7 +16,7 @@ import (
 var getWikiStatisticsTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_wiki_statistics",
-		"description": "Retrieve high-level wiki statistics, including total articles, storage footprint, a count of article files that cannot be read or parsed and article folders that cannot be listed, and a list of dead or broken internal links — both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links.",
+		"description": "Retrieve high-level wiki statistics, including total articles, a count of article files that cannot be read or parsed and article folders that cannot be listed, a count of documents stored somewhere other than articles/<slug>.md, and a list of dead or broken internal links — both [[WikiLinks]] and absolute [text](/articles/<slug>) Markdown links.",
 		"inputSchema": map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -32,7 +32,7 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	// number every other tool reports. Link scanning below deliberately does include home.
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: errorForClient(srv.Storage.ArticleDir, err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
 	}
 
 	// One cached pass replaces the read-every-file-in-full loop this used to run: the graph is
@@ -40,19 +40,26 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	// what the two tools share is those per-file caches, so neither rereads unchanged files.
 	graph, err := srv.Storage.ScanLinkGraph()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning WikiLinks: " + errorForClient(srv.Storage.ArticleDir, err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning WikiLinks: " + srv.clientError(err)}}}, nil
 	}
 
 	var respText string
 	respText = "NexWiki Knowledge Base Statistics:\n"
 	respText += fmt.Sprintf("- Total Articles: %d\n", len(articles))
 	respText += fmt.Sprintf("- Unreadable Article Files and Folders: %d\n", len(graph.Unreadable))
+	respText += fmt.Sprintf("- Misplaced Documents: %d\n", len(graph.Misplaced))
 	respText += fmt.Sprintf("- Total Internal Links Scanned: %d\n", graph.TotalLinks)
 	respText += fmt.Sprintf("- Total Broken/Dead Internal Links: %d\n\n", len(graph.Broken))
 
+	// Only the counts are reported here; wiki_health owns the lists and the remedies.
 	if len(graph.Unreadable) > 0 {
-		// Only the count is reported here; wiki_health owns the list and the remedies.
-		respText += "Some article files could not be read or parsed, or folders could not be listed. Those articles are left out of the counts above, and links to them show as broken. Run wiki_health to see which and why.\n\n"
+		respText += "Some article files could not be read or parsed, or folders could not be listed. "
+	}
+	if len(graph.Misplaced) > 0 {
+		respText += "Some documents are not stored as articles/<slug>.md (in a subfolder, under another filename, or with a slug not in slug form), so they cannot be opened. "
+	}
+	if len(graph.Unreadable) > 0 || len(graph.Misplaced) > 0 {
+		respText += "Those documents are left out of the counts above, and links to them show as broken. Run wiki_health to see which and why.\n\n"
 	}
 
 	if len(graph.Broken) == 0 {
@@ -70,11 +77,12 @@ func (srv *Server) toolGetWikiStatistics(args json.RawMessage) (interface{}, *JS
 	return ToolResponse{
 		Content: []ToolContent{{Type: "text", Text: respText}},
 		StructuredContent: StatisticsOutput{
-			TotalArticles:       len(articles),
-			UnreadableFileCount: len(graph.Unreadable),
-			TotalLinks:          graph.TotalLinks,
-			BrokenLinkCount:     len(graph.Broken),
-			BrokenLinks:         graph.Broken,
+			TotalArticles:          len(articles),
+			UnreadableFileCount:    len(graph.Unreadable),
+			MisplacedDocumentCount: len(graph.Misplaced),
+			TotalLinks:             graph.TotalLinks,
+			BrokenLinkCount:        len(graph.Broken),
+			BrokenLinks:            graph.Broken,
 		},
 	}, nil
 }
@@ -128,10 +136,20 @@ func (srv *Server) toolGetStatusTags(args json.RawMessage) (interface{}, *JSONRP
 	}, nil
 }
 
+// activityLogActions is every action the activity log records, and so the closed set the
+// get_recent_activity filter offers. An action missing here cannot be filtered on at all, since
+// the schema rejects it; TestActivityEnumsCoverLoggedValues fails when a new one is logged
+// without being added.
+var activityLogActions = []string{"create", "edit", "delete", "revert", "verify", "read", "delete-refused"}
+
+// activityLogSources is every source the activity log records, kept honest the same way by
+// TestActivityEnumsCoverLoggedValues.
+var activityLogSources = []string{"mcp", "api", "lifecycle"}
+
 var getRecentActivityTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_recent_activity",
-		"description": "Query the durable wiki activity log to see what changed and when — useful at session start to catch up on edits made by other agents, processes, or the human since you last looked. Events from a different MCP process may lag by milliseconds.",
+		"description": "Query the durable wiki activity log to see what changed, when, and who did it — useful at session start to catch up on edits made by other agents, the human, or the plan lifecycle worker since you last looked. Filter by action and by source.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -144,14 +162,16 @@ var getRecentActivityTool = toolDef{
 					"description": "Maximum number of events to return, newest kept (default 50, max 500).",
 				},
 				"action": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional filter by action type.",
-					"enum":        []string{"create", "edit", "delete", "read", "revert"},
+					"type": "string",
+					"description": "Optional filter by action: 'create', 'edit' (including appends, tag changes, OKF re-imports, and auto-archiving), 'delete', " +
+						"'revert' (rolled back to an earlier version), 'verify' (a human verified a document), 'read' (a read-only tool call), or " +
+						"'delete-refused' (the plan lifecycle worker kept a plan that may still be linked).",
+					"enum": activityLogActions,
 				},
 				"source": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional filter by origin: 'mcp' for AI tool calls, 'api' for human web UI actions.",
-					"enum":        []string{"mcp", "api"},
+					"description": "Optional filter by origin: 'mcp' for AI tool calls, 'api' for human web UI actions, 'lifecycle' for the plan lifecycle worker's unattended archiving and deletion.",
+					"enum":        activityLogSources,
 				},
 			},
 		},
@@ -192,7 +212,7 @@ func (srv *Server) toolGetRecentActivity(args json.RawMessage) (interface{}, *JS
 
 	events, err := ReadActivityLog(ActivityLogPath(srv.Storage.DataDir), since, limit, aArgs.Action, aArgs.Source)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error reading activity log: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error reading activity log: %s", srv.clientError(err))}}}, nil
 	}
 
 	// Fall back to the in-memory ring buffer when no durable log exists yet
@@ -260,7 +280,7 @@ var exportOkfBundleTool = toolDef{
 func (srv *Server) toolExportOkfBundle(args json.RawMessage) (interface{}, *JSONRPCError) {
 	data, err := srv.Storage.ExportOKFBundle()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error exporting OKF bundle: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error exporting OKF bundle: %s", srv.clientError(err))}}}, nil
 	}
 	fileName := fmt.Sprintf("okf-export-%s.zip", time.Now().UTC().Format("2006-01-02T15-04-05Z"))
 	outPath := filepath.Join(srv.Storage.DataDir, fileName)
@@ -268,7 +288,7 @@ func (srv *Server) toolExportOkfBundle(args json.RawMessage) (interface{}, *JSON
 		outPath = abs
 	}
 	if err := os.WriteFile(outPath, data, 0644); err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error writing OKF bundle to disk: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error writing OKF bundle to disk: %s", srv.clientError(err))}}}, nil
 	}
 	respText := fmt.Sprintf("Success! Exported OKF v%s bundle (%d bytes) to:\n%s\n", OKFVersion, len(data), outPath)
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
@@ -341,11 +361,11 @@ func (srv *Server) toolImportOkfBundle(args json.RawMessage) (interface{}, *JSON
 
 	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error reading bundle at '%s': %v", iArgs.Path, err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error reading bundle at '%s': %s", iArgs.Path, srv.clientError(err))}}}, nil
 	}
 	report, err := srv.Storage.ImportOKFBundle(data)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error importing OKF bundle: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error importing OKF bundle: %s", srv.clientError(err))}}}, nil
 	}
 	respText := fmt.Sprintf("OKF import complete: %d imported, %d skipped.\n", report.Imported, report.Skipped)
 	if len(report.MissingType) > 0 {
@@ -354,5 +374,8 @@ func (srv *Server) toolImportOkfBundle(args json.RawMessage) (interface{}, *JSON
 	for _, wmsg := range report.Warnings {
 		respText += "Warning: " + wmsg + "\n"
 	}
-	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+	return ToolResponse{
+		Content: []ToolContent{{Type: "text", Text: respText}},
+		bulk:    &bulkWrite{docs: report.saved},
+	}, nil
 }

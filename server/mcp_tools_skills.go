@@ -103,7 +103,7 @@ func (srv *Server) toolCreateAgentSkill(args json.RawMessage) (interface{}, *JSO
 
 	art, err := srv.Storage.SaveArticleWithStatus("", title, sArgs.Content, sArgs.Description, sArgs.Source, "", summary, tags, ContentTypeSkill, &status)
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent skill: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating agent skill: %s", srv.clientError(err))}}}, nil
 	}
 
 	respText := fmt.Sprintf("Success! Custom AI Skill '%s' created successfully.\nSlug: %s\nCreated At: %s\nVersion: %d\nStatus: %s\nTags: %s\n",
@@ -246,9 +246,10 @@ func (srv *Server) toolEditAgentSkill(args json.RawMessage) (interface{}, *JSONR
 	}
 	secretNote := secretWarning(warnedSecrets(newContent, newDescription, newSource))
 
-	art, err := srv.Storage.SaveArticleWithStatus(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type, eArgs.Status)
+	// Only an edit that supplies a title may rename the skill.
+	art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, newTitle, newContent, newDescription, newSource, existing.Resource, summary, newTags, existing.Type, ArticleOverrides{Status: eArgs.Status, KeepSlug: eArgs.Title == nil})
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent skill: %v", err)}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error editing agent skill: %s", srv.clientError(err))}}}, nil
 	}
 
 	respText := fmt.Sprintf("Success! Custom AI Skill '%s' updated successfully.\nSlug: %s\nNew Version: %d\nLast Edited: %s\nStatus: %s\nTags: %s\n",
@@ -274,15 +275,17 @@ var listAgentSkillsTool = toolDef{
 func (srv *Server) toolListAgentSkills(args json.RawMessage) (interface{}, *JSONRPCError) {
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: err.Error()}}}, nil
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
 	}
 
 	var text string
 	count := 0
 	matched := []Article{}
 	for _, artMeta := range articles {
-		art, err := srv.Storage.GetArticle(artMeta.Slug)
-		if err != nil {
+		// Skipped with the once-per-version warning getArticleForScan logs rather than silently
+		// dropped from the index.
+		art, ok := srv.Storage.getArticleForScan(artMeta.Slug)
+		if !ok {
 			continue
 		}
 

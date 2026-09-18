@@ -32,11 +32,14 @@ const (
 	metaSubscriptionID     = "io.modelcontextprotocol/subscriptionId"
 )
 
-// MCP-defined error codes in the specification's reserved -32020..-32099 sub-range.
+// MCP-defined error codes in the specification's reserved -32020..-32099 sub-range, and the
+// standard JSON-RPC codes.
 const (
 	errCodeHeaderMismatch             = -32020
 	errCodeMissingClientCapability    = -32021
 	errCodeUnsupportedProtocolVersion = -32022
+	errCodeParseError                 = -32700
+	errCodeInvalidRequest             = -32600
 	errCodeMethodNotFound             = -32601
 	errCodeInvalidParams              = -32602
 	errCodeInternal                   = -32603
@@ -352,8 +355,8 @@ func agentInstructions() string {
 
 // handleModernMethod dispatches a request that opted into the per-request-metadata era. It shares
 // the tool registry and prompt definitions with the legacy path; only the envelope differs.
-func (srv *Server) handleModernMethod(method string, env paramsEnvelope) (interface{}, *JSONRPCError) {
-	switch method {
+func (srv *Server) handleModernMethod(req *JSONRPCRequest, env paramsEnvelope) (interface{}, *JSONRPCError) {
+	switch req.Method {
 	case "server/discover":
 		// MUST be implemented by modern servers: it lets a client learn supported versions,
 		// capabilities, and identity in one request before sending anything else.
@@ -369,7 +372,7 @@ func (srv *Server) handleModernMethod(method string, env paramsEnvelope) (interf
 	case "tools/call":
 		// The modern era carries clientInfo in _meta on every request, so attribution needs no
 		// handshake and no session — the identity is right here in the envelope.
-		return srv.executeToolCall(env.Raw, srv.resolveAgent(env))
+		return srv.executeToolCall(env.Raw, srv.resolveAgent(req, env))
 
 	case "prompts/list":
 		return listPrompts(env.Cursor)
@@ -392,7 +395,7 @@ func (srv *Server) handleModernMethod(method string, env paramsEnvelope) (interf
 	default:
 		return nil, &JSONRPCError{
 			Code:    errCodeMethodNotFound,
-			Message: fmt.Sprintf("Method not found: %s", method),
+			Message: fmt.Sprintf("Method not found: %s", req.Method),
 		}
 	}
 }

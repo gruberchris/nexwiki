@@ -243,7 +243,6 @@ func TestSubscriptionStreamDeliversLiveUpdates(t *testing.T) {
 		t.Fatalf("NewRequest failed: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "http://localhost:8080")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -321,6 +320,48 @@ func TestSubscriptionStreamDeliversLiveUpdates(t *testing.T) {
 	}
 }
 
+// TestOverflowMarkerMapsOntoSubscriptionNotifications pins the shape a subscription stream gives
+// the buffer-overflow marker (#172): valid notification types the filter asked for, so the client
+// re-syncs through messages it already understands. A burst of updated notifications for
+// resources whose documents were never seen changing is the marker at work.
+func TestOverflowMarkerMapsOntoSubscriptionNotifications(t *testing.T) {
+	marker := WikiUpdate{Type: UpdateTypeMissed}
+	id := 42
+
+	filter := subscriptionFilter{
+		ResourcesListChanged: true,
+		ResourceSubscriptions: []string{
+			"nexwiki://article/watched",
+			"nexwiki://article/also-watched",
+		},
+	}
+	msgs := wikiUpdateNotifications(marker, filter, id)
+	if len(msgs) != 3 {
+		t.Fatalf("expected one updated per subscribed resource plus a list_changed, got %d", len(msgs))
+	}
+	for i, uri := range []string{"nexwiki://article/watched", "nexwiki://article/also-watched"} {
+		if msgs[i]["method"] != "notifications/resources/updated" || msgs[i]["params"].(map[string]interface{})["uri"] != uri {
+			t.Errorf("message %d is not an updated notification for %s: %v", i, uri, msgs[i])
+		}
+	}
+	if msgs[2]["method"] != "notifications/resources/list_changed" {
+		t.Errorf("expected a list_changed for a list-watching filter, got %v", msgs[2])
+	}
+
+	// A filter that only watches resources gets only updated notifications — the server must not
+	// send a type the client did not request, marker or not.
+	onlyResources := subscriptionFilter{ResourceSubscriptions: []string{"nexwiki://article/watched"}}
+	if msgs := wikiUpdateNotifications(marker, onlyResources, id); len(msgs) != 1 || msgs[0]["method"] != "notifications/resources/updated" {
+		t.Errorf("resource-only filter: got %v", msgs)
+	}
+
+	// And one that only watches the list gets only the list_changed.
+	onlyList := subscriptionFilter{ResourcesListChanged: true}
+	if msgs := wikiUpdateNotifications(marker, onlyList, id); len(msgs) != 1 || msgs[0]["method"] != "notifications/resources/list_changed" {
+		t.Errorf("list-only filter: got %v", msgs)
+	}
+}
+
 // TestSubscriptionWithNothingHonoredClosesGracefully pins that a client asking only for
 // notifications NexWiki cannot deliver is told so, rather than left holding an idle socket.
 func TestSubscriptionWithNothingHonoredClosesGracefully(t *testing.T) {
@@ -328,7 +369,6 @@ func TestSubscriptionWithNothingHonoredClosesGracefully(t *testing.T) {
 
 	body := `{"jsonrpc":"2.0","id":9,"method":"subscriptions/listen","params":{"notifications":{"toolsListChanged":true}}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/mcp", strings.NewReader(body))
-	req.Header.Set("Origin", "http://localhost:8080")
 	rec := httptest.NewRecorder()
 
 	srv.HandleStreamableHTTP(rec, req)

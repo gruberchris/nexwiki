@@ -1254,14 +1254,25 @@ func TestMCPAppendAgentPlanComprehensive(t *testing.T) {
 	}
 }
 
+// mcpEndpoint mounts srv's MCP handler the way main.go does: on /api/mcp, behind EnableCORS and
+// LimitRequestBodies. HandleStreamableHTTP has no Host or Origin check of its own, so a test of
+// browser behavior must go through this; calling the handler bare would accept what production
+// rejects. opts are passed to EnableCORS, as main.go passes the bind host.
+func mcpEndpoint(srv *Server, opts ...CORSOption) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/mcp", srv.HandleStreamableHTTP)
+	return EnableCORS(LimitRequestBodies(mux), opts...)
+}
+
 func TestHandleStreamableHTTP(t *testing.T) {
 	srv := newMCPServer(t)
+	handler := mcpEndpoint(srv)
 
 	// OPTIONS pre-flight from the wiki's own loopback UI: allowed, origin echoed back verbatim.
-	req := httptest.NewRequest("OPTIONS", "/mcp", nil)
+	req := newLoopbackRequest("OPTIONS", "/api/mcp", nil)
 	req.Header.Set("Origin", "http://localhost:8080")
 	w := httptest.NewRecorder()
-	srv.HandleStreamableHTTP(w, req)
+	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("OPTIONS: expected 200, got %d", w.Code)
 	}
@@ -1269,39 +1280,29 @@ func TestHandleStreamableHTTP(t *testing.T) {
 		t.Errorf("OPTIONS: expected echoed loopback origin, got %q", got)
 	}
 
-	// A cross-site page must not be able to drive MCP tools against the unauthenticated server.
-	reqEvil := httptest.NewRequest("POST", "/mcp",
-		strings.NewReader(`{"jsonrpc":"2.0","method":"tools/list","id":1}`))
-	reqEvil.Header.Set("Origin", "https://evil.example")
-	wEvil := httptest.NewRecorder()
-	srv.HandleStreamableHTTP(wEvil, reqEvil)
-	if wEvil.Code != http.StatusForbidden {
-		t.Errorf("cross-site MCP POST: expected 403, got %d", wEvil.Code)
-	}
-
 	// Unsupported method
-	req2 := httptest.NewRequest("PUT", "/mcp", nil)
+	req2 := newLoopbackRequest("PUT", "/api/mcp", nil)
 	w2 := httptest.NewRecorder()
-	srv.HandleStreamableHTTP(w2, req2)
+	handler.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusMethodNotAllowed {
 		t.Errorf("PUT: expected 405, got %d", w2.Code)
 	}
 
 	// POST with invalid JSON
-	req3 := httptest.NewRequest("POST", "/mcp", strings.NewReader("not json"))
+	req3 := newLoopbackRequest("POST", "/api/mcp", strings.NewReader("not json"))
 	req3.Header.Set("Content-Type", "application/json")
 	w3 := httptest.NewRecorder()
-	srv.HandleStreamableHTTP(w3, req3)
+	handler.ServeHTTP(w3, req3)
 	if w3.Code != http.StatusBadRequest {
 		t.Errorf("POST invalid JSON: expected 400, got %d", w3.Code)
 	}
 
 	// POST with valid JSON-RPC initialize
 	body := `{"jsonrpc":"2.0","method":"initialize","params":null,"id":1}`
-	req4 := httptest.NewRequest("POST", "/mcp", strings.NewReader(body))
+	req4 := newLoopbackRequest("POST", "/api/mcp", strings.NewReader(body))
 	req4.Header.Set("Content-Type", "application/json")
 	w4 := httptest.NewRecorder()
-	srv.HandleStreamableHTTP(w4, req4)
+	handler.ServeHTTP(w4, req4)
 	if w4.Code != http.StatusOK {
 		t.Errorf("POST valid request: expected 200, got %d", w4.Code)
 	}
@@ -1315,10 +1316,10 @@ func TestHandleStreamableHTTP(t *testing.T) {
 
 	// POST with tools/call
 	toolBody := `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_status_tags","arguments":{}},"id":2}`
-	req5 := httptest.NewRequest("POST", "/mcp", strings.NewReader(toolBody))
+	req5 := newLoopbackRequest("POST", "/api/mcp", strings.NewReader(toolBody))
 	req5.Header.Set("Content-Type", "application/json")
 	w5 := httptest.NewRecorder()
-	srv.HandleStreamableHTTP(w5, req5)
+	handler.ServeHTTP(w5, req5)
 	if w5.Code != http.StatusOK {
 		t.Errorf("POST tools/call: expected 200, got %d", w5.Code)
 	}
@@ -1326,21 +1327,96 @@ func TestHandleStreamableHTTP(t *testing.T) {
 	// GET with immediate context cancel (SSE stream setup then exit)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately so the stream loop exits right away
-	req6 := httptest.NewRequest("GET", "/mcp", nil).WithContext(ctx)
+	req6 := newLoopbackRequest("GET", "/api/mcp", nil).WithContext(ctx)
 	req6.Header.Set("Accept", "text/event-stream")
 	w6 := httptest.NewRecorder()
-	srv.HandleStreamableHTTP(w6, req6)
+	handler.ServeHTTP(w6, req6)
 	if w6.Header().Get("Content-Type") != "text/event-stream" {
 		t.Errorf("GET SSE: expected text/event-stream, got %s", w6.Header().Get("Content-Type"))
 	}
 
 	// GET with unsupported Accept header
-	req7 := httptest.NewRequest("GET", "/mcp", nil)
+	req7 := newLoopbackRequest("GET", "/api/mcp", nil)
 	req7.Header.Set("Accept", "application/json")
 	w7 := httptest.NewRecorder()
-	srv.HandleStreamableHTTP(w7, req7)
+	handler.ServeHTTP(w7, req7)
 	if w7.Code != http.StatusNotAcceptable {
 		t.Errorf("GET unsupported Accept: expected 406, got %d", w7.Code)
+	}
+}
+
+// TestMCPEndpointRejectsDisallowedOrigins pins that /api/mcp, whose handler leaves the Origin check
+// to EnableCORS, answers an OPTIONS, GET, or POST carrying an Origin that originAllowed rejects with
+// 403 and no Access-Control-Allow-Origin on the production wiring, and that a tools/call rejected
+// that way does not run.
+func TestMCPEndpointRejectsDisallowedOrigins(t *testing.T) {
+	t.Setenv(AllowedOriginsEnv, "") // a developer's own allow list must not decide the outcome
+	srv := newMCPServer(t)
+	// WithBindHost makes wiki.lan an allowed Host, so a request addressed to that DNS name reaches
+	// the Origin rules below instead of being rejected by the Host check.
+	handler := mcpEndpoint(srv, WithBindHost("wiki.lan"))
+
+	const slug = "rejected-origin-write"
+	createBody := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_wiki_article",` +
+		`"arguments":{"title":"Rejected Origin Write","content":"# Written"}}}`
+	newRequest := func(method, origin, host string) *http.Request {
+		var req *http.Request
+		switch method {
+		case http.MethodPost:
+			req = httptest.NewRequest(method, "/api/mcp", strings.NewReader(createBody))
+			req.Header.Set("Content-Type", "application/json")
+		case http.MethodOptions:
+			req = httptest.NewRequest(method, "/api/mcp", nil)
+			req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+			req.Header.Set("Access-Control-Request-Headers", "content-type, mcp-protocol-version")
+		default:
+			// A cancelled context ends the stream at once should the request get through.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			req = httptest.NewRequest(method, "/api/mcp", nil).WithContext(ctx)
+			req.Header.Set("Accept", "text/event-stream")
+		}
+		req.Header.Set("Origin", origin)
+		req.Host = host
+		return req
+	}
+
+	origins := []struct{ name, origin, host string }{
+		{"non-loopback Origin not in the allow list", "https://evil.example", "localhost:5808"},
+		// Rule 4 accepts an Origin equal to an allowed Host, not one naming a different DNS name.
+		{"Origin of another DNS name than an allowed DNS-name Host", "http://other.lan:5808", "wiki.lan:5808"},
+		{"opaque null Origin", "null", "localhost:5808"},
+	}
+	for _, o := range origins {
+		for _, method := range []string{http.MethodOptions, http.MethodGet, http.MethodPost} {
+			t.Run(o.name+"/"+method, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, newRequest(method, o.origin, o.host))
+				if w.Code != http.StatusForbidden {
+					t.Errorf("expected 403, got %d: %s", w.Code, w.Body.String())
+				}
+				if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+					t.Errorf("rejected origin was granted Access-Control-Allow-Origin %q", got)
+				}
+				if got := w.Header().Get("Content-Type"); got == "text/event-stream" {
+					t.Error("rejected origin was served the MCP stream")
+				}
+			})
+		}
+	}
+	if _, err := srv.Storage.GetArticle(slug); err == nil {
+		t.Fatal("a tools/call with a rejected Origin still created the article")
+	}
+
+	// The same call with a loopback Origin succeeds, so the check above can only pass because the
+	// Origin was rejected, not because the call was malformed.
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, newRequest(http.MethodPost, "http://localhost:5808", "localhost:5808"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("same-origin tools/call: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := srv.Storage.GetArticle(slug); err != nil {
+		t.Fatalf("same-origin tools/call did not create the article: %v", err)
 	}
 }
 

@@ -9,7 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -607,6 +611,218 @@ func TestHandleDeleteTheme(t *testing.T) {
 	}
 }
 
+// runConcurrently calls fn(0) through fn(n-1) on n goroutines released together, and stops the test
+// if they have not all returned within testWaitLimit.
+func runConcurrently(t *testing.T, n int, what string, fn func(i int)) {
+	t.Helper()
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := range n {
+		go func() {
+			defer wg.Done()
+			<-start
+			fn(i)
+		}()
+	}
+	close(start)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	if !waitClosed(t, done, what) {
+		t.FailNow()
+	}
+}
+
+// Theme saves load the list, change it and save it back. Unless that whole sequence is serialized,
+// concurrent creates can start from the same list, and each save then discards the others' themes.
+func TestHandleSaveThemeConcurrentCreatesAllPersist(t *testing.T) {
+	srv := newTestServer(t)
+
+	const writers = 20
+	codes := make([]int, writers)
+	runConcurrently(t, writers, "the concurrent theme saves", func(i int) {
+		body := fmt.Sprintf(`{"name": "concurrent-%02d", "default_mode": "dark", "light": {}, "dark": {}}`, i)
+		w := httptest.NewRecorder()
+		srv.HandleSaveTheme(w, httptest.NewRequest("POST", "/api/themes", strings.NewReader(body)))
+		codes[i] = w.Code
+	})
+
+	want := make([]string, 0, writers)
+	for i, code := range codes {
+		if code != http.StatusOK {
+			t.Errorf("save of concurrent-%02d: expected 200, got %d", i, code)
+		}
+		want = append(want, fmt.Sprintf("concurrent-%02d", i))
+	}
+	got := readCustomThemesFile(t, srv.Storage.DataDir)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("%d of %d concurrently created themes persisted: %v", len(got), writers, got)
+	}
+}
+
+// Deletes load, change and save the list too, so a delete racing another delete or a create can
+// save a stale list, bringing back a theme that was already deleted or dropping one just created.
+func TestHandleDeleteThemeConcurrentWithCreates(t *testing.T) {
+	srv := newTestServer(t)
+
+	const n = 10
+	for i := range n {
+		for _, prefix := range []string{"keep", "drop"} {
+			body := fmt.Sprintf(`{"name": "%s-%02d"}`, prefix, i)
+			w := httptest.NewRecorder()
+			srv.HandleSaveTheme(w, httptest.NewRequest("POST", "/api/themes", strings.NewReader(body)))
+			if w.Code != http.StatusOK {
+				t.Fatalf("seeding %s-%02d: expected 200, got %d", prefix, i, w.Code)
+			}
+		}
+	}
+
+	// Even requests delete drop-NN, odd ones create new-NN.
+	codes := make([]int, 2*n)
+	runConcurrently(t, 2*n, "the concurrent theme deletes and creates", func(i int) {
+		w := httptest.NewRecorder()
+		if i%2 == 0 {
+			name := fmt.Sprintf("drop-%02d", i/2)
+			req := httptest.NewRequest("DELETE", "/api/themes/"+name, nil)
+			req.SetPathValue("name", name)
+			srv.HandleDeleteTheme(w, req)
+		} else {
+			body := fmt.Sprintf(`{"name": "new-%02d"}`, i/2)
+			srv.HandleSaveTheme(w, httptest.NewRequest("POST", "/api/themes", strings.NewReader(body)))
+		}
+		codes[i] = w.Code
+	})
+	for i, code := range codes {
+		if code != http.StatusOK {
+			t.Errorf("request %d: expected 200, got %d", i, code)
+		}
+	}
+
+	want := make([]string, 0, 2*n)
+	for i := range n {
+		want = append(want, fmt.Sprintf("keep-%02d", i), fmt.Sprintf("new-%02d", i))
+	}
+	slices.Sort(want)
+	got := readCustomThemesFile(t, srv.Storage.DataDir)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("after concurrent deletes and creates:\n got %v\nwant %v", got, want)
+	}
+}
+
+// Saving a theme whose name matches an existing one case-insensitively replaces it in place and
+// responds with the submitted theme marked custom; deleting by any casing removes it and responds
+// with a confirmation, a repeat delete responds 404, and deleting the last custom theme leaves the
+// list with only the default themes.
+func TestHandleSaveAndDeleteThemeRoundTrip(t *testing.T) {
+	srv := newTestServer(t)
+
+	save := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		w := httptest.NewRecorder()
+		srv.HandleSaveTheme(w, httptest.NewRequest("POST", "/api/themes", strings.NewReader(body)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("save %s: expected 200, got %d: %s", body, w.Code, w.Body.String())
+		}
+		return w
+	}
+	del := func(name string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest("DELETE", "/api/themes/"+name, nil)
+		req.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		srv.HandleDeleteTheme(w, req)
+		return w
+	}
+
+	save(`{"name": "keeper", "default_mode": "light", "light": {}, "dark": {}}`)
+	save(`{"name": "Ocean", "default_mode": "light", "light": {"bg_primary": "#001"}, "dark": {}}`)
+	w := save(`{"name": "ocean", "default_mode": "dark", "light": {"bg_primary": "#002"}, "dark": {}, "custom": false}`)
+
+	var echoed Theme
+	if err := json.Unmarshal(w.Body.Bytes(), &echoed); err != nil {
+		t.Fatalf("failed to parse save response: %v", err)
+	}
+	if echoed.Name != "ocean" || !echoed.Custom || echoed.Light.BgPrimary != "#002" {
+		t.Errorf("update response: got %+v, want the submitted theme marked custom", echoed)
+	}
+
+	loaded, err := srv.Storage.ThemeStore.LoadCustomThemes()
+	if err != nil {
+		t.Fatalf("LoadCustomThemes failed: %v", err)
+	}
+	if len(loaded) != 2 || loaded[0].Name != "keeper" || loaded[1].Name != "ocean" ||
+		loaded[1].DefaultMode != "dark" || loaded[1].Light.BgPrimary != "#002" || !loaded[1].Custom {
+		t.Errorf("after update: got %+v, want keeper then the updated ocean in its place", loaded)
+	}
+
+	w = del("OCEAN")
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var msg map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &msg); err != nil || msg["message"] != "theme deleted successfully" {
+		t.Errorf("delete response: got %s (%v)", w.Body.String(), err)
+	}
+	if got := readCustomThemesFile(t, srv.Storage.DataDir); !slices.Equal(got, []string{"keeper"}) {
+		t.Errorf("after delete: got %v, want [keeper]", got)
+	}
+
+	if w := del("ocean"); w.Code != http.StatusNotFound {
+		t.Errorf("repeat delete: expected 404, got %d", w.Code)
+	}
+	if w := del("keeper"); w.Code != http.StatusOK {
+		t.Errorf("delete last theme: expected 200, got %d", w.Code)
+	}
+	if got := readCustomThemesFile(t, srv.Storage.DataDir); len(got) != 0 {
+		t.Errorf("after deleting every theme: got %v, want none", got)
+	}
+
+	w = httptest.NewRecorder()
+	srv.HandleGetThemes(w, httptest.NewRequest("GET", "/api/themes", nil))
+	var all []Theme
+	if err := json.Unmarshal(w.Body.Bytes(), &all); err != nil {
+		t.Fatalf("failed to parse themes: %v", err)
+	}
+	if w.Code != http.StatusOK || len(all) != len(DefaultThemes) {
+		t.Errorf("list after deleting every custom theme: got %d with %d themes, want 200 with %d",
+			w.Code, len(all), len(DefaultThemes))
+	}
+}
+
+// A custom_themes.json that no longer parses is reported as a load failure by both writers, and
+// neither overwrites it with a list built from nothing.
+func TestHandleThemeWritesReportUnloadableFile(t *testing.T) {
+	srv := newTestServer(t)
+	path := filepath.Join(srv.Storage.DataDir, "custom_themes.json")
+	const corrupt = `[{"name": "trunc`
+	if err := os.WriteFile(path, []byte(corrupt), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	srv.HandleSaveTheme(w, httptest.NewRequest("POST", "/api/themes", strings.NewReader(`{"name": "new-theme"}`)))
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "failed to load custom themes") {
+		t.Errorf("save: expected 500 failed to load custom themes, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req := httptest.NewRequest("DELETE", "/api/themes/trunc", nil)
+	req.SetPathValue("name", "trunc")
+	w = httptest.NewRecorder()
+	srv.HandleDeleteTheme(w, req)
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "failed to load custom themes") {
+		t.Errorf("delete: expected 500 failed to load custom themes, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if data, _ := os.ReadFile(path); string(data) != corrupt {
+		t.Errorf("custom_themes.json was overwritten after failing to load: %s", data)
+	}
+}
+
 func TestHandleGetWikiStats(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -1180,7 +1396,7 @@ func TestEnableCORS(t *testing.T) {
 	}))
 
 	// A loopback origin is echoed back verbatim (never "*"), and OPTIONS short-circuits with 200.
-	req := httptest.NewRequest("OPTIONS", "/api/test", nil)
+	req := newLoopbackRequest("OPTIONS", "/api/test", nil)
 	req.Header.Set("Origin", "http://localhost:5173")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -1199,7 +1415,7 @@ func TestEnableCORS(t *testing.T) {
 	}
 
 	// A request with no Origin is a non-browser client (curl, MCP SDK) and passes through.
-	req2 := httptest.NewRequest("GET", "/api/test", nil)
+	req2 := newLoopbackRequest("GET", "/api/test", nil)
 	w2 := httptest.NewRecorder()
 	handler.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusTeapot {
@@ -1210,7 +1426,7 @@ func TestEnableCORS(t *testing.T) {
 	}
 
 	// A cross-site origin is rejected outright — reads included, since there is no auth.
-	req3 := httptest.NewRequest("DELETE", "/api/articles/home", nil)
+	req3 := newLoopbackRequest("DELETE", "/api/articles/home", nil)
 	req3.Header.Set("Origin", "https://evil.example")
 	w3 := httptest.NewRecorder()
 	handler.ServeHTTP(w3, req3)
@@ -1220,6 +1436,177 @@ func TestEnableCORS(t *testing.T) {
 	if got := w3.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Errorf("cross-site DELETE: must not echo the origin, got %q", got)
 	}
+}
+
+// corsList splits a comma-separated CORS header value into lower-cased names, so assertions do not
+// depend on the casing or order the server happens to use.
+func corsList(value string) []string {
+	var names []string
+	for _, part := range strings.Split(value, ",") {
+		if name := strings.ToLower(strings.TrimSpace(part)); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// TestEnableCORSForBrowserMCPClients covers #171. A browser MCP client on an allowed origin must be
+// able to send the protocol headers /api/mcp requires, and read the headers it answers with,
+// without that widening the policy for any other origin.
+func TestEnableCORSForBrowserMCPClients(t *testing.T) {
+	t.Setenv(AllowedOriginsEnv, "https://mcp-client.example")
+
+	// Mounted behind the same middleware stack main.go uses: EnableCORS answers the preflight before
+	// the request ever reaches HandleStreamableHTTP, so testing the handler alone would miss it.
+	handler := mcpEndpoint(newMCPServer(t))
+
+	// Browsers lower-case the names they list in Access-Control-Request-Headers.
+	mcpHeaders := []string{
+		"content-type", "accept", "mcp-protocol-version", "mcp-method", "mcp-name", "x-nexwiki-client-name",
+	}
+
+	preflight := func(origin, requestHeaders string) *httptest.ResponseRecorder {
+		req := newLoopbackRequest(http.MethodOptions, "/api/mcp", nil)
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+		req.Header.Set("Access-Control-Request-Headers", requestHeaders)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w
+	}
+
+	for _, origin := range []string{"http://localhost:5173", "https://mcp-client.example"} {
+		t.Run("allowed origin "+origin+" may send the MCP headers", func(t *testing.T) {
+			w := preflight(origin, strings.Join(mcpHeaders, ","))
+			if w.Code != http.StatusOK {
+				t.Fatalf("preflight: expected 200, got %d", w.Code)
+			}
+			if got := w.Header().Get("Access-Control-Allow-Origin"); got != origin {
+				t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, origin)
+			}
+			allowed := corsList(w.Header().Get("Access-Control-Allow-Headers"))
+			for _, name := range append(mcpHeaders, "authorization") {
+				if !slices.Contains(allowed, name) {
+					t.Errorf("Access-Control-Allow-Headers %v is missing %q", allowed, name)
+				}
+			}
+			if methods := corsList(w.Header().Get("Access-Control-Allow-Methods")); !slices.Contains(methods, "post") {
+				t.Errorf("Access-Control-Allow-Methods %v must allow POST to /api/mcp", methods)
+			}
+		})
+	}
+
+	t.Run("allow list is explicit, never a wildcard or an echo of the request", func(t *testing.T) {
+		assertExplicit := func(t *testing.T, w *httptest.ResponseRecorder) {
+			t.Helper()
+			allowed := corsList(w.Header().Get("Access-Control-Allow-Headers"))
+			if len(allowed) == 0 {
+				t.Fatal("Access-Control-Allow-Headers is empty")
+			}
+			if slices.Contains(allowed, "*") {
+				t.Errorf("Access-Control-Allow-Headers %v must not contain a wildcard", allowed)
+			}
+			if slices.Contains(allowed, "x-arbitrary-header") {
+				t.Errorf("Access-Control-Allow-Headers %v echoed an unrequired header", allowed)
+			}
+		}
+
+		assertExplicit(t, preflight("http://localhost:5173", "mcp-method, x-arbitrary-header"))
+
+		// The origin opt-out widens who may call, not what they may send.
+		t.Setenv(AllowedOriginsEnv, "*")
+		w := preflight("https://evil.example", "mcp-method, x-arbitrary-header")
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+			t.Fatalf("wildcard opt-out: Access-Control-Allow-Origin = %q, want \"*\"", got)
+		}
+		assertExplicit(t, w)
+	})
+
+	t.Run("disallowed origin preflight is still rejected with no CORS grants", func(t *testing.T) {
+		w := preflight("https://evil.example", strings.Join(mcpHeaders, ","))
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("preflight: expected 403, got %d", w.Code)
+		}
+		for _, name := range []string{
+			"Access-Control-Allow-Origin", "Access-Control-Allow-Methods",
+			"Access-Control-Allow-Headers", "Access-Control-Expose-Headers",
+		} {
+			if got := w.Header().Get(name); got != "" {
+				t.Errorf("rejected origin got %s: %q", name, got)
+			}
+		}
+		// Vary keeps a shared cache from serving this 403 to an allowed origin, or the reverse.
+		if got := w.Header().Get("Vary"); got != "Origin" {
+			t.Errorf("Vary = %q, want Origin", got)
+		}
+		if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("security headers must still apply to a rejection; X-Frame-Options = %q", got)
+		}
+	})
+
+	// A browser only lets JavaScript read CORS-safelisted response headers (Content-Type, which
+	// separates a JSON reply from an SSE stream, among them) plus those named in
+	// Access-Control-Expose-Headers. NexWiki issues no Mcp-Session-Id, so nothing needs exposing
+	// today; the guard is that any protocol header a response does carry is readable.
+	t.Run("MCP response headers are readable by browser JavaScript", func(t *testing.T) {
+		requests := []struct {
+			name    string
+			body    string
+			headers map[string]string
+			want    string
+		}{
+			{
+				name: "modern server/discover",
+				body: `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{` +
+					`"io.modelcontextprotocol/protocolVersion":"` + ModernProtocolVersion + `",` +
+					`"io.modelcontextprotocol/clientCapabilities":{}}}}`,
+				headers: map[string]string{
+					"MCP-Protocol-Version": ModernProtocolVersion,
+					"Mcp-Method":           "server/discover",
+				},
+				want: "supportedVersions",
+			},
+			{
+				name: "legacy initialize",
+				body: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",` +
+					`"capabilities":{},"clientInfo":{"name":"browser-client","version":"1.0"}}}`,
+				want: "protocolVersion",
+			},
+		}
+
+		for _, tc := range requests {
+			t.Run(tc.name, func(t *testing.T) {
+				req := newLoopbackRequest(http.MethodPost, "/api/mcp", strings.NewReader(tc.body))
+				req.Header.Set("Origin", "http://localhost:5173")
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Accept", "application/json, text/event-stream")
+				for k, v := range tc.headers {
+					req.Header.Set(k, v)
+				}
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, req)
+
+				if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), tc.want) {
+					t.Fatalf("expected 200 with %q, got %d: %s", tc.want, w.Code, w.Body.String())
+				}
+				if got := w.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+					t.Errorf("Access-Control-Allow-Origin = %q", got)
+				}
+
+				exposed := corsList(w.Header().Get("Access-Control-Expose-Headers"))
+				if slices.Contains(exposed, "*") {
+					t.Errorf("Access-Control-Expose-Headers %v must not contain a wildcard", exposed)
+				}
+				for name := range w.Header() {
+					lower := strings.ToLower(name)
+					if (strings.HasPrefix(lower, "mcp-") || strings.HasPrefix(lower, "x-nexwiki-")) &&
+						!slices.Contains(exposed, lower) {
+						t.Errorf("response sets %s but Access-Control-Expose-Headers %v hides it", name, exposed)
+					}
+				}
+			})
+		}
+	})
 }
 
 func TestOriginAllowed(t *testing.T) {
@@ -1246,7 +1633,7 @@ func TestOriginAllowed(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, got := originAllowed(tc.origin, tc.host); got != tc.want {
+			if _, got := originAllowed(tc.origin, tc.host, ""); got != tc.want {
 				t.Errorf("originAllowed(%q, %q) = %v, want %v", tc.origin, tc.host, got, tc.want)
 			}
 		})
@@ -1254,7 +1641,7 @@ func TestOriginAllowed(t *testing.T) {
 
 	t.Run("wildcard opt-out restores permissive behavior", func(t *testing.T) {
 		t.Setenv(AllowedOriginsEnv, "*")
-		origin, ok := originAllowed("https://evil.example", "localhost:8080")
+		origin, ok := originAllowed("https://evil.example", "localhost:8080", "")
 		if !ok || origin != "*" {
 			t.Errorf("wildcard: got (%q, %v), want (\"*\", true)", origin, ok)
 		}

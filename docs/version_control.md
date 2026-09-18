@@ -62,7 +62,9 @@ If a page has been edited incorrectly, you can roll it back to the exact content
 3. Confirm the pop-up modal asking if you want to overwrite active content.
 
 ### ⚠️ Revert Rules & Safeguards:
-*   **Slug Integrity**: Reverting an article **preserves the current active URL slug**. Even if you roll back to a version that had a completely different title, the URL route (e.g. `/articles/my-active-page`) remains unchanged. This guarantees that your internal WikiLinks, external bookmarks, and routing maps **never break**.
+*   **What Is Restored**: Reverting restores the old version's Markdown content and its metadata: description, source, resource, tags, sources, stale-after date, and verifications.
+*   **Title & Slug Integrity**: Reverting **keeps the current title and URL slug**; the title is not reverted. Even if you roll back to a version that had a completely different title, the page keeps its current title and its URL route (e.g. `/articles/my-active-page`) stays the same. This guarantees that your internal WikiLinks, external bookmarks, and routing maps **never break**. To bring back an old title, edit the page and change the title, which renames it.
+*   **Type & Lifecycle State**: Reverting keeps the document's current type, and a plan's or skill's current lifecycle status (and a memory's kind). Rolling back the text of a completed plan does not move it back to draft; change the status separately if you mean to.
 *   **The Revert Commit**: Reverting does not delete history. Instead, the server takes the old content and saves it as a **brand new incremented version** (e.g., if you have 4 versions, reverting to `v2` creates `v5`). The system assigns an automatic comment: `"Reverted to version 2"`. This ensures you can easily roll back the revert itself if you change your mind!
 
 ---

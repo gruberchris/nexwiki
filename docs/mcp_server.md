@@ -61,7 +61,7 @@ Over HTTP it must also mirror those fields into headers, which NexWiki validates
 |---|---|---|
 | `MCP-Protocol-Version` | every request | `_meta` protocol version |
 | `Mcp-Method` | every request | the JSON-RPC `method` |
-| `Mcp-Name` | `tools/call`, `prompts/get` | `params.name` |
+| `Mcp-Name` | `tools/call`, `prompts/get`, `resources/read` | `params.name` (or `params.uri` for `resources/read`) |
 
 `Mcp-Name` values may use the spec's Base64 sentinel form (`=?base64?...?=`); NexWiki decodes before comparing.
 
@@ -298,23 +298,9 @@ notifications/resources/list_changed         sub=77
 
 Every message carries `io.modelcontextprotocol/subscriptionId` in `_meta` so concurrent subscriptions can be demultiplexed.
 
-**Subscriptions work on stdio too.** The specification defines `subscriptionId` precisely because stdio multiplexes every subscription onto one channel, so the shape is supported by design — NexWiki serialises stdout behind a single lock and runs each subscription in its own goroutine, exactly as the sidecar proxy already did.
+**Overflow markers:** a bulk write (an OKF import, a global tag deletion) can outpace a subscription's buffer. Rather than silently drop notifications, the stream collapses the backlog and prompts a re-sync through the notification types you asked for: you receive `notifications/resources/updated` for each subscribed resource (and `notifications/resources/list_changed` if you requested it) with no document change behind them. Treat such a burst as the signal that per-document updates were missed — re-read the subscribed resources, and re-list if you watch the list. The durable state (the article store and the activity log via `get_recent_activity`) is always complete; only the live stream fell behind.
 
-| Transport | Cancel a subscription with |
-|---|---|
-| Streamable HTTP | close the response stream |
-| stdio | `notifications/cancelled` naming the `subscriptions/listen` request id |
-
-Either way the server answers the long-lived request with a `resultType: "complete"` result carrying the subscription id, so a client can tell a deliberate close from a dropped transport. **A stream that ends without that response was a disconnect, and the client should re-subscribe.**
-
-```bash
-# on stdio, end subscription 77
-{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":77}}
-```
-
-> Earlier versions stubbed this out on stdio: the acknowledgment was sent and nothing followed. That was worse than it sounds — the acknowledgment is a *notification* and carries no id, so the client sat waiting on a response to the long-lived request that was never coming, and only a timeout ended it.
-
-A stdio **sidecar next to a running web server** gets subscriptions the same way it always has, by proxying to the primary and relaying the stream. See [Sidecar proxy mode](#-sidecar-proxy-mode) below.
+> **Transport:** a *standalone* stdio server cannot hold subscriptions open — its loop is strictly request/response on one channel — so it acknowledges and closes gracefully. A stdio **sidecar next to a running web server does** get live subscriptions, because it proxies to the primary and relays the stream. See [Sidecar proxy mode](#-sidecar-proxy-mode) below.
 
 ## 🔀 Sidecar proxy mode
 
@@ -355,7 +341,7 @@ To prevent stdio pipe corruption (which breaks JSON-RPC communication in tools l
 
 A single JSON-RPC line on stdio may be up to **8 MB**, in both the standalone stdio server and the sidecar proxy. This is far above bufio's 64 KB default because MCP payloads carry whole article bodies — a `create_wiki_article` call with a long document passes 64 KB easily.
 
-Exceeding the cap is **not recoverable**: the read loop ends and the stdio channel stops answering for the life of the process. NexWiki emits a JSON-RPC parse error naming the limit before it goes quiet, so the failure is attributable rather than silent, but the session is over. Use the Streamable HTTP transport for payloads that large — it has no per-message line limit (its own body caps are separate and much higher).
+Exceeding the cap is **not recoverable**: the read loop ends and the stdio channel stops answering for the life of the process. NexWiki emits a JSON-RPC parse error naming the limit before it goes quiet, so the failure is attributable rather than silent, but the session is over. The Streamable HTTP transport caps a request body at the same **8 MB**; the difference is what happens on the way over — an oversized HTTP request is refused with `413` naming the limit and the session (and every other request) continues, while an oversized stdio line ends the session.
 
 ---
 
@@ -418,7 +404,7 @@ State is per resolved agent, bounded (8 lookups each, 64 agents, least-recently-
 
 > **Native OKF storage & document `type`.** Every NexWiki `.md` file is a conformant Open Knowledge Format (OKF v0.2) concept document at rest (real YAML front matter, with dual-era OKF v0.1 backward compatibility). Each document carries a `type` — `Wiki`, `Attested Computation`, or one of the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags remain: **status tags** (e.g. `wip`, `completed`, `inbox`) and tool-managed **memory-scope tags** (`memory-<scope>`).
 
-> **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port (and is the primary that persists the activity log); if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely and serves all tools from the in-process storage layer. If it detects a running NexWiki web server, it forwards its activity events to it; with no NexWiki web server, it persists the log itself. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
+> **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port; if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely. If it detects a running NexWiki web server on its `-port`, it proxies all MCP traffic to it and never opens the data directory, so the primary executes every call and records its successful tool calls in the activity log (see [Sidecar proxy mode](#-sidecar-proxy-mode)). With no NexWiki web server, it opens the data directory itself, serves all tools from the in-process storage layer, and persists the activity log directly. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
 
 The NexWiki MCP server registers and exposes twenty-nine powerful tools for AI agents:
 
@@ -459,8 +445,8 @@ Retrieves the raw Markdown content and Yaml-style front-matter configurations of
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the target article (e.g. `home` or `setup-guide`).
 * **Behavior**:
-  Reads the Markdown file on disk and parses the front-matter metadata conforming to OKF v0.2. The text block starts with a metadata header — Type, Title, Slug, **Version**, Created, Updated, plus Description, Resource, Source, Sources (`[id] Title (resource)`), Tags, **Trust Tier** (`🟢 Human-Reviewed`, `🔵 Machine-Confirmed`, `⚪ Unverified`), and Attested Computation details (`Runtime`, `Parameters`) when present. If the concept has exceeded its freshness date (`stale_after`), a prominent warning is included: `⚠️ STALE CONCEPT: this document passed its freshness expiration on YYYY-MM-DD`. This is followed by the complete Markdown body content. If other articles link to this page — via `[[WikiLinks]]` or absolute `/articles/<slug>` Markdown links — a `Linked from:` section is appended (capped at 15 entries) so agents can traverse the knowledge graph in reverse.
-* **Structured output**: `structuredContent` as `{article, backlinks[]}`. The raw Markdown body is also in `article.content`. The article also includes `version` (to pass straight to `edit_wiki_article` as `loaded_version`), plus OKF v0.2 metadata: `sources`, `trust_tier`, `generated`, `verified`, `stale_after`, `is_stale`, and computation fields when applicable. Unlike the prose, `backlinks` is not capped at 15. Both `content[0].text` and `structuredContent.article.content` carry the body, guaranteeing that both text-only clients and structured-only clients can read and edit documents seamlessly.
+  Reads the Markdown file on disk and parses the front-matter metadata conforming to OKF v0.2. The text block starts with a metadata header — Type, Title, Slug, **Version**, Created, Updated, plus Description, Resource, Source, Sources (`[id] Title (resource)`), Tags, **Trust Tier** (`🟢 Human-Reviewed`, `🔵 Machine-Confirmed`, `⚪ Unverified`), and Attested Computation details (`Runtime`, `Parameters`) when present. If the concept has exceeded its freshness date (`stale_after`), a prominent warning is included: `⚠️ STALE CONCEPT: this document passed its freshness expiration on YYYY-MM-DD`. This is followed by the complete Markdown body content. If other articles link to this page — via `[[WikiLinks]]` or absolute `/articles/<slug>` Markdown links — a `Linked from:` section is appended (capped at 15 entries) so agents can traverse the knowledge graph in reverse. When the backlink scan skipped unreadable entries (files that could not be read or parsed, directories that could not be listed) or misplaced documents that link to this page, a `Note:` line says the `Linked from:` list may be incomplete and points to `wiki_health` for the detail.
+* **Structured output**: `structuredContent` as `{article, backlinks[], skipped_document_count, skipped_documents[]}`. The raw Markdown body is also in `article.content`. The article also includes `version` (to pass straight to `edit_wiki_article` as `loaded_version`), plus OKF v0.2 metadata: `sources`, `trust_tier`, `generated`, `verified`, `stale_after`, `is_stale`, and computation fields when applicable. Unlike the prose, `backlinks` is not capped at 15. When the backlink scan skipped entries, `skipped_document_count` is the total and `skipped_documents` lists the first 20 sorted by path, each with `path` and a `reason` of `unreadable` or `misplaced` (misplaced entries also carry their declared `slug`); any of them may link to this page, so a nonzero count means the `backlinks` list is a lower bound. Both fields are absent when nothing was skipped, and `wiki_health` lists every entry in full. Both `content[0].text` and `structuredContent.article.content` carry the body, guaranteeing that both text-only clients and structured-only clients can read and edit documents seamlessly.
 
 ---
 
@@ -788,8 +774,8 @@ Lists all articles whose content links to a given article, in **either** interna
 * **Arguments**:
   * `slug` (string, **required**): The URL-safe slug of the target article to find inbound links for.
 * **Behavior**:
-  Scans all article bodies (including the `home` dashboard) on demand for internal links resolving to the target slug, skipping self-links. Returns an indexed plain-text list with titles, slugs, summaries, and updated timestamps, sorted the newest first. Useful before editing or deleting a page to see what references it. `read_article` also appends a compact `Linked from:` section automatically.
-* **Structured output**: `structuredContent` as `{slug, count, backlinks[]}`.
+  Scans all article bodies (including the `home` dashboard) on demand for internal links resolving to the target slug, skipping self-links. Returns an indexed plain-text list with titles, slugs, summaries, and updated timestamps, sorted the newest first. Useful before editing or deleting a page to see what references it. When the scan skipped unreadable entries (files that could not be read or parsed, directories that could not be listed) or misplaced documents that link to the target, a `Note:` line says so and points to `wiki_health` — an empty or short list is then not proof of few inbound links. `read_article` also appends a compact `Linked from:` section automatically.
+* **Structured output**: `structuredContent` as `{slug, count, backlinks[], skipped_document_count, skipped_documents[]}`. When the scan skipped entries, `skipped_document_count` is the total and `skipped_documents` lists the first 20 sorted by path, each with `path` and a `reason` of `unreadable` or `misplaced` (misplaced entries also carry their declared `slug`). Any of them may link to the target, so a nonzero `skipped_document_count` means `count` is a lower bound; both fields are absent when nothing was skipped, and `wiki_health` lists every entry in full.
 
 ---
 
@@ -845,10 +831,10 @@ Queries the **durable activity log** (`data/activity.jsonl`) to see what changed
 * **Arguments**:
   * `since` (string, **optional**): Only return events newer than this. Accepts a Go duration (`30m`, `24h`, `168h`) or an RFC3339 timestamp (`2026-06-10T00:00:00Z`).
   * `limit` (integer, **optional**): Maximum events returned, newest kept (default 50, max 500).
-  * `action` (string, **optional**): Filter by `create`, `edit`, `delete`, `read`, or `revert`.
-  * `source` (string, **optional**): Filter by origin — `mcp` (AI tool calls) or `api` (human web UI actions).
+  * `action` (string, **optional**): Filter by `create`, `edit` (including appends, tag changes, OKF re-imports, and auto-archiving), `delete`, `revert` (rolled back to an earlier version), `verify` (a human verified a document), `read` (a read-only tool call), or `delete-refused` (the plan lifecycle worker kept a plan that may still be linked).
+  * `source` (string, **optional**): Filter by origin — `mcp` (AI tool calls), `api` (human web UI actions), or `lifecycle` (the plan lifecycle worker's unattended archiving and deletion).
 * **Behavior**:
-  Reads the persisted JSON Lines activity log written by the primary server process (every REST and MCP mutation/read event, deduplicated within 2-second windows), **spanning the active file plus rotated archives** so durable history survives rotation. Falls back to the in-memory 200-event ring buffer when no durable log exists yet. At 10 MB the active log is rotated aside into a **non-destructive, timestamped archive** (`activity-<UTC>.jsonl`) — earlier archives are never overwritten (optional retention cap via `NEXWIKI_ACTIVITY_MAX_ARCHIVES`, default unlimited). The Activity Drawer also pages this durable history via `GET /api/activity/log` ("Load older history"). Events from a different MCP process may lag by milliseconds while being forwarded to the primary.
+  Reads the persisted JSON Lines activity log written by the process that owns the data directory (article writes from the web UI, every successful MCP tool call including reads, and the plan lifecycle worker's changes and refused deletions; near-duplicate events collapse within 2-second windows, qualified by the document's revision, so the same save announced twice is dropped but two legitimate changes to one document both survive), **spanning the active file plus rotated archives** so durable history survives rotation. Falls back to the in-memory 200-event ring buffer when no durable log exists yet. At 10 MB the active log is rotated aside into a **non-destructive, timestamped archive** (`activity-<UTC>.jsonl`) — or, when that name is already taken within the same second, a numbered fallback archive (`activity.jsonl.<N>`); earlier archives of either form are never overwritten (optional retention cap via `NEXWIKI_ACTIVITY_MAX_ARCHIVES`, default unlimited). The Activity Drawer also pages this durable history via `GET /api/activity/log` ("Load older history").
 
 * **Sample output**:
 ```
@@ -884,11 +870,12 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   * `cold_days` (integer, *optional*): How many days a memory may go unread and unedited before counting as cold. Default `90`.
   * `limit` (integer, *optional*): Maximum items reported **per category**. Default `50`, maximum `500`. Counts are always complete even when the lists are capped.
 * **Behavior**:
-  Runs eleven checks over a single cached pass of the article directory — the same `LinkGraph` scan `get_wiki_statistics` runs, so the two tools find the same broken links and unreadable entries in the same wiki (their document counts differ by design: `total_documents` includes the home page, `total_articles` does not):
+  Runs twelve checks over a single cached pass of the article directory — the same `LinkGraph` scan `get_wiki_statistics` runs, so the two tools find the same broken links and unreadable entries in the same wiki (their document counts differ by design: `total_documents` includes the home page, `total_articles` does not):
 
   | Check | Finds | Why it matters |
   |---|---|---|
   | **Unreadable files** | An article file that cannot be read or parsed (malformed front matter, file permissions), or an article folder that cannot be listed | The file, or every article in the folder, is missing from listings and from every other check, so the rest of the report cannot see it |
+  | **Misplaced documents** | A document that parses but is not stored as `articles/<slug>.md` — in a subfolder, copied under another filename, or with a slug not in slug form | No listing, search, lookup, or check includes it, so the file exists but the wiki cannot open it. Each finding carries a `remedy` that is safe to follow: it names a free destination and never suggests overwriting another document |
   | **Orphan pages** | A **wiki article** no other article links to | Unreachable by graph traversal, so an agent following links will never find it |
   | **Broken internal links** | The target does not exist | Names the `target_slug` a fix has to create, and the `form` the link was written in |
   | **Memories with no `source`** | An `AI-Agent-Memory` with empty provenance | A fact that cannot be re-verified later |
@@ -916,9 +903,10 @@ Audits the knowledge base for maintenance work in one call. Everything it report
   * **Reads keep a memory warm.** A memory the agent keeps consulting is alive even if nobody has edited it in a year — that is what a good memory looks like.
   * **Duplicate detection is scoped, and skips pairs that already link to each other.** A "Deployment Notes" memory about `docker` and one about `nexwiki` are separate by design. And when two memories reference one another, their author already knows both exist and has decided to keep them apart. It reports similarity, not disagreement: telling the two apart needs semantics NexWiki deliberately does not have.
   * **Unreadable files are reported first, and never fail the scan.** The scan skips them and carries on, and the report lists them ahead of every other category, since fixing one can change what the rest of the report says. A folder that cannot be listed is reported once, with a trailing `/`, however many articles it holds. The remedies differ: fix a file's front matter or permissions, or delete the file; for a folder, fix whatever keeps it from being listed (usually its permissions), since deleting it would take its articles with it. A file deleted or renamed mid-scan is not reported. The server also logs each one to stderr — see [Article Files on Disk](./production_deployment.md#article-files-on-disk). Only an article directory that cannot be read or searched as a whole fails the tool, the latter with `article directory is not searchable`.
+  * **Misplaced documents are reported right after the unreadable files.** A document is valid only at `articles/<slug>.md` at the top level, compared with the article directory's case sensitivity (detected once at startup); anything else is skipped by every walk and cannot be opened or edited by slug, and a create that would overwrite one is refused. Each is warned about once per file version server-side, and the report lists it with its declared slug and a `remedy` that never overwrites another document and never tells two misplaced documents to move to the same destination. Misplaced documents count toward the wiki needing attention.
 
   A stale plan does **not** need an in-flight tag. Requiring `wip` sounds tidier but makes the check incapable of firing on a real wiki, where plans typically carry a project tag and nothing else — what matters is that the plan was never marked finished and nobody has touched it since. When an in-flight tag (`wip`, `in-progress`, `draft`, `active`, `todo`, `pending`, `review`, `blocked`) *is* present, the report names it.
-* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, unreadable_file_count, unreadable_files[], orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], unkinded_memory_count, unkinded_memories[], contested_memory_count, contested_memories[], stale_plan_count, stale_plans[], stale_concept_count, stale_concepts[], unreferenced_skill_count, unreferenced_skills[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count, plan_status_census}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `unreadable_files[]`, sorted by path, carries `path`, relative to the article directory and slash-separated (a folder's ends in `/`), and `error`, why it could not be read, parsed, or listed. Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`). The `error` values, and the error text of a scan that fails outright, contain no absolute server paths.
+* **Structured output**: `structuredContent` as `{total_documents, stale_days, limit, truncated, unreadable_file_count, unreadable_files[], misplaced_document_count, misplaced_documents[], orphan_count, orphans[], broken_link_count, broken_links[], unsourced_memory_count, unsourced_memories[], unkinded_memory_count, unkinded_memories[], contested_memory_count, contested_memories[], stale_plan_count, stale_plans[], stale_concept_count, stale_concepts[], unreferenced_skill_count, unreferenced_skills[], cold_days, cold_memory_scan_ran, cold_memory_skipped_reason, cold_memory_count, cold_memories[], duplicate_memory_count, duplicate_memories[], parked_plan_count, plan_status_census}`. Counts are complete; the lists honour `limit`, and `truncated` says whether anything was cut. Each entry in `unreadable_files[]`, sorted by path, carries `path`, relative to the article directory and slash-separated (a folder's ends in `/`), and `error`, why it could not be read, parsed, or listed. Each entry in `misplaced_documents[]`, sorted by path, carries `path` (relative to the article directory), `slug` (the slug its front matter declares), and `remedy` (a fix that is safe to follow). Each entry in `broken_links[]` carries `from_slug`, `target`, `target_slug`, and `form` (`"wikilink"` or `"markdown"`). The `error` values, and the error text of a scan that fails outright, contain no absolute server paths.
 
 **Examples**
 
@@ -940,8 +928,10 @@ To connect your AI agents (Claude Desktop, Cursor, Copilot CLI, Claude Code, or 
    Connects the client directly to your active running web server on port `5808` (at `http://localhost:5808/api/mcp`).
    * **Advantages**: Zero process overhead, and **completely avoids database file lock contentions** (since the active running Go server process maintains exclusive locks, and all clients share it over HTTP).
 2. **Stdio (Process-Based Alternative 📦)**:
-   The client spawns its own isolated background process of the `nexwiki` Go executable on demand.
-   * **Disadvantage**: Since each Stdio client spawns a separate binary process, they might compete to acquire exclusive database/search index file locks if the active web server is already running, which can trigger file-locking errors. Use this only if you aren't running the web server interface.
+   The client spawns its own `nexwiki -mcp-only` process on demand. At startup, the process checks for a NexWiki web server on `127.0.0.1` at its `-port` (default `5808`):
+   * **Web server running**: The process proxies all MCP traffic to that server's `/api/mcp` and never opens the data directory, so there is no lock contention. See [Sidecar proxy mode](#-sidecar-proxy-mode).
+   * **No web server**: The process opens the data directory itself and holds the search index lock until the client exits. It serves MCP only: no web UI, no plan lifecycle worker, and no live subscriptions.
+   * **Disadvantages**: An extra process per client, and the check runs only once, at startup. While a standalone stdio process runs, a web server (or another standalone process) started on the same data directory cannot open the search index and exits with an error after 15 seconds. Each stdio message is capped at 8 MB (see [Stdio message size](#-stdio-message-size)).
 
 ---
 

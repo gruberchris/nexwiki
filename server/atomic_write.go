@@ -52,8 +52,11 @@ var chmodFile = (*os.File).Chmod
 //
 // The temp file is created beside the destination so the rename never crosses a filesystem, and
 // its name does not end in ".md" (or ".md.gz") so the scans, which filter on those extensions,
-// never see it. A crash before the rename leaves it behind for removeLeftoverTempFiles, which runs
-// alongside live saves and so relies on every caller holding Storage.writeMu.
+// never see it. A crash before the rename leaves it behind for removeLeftoverTempFiles. That sweeps
+// the article tree and the data directory root at startup, before any save, and the history and
+// asset trees in the background alongside live saves, so callers writing into the history or
+// asset trees must hold Storage.writeMu. A caller writing into the root (ThemeStore) need not:
+// the root's sweep is startup-only, so it never runs alongside a save in progress.
 //
 // It otherwise behaves like os.WriteFile where that is cheap to keep: it writes through a symlink
 // instead of replacing the link, an existing file keeps its mode (where the filesystem allows the
@@ -147,9 +150,10 @@ var sweepDirHook func(dir string)
 // before its next directory.
 //
 // A temp file mid-write looks exactly like a leftover, so each directory is listed and cleaned
-// while holding writeMu, which every writeFileAtomic caller holds from create to rename; writers
-// in other processes are ruled out by the search index lock NewStorage holds. The lock is released
-// between directories, so a long sweep never holds up a save for more than one directory.
+// while holding writeMu, which every writeFileAtomic caller writing under a swept root holds from
+// create to rename; writers in other processes are ruled out by the search index lock NewStorage
+// holds. The lock is released between directories, so a long sweep never holds up a save for more
+// than one directory.
 func (s *Storage) removeLeftoverTempFiles(stop <-chan struct{}, roots ...string) {
 	removed := 0
 	defer func() {
@@ -197,10 +201,45 @@ func (s *Storage) removeLeftoverTempFiles(stop <-chan struct{}, roots ...string)
 	}
 }
 
+// removeRootTempFiles is the data directory root's share of the startup temp file sweep: a custom
+// theme save writes its file directly in the root, so a crash mid-save can strand a temp file
+// there that no tree sweep reaches. Files only, and never recursive — the root's subdirectories
+// are the article, history, and asset trees and the search index, which own their own temp files
+// and are swept by their own passes.
+//
+// It takes no lock and must never run alongside live writes, only at startup like the
+// article-tree sweep: a theme save in progress holds only ThemeStore's own mu, not writeMu, so no
+// lock this package owns could keep a background root sweep from deleting its temp file
+// mid-write. At startup nothing can be mid-write — this process has not begun serving writes, and
+// the search index's exclusive lock rules out any other.
+func (s *Storage) removeRootTempFiles() {
+	entries, err := os.ReadDir(s.DataDir)
+	if err != nil {
+		log.Printf("Warning: temp file sweep could not read %s: %v", s.dataRelPath(s.DataDir), err)
+		return
+	}
+	removed := 0
+	for _, e := range entries {
+		if e.IsDir() || !e.Type().IsRegular() || !isAtomicTempName(e.Name()) {
+			continue
+		}
+		path := filepath.Join(s.DataDir, e.Name())
+		if err := os.Remove(path); err == nil {
+			removed++
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("Warning: could not remove leftover temp file %s: %v", s.dataRelPath(path), err)
+		}
+	}
+	if removed > 0 {
+		log.Printf("Removed %d leftover temp file(s) from interrupted writes", removed)
+	}
+}
+
 // sweepTempFilesInBackground runs removeLeftoverTempFiles over the history and asset trees without
 // holding up startup. Nothing at boot needs them clean (history scans read only .md.gz, so a
 // leftover there only wastes space), and they hold a directory per article, which can take seconds
-// to walk on a NAS mount. Close stops the sweep and waits for it to return.
+// to walk on a NAS mount. Close stops the sweep and waits for it to return; a CloseContext that gives
+// up at its deadline stops it without waiting.
 func (s *Storage) sweepTempFilesInBackground() {
 	s.sweepStop = make(chan struct{})
 	s.sweepDone = make(chan struct{})

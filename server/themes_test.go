@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -175,6 +178,152 @@ func TestThemeStoreSaveLoadRoundtrip(t *testing.T) {
 	}
 	if loaded[0].Schedule == nil {
 		t.Error("expected schedule for theme-a to be preserved")
+	}
+}
+
+// readCustomThemesFile checks that custom_themes.json in dataDir is complete JSON with no temp file
+// from writeFileAtomic left beside it, and returns the names of the themes it holds.
+func readCustomThemesFile(t *testing.T, dataDir string) []string {
+	t.Helper()
+	leftovers, err := filepath.Glob(filepath.Join(dataDir, atomicTempPrefix+"*"+atomicTempSuffix))
+	if err != nil {
+		t.Fatalf("Glob failed: %v", err)
+	}
+	if len(leftovers) > 0 {
+		t.Errorf("temp files left beside custom_themes.json: %v", leftovers)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dataDir, "custom_themes.json"))
+	if err != nil {
+		t.Fatalf("reading custom_themes.json failed: %v", err)
+	}
+	var themes []Theme
+	if err := json.Unmarshal(data, &themes); err != nil {
+		t.Fatalf("custom_themes.json is not valid JSON: %v\n%s", err, data)
+	}
+	names := make([]string, 0, len(themes))
+	for _, theme := range themes {
+		names = append(names, theme.Name)
+	}
+	return names
+}
+
+// statFileIdentity returns path's FileInfo for os.SameFile, taken through a handle that is closed
+// again before it returns. On Windows, os.Stat records only the path and os.SameFile looks the file
+// ID up by that path when it compares, so a FileInfo from before a replacement would compare as the
+// new file; a handle's Stat loads the ID at once. The handle is not kept because on Windows an open
+// handle blocks the rename that replaces the file.
+func statFileIdentity(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	return info
+}
+
+// A crash during a save must leave the old file, not a truncated one that fails every later load,
+// so the save has to replace the file rather than rewrite it in place.
+func TestSaveCustomThemesReplacesFileAtomically(t *testing.T) {
+	dir := t.TempDir()
+	ts := NewThemeStore(dir)
+	path := filepath.Join(dir, "custom_themes.json")
+
+	if err := ts.SaveCustomThemes([]Theme{{Name: "first", Custom: true}}); err != nil {
+		t.Fatalf("SaveCustomThemes failed: %v", err)
+	}
+	before := statFileIdentity(t, path)
+
+	// Compared across a single save: the replacement is created while the old file still exists, so
+	// it cannot reuse the old file's ID (the inode number, or the volume and file index on Windows),
+	// as a later file could once the old one is freed.
+	if err := ts.SaveCustomThemes([]Theme{{Name: "first", Custom: true}, {Name: "second", Custom: true}}); err != nil {
+		t.Fatalf("SaveCustomThemes failed: %v", err)
+	}
+	after := statFileIdentity(t, path)
+	if os.SameFile(before, after) {
+		t.Error("custom_themes.json was rewritten in place instead of replaced by a rename")
+	}
+
+	if err := ts.UpdateCustomThemes(func(themes []Theme) ([]Theme, error) {
+		return append(themes, Theme{Name: "third", Custom: true}), nil
+	}); err != nil {
+		t.Fatalf("UpdateCustomThemes failed: %v", err)
+	}
+
+	if got, want := readCustomThemesFile(t, dir), []string{"first", "second", "third"}; !slices.Equal(got, want) {
+		t.Errorf("saved themes = %v, want %v", got, want)
+	}
+}
+
+func TestUpdateCustomThemes(t *testing.T) {
+	dir := t.TempDir()
+	ts := NewThemeStore(dir)
+
+	// A missing file loads as an empty list, as LoadCustomThemes does.
+	err := ts.UpdateCustomThemes(func(themes []Theme) ([]Theme, error) {
+		if len(themes) != 0 {
+			t.Errorf("missing file: modify got %d themes, want 0", len(themes))
+		}
+		return append(themes, Theme{Name: "ocean", Custom: true, Light: ThemeColors{BgPrimary: "#001"}}), nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateCustomThemes on a missing file failed: %v", err)
+	}
+
+	// modify sees what the previous update saved.
+	err = ts.UpdateCustomThemes(func(themes []Theme) ([]Theme, error) {
+		if len(themes) != 1 || themes[0].Light.BgPrimary != "#001" {
+			t.Errorf("modify got %+v, want the saved ocean theme", themes)
+		}
+		themes[0].Light.BgPrimary = "#002"
+		return themes, nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateCustomThemes failed: %v", err)
+	}
+	loaded, err := ts.LoadCustomThemes()
+	if err != nil {
+		t.Fatalf("LoadCustomThemes failed: %v", err)
+	}
+	if len(loaded) != 1 || loaded[0].Light.BgPrimary != "#002" {
+		t.Errorf("after update loaded %+v, want ocean with BgPrimary #002", loaded)
+	}
+
+	// An error from modify is returned as is, and nothing is saved.
+	path := filepath.Join(dir, "custom_themes.json")
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	errRejected := errors.New("rejected")
+	err = ts.UpdateCustomThemes(func([]Theme) ([]Theme, error) { return nil, errRejected })
+	if err != errRejected {
+		t.Errorf("modify error: got %v, want %v itself, not wrapped in errLoadCustomThemes", err, errRejected)
+	}
+	if now, _ := os.ReadFile(path); !bytes.Equal(now, saved) {
+		t.Errorf("a rejected update changed the file:\n%s", now)
+	}
+
+	// A file that will not load is reported as a load failure, without calling modify or touching
+	// the file.
+	if err := os.WriteFile(path, []byte(`[{"name": "trunc`), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	err = ts.UpdateCustomThemes(func(themes []Theme) ([]Theme, error) {
+		t.Error("modify called although the file did not load")
+		return themes, nil
+	})
+	if !errors.Is(err, errLoadCustomThemes) {
+		t.Errorf("unloadable file: got %v, want errLoadCustomThemes", err)
+	}
+	if now, _ := os.ReadFile(path); string(now) != `[{"name": "trunc` {
+		t.Errorf("a failed load changed the file:\n%s", now)
 	}
 }
 

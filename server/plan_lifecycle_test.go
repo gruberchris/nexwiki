@@ -314,7 +314,13 @@ func captureWorkerLog(w *PlanLifecycleWorker) *strings.Builder {
 // incompleteScanWarning is the fragment of the worker's line for a plan it kept because the
 // backlink scan skipped entries.
 func incompleteScanWarning(slug string, skipped int) string {
-	return fmt.Sprintf("refusing to delete plan '%s' — the backlink scan skipped %d unreadable %s", slug, skipped, plural(skipped, "entry", "entries"))
+	return fmt.Sprintf("refusing to delete plan '%s' — the backlink scan skipped %d unreadable %s that may link to it", slug, skipped, plural(skipped, "entry", "entries"))
+}
+
+// misplacedLinkerWarning is the fragment of the worker's line for a plan it kept because misplaced
+// documents link to it and nothing else does.
+func misplacedLinkerWarning(slug string, linkers int) string {
+	return fmt.Sprintf("refusing to delete plan '%s' — %d misplaced %s %s to it.", slug, linkers, plural(linkers, "document", "documents"), plural(linkers, "links", "link"))
 }
 
 // deleteRefusals counts the delete-refused activity events the worker published for a plan.
@@ -340,12 +346,12 @@ func TestLifecycleWorkerKeepsPlanWhenLinkerIsUnparsable(t *testing.T) {
 	broken := filepath.Join(s.ArticleDir, "broken.md")
 	writeWithMtime(t, broken, []byte("---\ntitle: [unclosed\n---\nSee [[Shadowed Archived]].\n"), time.Now().Add(-time.Hour))
 
-	_, skipped, err := s.getBacklinksWithSkipped("shadowed-archived")
+	scan, err := s.scanBacklinks("shadowed-archived")
 	if err != nil {
-		t.Fatalf("getBacklinksWithSkipped failed: %v", err)
+		t.Fatalf("scanBacklinks failed: %v", err)
 	}
-	if len(skipped) != 1 || skipped[0].Path != "broken.md" || skipped[0].Error == "" {
-		t.Errorf("skipped = %+v, want only broken.md with its error", skipped)
+	if len(scan.unreadable) != 1 || scan.unreadable[0].Path != "broken.md" || scan.unreadable[0].Error == "" || len(scan.misplaced) != 0 {
+		t.Errorf("unreadable = %+v and misplaced = %+v, want only broken.md with its error", scan.unreadable, scan.misplaced)
 	}
 
 	bus := NewEventBus()
@@ -378,7 +384,8 @@ func TestLifecycleWorkerKeepsPlanWhenLinkerIsUnparsable(t *testing.T) {
 
 // TestLifecycleWorkerKeepsPlanWhenLinkerIsInUnreadableFolder is the folder form of the same guard:
 // an unlistable subdirectory used to fail the backlink scan outright and now only skips that
-// folder, which must not turn into a deletion.
+// folder, which must not turn into a deletion. Once the folder is readable its linker is found to be
+// misplaced, which keeps the plan too, and moved to where it belongs it is an ordinary backlink.
 func TestLifecycleWorkerKeepsPlanWhenLinkerIsInUnreadableFolder(t *testing.T) {
 	s := newLifecycleStorage(t)
 	captureLog(t) // the scans' own skip warnings
@@ -404,16 +411,30 @@ func TestLifecycleWorkerKeepsPlanWhenLinkerIsInUnreadableFolder(t *testing.T) {
 		t.Errorf("the refusal must be recorded as one delete-refused activity event, got %d", n)
 	}
 
-	// Once the folder is readable the link is found, and the plan is refused as linked.
+	// Once the folder is readable the linker is scanned. A document in a folder is misplaced, so it
+	// is still no backlink, but it links to the plan and keeps it.
 	if err := os.Chmod(locked, 0755); err != nil {
 		t.Fatalf("Chmod failed: %v", err)
+	}
+	out.Reset()
+	w.Sweep()
+	if _, err := s.GetArticle("hidden-linked-archived"); err != nil {
+		t.Fatal("a plan a misplaced document links to must not be auto-deleted")
+	}
+	if !strings.Contains(out.String(), misplacedLinkerWarning("hidden-linked-archived", 1)) {
+		t.Errorf("the recovered scan should refuse on the misplaced linker, got %q", out.String())
+	}
+
+	// Moved to where it belongs, the linker is a backlink, and the plan is refused as linked.
+	if err := os.Rename(filepath.Join(locked, "pointer.md"), filepath.Join(s.ArticleDir, "pointer.md")); err != nil {
+		t.Fatalf("Rename failed: %v", err)
 	}
 	w.Sweep()
 	if _, err := s.GetArticle("hidden-linked-archived"); err != nil {
 		t.Fatal("a plan other documents link to must never be auto-deleted")
 	}
 	if !strings.Contains(out.String(), "refusing to delete plan 'hidden-linked-archived' — still linked from: pointer") {
-		t.Errorf("the recovered scan should refuse on the real link, got %q", out.String())
+		t.Errorf("the scan should refuse on the real link, got %q", out.String())
 	}
 }
 

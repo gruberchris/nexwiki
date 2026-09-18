@@ -126,7 +126,7 @@ A guide to running NexWiki in containers using official multi-platform images:
 * **Multi-Platform GHCR Images**: Pulling and running `ghcr.io/gruberchris/nexwiki:latest` on `linux/amd64` and `linux/arm64`.
 * **Container Run Commands**: Minimal and advanced `docker run` invocations with port mapping and environment variables.
 * **Production Docker Compose**: Production-ready `docker-compose.yml` configuration with persistent volumes.
-* **Volume Persistence**: Understanding `/app/data` structure (`articles/`, `assets/`, `search.bleve/`, `activity.jsonl`) and graceful shutdown handling.
+* **Volume Persistence**: Understanding `/app/data` structure (`articles/`, `assets/`, `history/`, `search.bleve/`, `activity.jsonl`, `custom_themes.json`) and graceful shutdown handling.
 * **Stdio MCP Subprocesses**: Spawning stdio MCP workers via `docker exec` with the `-mcp-only` flag.
 
 ### 18. [NexWiki Production Deployment & Reverse Proxy Guide](./production_deployment.md)
@@ -141,7 +141,7 @@ A production deployment manual covering security boundaries, persistent storage,
 ### 19. [NexWiki Developer Setup & Build Automation Guide](./developer_guide.md)
 A technical manual for developers contributing to the Go backend and React frontend:
 * **Prerequisites & Toolchain**: Requirements for Go 1.27+ and Node.js 20.x+.
-* **Frictionless Dev Mode**: Running Vite hot-reloading dev server on `:5173` with backend CORS proxying on `:5808`.
+* **Frictionless Dev Mode**: Running Vite hot-reloading dev server on `:5173` for UI-only iteration (fetches are relative and Vite proxies nothing, so the backend is reached by opening the Go server on `:5808`, which serves `frontend/dist` from disk when it exists).
 * **Makefile Automation**: Overview of build, clean, and Docker automation targets.
 * **Multi-Platform Cross-Compilation**: Compiling standalone binaries for Windows AMD64, Linux AMD64, Linux ARM64, and macOS ARM64 with embedded assets (`go:embed`).
 * **Testing & Quality Gates**: Executing Go race detector tests (`go test -race`), static analysis (`go vet`), and frontend Vitest suites.

@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -532,8 +534,16 @@ var DefaultThemes = []Theme{
 // ThemeStore handles persistent custom theme files in the wiki's data directory.
 type ThemeStore struct {
 	filePath string
-	mu       sync.RWMutex
+	// mu guards custom_themes.json. Writers must hold it across the whole load-modify-save, which
+	// is what UpdateCustomThemes is for: two requests that each load, change and save under
+	// separate holds can both start from the same list, and the later save discards the other's
+	// change.
+	mu sync.RWMutex
 }
+
+// errLoadCustomThemes marks an UpdateCustomThemes error as a failure to read the existing file,
+// so callers can report it apart from a failed save.
+var errLoadCustomThemes = errors.New("loading custom themes")
 
 // NewThemeStore builds a new ThemeStore.
 func NewThemeStore(dataDir string) *ThemeStore {
@@ -546,7 +556,39 @@ func NewThemeStore(dataDir string) *ThemeStore {
 func (ts *ThemeStore) LoadCustomThemes() ([]Theme, error) {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
+	return ts.loadCustomThemesLocked()
+}
 
+// SaveCustomThemes persists user-created themes to custom_themes.json, replacing whatever is there.
+// To change the existing list, use UpdateCustomThemes.
+func (ts *ThemeStore) SaveCustomThemes(themes []Theme) error {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return ts.saveCustomThemesLocked(themes)
+}
+
+// UpdateCustomThemes loads the custom themes, passes them to modify, and saves what it returns, all
+// under one hold of the store's lock, so concurrent updates cannot lose one another's changes. If
+// modify returns an error, nothing is saved and that error is returned unchanged; a failure to load
+// the existing file wraps errLoadCustomThemes. modify runs with the lock held, so it must be quick
+// and must not call back into the ThemeStore, which would deadlock.
+func (ts *ThemeStore) UpdateCustomThemes(modify func([]Theme) ([]Theme, error)) error {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	themes, err := ts.loadCustomThemesLocked()
+	if err != nil {
+		return fmt.Errorf("%w: %w", errLoadCustomThemes, err)
+	}
+	themes, err = modify(themes)
+	if err != nil {
+		return err
+	}
+	return ts.saveCustomThemesLocked(themes)
+}
+
+// loadCustomThemesLocked is LoadCustomThemes's body. The caller must hold mu, for reading at least.
+func (ts *ThemeStore) loadCustomThemesLocked() ([]Theme, error) {
 	if _, err := os.Stat(ts.filePath); os.IsNotExist(err) {
 		return []Theme{}, nil
 	}
@@ -564,11 +606,8 @@ func (ts *ThemeStore) LoadCustomThemes() ([]Theme, error) {
 	return themes, nil
 }
 
-// SaveCustomThemes persists user-created themes to custom_themes.json.
-func (ts *ThemeStore) SaveCustomThemes(themes []Theme) error {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-
+// saveCustomThemesLocked is SaveCustomThemes's body. The caller must hold mu for writing.
+func (ts *ThemeStore) saveCustomThemesLocked(themes []Theme) error {
 	data, err := json.MarshalIndent(themes, "", "  ")
 	if err != nil {
 		return err
@@ -580,7 +619,10 @@ func (ts *ThemeStore) SaveCustomThemes(themes []Theme) error {
 		return err
 	}
 
-	return os.WriteFile(ts.filePath, data, 0644)
+	// Atomically, so a crash mid-write leaves the old file rather than a truncated one that fails
+	// every later load. Storage.writeMu is not needed: the data directory root, where this file
+	// lives, is swept for leftovers only at startup, never alongside live writes.
+	return writeFileAtomic(ts.filePath, data, 0644)
 }
 
 // themeActiveToday checks if the given time falls inside the theme's annual date range.
