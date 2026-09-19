@@ -114,7 +114,7 @@ func TestListAgentSkillsWarnsAndContinuesPastAnUnreadableSkill(t *testing.T) {
 	corruptBehindCache(t, srv.Storage, "broken-skill")
 	buf := captureLog(t)
 
-	resp := toolCall(t, srv, `{"name":"list_agent_skills","arguments":{}}`)
+	resp := toolCall(t, srv, `{"name":"list_articles","arguments":{"type":"skills"}}`)
 	if resp.IsError {
 		t.Fatalf("the listing must survive one unreadable skill: %s", resp.Content[0].Text)
 	}
@@ -141,7 +141,7 @@ func TestListAgentPlansWarnsAndContinuesPastAnUnreadablePlan(t *testing.T) {
 	corruptBehindCache(t, srv.Storage, "broken-plan")
 	buf := captureLog(t)
 
-	resp := toolCall(t, srv, `{"name":"list_agent_plans","arguments":{}}`)
+	resp := toolCall(t, srv, `{"name":"list_articles","arguments":{"type":"plans"}}`)
 	if resp.IsError {
 		t.Fatalf("the listing must survive one unreadable plan: %s", resp.Content[0].Text)
 	}

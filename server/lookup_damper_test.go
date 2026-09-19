@@ -127,7 +127,7 @@ func TestDamperResetsOnAWrite(t *testing.T) {
 		t.Fatalf("setup: expected the repeat to be noticed:\n%s", out)
 	}
 
-	created := damperCall(t, srv, "agent-a", `{"name":"create_agent_memory","arguments":{"title":"Docker Build Note","content":"# fact","memory_kind":"project","description":"d","source":"s"}}`)
+	created := damperCall(t, srv, "agent-a", `{"name":"save_article","arguments":{"title":"Docker Build Note","content":"# fact","type":"AI-Agent-Memory","memory_kind":"project","description":"d","source":"s"}}`)
 	if strings.Contains(created, "Error") {
 		t.Fatalf("setup: create failed:\n%s", created)
 	}
@@ -268,7 +268,7 @@ func TestDamperNeverTouchesStructuredContent(t *testing.T) {
 func TestDamperNeverBlocks(t *testing.T) {
 	srv := newMCPServer(t)
 
-	if resp := toolCall(t, srv, `{"name":"create_wiki_article","arguments":{"title":"Bleve Notes","content":"# bleve indexing"}}`); resp.IsError {
+	if resp := toolCall(t, srv, `{"name":"save_article","arguments":{"title":"Bleve Notes","content":"# bleve indexing"}}`); resp.IsError {
 		t.Fatalf("setup failed: %s", resp.Content[0].Text)
 	}
 

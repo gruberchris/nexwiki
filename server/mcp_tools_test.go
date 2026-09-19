@@ -13,7 +13,7 @@ import (
 // the registry, the schema lived in one 760-line literal and the handler in a separate 1,180-line
 // switch, so adding a tool to one and forgetting the other compiled cleanly and shipped broken.
 func TestRegistryCoversEveryTool(t *testing.T) {
-	const expectedToolCount = 29
+	const expectedToolCount = 9
 
 	if len(mcpToolRegistry) != expectedToolCount {
 		t.Errorf("registry holds %d tools, expected %d — update the count in README.md, AGENTS.md, "+
@@ -116,35 +116,34 @@ func TestAnnotationsProjectedIntoToolsList(t *testing.T) {
 	}
 
 	t.Run("read-only tool", func(t *testing.T) {
-		entry := byName["get_context_overview"]
+		entry := byName["read_article"]
 		ann := entry["annotations"].(map[string]interface{})
 
 		if ann["readOnlyHint"] != true {
-			t.Error("get_context_overview must be readOnlyHint:true — it is the first call of every session")
+			t.Error("read_article must be readOnlyHint:true")
 		}
 		// destructiveHint/idempotentHint are defined as meaningful only for writes; emitting
 		// them here would contradict readOnlyHint.
 		if _, present := ann["destructiveHint"]; present {
 			t.Error("read-only tools should not carry destructiveHint")
 		}
-		if entry["title"] != "Get Context Overview" {
+		if entry["title"] != "Read Article" {
 			t.Errorf("title should also appear top-level for 2026-07-28 clients, got %v", entry["title"])
 		}
 	})
 
 	t.Run("additive write", func(t *testing.T) {
-		ann := byName["create_wiki_article"]["annotations"].(map[string]interface{})
+		ann := byName["append_article"]["annotations"].(map[string]interface{})
 		if ann["readOnlyHint"] != false {
-			t.Error("create_wiki_article writes")
+			t.Error("append_article writes")
 		}
 		if ann["destructiveHint"] != false {
-			t.Error("creating a new article is additive, not destructive")
+			t.Error("appending to an article is additive, not destructive")
 		}
 	})
 
 	t.Run("destructive write", func(t *testing.T) {
-		for _, name := range []string{"delete_wiki_article", "delete_agent_memory",
-			"edit_wiki_article", "update_article_tags", "revert_article_version", "import_okf_bundle"} {
+		for _, name := range []string{"save_article", "delete_article"} {
 			ann := byName[name]["annotations"].(map[string]interface{})
 			if ann["destructiveHint"] != true {
 				t.Errorf("%s can overwrite or remove existing content and must be destructiveHint:true", name)
@@ -154,7 +153,7 @@ func TestAnnotationsProjectedIntoToolsList(t *testing.T) {
 
 	t.Run("deletes are idempotent", func(t *testing.T) {
 		// Deleting an already-deleted article has no further effect.
-		for _, name := range []string{"delete_wiki_article", "delete_agent_memory"} {
+		for _, name := range []string{"delete_article"} {
 			ann := byName[name]["annotations"].(map[string]interface{})
 			if ann["idempotentHint"] != true {
 				t.Errorf("%s should be idempotentHint:true", name)
@@ -345,7 +344,7 @@ func TestSchemaTypeNameSpeaksJSONSchema(t *testing.T) {
 func TestAgentCreateToolsAcceptTags(t *testing.T) {
 	t.Run("plan is created in flight in one call", func(t *testing.T) {
 		srv := newMCPServer(t)
-		resp := toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Tagged Plan","content":"# Plan","project_context":"nexwiki","status":"implementing","tags":["postgres"]}}`)
+		resp := toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Plan","title":"Tagged Plan","content":"# Plan","project_context":"nexwiki","status":"implementing","tags":["postgres"]}}`)
 		if resp.IsError {
 			t.Fatalf("create failed: %s", resp.Content[0].Text)
 		}
@@ -367,7 +366,7 @@ func TestAgentCreateToolsAcceptTags(t *testing.T) {
 
 	t.Run("memory keeps its tool-managed scope tag", func(t *testing.T) {
 		srv := newMCPServer(t)
-		resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Tagged Memory","content":"# M","memory_type":"nexwiki","tags":["review"],"description":"fixture memory","source":"test fixture"}}`)
+		resp := toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","memory_kind":"project","title":"Tagged Memory","content":"# M","memory_type":"nexwiki","tags":["review"],"description":"fixture memory","source":"test fixture"}}`)
 		if resp.IsError {
 			t.Fatalf("create failed: %s", resp.Content[0].Text)
 		}
@@ -383,7 +382,7 @@ func TestAgentCreateToolsAcceptTags(t *testing.T) {
 	t.Run("a caller cannot forge a memory scope tag", func(t *testing.T) {
 		srv := newMCPServer(t)
 		// Forging memory-<scope> would let a plan masquerade as scoped memory in list_agent_memories.
-		toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Forging Plan","content":"# P","project_context":"proj","tags":["memory-secret","postgres"]}}`)
+		toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Plan","title":"Forging Plan","content":"# P","project_context":"proj","tags":["memory-secret","postgres"]}}`)
 		art, _ := srv.Storage.GetArticle("forging-plan")
 		if hasTagFold(art.Tags, MemoryScopeTagPrefix+"secret") {
 			t.Errorf("a forged memory-scope tag was accepted: %v", art.Tags)
@@ -393,7 +392,7 @@ func TestAgentCreateToolsAcceptTags(t *testing.T) {
 		}
 
 		srv2 := newMCPServer(t)
-		toolCall(t, srv2, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Forging Memory","content":"# M","memory_type":"real","tags":["memory-fake"],"description":"fixture memory","source":"test fixture"}}`)
+		toolCall(t, srv2, `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","memory_kind":"project","title":"Forging Memory","content":"# M","memory_type":"real","tags":["memory-fake"],"description":"fixture memory","source":"test fixture"}}`)
 		art2, _ := srv2.Storage.GetArticle("forging-memory")
 		if hasTagFold(art2.Tags, MemoryScopeTagPrefix+"fake") {
 			t.Errorf("a forged memory-scope tag was accepted: %v", art2.Tags)
@@ -405,7 +404,7 @@ func TestAgentCreateToolsAcceptTags(t *testing.T) {
 
 	t.Run("omitting tags is unchanged", func(t *testing.T) {
 		srv := newMCPServer(t)
-		toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Bare Plan","content":"# P","project_context":"nexwiki"}}`)
+		toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Plan","title":"Bare Plan","content":"# P","project_context":"nexwiki"}}`)
 		art, _ := srv.Storage.GetArticle("bare-plan")
 		if len(art.Tags) != 1 || !hasTagFold(art.Tags, "nexwiki") {
 			t.Errorf("expected only the project tag, got %v", art.Tags)
@@ -419,7 +418,7 @@ func TestAgentCreateToolsAcceptTags(t *testing.T) {
 	t.Run("a project_context that slugifies to nothing does not panic", func(t *testing.T) {
 		srv := newMCPServer(t)
 		// contextTags ends up empty here; the dedupe set must not be nil when written to.
-		resp := toolCall(t, srv, `{"name":"create_agent_plan","arguments":{"title":"Odd Context","content":"# P","project_context":"!!!","status":"implementing"}}`)
+		resp := toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Plan","title":"Odd Context","content":"# P","project_context":"!!!","status":"implementing"}}`)
 		if resp.IsError {
 			t.Fatalf("create failed: %s", resp.Content[0].Text)
 		}
@@ -429,13 +428,11 @@ func TestAgentCreateToolsAcceptTags(t *testing.T) {
 		}
 	})
 
-	t.Run("every create tool advertises tags", func(t *testing.T) {
-		for _, name := range []string{"create_wiki_article", "create_agent_skill", "create_agent_memory", "create_agent_plan"} {
-			schema := toolsByName[name].Schema["inputSchema"].(map[string]interface{})
-			props := schema["properties"].(map[string]interface{})
-			if _, ok := props["tags"]; !ok {
-				t.Errorf("%s does not advertise a tags argument", name)
-			}
+	t.Run("save_article advertises tags", func(t *testing.T) {
+		schema := toolsByName["save_article"].Schema["inputSchema"].(map[string]interface{})
+		props := schema["properties"].(map[string]interface{})
+		if _, ok := props["tags"]; !ok {
+			t.Errorf("save_article does not advertise a tags argument")
 		}
 	})
 }
@@ -501,14 +498,14 @@ func TestBareToolVerbsCoverRegistry(t *testing.T) {
 	}
 }
 
-// TestCreateWikiArticleRejectsToolVerbTitle is the end-to-end assertion: the bad call is refused
+// TestSaveArticleRejectsToolVerbTitle is the end-to-end assertion: the bad call is refused
 // and, critically, no article is written. The original incident left a real 2,500-word article
 // stranded at a meaningless slug precisely because the write went through.
-func TestCreateWikiArticleRejectsToolVerbTitle(t *testing.T) {
+func TestSaveArticleRejectsToolVerbTitle(t *testing.T) {
 	srv := newTestServer(t)
 
 	args := json.RawMessage(`{"title":"create","content":"# A complete article body that should not be saved."}`)
-	result, rpcErr := createWikiArticleTool.Handler(srv, args)
+	result, rpcErr := saveArticleTool.Handler(srv, args)
 	if rpcErr != nil {
 		t.Fatalf("expected a tool-level error response, got a JSON-RPC error: %v", rpcErr)
 	}

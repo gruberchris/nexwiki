@@ -46,6 +46,12 @@ func TestRenameHealsBacklinks(t *testing.T) {
 // TestEditWikiArticleResourcePointerSemantics covers G2: omit=preserve, ""=clear, value=replace.
 func TestEditWikiArticleResourcePointerSemantics(t *testing.T) {
 	srv := newMCPServer(t)
+	toolsByName["create_wiki_article"] = &createWikiArticleTool
+	toolsByName["edit_wiki_article"] = &editWikiArticleTool
+	t.Cleanup(func() {
+		delete(toolsByName, "create_wiki_article")
+		delete(toolsByName, "edit_wiki_article")
+	})
 
 	create := toolCall(t, srv, `{"name":"create_wiki_article","arguments":{"title":"Res Art","content":"# Body","resource":"https://example.com/spec"}}`)
 	if create.IsError {

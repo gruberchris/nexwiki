@@ -168,10 +168,10 @@ func TestSymlinkedArticleDirectory(t *testing.T) {
 	t.Run("a symlinked directory that cannot be searched fails scans naming the entry", func(t *testing.T) {
 		lockSearch(t, elsewhere)
 		srv := NewServer(storage, "Test Wiki", "light", false, NewEventBus(), "1.0.0", "")
-		resp := toolCall(t, srv, `{"name":"get_wiki_statistics","arguments":{}}`)
+		resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`)
 		want := "failed to list articles: article directory is not searchable: lstat articles/home.md: permission denied"
 		if !resp.IsError || len(resp.Content) != 1 || resp.Content[0].Text != want {
-			t.Errorf("get_wiki_statistics: got %+v, want an error reading %q", resp, want)
+			t.Errorf("get_wiki_overview: got %+v, want an error reading %q", resp, want)
 		}
 	})
 
@@ -200,10 +200,10 @@ func TestSymlinkedArticleDirectory(t *testing.T) {
 		// client sees it as articles, the name relative to the data directory, rather than as an
 		// empty path.
 		srv := NewServer(storage, "Test Wiki", "light", false, NewEventBus(), "1.0.0", "")
-		resp := toolCall(t, srv, `{"name":"get_wiki_statistics","arguments":{}}`)
+		resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`)
 		want := "failed to list articles: lstat articles: no such file or directory"
 		if !resp.IsError || len(resp.Content) != 1 || resp.Content[0].Text != want {
-			t.Errorf("get_wiki_statistics: got %+v, want an error reading %q", resp, want)
+			t.Errorf("get_wiki_overview: got %+v, want an error reading %q", resp, want)
 		}
 	})
 

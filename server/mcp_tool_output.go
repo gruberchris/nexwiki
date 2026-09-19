@@ -482,7 +482,7 @@ func activityOutputSchema() map[string]interface{} {
 type OverviewOutput struct {
 	TotalArticles  int               `json:"total_articles"`
 	Articles       []Article         `json:"articles"`
-	RecentActivity []LogEvent        `json:"recent_activity,omitempty"`
+	RecentActivity []LogEvent        `json:"recent_activity"`
 	Statistics     *StatisticsOutput `json:"statistics,omitempty"`
 	StatusTags     *StatusTagsOutput `json:"status_tags,omitempty"`
 }

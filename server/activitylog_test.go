@@ -641,32 +641,26 @@ func TestMCPGetRecentActivity(t *testing.T) {
 	srv.EventBus.PublishActivity("mcp", "create", "create_wiki_article", "new-doc", "New Doc", "Claude")
 	srv.EventBus.PublishActivity("api", "edit", "", "new-doc", "New Doc", "User")
 
-	resp := toolCall(t, srv, `{"name":"get_recent_activity","arguments":{"since":"1h"}}`)
+	resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"since":"1h"}}`)
 	if resp.IsError {
-		t.Fatalf("get_recent_activity failed: %s", resp.Content[0].Text)
+		t.Fatalf("get_wiki_overview failed: %s", resp.Content[0].Text)
 	}
 	text := resp.Content[0].Text
-	if !strings.Contains(text, "[mcp/create] create_wiki_article → 'New Doc' (new-doc) by Claude") {
+	if !strings.Contains(text, "[mcp/create] create_wiki_article → 'New Doc' (new-doc)") {
 		t.Errorf("missing mcp event line: %s", text)
 	}
-	if !strings.Contains(text, "[api/edit] web-ui → 'New Doc' (new-doc) by User") {
+	if !strings.Contains(text, "[api/edit] web-ui → 'New Doc' (new-doc)") {
 		t.Errorf("missing api event line: %s", text)
 	}
 
-	// Source filter
-	apiOnly := toolCall(t, srv, `{"name":"get_recent_activity","arguments":{"source":"api"}}`)
-	if strings.Contains(apiOnly.Content[0].Text, "[mcp/") {
-		t.Errorf("source filter leaked mcp events: %s", apiOnly.Content[0].Text)
-	}
-
 	// Invalid since value
-	bad := toolCall(t, srv, `{"name":"get_recent_activity","arguments":{"since":"yesterday"}}`)
+	bad := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"since":"yesterday"}}`)
 	if !bad.IsError {
 		t.Error("expected error for invalid since value")
 	}
 
 	// RFC3339 since accepted
-	rfc := toolCall(t, srv, `{"name":"get_recent_activity","arguments":{"since":"2020-01-01T00:00:00Z"}}`)
+	rfc := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"since":"2020-01-01T00:00:00Z"}}`)
 	if rfc.IsError {
 		t.Errorf("RFC3339 since rejected: %s", rfc.Content[0].Text)
 	}
@@ -678,7 +672,7 @@ func TestMCPGetRecentActivityFallsBackToRing(t *testing.T) {
 	// No persistence wired and no file on disk: tool falls back to the in-memory ring
 	srv.EventBus.PublishActivity("mcp", "read", "read_article", "doc", "Doc", "Claude")
 
-	resp := toolCall(t, srv, `{"name":"get_recent_activity","arguments":{}}`)
+	resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`)
 	if resp.IsError {
 		t.Fatalf("fallback failed: %s", resp.Content[0].Text)
 	}

@@ -448,7 +448,7 @@ func (h *stdioHarness) send(line string) <-chan struct{} {
 }
 
 func createArticleRequest(id int, title string) string {
-	return `{"jsonrpc":"2.0","id":` + strconv.Itoa(id) + `,"method":"tools/call","params":{"name":"create_wiki_article","arguments":{"title":"` +
+	return `{"jsonrpc":"2.0","id":` + strconv.Itoa(id) + `,"method":"tools/call","params":{"name":"save_article","arguments":{"title":"` +
 		title + `","content":"# body"}}}`
 }
 

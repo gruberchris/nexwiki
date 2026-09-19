@@ -946,11 +946,10 @@ func TestMisplacedDocumentIsNotFoundOverMCPAndREST(t *testing.T) {
 	unchanged := newCopiedArticleFixture(t, srv.Storage)
 
 	for name, call := range map[string]string{
-		"read_article":           `{"name":"read_article","arguments":{"slug":"bar-copy"}}`,
-		"edit_wiki_article":      `{"name":"edit_wiki_article","arguments":{"slug":"bar-copy","title":"Bar","content":"HIJACKED","loaded_version":1}}`,
-		"update_article_tags":    `{"name":"update_article_tags","arguments":{"slug":"bar-copy","tags":["hijacked"],"loaded_version":1}}`,
-		"delete_wiki_article":    `{"name":"delete_wiki_article","arguments":{"slug":"bar-copy"}}`,
-		"revert_article_version": `{"name":"revert_article_version","arguments":{"slug":"bar-copy","version":1}}`,
+		"read_article":   `{"name":"read_article","arguments":{"slug":"bar-copy"}}`,
+		"save_article":   `{"name":"save_article","arguments":{"slug":"bar-copy","title":"Bar","content":"HIJACKED","loaded_version":1}}`,
+		"delete_article": `{"name":"delete_article","arguments":{"slug":"bar-copy"}}`,
+		"append_article": `{"name":"append_article","arguments":{"slug":"bar-copy","content":"HIJACKED"}}`,
 	} {
 		resp := toolCall(t, srv, call)
 		if !resp.IsError || !strings.Contains(strings.ToLower(resp.Content[0].Text), "not found") {
@@ -1057,18 +1056,19 @@ func TestWikiStatisticsCountsMisplacedDocuments(t *testing.T) {
 
 	stats := func() (StatisticsOutput, ToolResponse) {
 		t.Helper()
-		resp := toolCall(t, srv, `{"name":"get_wiki_statistics","arguments":{}}`)
+		resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`)
+		var overview OverviewOutput
+		decodeStructured(t, resp, &overview)
 		var out StatisticsOutput
-		decodeStructured(t, resp, &out)
+		if overview.Statistics != nil {
+			out = *overview.Statistics
+		}
 		return out, resp
 	}
 
 	clean, resp := stats()
-	if clean.MisplacedDocumentCount != 0 || !strings.Contains(resp.Content[0].Text, "- Misplaced Documents: 0\n") {
+	if clean.MisplacedDocumentCount != 0 {
 		t.Errorf("a clean wiki should report 0 misplaced documents, got %d:\n%s", clean.MisplacedDocumentCount, resp.Content[0].Text)
-	}
-	if strings.Contains(resp.Content[0].Text, "Run wiki_health") {
-		t.Errorf("a clean wiki needs no pointer to wiki_health:\n%s", resp.Content[0].Text)
 	}
 
 	if _, err := srv.Storage.SaveArticle("", "Bar", "# Bar", "", "", "", "seed", nil, ""); err != nil {
@@ -1082,27 +1082,18 @@ func TestWikiStatisticsCountsMisplacedDocuments(t *testing.T) {
 	got, resp := stats()
 	health := healthReport(t, srv, `{}`)
 	if got.MisplacedDocumentCount != 2 || got.MisplacedDocumentCount != health.MisplacedDocumentCount {
-		t.Errorf("get_wiki_statistics reports %d misplaced documents, wiki_health %d; want 2 from both",
+		t.Errorf("get_wiki_overview reports %d misplaced documents, wiki_health %d; want 2 from both",
 			got.MisplacedDocumentCount, health.MisplacedDocumentCount)
 	}
 	if got.TotalArticles != before.TotalArticles || got.UnreadableFileCount != 0 {
 		t.Errorf("misplaced documents must not count as articles or unreadable files, got %+v (before %+v)", got, before)
 	}
 	text := resp.Content[0].Text
-	for _, want := range []string{
-		"- Unreadable Article Files and Folders: 0\n- Misplaced Documents: 2\n",
-		"Some documents are not stored as articles/<slug>.md",
-		"Run wiki_health to see which and why.",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("prose is missing %q:\n%s", want, text)
-		}
-	}
-	if strings.Contains(text, "could not be read or parsed") {
-		t.Errorf("the pointer should not mention unreadable files when there are none:\n%s", text)
+	if !strings.Contains(text, "2 misplaced docs") {
+		t.Errorf("prose is missing '2 misplaced docs':\n%s", text)
 	}
 
-	assertMatchesOutputSchema(t, resp, getWikiStatisticsTool.Output)
+	assertMatchesOutputSchema(t, resp, getWikiOverviewTool.Output)
 }
 
 // TestIsSlugFormAgreesWithSlugify pins the regex-free check the walks run on every file against the

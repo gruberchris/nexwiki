@@ -25,7 +25,7 @@ func seedKindFixture(t *testing.T) *Server {
 		{"One More Reference", "reference"},
 	}
 	for _, s := range seed {
-		call := `{"name":"create_agent_memory","arguments":{"title":"` + s.title +
+		call := `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","title":"` + s.title +
 			`","content":"# fact","memory_kind":"` + s.kind +
 			`","description":"fixture memory","source":"test fixture"}}`
 		if resp := toolCall(t, srv, call); resp.IsError {
@@ -38,7 +38,7 @@ func seedKindFixture(t *testing.T) *Server {
 func TestContextOverviewPinsUserAndFeedback(t *testing.T) {
 	srv := seedKindFixture(t)
 
-	resp := toolCall(t, srv, `{"name":"get_context_overview","arguments":{"type":"memories"}}`)
+	resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`)
 	if resp.IsError {
 		t.Fatalf("overview failed: %s", resp.Content[0].Text)
 	}
@@ -76,7 +76,7 @@ func TestContextOverviewPinsUserAndFeedback(t *testing.T) {
 func TestContextOverviewPinDoesNotDuplicate(t *testing.T) {
 	srv := seedKindFixture(t)
 
-	resp := toolCall(t, srv, `{"name":"get_context_overview","arguments":{}}`)
+	resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`)
 	if resp.IsError {
 		t.Fatalf("overview failed: %s", resp.Content[0].Text)
 	}
@@ -104,7 +104,7 @@ func TestContextOverviewPinDoesNotDuplicate(t *testing.T) {
 func TestContextOverviewShowsKind(t *testing.T) {
 	srv := seedKindFixture(t)
 
-	resp := toolCall(t, srv, `{"name":"get_context_overview","arguments":{"type":"memories"}}`)
+	resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`)
 	text := resp.Content[0].Text
 
 	// The kind has to be visible, or an agent cannot tell why the order is what it is, nor
@@ -125,11 +125,11 @@ func TestContextOverviewShowsKind(t *testing.T) {
 func TestContextOverviewStaysQuietWithNothingPinned(t *testing.T) {
 	srv := newMCPServer(t)
 
-	if resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"title":"Only Project","content":"# fact","memory_kind":"project","description":"d","source":"s"}}`); resp.IsError {
+	if resp := toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","title":"Only Project","content":"# fact","memory_kind":"project","description":"d","source":"s"}}`); resp.IsError {
 		t.Fatalf("setup failed: %s", resp.Content[0].Text)
 	}
 
-	resp := toolCall(t, srv, `{"name":"get_context_overview","arguments":{"type":"memories"}}`)
+	resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`)
 	text := resp.Content[0].Text
 	if strings.Contains(text, "listed first") {
 		t.Errorf("no pinned memories exist, so the overview should not explain an ordering:\n%s", text)
@@ -150,7 +150,7 @@ func TestContextOverviewPinSurvivesAnUnkindedCorpus(t *testing.T) {
 		}
 	}
 
-	resp := toolCall(t, srv, `{"name":"get_context_overview","arguments":{"type":"memories"}}`)
+	resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`)
 	if resp.IsError {
 		t.Fatalf("overview failed: %s", resp.Content[0].Text)
 	}

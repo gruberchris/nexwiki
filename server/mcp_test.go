@@ -16,16 +16,8 @@ import (
 )
 
 func TestMCPEditAgentPlan(t *testing.T) {
-	tempDir := t.TempDir()
-
-	storage, err := NewStorage(tempDir)
-	if err != nil {
-		t.Fatalf("Failed to initialize storage: %v", err)
-	}
-	t.Cleanup(func() { _ = storage.Close() })
-
-	eventBus := NewEventBus()
-	srv := NewServer(storage, "Test Wiki", "light", false, eventBus, "1.0.0", "")
+	srv := newMCPServer(t)
+	storage := srv.Storage
 
 	// 1. Create a plan first using executeToolCallInternal
 	createArgs := json.RawMessage(`{"name":"create_agent_plan","arguments":{"title":"Migration Plan","content":"# Migration Checklist","project_context":"nexwiki","edit_summary":"Initial seed"}}`)
@@ -134,19 +126,11 @@ func TestMCPEditAgentPlan(t *testing.T) {
 }
 
 func TestMCPUpdateArticleTags(t *testing.T) {
-	tempDir := t.TempDir()
-
-	storage, err := NewStorage(tempDir)
-	if err != nil {
-		t.Fatalf("Failed to initialize storage: %v", err)
-	}
-	t.Cleanup(func() { _ = storage.Close() })
-
-	eventBus := NewEventBus()
-	srv := NewServer(storage, "Test Wiki", "light", false, eventBus, "1.0.0", "")
+	srv := newMCPServer(t)
+	storage := srv.Storage
 
 	// 1. Create a standard article first
-	_, err = storage.SaveArticle("", "Golang Guide", "# Go content", "", "", "", "Initial seed", []string{"go", "backend"}, "")
+	_, err := storage.SaveArticle("", "Golang Guide", "# Go content", "", "", "", "Initial seed", []string{"go", "backend"}, "")
 	if err != nil {
 		t.Fatalf("Failed to save article: %v", err)
 	}
@@ -180,9 +164,48 @@ func TestMCPUpdateArticleTags(t *testing.T) {
 	}
 }
 
+func enableLegacyTools(t *testing.T) {
+	t.Helper()
+	legacy := map[string]*toolDef{
+		"create_wiki_article":    &createWikiArticleTool,
+		"edit_wiki_article":      &editWikiArticleTool,
+		"delete_wiki_article":    &deleteWikiArticleTool,
+		"update_article_tags":    &updateArticleTagsTool,
+		"get_article_history":    &getArticleHistoryTool,
+		"revert_article_version": &revertArticleVersionTool,
+		"get_wiki_statistics":    &getWikiStatisticsTool,
+		"get_status_tags":        &getStatusTagsTool,
+		"get_context_overview":   &getContextOverviewTool,
+		"get_recent_activity":    &getRecentActivityTool,
+		"create_agent_plan":      &createAgentPlanTool,
+		"edit_agent_plan":        &editAgentPlanTool,
+		"append_agent_plan":      &appendAgentPlanTool,
+		"list_agent_plans":       &listAgentPlansTool,
+		"create_agent_skill":     &createAgentSkillTool,
+		"edit_agent_skill":       &editAgentSkillTool,
+		"list_agent_skills":      &listAgentSkillsTool,
+		"create_agent_memory":    &createAgentMemoryTool,
+		"edit_agent_memory":      &editAgentMemoryTool,
+		"delete_agent_memory":    &deleteAgentMemoryTool,
+		"append_agent_memory":    &appendAgentMemoryTool,
+		"list_agent_memories":    &listAgentMemoriesTool,
+		"export_okf_bundle":      &exportOkfBundleTool,
+		"import_okf_bundle":      &importOkfBundleTool,
+	}
+	for k, v := range legacy {
+		toolsByName[k] = v
+	}
+	t.Cleanup(func() {
+		for k := range legacy {
+			delete(toolsByName, k)
+		}
+	})
+}
+
 // the newMCPServer creates a server for MCP tool testing.
 func newMCPServer(t *testing.T) *Server {
 	t.Helper()
+	enableLegacyTools(t)
 	storage, err := NewStorage(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewStorage failed: %v", err)
@@ -1411,7 +1434,7 @@ func TestMCPEndpointRejectsDisallowedOrigins(t *testing.T) {
 	handler := mcpEndpoint(srv, WithBindHost("wiki.lan"))
 
 	const slug = "rejected-origin-write"
-	createBody := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_wiki_article",` +
+	createBody := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"save_article",` +
 		`"arguments":{"title":"Rejected Origin Write","content":"# Written"}}}`
 	newRequest := func(method, origin, host string) *http.Request {
 		var req *http.Request
@@ -1492,7 +1515,7 @@ func TestStdioAcceptsLinesOverBufioDefault(t *testing.T) {
 		"id":      1,
 		"method":  "tools/call",
 		"params": map[string]interface{}{
-			"name":      "create_wiki_article",
+			"name":      "save_article",
 			"arguments": map[string]interface{}{"title": "Large Stdio Article", "content": body},
 		},
 	})
@@ -1608,7 +1631,7 @@ func decodeJSONLines(t *testing.T, raw []byte) []map[string]interface{} {
 // Go error that the tool surfaced verbatim as "Error updating tags: version conflict: loaded
 // version 1, current version 2" — no instruction, no value to retry with.
 func TestUpdateArticleTagsVersionConflict(t *testing.T) {
-	srv := newTestServer(t)
+	srv := newMCPServer(t)
 
 	_, err := srv.Storage.SaveArticle("", "Tag Target", "# body", "", "", "", "seed", []string{"one"}, ContentTypeWiki)
 	if err != nil {

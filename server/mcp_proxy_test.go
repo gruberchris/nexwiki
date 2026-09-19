@@ -8,8 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+
 	"strings"
 	"sync"
 	"testing"
@@ -85,8 +84,8 @@ func TestProxyForwardsLegacyCalls(t *testing.T) {
 	}
 
 	tools := msgs[0]["result"].(map[string]interface{})["tools"].([]interface{})
-	if len(tools) != 29 {
-		t.Errorf("proxied tools/list returned %d tools, want 29", len(tools))
+	if len(tools) != 9 {
+		t.Errorf("proxied tools/list returned %d tools, want 9", len(tools))
 	}
 	if msgs[0]["id"].(float64) != 1 || msgs[1]["id"].(float64) != 2 {
 		t.Error("responses must preserve their request ids and order")
@@ -176,7 +175,7 @@ func TestProxySynthesizesModernHeaders(t *testing.T) {
 	meta := `"_meta":{"io.modelcontextprotocol/protocolVersion":"` + ModernProtocolVersion + `",` +
 		`"io.modelcontextprotocol/clientCapabilities":{}}`
 	proxy.Run(strings.NewReader(
-		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_status_tags","arguments":{},` + meta + `}}` + "\n"))
+		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_wiki_overview","arguments":{},` + meta + `}}` + "\n"))
 
 	msgs := out.messages(t)
 	if len(msgs) != 1 {
@@ -349,7 +348,7 @@ func TestProxyHandlesLargePayloads(t *testing.T) {
 	_, proxy, out := proxyAgainstPrimary(t)
 
 	big := strings.Repeat("x", 200_000)
-	payload := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_wiki_article",` +
+	payload := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"save_article",` +
 		`"arguments":{"title":"Big Page","content":"` + big + `"}}}`
 
 	proxy.Run(strings.NewReader(payload + "\n"))
@@ -511,19 +510,10 @@ func TestInvisibleConfiguredAgentNameIsTreatedAsUnset(t *testing.T) {
 	proxy.agentName = built.agentName
 	logPath := persistPrimaryActivity(t, primary)
 
-	bundlePath := filepath.Join(primary.Storage.DataDir, "bundle.zip")
-	bundle := okfBundle(t, map[string]string{
-		"wiki/imported-page.md": "---\ntype: Wiki\ntitle: Imported Page\nslug: imported-page\n---\n# imported\n",
-	})
-	if err := os.WriteFile(bundlePath, bundle, 0644); err != nil {
-		t.Fatalf("write bundle: %v", err)
-	}
-	importArgs, _ := json.Marshal(map[string]string{"path": bundlePath})
-	importCall := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"import_okf_bundle","arguments":` +
-		string(importArgs) + `}}`
+	saveCall := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"save_article","arguments":{"title":"Imported Page","content":"# imported"}}}`
 
 	proxy.Run(strings.NewReader(strings.Join([]string{
-		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`, listCall, importCall,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`, listCall, saveCall,
 	}, "\n") + "\n"))
 
 	for _, msg := range out.messages(t) {
@@ -542,8 +532,8 @@ func TestInvisibleConfiguredAgentNameIsTreatedAsUnset(t *testing.T) {
 			t.Errorf("%s event attributed to %q, want %q", ev.Tool, ev.Agent, DefaultAgentName)
 		}
 	}
-	if len(events) != 2 || !tools["list_articles"] || !tools["import_okf_bundle"] {
-		t.Fatalf("expected one list_articles and one import_okf_bundle event, got %+v", events)
+	if len(events) != 2 || !tools["list_articles"] || !tools["save_article"] {
+		t.Fatalf("expected one list_articles and one save_article event, got %+v", events)
 	}
 }
 

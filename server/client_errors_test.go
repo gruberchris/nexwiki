@@ -455,12 +455,8 @@ func TestUnlistableArticleDirErrorsHideDataDir(t *testing.T) {
 			for _, call := range []string{
 				`{"name":"list_articles","arguments":{}}`,
 				`{"name":"get_backlinks","arguments":{"slug":"home"}}`,
-				`{"name":"get_context_overview","arguments":{}}`,
-				`{"name":"list_agent_plans","arguments":{}}`,
-				`{"name":"list_agent_memories","arguments":{}}`,
-				`{"name":"list_agent_skills","arguments":{}}`,
+				`{"name":"get_wiki_overview","arguments":{}}`,
 				`{"name":"wiki_health","arguments":{}}`,
-				`{"name":"get_wiki_statistics","arguments":{}}`,
 			} {
 				resp := toolCall(t, srv, call)
 				if !resp.IsError || len(resp.Content) != 1 {
@@ -502,6 +498,9 @@ func TestUnlistableArticleDirErrorsHideDataDir(t *testing.T) {
 // article that cannot be read, and an activity log that cannot be, which sits at the top of the
 // data directory rather than under articles/.
 func TestUnreadableFileErrorsHideDataDir(t *testing.T) {
+	toolsByName["get_recent_activity"] = &getRecentActivityTool
+	t.Cleanup(func() { delete(toolsByName, "get_recent_activity") })
+
 	if runtime.GOOS == "windows" {
 		t.Skip("mode 0 does not stop reads on Windows")
 	}
@@ -545,6 +544,9 @@ func TestUnreadableFileErrorsHideDataDir(t *testing.T) {
 // TestImportOKFBundleReadErrorHidesDataDir covers an OKF path, which import resolves against the
 // data directory before reading it, so the OS error names the absolute path.
 func TestImportOKFBundleReadErrorHidesDataDir(t *testing.T) {
+	toolsByName["import_okf_bundle"] = &importOkfBundleTool
+	t.Cleanup(func() { delete(toolsByName, "import_okf_bundle") })
+
 	srv := newMCPServer(t)
 
 	resp := toolCall(t, srv, `{"name":"import_okf_bundle","arguments":{"path":"missing.zip"}}`)
@@ -558,6 +560,9 @@ func TestImportOKFBundleReadErrorHidesDataDir(t *testing.T) {
 // tool, and the REST endpoint, and returns the warnings each reports, keyed by which it was.
 func importWarnings(t *testing.T, srv *Server, bundle []byte) map[string][]string {
 	t.Helper()
+	toolsByName["import_okf_bundle"] = &importOkfBundleTool
+	t.Cleanup(func() { delete(toolsByName, "import_okf_bundle") })
+
 	got := make(map[string][]string)
 
 	report, err := srv.Storage.ImportOKFBundle(bundle)

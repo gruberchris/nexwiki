@@ -467,7 +467,13 @@ func (srv *Server) toolListArticles(args json.RawMessage) (interface{}, *JSONRPC
 				continue
 			}
 		}
-		filtered = append(filtered, art)
+		fullArt, ok := srv.Storage.getArticleForScan(art.Slug)
+		if !ok {
+			continue
+		}
+		item := *fullArt
+		item.Content = ""
+		filtered = append(filtered, item)
 	}
 
 	pageSize := 50
@@ -1449,6 +1455,9 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 	var existing *Article
 	if strings.TrimSpace(sArgs.Slug) != "" {
 		existing, _ = srv.Storage.GetArticle(strings.TrimSpace(sArgs.Slug))
+		if existing == nil && sArgs.LoadedVersion != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: document with slug '%s' not found", sArgs.Slug)}}}, nil
+		}
 	}
 
 	if existing != nil {
@@ -1551,7 +1560,7 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		}
 
 		overrides := ArticleOverrides{
-			KeepSlug:   Slugify(sArgs.Title) == existing.Slug || sArgs.Slug != "",
+			KeepSlug:   (sArgs.Title == existing.Title) || (Slugify(sArgs.Title) == existing.Slug),
 			Status:     statusOverride,
 			MemoryKind: kindOverride,
 			Generated:  &OKFGenerated{By: "nexwiki/mcp", At: time.Now()},
@@ -1868,6 +1877,9 @@ func (srv *Server) toolGetWikiOverview(args json.RawMessage) (interface{}, *JSON
 		if len(events) > 20 {
 			events = events[len(events)-20:]
 		}
+	}
+	if events == nil {
+		events = []LogEvent{}
 	}
 
 	stats := &StatisticsOutput{

@@ -88,6 +88,7 @@ var mcpToolRegistry = []toolDef{
 	deleteArticleTool,
 	getWikiOverviewTool,
 	getBacklinksTool,
+	wikiHealthTool,
 }
 
 // toolsByName indexes the registry for O(1) dispatch. Built once at init from the same slice
@@ -113,7 +114,7 @@ var toolsByName = func() map[string]*toolDef {
 var bareToolVerbs = map[string]bool{
 	"create": true, "edit": true, "append": true, "delete": true,
 	"read": true, "search": true, "get": true, "list": true,
-	"save": true,
+	"save": true, "wiki": true,
 	"update": true, "revert": true, "import": true, "export": true,
 }
 
