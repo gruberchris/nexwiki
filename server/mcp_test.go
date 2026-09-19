@@ -968,6 +968,60 @@ func TestLogMCPToolCallBranches(t *testing.T) {
 	}
 }
 
+func TestLogMCPToolCallSaveArticle(t *testing.T) {
+	srv := newMCPServer(t)
+	updates := srv.EventBus.SubscribeWikiUpdates()
+	defer srv.EventBus.UnsubscribeWikiUpdates(updates)
+
+	// 1. Create via save_article
+	res, rpcErr := srv.executeToolCall(json.RawMessage(`{"name":"save_article","arguments":{"title":"Save Tool Doc","content":"# Body v1"}}`), "Agent-X")
+	if rpcErr != nil || isToolError(res) {
+		t.Fatalf("save_article create failed: %v %+v", rpcErr, res)
+	}
+
+	history := srv.EventBus.GetHistory()
+	if len(history) != 1 {
+		t.Fatalf("expected 1 activity event, got %d", len(history))
+	}
+	ev := history[0]
+	if ev.Source != "mcp" || ev.Action != "create" || ev.Tool != "save_article" || ev.Slug != "save-tool-doc" || ev.Agent != "Agent-X" || ev.Version != 1 {
+		t.Errorf("unexpected event on create: %+v", ev)
+	}
+
+	select {
+	case u := <-updates:
+		if u.Type != "article-added" || u.Slug != "save-tool-doc" {
+			t.Errorf("unexpected wiki update on create: %+v", u)
+		}
+	default:
+		t.Fatal("expected wiki update on create")
+	}
+
+	// 2. Edit via save_article
+	res, rpcErr = srv.executeToolCall(json.RawMessage(`{"name":"save_article","arguments":{"slug":"save-tool-doc","title":"Save Tool Doc","content":"# Body v2","loaded_version":1}}`), "Agent-X")
+	if rpcErr != nil || isToolError(res) {
+		t.Fatalf("save_article update failed: %v %+v", rpcErr, res)
+	}
+
+	history = srv.EventBus.GetHistory()
+	if len(history) != 2 {
+		t.Fatalf("expected 2 activity events, got %d", len(history))
+	}
+	ev2 := history[1]
+	if ev2.Source != "mcp" || ev2.Action != "edit" || ev2.Tool != "save_article" || ev2.Slug != "save-tool-doc" || ev2.Agent != "Agent-X" || ev2.Version != 2 {
+		t.Errorf("unexpected event on update: %+v", ev2)
+	}
+
+	select {
+	case u := <-updates:
+		if u.Type != "article-edited" || u.Slug != "save-tool-doc" {
+			t.Errorf("unexpected wiki update on edit: %+v", u)
+		}
+	default:
+		t.Fatal("expected wiki update on edit")
+	}
+}
+
 func TestMCPEditAgentPlanContentEditing(t *testing.T) {
 	srv := newMCPServer(t)
 

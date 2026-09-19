@@ -82,33 +82,12 @@ func (b toolBehavior) annotations() map[string]interface{} {
 var mcpToolRegistry = []toolDef{
 	searchWikiTool,
 	readArticleTool,
+	saveArticleTool,
+	appendArticleTool,
 	listArticlesTool,
-	createWikiArticleTool,
-	editWikiArticleTool,
-	updateArticleTagsTool,
-	deleteWikiArticleTool,
-	getArticleHistoryTool,
-	revertArticleVersionTool,
-	getWikiStatisticsTool,
-	createAgentMemoryTool,
-	appendAgentMemoryTool,
-	editAgentMemoryTool,
-	deleteAgentMemoryTool,
-	listAgentMemoriesTool,
-	createAgentPlanTool,
-	appendAgentPlanTool,
-	editAgentPlanTool,
-	listAgentPlansTool,
-	createAgentSkillTool,
-	editAgentSkillTool,
-	listAgentSkillsTool,
-	getStatusTagsTool,
-	getRecentActivityTool,
+	deleteArticleTool,
+	getWikiOverviewTool,
 	getBacklinksTool,
-	getContextOverviewTool,
-	exportOkfBundleTool,
-	importOkfBundleTool,
-	wikiHealthTool,
 }
 
 // toolsByName indexes the registry for O(1) dispatch. Built once at init from the same slice
@@ -134,6 +113,7 @@ var toolsByName = func() map[string]*toolDef {
 var bareToolVerbs = map[string]bool{
 	"create": true, "edit": true, "append": true, "delete": true,
 	"read": true, "search": true, "get": true, "list": true,
+	"save": true,
 	"update": true, "revert": true, "import": true, "export": true,
 }
 

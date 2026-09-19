@@ -228,6 +228,7 @@ func TestMCPToolActions(t *testing.T) {
 		"revert_article_version": "revert",
 		"delete_agent_memory":    "delete",
 		"search_wiki":            "read",
+		"save_article":           "edit",
 	} {
 		if got := mcpToolAction(tool); got != want {
 			t.Errorf("mcpToolAction(%q) = %q, want %q", tool, got, want)

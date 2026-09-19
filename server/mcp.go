@@ -503,7 +503,7 @@ func mcpToolAction(tool string) string {
 		return "create"
 	case strings.HasPrefix(tool, "revert_"):
 		return "revert"
-	case strings.HasPrefix(tool, "edit_"), strings.HasPrefix(tool, "append_"), strings.HasPrefix(tool, "update_"):
+	case strings.HasPrefix(tool, "edit_"), strings.HasPrefix(tool, "append_"), strings.HasPrefix(tool, "update_"), strings.HasPrefix(tool, "save_"):
 		return "edit"
 	case strings.HasPrefix(tool, "delete_"):
 		return "delete"
@@ -552,6 +552,18 @@ func (srv *Server) logMCPToolCall(params json.RawMessage, agent string) {
 		if art, err := srv.Storage.GetArticle(slug); err == nil {
 			written = art
 		}
+	}
+	if written == nil && common.Title != "" {
+		if art, err := srv.Storage.GetArticle(Slugify(common.Title)); err == nil {
+			written = art
+			slug = written.Slug
+		}
+	}
+
+	// A document's first revision is version 1, and any later save supersedes an existing
+	// document, so the version tells a create from a replacement for polymorphic save tools.
+	if strings.HasPrefix(tool, "save_") && written != nil && written.Version == 1 {
+		action = "create"
 	}
 
 	// The title for the event: the argument the caller named the document by, or the stored one
