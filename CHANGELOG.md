@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-09-19
+
 ### Added
 - **Unreadable Files and Folders in `wiki_health` and `get_wiki_statistics`**:
   - `wiki_health` has an eleventh check: `unreadable_file_count` and `unreadable_files` (`[{path, error}]`, sorted by path, a folder's `path` ending in `/`), capped by `limit` and flagged in `truncated`. It is listed first in the prose report, counts toward the wiki needing attention, and gives files and folders different remedies. The `error` values contain no absolute server paths.
