@@ -15,10 +15,35 @@ import (
 // Each tool pairs its JSON schema with its handler in one place, so the two can never
 // drift apart. Registration order lives in mcp_tools.go.
 
+// StringOrArray unmarshals either a single string or an array of strings into a slice.
+type StringOrArray []string
+
+func (s *StringOrArray) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		*s = nil
+		return nil
+	}
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		if strings.TrimSpace(str) != "" {
+			*s = []string{strings.TrimSpace(str)}
+		} else {
+			*s = nil
+		}
+		return nil
+	}
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*s = arr
+		return nil
+	}
+	return errors.New("expected string or array of strings")
+}
+
 var searchWikiTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "search_wiki",
-		"description": "Perform full-text searches across the entire NexWiki knowledge base using Bleve query parsing. Searches ALL document types by default — wiki articles, your own agent memories, plans, and skills — so prior knowledge you recorded is always retrievable. Returns scored matches with highlighted snippets. Use 'type' and 'tags' to narrow.",
+		"description": "Perform full-text searches across the entire NexWiki knowledge base using Bleve query parsing. Searches all document types by default — wiki articles, agent memories, plans, and skills. Returns scored matches with highlighted snippets. Use 'type' and 'tag' to narrow.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -27,32 +52,16 @@ var searchWikiTool = toolDef{
 					"description": "The search keywords or query string. Supports wildcards, quotes for exact matches, and boolean terms.",
 				},
 				"type": map[string]interface{}{
-					"type": "array",
-					"items": map[string]interface{}{
-						"type": "string",
-						"enum": SearchTypeNames(),
-					},
-					"description": "Optional document types to restrict the search to: 'articles', 'memories', 'plans', 'skills'. Omit to search every type.",
+					"type":        "string",
+					"description": "Optional document type to restrict search to: 'articles', 'memories', 'plans', 'skills', or OKF types ('Wiki', 'AI-Agent-Memory', etc.). Omit to search every type.",
 				},
-				"tags": map[string]interface{}{
-					"type": "array",
-					"items": map[string]interface{}{
-						"type": "string",
-					},
-					"description": "Optional tags a result must ALL carry (case-insensitive), e.g. ['wip'] or ['memory-nexwiki'].",
+				"tag": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional tag a result must carry (case-insensitive), e.g. 'wip' or 'memory-nexwiki'.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
 					"description": "Optional maximum number of results (default 40, maximum 200).",
-				},
-				"include_archived": map[string]interface{}{
-					"type":        "boolean",
-					"description": "Optional; set true to include archived documents, which are excluded by default.",
-				},
-				"memory_kind": map[string]interface{}{
-					"type":        "string",
-					"enum":        MemoryKinds,
-					"description": "Optional; narrow to agent memories of one kind: 'project', 'reference', 'user', or 'feedback'. Only memories carry a kind, so supplying this necessarily excludes every other document type.",
 				},
 			},
 			"required": []string{"query"},
@@ -65,12 +74,13 @@ var searchWikiTool = toolDef{
 
 func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type SearchArgs struct {
-		Query           string   `json:"query"`
-		Types           []string `json:"type"`
-		Tags            []string `json:"tags"`
-		Limit           int      `json:"limit"`
-		IncludeArchived bool     `json:"include_archived"`
-		MemoryKind      string   `json:"memory_kind"`
+		Query           string        `json:"query"`
+		Type            StringOrArray `json:"type"`
+		Tag             StringOrArray `json:"tag"`
+		Tags            StringOrArray `json:"tags"`
+		Limit           int           `json:"limit"`
+		IncludeArchived bool          `json:"include_archived"`
+		MemoryKind      string        `json:"memory_kind"`
 	}
 	var searchArgs SearchArgs
 	if e := decodeToolArgs(args, &searchArgs); e != nil {
@@ -80,9 +90,12 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'query' argument"}
 	}
 
+	tags := append([]string(nil), searchArgs.Tag...)
+	tags = append(tags, searchArgs.Tags...)
+
 	// Report a bad type name rather than silently returning nothing — an agent that typos
 	// "memorys" would otherwise conclude the knowledge simply is not there.
-	if unknown := ValidateSearchTypes(searchArgs.Types); len(unknown) > 0 {
+	if unknown := ValidateSearchTypes(searchArgs.Type); len(unknown) > 0 {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf(
 			"Error: unknown document type(s): %s. Valid values: %s.",
 			strings.Join(unknown, ", "), strings.Join(SearchTypeNames(), ", "))}}}, nil
@@ -98,8 +111,8 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 	// No legacyQueryHeuristics: an agent searching its own second brain sees every document
 	// type unless it explicitly narrows. Memories and plans are the point, not noise.
 	results, err := srv.Storage.SearchArticlesWithOptions(searchArgs.Query, SearchOptions{
-		Types:           searchArgs.Types,
-		Tags:            searchArgs.Tags,
+		Types:           searchArgs.Type,
+		Tags:            tags,
 		Limit:           searchArgs.Limit,
 		IncludeArchived: searchArgs.IncludeArchived,
 		MemoryKind:      memoryKind,
@@ -111,11 +124,11 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 	// Describe the applied facets so the agent can tell "no such knowledge" from "my filter
 	// excluded it" — the difference between giving up and retrying with a wider search.
 	var facets []string
-	if len(searchArgs.Types) > 0 {
-		facets = append(facets, "type: "+strings.Join(searchArgs.Types, ", "))
+	if len(searchArgs.Type) > 0 {
+		facets = append(facets, "type: "+strings.Join(searchArgs.Type, ", "))
 	}
-	if len(searchArgs.Tags) > 0 {
-		facets = append(facets, "tags: "+strings.Join(searchArgs.Tags, ", "))
+	if len(tags) > 0 {
+		facets = append(facets, "tags: "+strings.Join(tags, ", "))
 	}
 	if memoryKind != "" {
 		facets = append(facets, "memory kind: "+memoryKind)
@@ -171,8 +184,8 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		StructuredContent: SearchOutput{
 			Query:           searchArgs.Query,
 			Count:           len(hits),
-			Types:           searchArgs.Types,
-			Tags:            searchArgs.Tags,
+			Types:           searchArgs.Type,
+			Tags:            tags,
 			MemoryKind:      memoryKind,
 			IncludeArchived: searchArgs.IncludeArchived,
 			Results:         hits,
@@ -192,13 +205,17 @@ func plainSnippet(snippet string) string {
 var readArticleTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "read_article",
-		"description": "Retrieve the full raw Markdown content and front-matter configurations of a specific NexWiki article by its URL slug.",
+		"description": "Retrieve the full raw Markdown content, front-matter configurations, and inbound backlinks of a document by its URL slug. Optionally specify 'version' to load a historical revision.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"slug": map[string]interface{}{
 					"type":        "string",
-					"description": "The clean URL-safe slug of the target article (e.g. 'home' or 'guides').",
+					"description": "The clean URL-safe slug of the target document.",
+				},
+				"version": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional historical revision number to load. Omit to load the latest version.",
 				},
 			},
 			"required": []string{"slug"},
@@ -211,7 +228,8 @@ var readArticleTool = toolDef{
 
 func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type ReadArgs struct {
-		Slug string `json:"slug"`
+		Slug    string `json:"slug"`
+		Version int    `json:"version"`
 	}
 	var readArgs ReadArgs
 	if e := decodeToolArgs(args, &readArgs); e != nil {
@@ -221,9 +239,18 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'slug' argument"}
 	}
 
-	art, err := srv.Storage.GetArticle(readArgs.Slug)
-	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error loading article '%s': %s", readArgs.Slug, srv.clientError(err))}}}, nil
+	var art *Article
+	var err error
+	if readArgs.Version > 0 {
+		art, err = srv.Storage.GetArticleVersion(readArgs.Slug, readArgs.Version)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error loading article '%s' version %d: %s", readArgs.Slug, readArgs.Version, srv.clientError(err))}}}, nil
+		}
+	} else {
+		art, err = srv.Storage.GetArticle(readArgs.Slug)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error loading article '%s': %s", readArgs.Slug, srv.clientError(err))}}}, nil
+		}
 	}
 
 	// Return tags in read metadata
@@ -358,29 +385,113 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 var listArticlesTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "list_articles",
-		"description": "List all articles currently available inside your NexWiki knowledge base, showing their titles, URL slugs, and article types (e.g., Wiki Article, Agent Memory, Agent Plan, or Agent Skill).",
+		"description": "List articles, memories, plans, and skills in the knowledge base. Filter by type, status, or tag. Supports limit and cursor pagination.",
 		"inputSchema": map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
+			"type": "object",
+			"properties": map[string]interface{}{
+				"type": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional filter by document type: 'articles', 'memories', 'plans', 'skills', or OKF types ('Wiki', 'AI-Agent-Memory', etc.).",
+				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional filter by lifecycle status (e.g. 'draft', 'implementing', 'completed', 'ready').",
+				},
+				"tag": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional filter by tag (case-insensitive).",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional maximum number of documents to return per page (default 50).",
+				},
+				"cursor": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional opaque pagination cursor returned from a prior call.",
+				},
+			},
 		},
 	},
-	Output:   documentListOutputSchema("Every document in the knowledge base, most recently updated first."),
+	Output:   documentListOutputSchema("Matching documents in the knowledge base, most recently updated first."),
 	Handler:  (*Server).toolListArticles,
 	Behavior: toolBehavior{Title: "List Articles", ReadOnly: true},
 }
 
 func (srv *Server) toolListArticles(args json.RawMessage) (interface{}, *JSONRPCError) {
+	type ListArgs struct {
+		Type   string `json:"type"`
+		Status string `json:"status"`
+		Tag    string `json:"tag"`
+		Limit  int    `json:"limit"`
+		Cursor string `json:"cursor"`
+	}
+	var lArgs ListArgs
+	if e := decodeToolArgs(args, &lArgs); e != nil {
+		return nil, e
+	}
+
 	articles, err := srv.Storage.ListArticles()
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
 	}
 
+	var filtered []Article
+	targetType := ""
+	if strings.TrimSpace(lArgs.Type) != "" {
+		targetType = ResolveSearchType(lArgs.Type)
+		if targetType == "" {
+			targetType = normalizeType(lArgs.Type)
+		}
+	}
+
+	statusFilter := strings.ToLower(strings.TrimSpace(lArgs.Status))
+	tagFilter := strings.ToLower(strings.TrimSpace(lArgs.Tag))
+
+	for _, art := range articles {
+		if targetType != "" && art.Type != targetType {
+			continue
+		}
+		if statusFilter != "" {
+			if statusFilter == StatusArchived {
+				if !IsArchived(&art) {
+					continue
+				}
+			} else {
+				if !strings.EqualFold(art.Status, statusFilter) {
+					continue
+				}
+			}
+		}
+		if tagFilter != "" {
+			if !hasTag(art.Tags, tagFilter) {
+				continue
+			}
+		}
+		fullArt, ok := srv.Storage.getArticleForScan(art.Slug)
+		if !ok {
+			continue
+		}
+		item := *fullArt
+		item.Content = ""
+		filtered = append(filtered, item)
+	}
+
+	pageSize := 50
+	if lArgs.Limit > 0 {
+		pageSize = lArgs.Limit
+	}
+
+	page, nextCursor, rpcErr := paginate(filtered, lArgs.Cursor, pageSize)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+
 	var text string
-	if len(articles) == 0 {
-		text = "NexWiki contains no articles currently.\n"
+	if len(page) == 0 {
+		text = "No matching articles found.\n"
 	} else {
-		text = fmt.Sprintf("NexWiki Directory Index contains %d articles:\n\n", len(articles))
-		for i, art := range articles {
+		text = fmt.Sprintf("NexWiki Directory Index (%d matching articles, showing %d):\n\n", len(filtered), len(page))
+		for i, art := range page {
 			articleType := "Wiki Article"
 			switch art.Type {
 			case ContentTypeMemory:
@@ -395,17 +506,28 @@ func (srv *Server) toolListArticles(args json.RawMessage) (interface{}, *JSONRPC
 			if len(art.Tags) > 0 {
 				tagsStr = fmt.Sprintf(" | Tags: %s", strings.Join(art.Tags, ", "))
 			}
-			text += fmt.Sprintf("[%d] %s (Slug: %s, Type: %s, Last Edited: %s%s)\n",
-				i+1, art.Title, art.Slug, articleType, art.Timestamp.Format("2006-01-02 15:04:05"), tagsStr)
+			statusStr := ""
+			if art.Status != "" {
+				statusStr = fmt.Sprintf(" | Status: %s", art.Status)
+			}
+			text += fmt.Sprintf("[%d] %s (Slug: %s, Type: %s%s, Last Edited: %s%s)\n",
+				i+1, art.Title, art.Slug, articleType, statusStr, art.Timestamp.Format("2006-01-02 15:04:05"), tagsStr)
 			if art.Description != "" {
 				text += fmt.Sprintf("    Summary: %s\n", art.Description)
 			}
 		}
+		if nextCursor != "" {
+			text += fmt.Sprintf("\nNext page cursor: %s\n", nextCursor)
+		}
 	}
 
 	return ToolResponse{
-		Content:           []ToolContent{{Type: "text", Text: text}},
-		StructuredContent: DocumentListOutput{Count: len(articles), Documents: nonNilDocuments(articles)},
+		Content: []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: DocumentListOutput{
+			Count:      len(filtered),
+			Documents:  nonNilDocuments(page),
+			NextCursor: nextCursor,
+		},
 	}, nil
 }
 
@@ -1225,4 +1347,642 @@ func formatTrustTier(tier string) string {
 		}
 		return tier
 	}
+}
+
+var saveArticleTool = toolDef{
+	Schema: map[string]interface{}{
+		"name":        "save_article",
+		"description": "Create or update any document (wiki article, agent memory, plan, or skill). If 'slug' is provided and matches an existing document, it updates it; otherwise it creates a new document. Supports optimistic locking via 'loaded_version'.",
+		"inputSchema": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "Human-readable title of the document. Never use a bare tool verb.",
+				},
+				"content": map[string]interface{}{
+					"type":        "string",
+					"description": "Raw Markdown body content of the document.",
+				},
+				"slug": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional slug. If provided and matches an existing document, updates/revises it; if omitted or not existing, creates a new document.",
+				},
+				"type": map[string]interface{}{
+					"type":        "string",
+					"description": "Document type: 'Wiki' (default), 'AI-Agent-Memory', 'AI-Agent-Plan', or 'AI-Agent-Skill'.",
+					"enum":        []string{"Wiki", "AI-Agent-Memory", "AI-Agent-Plan", "AI-Agent-Skill"},
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional one-line summary, shown in list indexes and overview.",
+				},
+				"source": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional provenance: URL, document, ticket, or session context.",
+				},
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional lifecycle status for plans (draft, implementing, blocked, completed, superseded, parked, evergreen, archived) or skills (draft, ready, archived).",
+				},
+				"tags": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Optional tags for topics and context. Lifecycle status belongs in 'status', not tags.",
+				},
+				"memory_kind": map[string]interface{}{
+					"type":        "string",
+					"enum":        MemoryKinds,
+					"description": "Optional kind when type is AI-Agent-Memory: 'project', 'reference', 'user', or 'feedback'.",
+				},
+				"memory_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional scope for AI-Agent-Memory (e.g. 'nexwiki' or 'docker'). Generates 'memory-<memory_type>' tag.",
+				},
+				"project_context": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional project context for AI-Agent-Plan. Generates custom project tag.",
+				},
+				"loaded_version": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional active version number from read_article to enforce optimistic concurrency locking on edits.",
+				},
+				"edit_summary": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional revision log description summarizing the edit.",
+				},
+			},
+			"required": []string{"title", "content"},
+		},
+	},
+	Output:   nil,
+	Handler:  (*Server).toolSaveArticle,
+	Behavior: toolBehavior{Title: "Save Article", ReadOnly: false, Destructive: true, Idempotent: false},
+}
+
+func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCError) {
+	type SaveArgs struct {
+		Title          string   `json:"title"`
+		Content        string   `json:"content"`
+		Slug           string   `json:"slug"`
+		Type           string   `json:"type"`
+		Description    string   `json:"description"`
+		Source         string   `json:"source"`
+		Status         string   `json:"status"`
+		Tags           []string `json:"tags"`
+		MemoryKind     string   `json:"memory_kind"`
+		MemoryType     string   `json:"memory_type"`
+		ProjectContext string   `json:"project_context"`
+		LoadedVersion  *int     `json:"loaded_version"`
+		EditSummary    string   `json:"edit_summary"`
+	}
+	var sArgs SaveArgs
+	if e := decodeToolArgs(args, &sArgs); e != nil {
+		return nil, e
+	}
+	if strings.TrimSpace(sArgs.Title) == "" || strings.TrimSpace(sArgs.Content) == "" {
+		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'title' and 'content' are required."}
+	}
+	if resp := rejectToolArtifactTitle(sArgs.Title, "document"); resp != nil {
+		return *resp, nil
+	}
+
+	if refusal := secretRefusal("document", sArgs.Content, sArgs.Description, sArgs.Source); refusal != nil {
+		return *refusal, nil
+	}
+	secretNote := secretWarning(warnedSecrets(sArgs.Content, sArgs.Description, sArgs.Source))
+
+	var existing *Article
+	if strings.TrimSpace(sArgs.Slug) != "" {
+		existing, _ = srv.Storage.GetArticle(strings.TrimSpace(sArgs.Slug))
+		if existing == nil && sArgs.LoadedVersion != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: document with slug '%s' not found", sArgs.Slug)}}}, nil
+		}
+	}
+
+	if existing != nil {
+		if sArgs.LoadedVersion != nil {
+			if existing.Version > 0 && *sArgs.LoadedVersion != existing.Version {
+				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: versionConflictMessage(existing.Type, existing.Slug, existing.Version, *sArgs.LoadedVersion)}}}, nil
+			}
+		}
+
+		docType := existing.Type
+		var statusOverride *string
+		if sArgs.Status != "" {
+			st := NormalizeStatus(sArgs.Status)
+			if err := ValidateStatus(docType, st); err != nil {
+				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+			}
+			statusOverride = &st
+		}
+
+		var kindOverride *string
+		if sArgs.MemoryKind != "" {
+			mk := NormalizeMemoryKind(sArgs.MemoryKind)
+			if err := ValidateMemoryKind(docType, mk, false); err != nil {
+				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+			}
+			kindOverride = &mk
+		}
+
+		var tags []string
+		if sArgs.Tags != nil {
+			switch docType {
+			case ContentTypeMemory:
+				var scopeTags []string
+				if sArgs.MemoryType != "" {
+					scopeTags = []string{MemoryScopeTagPrefix + Slugify(sArgs.MemoryType)}
+				} else {
+					for _, t := range existing.Tags {
+						if strings.HasPrefix(t, MemoryScopeTagPrefix) {
+							scopeTags = append(scopeTags, t)
+						}
+					}
+				}
+				tags = validateAndCleanUserTags(sArgs.Tags, scopeTags, docType)
+			case ContentTypePlan:
+				var contextTags []string
+				if sArgs.ProjectContext != "" {
+					if ctx := Slugify(sArgs.ProjectContext); ctx != "" {
+						contextTags = append(contextTags, ctx)
+					}
+				}
+				tags = append([]string(nil), contextTags...)
+				seen := make(map[string]bool, len(contextTags))
+				for _, t := range contextTags {
+					seen[strings.ToLower(t)] = true
+				}
+				for _, t := range validateAndCleanUserTags(sArgs.Tags, nil, ContentTypePlan) {
+					if lower := strings.ToLower(t); !seen[lower] {
+						seen[lower] = true
+						tags = append(tags, t)
+					}
+				}
+			default:
+				tags = validateAndCleanUserTags(sArgs.Tags, nil, docType)
+			}
+		} else {
+			tags = append([]string(nil), existing.Tags...)
+			if sArgs.MemoryType != "" && docType == ContentTypeMemory {
+				newScope := MemoryScopeTagPrefix + Slugify(sArgs.MemoryType)
+				var withoutScope []string
+				for _, t := range tags {
+					if !strings.HasPrefix(t, MemoryScopeTagPrefix) {
+						withoutScope = append(withoutScope, t)
+					}
+				}
+				tags = validateAndCleanUserTags(withoutScope, []string{newScope}, docType)
+			}
+			if sArgs.ProjectContext != "" && docType == ContentTypePlan {
+				if ctx := Slugify(sArgs.ProjectContext); ctx != "" {
+					if !hasTag(tags, ctx) {
+						tags = append(tags, ctx)
+					}
+				}
+			}
+		}
+
+		if err := ValidateStatusFreeTags(docType, tags); err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+		}
+
+		desc := existing.Description
+		if sArgs.Description != "" {
+			desc = sArgs.Description
+		}
+		src := existing.Source
+		if sArgs.Source != "" {
+			src = sArgs.Source
+		}
+		summary := sArgs.EditSummary
+		if summary == "" {
+			summary = fmt.Sprintf("Updated %s", existing.Title)
+		}
+
+		overrides := ArticleOverrides{
+			KeepSlug:   (sArgs.Title == existing.Title) || (Slugify(sArgs.Title) == existing.Slug),
+			Status:     statusOverride,
+			MemoryKind: kindOverride,
+			Generated:  &OKFGenerated{By: "nexwiki/mcp", At: time.Now()},
+		}
+
+		art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, sArgs.Title, sArgs.Content, desc, src, existing.Resource, summary, tags, docType, overrides)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error saving article: %s", srv.clientError(err))}}}, nil
+		}
+
+		respText := fmt.Sprintf("Success! Document '%s' (slug: %s) updated successfully.\nNew Version: %d\nLast Edited: %s\n",
+			art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339))
+		respText = secretNote + respText
+		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+	}
+
+	docType := ContentTypeWiki
+	if sArgs.Type != "" {
+		resolved := ResolveSearchType(sArgs.Type)
+		if resolved != "" {
+			docType = resolved
+		} else {
+			docType = normalizeType(sArgs.Type)
+		}
+	}
+
+	targetSlug := Slugify(sArgs.Title)
+	if _, err := srv.Storage.GetArticle(targetSlug); err == nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: an article with slug '%s' already exists. Pass 'slug' to update an existing article.", targetSlug)}}}, nil
+	}
+
+	var statusOverride *string
+	st := NormalizeStatus(sArgs.Status)
+	if docType == ContentTypePlan && st == "" {
+		st = DefaultPlanStatus
+	}
+	if st != "" {
+		if err := ValidateStatus(docType, st); err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+		}
+		statusOverride = &st
+	}
+
+	var kindOverride *string
+	if docType == ContentTypeMemory {
+		mk := NormalizeMemoryKind(sArgs.MemoryKind)
+		if mk != "" {
+			if err := ValidateMemoryKind(docType, mk, false); err != nil {
+				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+			}
+			kindOverride = &mk
+		}
+	}
+
+	var tags []string
+	switch docType {
+	case ContentTypeMemory:
+		var scopeTags []string
+		if sArgs.MemoryType != "" {
+			scopeTags = []string{MemoryScopeTagPrefix + Slugify(sArgs.MemoryType)}
+		}
+		tags = validateAndCleanUserTags(sArgs.Tags, scopeTags, docType)
+	case ContentTypePlan:
+		var contextTags []string
+		if sArgs.ProjectContext != "" {
+			if ctx := Slugify(sArgs.ProjectContext); ctx != "" {
+				contextTags = append(contextTags, ctx)
+			}
+		}
+		tags = append([]string(nil), contextTags...)
+		seen := make(map[string]bool, len(contextTags))
+		for _, t := range contextTags {
+			seen[strings.ToLower(t)] = true
+		}
+		for _, t := range validateAndCleanUserTags(sArgs.Tags, nil, ContentTypePlan) {
+			if lower := strings.ToLower(t); !seen[lower] {
+				seen[lower] = true
+				tags = append(tags, t)
+			}
+		}
+	default:
+		tags = validateAndCleanUserTags(sArgs.Tags, nil, docType)
+	}
+	if err := ValidateStatusFreeTags(docType, tags); err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+	}
+
+	summary := sArgs.EditSummary
+	if summary == "" {
+		summary = fmt.Sprintf("Created %s", sArgs.Title)
+	}
+
+	overrides := ArticleOverrides{
+		Status:     statusOverride,
+		MemoryKind: kindOverride,
+		Generated:  &OKFGenerated{By: "nexwiki/mcp", At: time.Now()},
+	}
+
+	art, err := srv.Storage.SaveArticleWithOverrides("", sArgs.Title, sArgs.Content, sArgs.Description, sArgs.Source, "", summary, tags, docType, overrides)
+	if err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error creating article: %s", srv.clientError(err))}}}, nil
+	}
+
+	respText := fmt.Sprintf("Success! Document '%s' created successfully.\nSlug: %s\nType: %s\nCreated At: %s\nVersion: %d\n",
+		art.Title, art.Slug, art.Type, art.CreatedAt.Format(time.RFC3339), art.Version)
+	respText = secretNote + respText
+	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+}
+
+var appendArticleTool = toolDef{
+	Schema: map[string]interface{}{
+		"name":        "append_article",
+		"description": "Append text or logs to the end of an existing document without modifying its metadata, status, or tags. Supports optimistic locking via 'loaded_version'.",
+		"inputSchema": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"slug": map[string]interface{}{
+					"type":        "string",
+					"description": "The unique URL-safe slug of the document to append to.",
+				},
+				"content": map[string]interface{}{
+					"type":        "string",
+					"description": "The Markdown text to append to the end of the document.",
+				},
+				"loaded_version": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional active version number to detect concurrent edit collisions.",
+				},
+				"edit_summary": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional summary outlining what details were appended.",
+				},
+			},
+			"required": []string{"slug", "content"},
+		},
+	},
+	Output:   nil,
+	Handler:  (*Server).toolAppendArticle,
+	Behavior: toolBehavior{Title: "Append Article", ReadOnly: false, Destructive: false, Idempotent: false},
+}
+
+func (srv *Server) toolAppendArticle(args json.RawMessage) (interface{}, *JSONRPCError) {
+	type AppendArgs struct {
+		Slug            string `json:"slug"`
+		Content         string `json:"content"`
+		ContentToAppend string `json:"content_to_append"`
+		LoadedVersion   *int   `json:"loaded_version"`
+		EditSummary     string `json:"edit_summary"`
+	}
+	var aArgs AppendArgs
+	if e := decodeToolArgs(args, &aArgs); e != nil {
+		return nil, e
+	}
+	content := aArgs.Content
+	if content == "" {
+		content = aArgs.ContentToAppend
+	}
+	if aArgs.Slug == "" || content == "" {
+		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid arguments. 'slug' and 'content' are required."}
+	}
+
+	existing, err := srv.Storage.GetArticle(aArgs.Slug)
+	if err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", aArgs.Slug)}}}, nil
+	}
+
+	if aArgs.LoadedVersion != nil {
+		if existing.Version > 0 && *aArgs.LoadedVersion != existing.Version {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: versionConflictMessage(existing.Type, existing.Slug, existing.Version, *aArgs.LoadedVersion)}}}, nil
+		}
+	}
+
+	newContent := existing.Content
+	if newContent != "" {
+		newContent += "\n\n" + content
+	} else {
+		newContent = content
+	}
+
+	summary := aArgs.EditSummary
+	if summary == "" {
+		summary = fmt.Sprintf("Appended content to %s", existing.Title)
+	}
+
+	if refusal := secretRefusal("document", content, "", ""); refusal != nil {
+		return *refusal, nil
+	}
+	secretNote := secretWarning(warnedSecrets(content, "", ""))
+
+	art, err := srv.Storage.SaveArticleWithOverrides(existing.Slug, existing.Title, newContent, existing.Description, existing.Source, existing.Resource, summary, existing.Tags, existing.Type, ArticleOverrides{KeepSlug: true})
+	if err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error appending to article: %s", srv.clientError(err))}}}, nil
+	}
+
+	respText := fmt.Sprintf("Success! Appended content to '%s' (version: %d, edited: %s).\n",
+		art.Title, art.Version, art.Timestamp.Format(time.RFC3339))
+	respText = secretNote + respText
+	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+}
+
+var deleteArticleTool = toolDef{
+	Schema: map[string]interface{}{
+		"name":        "delete_article",
+		"description": "Permanently delete any document (wiki article, agent memory, plan, or skill) and its historical backups from disk by slug.",
+		"inputSchema": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"slug": map[string]interface{}{
+					"type":        "string",
+					"description": "The unique URL-safe slug of the document to delete.",
+				},
+			},
+			"required": []string{"slug"},
+		},
+	},
+	Output:   nil,
+	Handler:  (*Server).toolDeleteArticle,
+	Behavior: toolBehavior{Title: "Delete Article", ReadOnly: false, Destructive: true, Idempotent: true},
+}
+
+func (srv *Server) toolDeleteArticle(args json.RawMessage) (interface{}, *JSONRPCError) {
+	type DelArgs struct {
+		Slug string `json:"slug"`
+	}
+	var dArgs DelArgs
+	if e := decodeToolArgs(args, &dArgs); e != nil {
+		return nil, e
+	}
+	if dArgs.Slug == "" {
+		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'slug' argument"}
+	}
+
+	existing, err := srv.Storage.GetArticle(dArgs.Slug)
+	if err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", dArgs.Slug)}}}, nil
+	}
+
+	err = srv.Storage.DeleteArticle(existing.Slug)
+	if err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error deleting article: %s", srv.clientError(err))}}}, nil
+	}
+
+	respText := fmt.Sprintf("Success! Document with slug '%s' has been permanently deleted from disk along with all history backups and media assets.\n", existing.Slug)
+	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
+}
+
+var getWikiOverviewTool = toolDef{
+	Schema: map[string]interface{}{
+		"name":        "get_wiki_overview",
+		"description": "Consolidated orientation tool: returns compact progressive-disclosure index, recent activity since specified duration, and basic repository statistics.",
+		"inputSchema": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"since": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional filter for recent activity. Accepts a Go duration (e.g. '24h', '48h') or RFC3339 timestamp. Defaults to '48h'.",
+				},
+				"include_stats": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional; set true to scan and include full link graph health and broken link statistics.",
+				},
+			},
+		},
+	},
+	Output:   overviewOutputSchema(),
+	Handler:  (*Server).toolGetWikiOverview,
+	Behavior: toolBehavior{Title: "Get Wiki Overview", ReadOnly: true},
+}
+
+func (srv *Server) toolGetWikiOverview(args json.RawMessage) (interface{}, *JSONRPCError) {
+	type OverviewArgs struct {
+		Since        string `json:"since"`
+		IncludeStats bool   `json:"include_stats"`
+	}
+	var oArgs OverviewArgs
+	_ = json.Unmarshal(args, &oArgs)
+
+	sinceStr := strings.TrimSpace(oArgs.Since)
+	if sinceStr == "" {
+		sinceStr = "48h"
+	}
+	var since time.Time
+	if dur, err := time.ParseDuration(sinceStr); err == nil {
+		since = time.Now().Add(-dur)
+	} else if ts, err := time.Parse(time.RFC3339, sinceStr); err == nil {
+		since = ts
+	} else {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: invalid 'since' value '%s'. Use a Go duration (e.g. '48h') or an RFC3339 timestamp.", sinceStr)}}}, nil
+	}
+
+	articles, err := srv.Storage.ListArticles()
+	if err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
+	}
+
+	grouped := make(map[string][]Article)
+	for _, art := range articles {
+		dir := getArticleDirectory(art.Type)
+		grouped[dir] = append(grouped[dir], art)
+	}
+
+	sort.SliceStable(grouped["aimemories"], func(i, j int) bool {
+		return isPinnedMemoryKind(grouped["aimemories"][i].MemoryKind) &&
+			!isPinnedMemoryKind(grouped["aimemories"][j].MemoryKind)
+	})
+
+	events, _ := ReadActivityLog(ActivityLogPath(srv.Storage.DataDir), since, 20, "", "")
+	if events == nil && srv.EventBus != nil {
+		for _, ev := range srv.EventBus.GetHistory() {
+			if !since.IsZero() && ev.Timestamp.Before(since) {
+				continue
+			}
+			events = append(events, ev)
+		}
+		if len(events) > 20 {
+			events = events[len(events)-20:]
+		}
+	}
+	if events == nil {
+		events = []LogEvent{}
+	}
+
+	stats := &StatisticsOutput{
+		TotalArticles: len(articles),
+	}
+	if oArgs.IncludeStats {
+		if graph, gErr := srv.Storage.ScanLinkGraph(); gErr == nil {
+			stats.UnreadableFileCount = len(graph.Unreadable)
+			stats.MisplacedDocumentCount = len(graph.Misplaced)
+			stats.TotalLinks = graph.TotalLinks
+			stats.BrokenLinkCount = len(graph.Broken)
+			stats.BrokenLinks = graph.Broken
+		}
+	}
+
+	statusTags := &StatusTagsOutput{
+		StatusTags:      StatusTags,
+		PlanStatusTags:  PlanStatusTags,
+		SkillStatusTags: SkillStatusTags,
+	}
+
+	sections := []struct {
+		dir   string
+		label string
+	}{
+		{"wiki", "Wiki Articles"},
+		{"aimemories", "Agent Memories"},
+		{"aiplans", "Agent Plans"},
+		{"aiskills", "Agent Skills"},
+	}
+
+	text := fmt.Sprintf("NexWiki Knowledge Base Overview (%d articles total)\n\n", len(articles))
+
+	if oArgs.IncludeStats {
+		text += "== Statistics ==\n"
+		text += fmt.Sprintf("- Total Articles: %d\n", stats.TotalArticles)
+		text += fmt.Sprintf("- Total Internal Links: %d\n", stats.TotalLinks)
+		text += fmt.Sprintf("- Broken Links: %d\n", stats.BrokenLinkCount)
+		if stats.BrokenLinkCount > 0 {
+			for _, bl := range stats.BrokenLinks {
+				text += fmt.Sprintf("    * %s in %s (missing: %s)\n", bl.Display(), bl.FromSlug, bl.TargetSlug)
+			}
+		}
+		if stats.UnreadableFileCount > 0 || stats.MisplacedDocumentCount > 0 {
+			text += fmt.Sprintf("- Issues: %d unreadable files/dirs, %d misplaced docs\n", stats.UnreadableFileCount, stats.MisplacedDocumentCount)
+		}
+		text += "\n"
+	}
+
+	text += "== Directory Index ==\n"
+	for _, sec := range sections {
+		entries := grouped[sec.dir]
+		text += fmt.Sprintf("=== %s (%d) ===\n", sec.label, len(entries))
+		if sec.dir == "aimemories" && countPinnedMemories(entries) > 0 {
+			text += "   (user and feedback memories are listed first)\n"
+		}
+		for _, art := range entries {
+			summary := art.Description
+			if summary == "" {
+				summary = art.ContentPreview
+			}
+			line := fmt.Sprintf("- %s (%s)", art.Title, art.Slug)
+			if summary != "" {
+				line += " — " + summary
+			}
+			if art.MemoryKind != "" {
+				line += fmt.Sprintf(" <%s>", art.MemoryKind)
+			}
+			if len(art.Tags) > 0 {
+				line += fmt.Sprintf(" [%s]", strings.Join(art.Tags, ", "))
+			}
+			line += fmt.Sprintf(" (updated %s)", art.Timestamp.Format("2006-01-02"))
+			text += line + "\n"
+		}
+		text += "\n"
+	}
+
+	if len(events) > 0 {
+		text += fmt.Sprintf("== Recent Activity (%d events since %s) ==\n", len(events), sinceStr)
+		for _, ev := range events {
+			toolStr := ev.Tool
+			if toolStr == "" {
+				toolStr = "web-ui"
+			}
+			line := fmt.Sprintf("- %s [%s/%s] %s", ev.Timestamp.Format("2006-01-02 15:04:05"), ev.Source, ev.Action, toolStr)
+			if ev.Title != "" || ev.Slug != "" {
+				line += fmt.Sprintf(" → '%s' (%s)", ev.Title, ev.Slug)
+			}
+			text += line + "\n"
+		}
+		text += "\n"
+	}
+
+	return ToolResponse{
+		Content: []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: OverviewOutput{
+			TotalArticles:  len(articles),
+			Articles:       nonNilDocuments(articles),
+			RecentActivity: events,
+			Statistics:     stats,
+			StatusTags:     statusTags,
+		},
+	}, nil
 }

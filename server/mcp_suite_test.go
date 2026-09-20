@@ -763,6 +763,12 @@ func TestOKFExportAndImportWithRelativeDataDir(t *testing.T) {
 	t.Cleanup(func() { _ = storage.Close() })
 
 	srv := NewServer(storage, "Relative Wiki", "light", false, NewEventBus(), "1.0.0", "")
+	toolsByName["export_okf_bundle"] = &exportOkfBundleTool
+	toolsByName["import_okf_bundle"] = &importOkfBundleTool
+	t.Cleanup(func() {
+		delete(toolsByName, "export_okf_bundle")
+		delete(toolsByName, "import_okf_bundle")
+	})
 
 	// 1. Export bundle
 	exportRaw, err := json.Marshal(map[string]interface{}{

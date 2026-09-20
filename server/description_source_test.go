@@ -184,7 +184,7 @@ func TestMCPDescriptionSourceFlow(t *testing.T) {
 	srv := newMCPServer(t)
 
 	// Create with description and source
-	resp := toolCall(t, srv, `{"name":"create_wiki_article","arguments":{"title":"Desc Article","content":"# Body","description":"short summary line","source":"https://example.com/ref"}}`)
+	resp := toolCall(t, srv, `{"name":"save_article","arguments":{"title":"Desc Article","content":"# Body","description":"short summary line","source":"https://example.com/ref"}}`)
 	if resp.IsError {
 		t.Fatalf("create failed: %s", resp.Content[0].Text)
 	}
@@ -204,8 +204,8 @@ func TestMCPDescriptionSourceFlow(t *testing.T) {
 		t.Errorf("list_articles missing summary: %s", list.Content[0].Text)
 	}
 
-	// edit_wiki_article omitting description/source preserves them
-	edit := toolCall(t, srv, `{"name":"edit_wiki_article","arguments":{"slug":"desc-article","title":"Desc Article","content":"# Body v2","loaded_version":1}}`)
+	// save_article omitting description/source preserves them
+	edit := toolCall(t, srv, `{"name":"save_article","arguments":{"slug":"desc-article","title":"Desc Article","content":"# Body v2","loaded_version":1}}`)
 	if edit.IsError {
 		t.Fatalf("edit failed: %s", edit.Content[0].Text)
 	}
@@ -217,8 +217,8 @@ func TestMCPDescriptionSourceFlow(t *testing.T) {
 		t.Errorf("edit without description/source did not preserve them: '%s'/'%s'", art.Description, art.Source)
 	}
 
-	// edit_wiki_article with a new description replaces it
-	edit2 := toolCall(t, srv, `{"name":"edit_wiki_article","arguments":{"slug":"desc-article","title":"Desc Article","content":"# Body v3","description":"updated summary","loaded_version":2}}`)
+	// save_article with a new description replaces it
+	edit2 := toolCall(t, srv, `{"name":"save_article","arguments":{"slug":"desc-article","title":"Desc Article","content":"# Body v3","description":"updated summary","loaded_version":2}}`)
 	if edit2.IsError {
 		t.Fatalf("edit2 failed: %s", edit2.Content[0].Text)
 	}
@@ -230,14 +230,14 @@ func TestMCPDescriptionSourceFlow(t *testing.T) {
 		t.Errorf("expected source preserved on edit2, got '%s'", art2.Source)
 	}
 
-	// create_agent_memory carries description into list_agent_memories
-	mem := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Mem With Summary","content":"# fact","memory_type":"nexwiki","description":"memory gist","source":"session 2026-06-11"}}`)
+	// save_article carries description into list_articles (memories)
+	mem := toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","memory_kind":"project","title":"Mem With Summary","content":"# fact","memory_type":"nexwiki","description":"memory gist","source":"session 2026-06-11"}}`)
 	if mem.IsError {
 		t.Fatalf("create_agent_memory failed: %s", mem.Content[0].Text)
 	}
-	memList := toolCall(t, srv, `{"name":"list_agent_memories","arguments":{}}`)
+	memList := toolCall(t, srv, `{"name":"list_articles","arguments":{"type":"memories"}}`)
 	if !strings.Contains(memList.Content[0].Text, "Summary: memory gist") {
-		t.Errorf("list_agent_memories missing summary: %s", memList.Content[0].Text)
+		t.Errorf("list_articles missing summary: %s", memList.Content[0].Text)
 	}
 }
 

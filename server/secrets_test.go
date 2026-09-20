@@ -81,7 +81,7 @@ func TestSecretRefusalNeverQuotesTheSecret(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Leaky Memory","content":`+body+`,"description":"d","source":"s"}}`)
+			resp := toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","title":"Leaky Memory","content":`+body+`,"description":"d","source":"s"}}`)
 			if !resp.IsError {
 				t.Fatal("the write should have been refused")
 			}
@@ -114,10 +114,10 @@ func TestSecretScanRefusesEveryDocumentClass(t *testing.T) {
 	// A key in a plan is no safer than a key in a memory, so the check sits at one chokepoint
 	// rather than on the class that happened to prompt it.
 	calls := map[string]string{
-		"create_wiki_article": `{"name":"create_wiki_article","arguments":{"title":"Leaky Article","content":` + leak + `}}`,
-		"create_agent_memory": `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Leaky Memory","content":` + leak + `,"description":"d","source":"s"}}`,
-		"create_agent_plan":   `{"name":"create_agent_plan","arguments":{"title":"Leaky Plan","content":` + leak + `,"project_context":"nexwiki"}}`,
-		"create_agent_skill":  `{"name":"create_agent_skill","arguments":{"title":"Leaky Skill","content":` + leak + `}}`,
+		"Wiki":            `{"name":"save_article","arguments":{"type":"Wiki","title":"Leaky Article","content":` + leak + `}}`,
+		"AI-Agent-Memory": `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","title":"Leaky Memory","content":` + leak + `,"description":"d","source":"s"}}`,
+		"AI-Agent-Plan":   `{"name":"save_article","arguments":{"type":"AI-Agent-Plan","title":"Leaky Plan","content":` + leak + `,"project_context":"nexwiki"}}`,
+		"AI-Agent-Skill":  `{"name":"save_article","arguments":{"type":"AI-Agent-Skill","title":"Leaky Skill","content":` + leak + `}}`,
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
@@ -146,7 +146,7 @@ func TestSecretScanRefusesEveryDocumentClass(t *testing.T) {
 func TestSecretScanCoversEditAndAppend(t *testing.T) {
 	srv := newMCPServer(t)
 
-	if resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Clean Memory","content":"# nothing sensitive","description":"d","source":"s"}}`); resp.IsError {
+	if resp := toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","title":"Clean Memory","content":"# nothing sensitive","description":"d","source":"s"}}`); resp.IsError {
 		t.Fatalf("setup failed: %s", resp.Content[0].Text)
 	}
 
@@ -156,13 +156,10 @@ func TestSecretScanCoversEditAndAppend(t *testing.T) {
 	}
 
 	t.Run("edit is refused", func(t *testing.T) {
-		resp := toolCall(t, srv, `{"name":"edit_agent_memory","arguments":{"change_intent":"refine","slug":"clean-memory","content":`+leak+`,"loaded_version":1}}`)
+		resp := toolCall(t, srv, `{"name":"save_article","arguments":{"slug":"clean-memory","title":"Clean Memory","content":`+leak+`,"loaded_version":1}}`)
 		if !resp.IsError {
 			t.Fatal("an edit that introduces a credential must be refused")
 		}
-		// Assert *which* refusal. edit_agent_memory has gained other gates in front of this one,
-		// and "IsError" alone would pass for the wrong reason — the same trap the create-side
-		// assertion fell into once already.
 		if !strings.Contains(resp.Content[0].Text, "GitHub token") {
 			t.Errorf("refused, but not by the secret scanner: %s", resp.Content[0].Text)
 		}
@@ -173,7 +170,7 @@ func TestSecretScanCoversEditAndAppend(t *testing.T) {
 	})
 
 	t.Run("append is refused", func(t *testing.T) {
-		resp := toolCall(t, srv, `{"name":"append_agent_memory","arguments":{"slug":"clean-memory","content_to_append":`+leak+`}}`)
+		resp := toolCall(t, srv, `{"name":"append_article","arguments":{"slug":"clean-memory","content":`+leak+`}}`)
 		if !resp.IsError {
 			t.Fatal("an append that introduces a credential must be refused")
 		}
@@ -190,7 +187,7 @@ func TestSecretScanCoversEditAndAppend(t *testing.T) {
 func TestSecretScanChecksProvenanceFields(t *testing.T) {
 	srv := newMCPServer(t)
 
-	resp := toolCall(t, srv, `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Sourced By Token","content":"# a fact","description":"d","source":"https://ci.example.com/?token=`+githubToken+`"}}`)
+	resp := toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","title":"Sourced By Token","content":"# a fact","description":"d","source":"https://ci.example.com/?token=`+githubToken+`"}}`)
 	if !resp.IsError {
 		t.Fatal("a credential in 'source' must be refused")
 	}
@@ -229,7 +226,7 @@ func TestDocumentationAboutCredentialsStaysWritable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resp := toolCall(t, srv, `{"name":"create_wiki_article","arguments":{"title":`+title+`,"content":`+content+`}}`)
+			resp := toolCall(t, srv, `{"name":"save_article","arguments":{"title":`+title+`,"content":`+content+`}}`)
 			if resp.IsError {
 				t.Errorf("documentation about credentials must stay writable, got: %s", resp.Content[0].Text)
 			}
@@ -242,7 +239,7 @@ func TestSecretScanModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call := `{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Mode Memory","content":` + leak + `,"description":"d","source":"s"}}`
+	call := `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","title":"Mode Memory","content":` + leak + `,"description":"d","source":"s"}}`
 
 	t.Run("warn writes the document and annotates the response", func(t *testing.T) {
 		t.Setenv(envSecretScan, "warn")

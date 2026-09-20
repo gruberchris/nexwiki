@@ -5,9 +5,9 @@ For a URL, article, transcript, or pile of notes — handle **one source per pas
 1. **Read the source fully** before writing anything. For a URL, fetch it with your own
    web-fetch capability — NexWiki does not fetch URLs. If you cannot reach it, ask the user
    to paste the content.
-2. `get_context_overview` so you don't duplicate an existing page.
+2. `get_wiki_overview` so you don't duplicate an existing page.
 3. Synthesize **one** wiki article in the wiki's voice (a compilation, not a transcript)
-   with `create_wiki_article`, setting `description` and `source` (the citation), and
+   with `save_article`, setting `description` and `source` (the citation), and
    cross-link related pages with `[[WikiLinks]]`.
 4. **Flag contradictions** with existing content for the user's review — never silently
    overwrite.

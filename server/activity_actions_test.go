@@ -228,6 +228,7 @@ func TestMCPToolActions(t *testing.T) {
 		"revert_article_version": "revert",
 		"delete_agent_memory":    "delete",
 		"search_wiki":            "read",
+		"save_article":           "edit",
 	} {
 		if got := mcpToolAction(tool); got != want {
 			t.Errorf("mcpToolAction(%q) = %q, want %q", tool, got, want)
@@ -243,6 +244,9 @@ func TestMCPToolActions(t *testing.T) {
 // TestMCPRevertIsLoggedAsRevert is the regression guard for an agent's revert being recorded as an
 // edit, which made filtering the log on "revert" find only the reverts made in the web UI.
 func TestMCPRevertIsLoggedAsRevert(t *testing.T) {
+	toolsByName["revert_article_version"] = &revertArticleVersionTool
+	t.Cleanup(func() { delete(toolsByName, "revert_article_version") })
+
 	srv := newMCPServer(t)
 	if _, err := srv.Storage.SaveArticle("", "Revert Me", "# v1", "", "", "", "", nil, ContentTypeWiki); err != nil {
 		t.Fatalf("seed v1: %v", err)

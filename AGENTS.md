@@ -75,13 +75,13 @@ To run a **stdio MCP server next to an already-running web primary** — which i
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes **twenty-nine** semantic tools for AI agents, covering search and reads, article writes with optimistic locking, revision history and reverts, tag management, AI memory lifecycle, collaborative plans, the custom skills registry, progressive-disclosure orientation, backlink traversal, activity history, and OKF bundle import/export.
+The NexWiki MCP server registers and exposes **nine** semantic tools for AI agents, covering search, structured reads, unified document writes with optimistic locking, append, listing with pagination, deletion, progressive-disclosure wiki overview, backlink traversal, and wiki health auditing.
 
 NexWiki also exposes **Resources** (`nexwiki://article/{slug}`) so a user can `@`-mention a wiki page directly, and **`subscriptions/listen`** so an agent is notified the moment a document is edited or the document set changes — on **both** Streamable HTTP and stdio. `completion/complete` autocompletes the `{slug}`, so a client discovers a page to mention instead of paging the whole resource list. See [docs/mcp_server.md](./docs/mcp_server.md#-resources---mention-a-wiki-page).
 
-Every tool carries MCP **annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`) so clients can auto-approve safe reads and confirm destructive writes. `openWorldHint` is `false` on all 29 — the entire surface is local. See [docs/mcp_server.md](./docs/mcp_server.md#-tool-annotations--fewer-approval-prompts).
+Every tool carries MCP **annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`) so clients can auto-approve safe reads and confirm destructive writes. `openWorldHint` is `false` on all 9 — the entire surface is local. See [docs/mcp_server.md](./docs/mcp_server.md#-tool-annotations--fewer-approval-prompts).
 
-Twelve read tools additionally declare an **`outputSchema`** and return `structuredContent` alongside their prose, so an agent parses data instead of scraping sentences — `read_article` hands back `version` as a number to pass straight to `edit_wiki_article` as `loaded_version`. The text is always still emitted, and both halves are rendered from the same value so they cannot disagree (`read_article` ships its Markdown body in both `content[0].text` and `structuredContent.article.content`, ensuring full interoperability across text-only and structured MCP clients). See [docs/mcp_server.md](./docs/mcp_server.md#-structured-output--parse-data-dont-scrape-prose).
+Six read tools additionally declare an **`outputSchema`** and return `structuredContent` alongside their prose, so an agent parses data instead of scraping sentences — `read_article` hands back `version` as a number to pass straight to `save_article` or `append_article` as `loaded_version`. The text is always still emitted, and both halves are rendered from the same value so they cannot disagree (`read_article` ships its Markdown body in both `content[0].text` and `structuredContent.article.content`, ensuring full interoperability across text-only and structured MCP clients). See [docs/mcp_server.md](./docs/mcp_server.md#-structured-output--parse-data-dont-scrape-prose).
 
 📖 **The complete reference — every tool, argument, and behavior — lives in [docs/mcp_server.md](./docs/mcp_server.md).** It is kept in lockstep with `server/mcp.go`; this file intentionally does not duplicate it.
 
@@ -94,7 +94,7 @@ curl -X POST http://localhost:5808/api/mcp \
 ```
 
 ### Document types and system tags
-Every NexWiki `.md` file is a conformant **Open Knowledge Format (OKF v0.2)** concept document at rest (real YAML front matter). Each carries a `type` — exactly one of **`Wiki`** or the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags that remain: **status tags** (`get_status_tags`) and tool-managed **memory-scope tags** (`memory-<scope>`).
+Every NexWiki `.md` file is a conformant **Open Knowledge Format (OKF v0.2)** concept document at rest (real YAML front matter). Each carries a `type` — exactly one of **`Wiki`** or the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags that remain: **status tags** (e.g. `draft`, `implementing`, `completed`) and tool-managed **memory-scope tags** (`memory-<scope>`).
 
 ---
 
@@ -109,7 +109,7 @@ Guides the agent to search for existing formatting/style guidelines and custom m
   * `title` (string, **required**): The title of the article to be created.
   * `description` (string, **optional**): A brief summary of what the article should cover.
 * **Behavior**:
-  Instructs the agent to call `list_agent_memories` / `search_wiki` to locate relevant style-guide memories, read them with `read_article`, incorporate the rules into the new article, and then save it with `create_wiki_article`.
+  Instructs the agent to call `list_articles` (with `type: "memories"`) or `search_wiki` to locate relevant style-guide memories, read them with `read_article`, incorporate the rules into the new article, and then save it with `save_article`.
 
 ---
 
@@ -120,7 +120,7 @@ Guides the agent to collaboratively outline a new development plan with the user
   * `title` (string, **required**): The title of the Collaborative Plan (e.g. "Go 1.22 Migration Plan").
   * `project` (string, **required**): The project context name (e.g. `nexwiki`).
 * **Behavior**:
-  Instructs the agent to collaboratively outline goals, technical requirements, and task checklists with the user, save the initial plan immediately with `create_agent_plan`, report the slug to the user, and use `append_agent_plan` to log progress as tasks are completed. After full implementation, the agent must append final notes and mark the plan as `completed` using `edit_agent_plan`. The reserved `AI-Agent-Plan` OKF type must never be relabelled.
+  Instructs the agent to collaboratively outline goals, technical requirements, and task checklists with the user, save the initial plan immediately with `save_article` (specifying `type: "AI-Agent-Plan"` and `project_context`), report the slug to the user, and use `append_article` to log progress as tasks are completed. After full implementation, the agent must append final notes and mark the plan as `completed` using `save_article` with `status: "completed"`. The reserved `AI-Agent-Plan` OKF type must never be relabelled.
 
 ---
 
@@ -178,7 +178,7 @@ If you compiled the binary on your local machine:
 }
 ```
 
-Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat window, confirming that all twenty-nine NexWiki MCP tools are ready to use!
+Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat window, confirming that all nine NexWiki MCP tools are ready to use!
 
 ---
 
@@ -194,7 +194,7 @@ NexWiki implements the modern **Streamable HTTP** transport at `/api/mcp`, servi
    * **URL**: `http://localhost:5808/api/mcp` (or your production domain e.g. `https://wiki.yourdomain.com/api/mcp`)
 5. Click **Save**.
 
-Cursor will establish a stream connection and immediately list all twenty-nine NexWiki tools in the sidebar. You can now use Cursor Composer or chat (`Cmd+K` / `Ctrl+K`) and reference your wiki directly during code generation!
+Cursor will establish a stream connection and immediately list all nine NexWiki tools in the sidebar. You can now use Cursor Composer or chat (`Cmd+K` / `Ctrl+K`) and reference your wiki directly during code generation!
 
 > Per-client setup for **Claude Code**, **GitHub Copilot CLI**, and other agent CLIs is documented in [docs/mcp_server.md](./docs/mcp_server.md#-connecting-clients).
 

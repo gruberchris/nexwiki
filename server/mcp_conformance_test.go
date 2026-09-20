@@ -20,7 +20,7 @@ import (
 // because of how the failure they exist to prevent presents itself: a client validates a result
 // against a schema and rejects the whole response, so a single missing field does not degrade one
 // feature — it makes the server look empty. Claude Code reported a healthy connection and zero of
-// the 29 tools because `ttlMs` was absent from `tools/list`.
+// the 9 tools because `ttlMs` was absent from `tools/list`.
 //
 // So the assertions here are deliberately about shape rather than behaviour, and they are stated as
 // the specification states them. When one fails, the subtest name is the rule that broke.
@@ -167,7 +167,7 @@ func TestConformanceToolsListShape(t *testing.T) {
 		t.Fatalf("tools is %T, want an array", result["tools"])
 	}
 	// Against the registry rather than a literal: TestRegistryCoversEveryTool already pins the
-	// registry at 29, so what matters here is that tools/list exposes all of it and drops none.
+	// registry at 9, so what matters here is that tools/list exposes all of it and drops none.
 	if len(tools) != len(mcpToolRegistry) {
 		t.Errorf("tools/list returned %d tools, want all %d in the registry", len(tools), len(mcpToolRegistry))
 	}

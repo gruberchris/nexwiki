@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -79,17 +78,17 @@ func seedHealthFixture(t *testing.T) *Server {
 	}
 
 	// A hub linking to one real page and one that was never written.
-	must(`{"name":"create_wiki_article","arguments":{"title":"Hub","content":"# Hub\n\nSee [[Linked Page]] and [[Never Written]].","edit_summary":"Initial"}}`)
+	must(`{"name":"save_article","arguments":{"title":"Hub","content":"# Hub\n\nSee [[Linked Page]] and [[Never Written]].","edit_summary":"Initial"}}`)
 	// Linked from the hub: not an orphan.
-	must(`{"name":"create_wiki_article","arguments":{"title":"Linked Page","content":"# Linked\n\nBody.","edit_summary":"Initial"}}`)
+	must(`{"name":"save_article","arguments":{"title":"Linked Page","content":"# Linked\n\nBody.","edit_summary":"Initial"}}`)
 	// Nothing links here: an orphan.
-	must(`{"name":"create_wiki_article","arguments":{"title":"Lonely Page","content":"# Lonely\n\nNobody links here.","edit_summary":"Initial"}}`)
+	must(`{"name":"save_article","arguments":{"title":"Lonely Page","content":"# Lonely\n\nNobody links here.","edit_summary":"Initial"}}`)
 	// Links only to itself, which must not rescue it from the orphan list.
-	must(`{"name":"create_wiki_article","arguments":{"title":"Self Ref","content":"# Self\n\nSee [[Self Ref]].","edit_summary":"Initial"}}`)
+	must(`{"name":"save_article","arguments":{"title":"Self Ref","content":"# Self\n\nSee [[Self Ref]].","edit_summary":"Initial"}}`)
 	// Archived and unlinked: deliberately out of scope.
-	must(`{"name":"create_wiki_article","arguments":{"title":"Retired Page","content":"# Retired\n\nOld.","tags":["archived"],"edit_summary":"Initial"}}`)
+	must(`{"name":"save_article","arguments":{"title":"Retired Page","content":"# Retired\n\nOld.","tags":["archived"],"edit_summary":"Initial"}}`)
 	// A memory with provenance, and one without.
-	must(`{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Sourced Fact","content":"# Fact","memory_type":"nexwiki","description":"has provenance","source":"design review"}}`)
+	must(`{"name":"save_article","arguments":{"type":"AI-Agent-Memory","memory_kind":"project","title":"Sourced Fact","content":"# Fact","memory_type":"nexwiki","description":"has provenance","source":"design review"}}`)
 	// The unsourced one is seeded through storage rather than the tool, because
 	// create_agent_memory now refuses a memory with no source. That is the point of the gate, and
 	// it makes this fixture the shape it is actually testing: a memory that predates it. The
@@ -99,18 +98,11 @@ func seedHealthFixture(t *testing.T) *Server {
 		t.Fatalf("seeding the unsourced memory failed: %v", err)
 	}
 	// Plans: one stale, one recent, one finished-but-old, one old still in its default draft.
-	// Statuses are set the way an agent would, through edit_agent_plan's status field
-	// (creation defaults every plan to 'draft').
-	must(`{"name":"create_agent_plan","arguments":{"title":"Stalled Plan","content":"# Plan","project_context":"nexwiki","description":"in flight"}}`)
-	must(`{"name":"create_agent_plan","arguments":{"title":"Fresh Plan","content":"# Plan","project_context":"nexwiki","description":"in flight"}}`)
-	must(`{"name":"create_agent_plan","arguments":{"title":"Finished Plan","content":"# Plan","project_context":"nexwiki","description":"done"}}`)
-	must(`{"name":"create_agent_plan","arguments":{"title":"Untagged Plan","content":"# Plan","project_context":"nexwiki","description":"old and never marked finished"}}`)
-	must(`{"name":"create_agent_plan","arguments":{"title":"Superseded Plan","content":"# Plan","project_context":"nexwiki","description":"replaced by another plan"}}`)
-
-	must(`{"name":"edit_agent_plan","arguments":{"slug":"stalled-plan","status":"implementing","loaded_version":1}}`)
-	must(`{"name":"edit_agent_plan","arguments":{"slug":"fresh-plan","status":"implementing","loaded_version":1}}`)
-	must(`{"name":"edit_agent_plan","arguments":{"slug":"finished-plan","status":"completed","loaded_version":1}}`)
-	must(`{"name":"edit_agent_plan","arguments":{"slug":"superseded-plan","status":"superseded","loaded_version":1}}`)
+	must(`{"name":"save_article","arguments":{"type":"AI-Agent-Plan","title":"Stalled Plan","content":"# Plan","project_context":"nexwiki","description":"in flight","status":"implementing"}}`)
+	must(`{"name":"save_article","arguments":{"type":"AI-Agent-Plan","title":"Fresh Plan","content":"# Plan","project_context":"nexwiki","description":"in flight","status":"implementing"}}`)
+	must(`{"name":"save_article","arguments":{"type":"AI-Agent-Plan","title":"Finished Plan","content":"# Plan","project_context":"nexwiki","description":"done","status":"completed"}}`)
+	must(`{"name":"save_article","arguments":{"type":"AI-Agent-Plan","title":"Untagged Plan","content":"# Plan","project_context":"nexwiki","description":"old and never marked finished"}}`)
+	must(`{"name":"save_article","arguments":{"type":"AI-Agent-Plan","title":"Superseded Plan","content":"# Plan","project_context":"nexwiki","description":"replaced by another plan","status":"superseded"}}`)
 
 	// Backdate last, so the tag edits above do not refresh the timestamps being aged.
 	for _, slug := range []string{"stalled-plan", "finished-plan", "untagged-plan", "superseded-plan"} {
@@ -306,7 +298,7 @@ func newHealthyWikiServer(t *testing.T) *Server {
 	// The seeded home page ships with example WikiLinks to pages that do not exist yet, so make
 	// them exist before asserting the wiki is clean.
 	for _, title := range []string{"Guides", "Markdown Playground"} {
-		if resp := toolCall(t, srv, `{"name":"create_wiki_article","arguments":{"title":"`+title+`","content":"# `+title+`\n\nBody.","edit_summary":"Initial"}}`); resp.IsError {
+		if resp := toolCall(t, srv, `{"name":"save_article","arguments":{"title":"`+title+`","content":"# `+title+`\n\nBody.","edit_summary":"Initial"}}`); resp.IsError {
 			t.Fatalf("setup failed: %s", resp.Content[0].Text)
 		}
 	}
@@ -353,7 +345,7 @@ func TestScanLinkGraphIgnoresCodeFences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
 	}
-	if resp := toolCall(t, srv, `{"name":"create_wiki_article","arguments":`+string(args)+`}`); resp.IsError {
+	if resp := toolCall(t, srv, `{"name":"save_article","arguments":`+string(args)+`}`); resp.IsError {
 		t.Fatalf("setup failed: %s", resp.Content[0].Text)
 	}
 
@@ -609,16 +601,15 @@ func TestWikiHealthFlagsStaleConcepts(t *testing.T) {
 	srv := newMCPServer(t)
 
 	// Past stale_after -> should be flagged in stale_concepts
-	pastDate := "2020-01-01"
-	resp1 := toolCall(t, srv, fmt.Sprintf(`{"name":"create_wiki_article","arguments":{"title":"Expired Concept","content":"# Expired\n\nOld content.","stale_after":"%s"}}`, pastDate))
-	if resp1.IsError {
-		t.Fatalf("failed to create expired article: %s", resp1.Content[0].Text)
+	past, _ := time.Parse("2006-01-02", "2020-01-01")
+	if _, err := srv.Storage.SaveArticleWithOverrides("", "Expired Concept", "# Expired\n\nOld content.", "", "", "", "Initial", nil, ContentTypeWiki, ArticleOverrides{StaleAfter: &past}); err != nil {
+		t.Fatalf("failed to create expired article: %v", err)
 	}
 
 	// Future stale_after -> should NOT be flagged
-	resp2 := toolCall(t, srv, `{"name":"create_wiki_article","arguments":{"title":"Fresh Concept","content":"# Fresh\n\nNew content.","stale_after":"2035-01-01"}}`)
-	if resp2.IsError {
-		t.Fatalf("failed to create fresh article: %s", resp2.Content[0].Text)
+	future, _ := time.Parse("2006-01-02", "2035-01-01")
+	if _, err := srv.Storage.SaveArticleWithOverrides("", "Fresh Concept", "# Fresh\n\nNew content.", "", "", "", "Initial", nil, ContentTypeWiki, ArticleOverrides{StaleAfter: &future}); err != nil {
+		t.Fatalf("failed to create fresh article: %v", err)
 	}
 
 	out := healthReport(t, srv, `{}`)
@@ -820,18 +811,18 @@ func TestWikiStatisticsCountsUnreadableFiles(t *testing.T) {
 
 	stats := func() (StatisticsOutput, ToolResponse) {
 		t.Helper()
-		resp := toolCall(t, srv, `{"name":"get_wiki_statistics","arguments":{}}`)
-		var out StatisticsOutput
+		resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`)
+		var out OverviewOutput
 		decodeStructured(t, resp, &out)
-		return out, resp
+		if out.Statistics == nil {
+			t.Fatalf("expected Statistics in overview")
+		}
+		return *out.Statistics, resp
 	}
 
 	clean, resp := stats()
-	if clean.UnreadableFileCount != 0 || !strings.Contains(resp.Content[0].Text, "- Unreadable Article Files and Folders: 0\n") {
+	if clean.UnreadableFileCount != 0 || strings.Contains(resp.Content[0].Text, "Issues:") {
 		t.Errorf("a clean wiki should report 0 unreadable files, got %d:\n%s", clean.UnreadableFileCount, resp.Content[0].Text)
-	}
-	if strings.Contains(resp.Content[0].Text, "Run wiki_health") {
-		t.Errorf("a clean wiki needs no pointer to wiki_health:\n%s", resp.Content[0].Text)
 	}
 
 	writeBrokenArticle(t, srv, "one.md")
@@ -840,16 +831,14 @@ func TestWikiStatisticsCountsUnreadableFiles(t *testing.T) {
 	got, resp := stats()
 	health := healthReport(t, srv, `{}`)
 	if got.UnreadableFileCount != 2 || got.UnreadableFileCount != health.UnreadableFileCount {
-		t.Errorf("get_wiki_statistics reports %d unreadable files, wiki_health %d; want 2 from both",
+		t.Errorf("get_wiki_overview reports %d unreadable files, wiki_health %d; want 2 from both",
 			got.UnreadableFileCount, health.UnreadableFileCount)
 	}
-	for _, want := range []string{"- Unreadable Article Files and Folders: 2\n", "Run wiki_health to see which and why."} {
-		if !strings.Contains(resp.Content[0].Text, want) {
-			t.Errorf("prose is missing %q:\n%s", want, resp.Content[0].Text)
-		}
+	if !strings.Contains(resp.Content[0].Text, "Issues: 2 unreadable files/dirs") {
+		t.Errorf("prose is missing unreadable count:\n%s", resp.Content[0].Text)
 	}
 
-	assertMatchesOutputSchema(t, resp, getWikiStatisticsTool.Output)
+	assertMatchesOutputSchema(t, resp, getWikiOverviewTool.Output)
 }
 
 // TestUnreadableForClientHidesDataDir pins that an error handed to an MCP client names paths
@@ -1115,12 +1104,15 @@ func TestWikiHealthReportsUnreadableDirectory(t *testing.T) {
 	}
 	assertMatchesOutputSchema(t, resp, wikiHealthTool.Output)
 
-	statsResp := toolCall(t, srv, `{"name":"get_wiki_statistics","arguments":{}}`)
-	var stats StatisticsOutput
-	decodeStructured(t, statsResp, &stats)
-	if stats.UnreadableFileCount != out.UnreadableFileCount {
-		t.Errorf("get_wiki_statistics reports %d unreadable entries, wiki_health %d; the directory must count in both",
-			stats.UnreadableFileCount, out.UnreadableFileCount)
+	statsResp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`)
+	var ov OverviewOutput
+	decodeStructured(t, statsResp, &ov)
+	if ov.Statistics == nil {
+		t.Fatalf("expected Statistics in overview")
+	}
+	if ov.Statistics.UnreadableFileCount != out.UnreadableFileCount {
+		t.Errorf("get_wiki_overview reports %d unreadable entries, wiki_health %d; the directory must count in both",
+			ov.Statistics.UnreadableFileCount, out.UnreadableFileCount)
 	}
 }
 
@@ -1157,7 +1149,7 @@ func TestScanErrorsHideDataDir(t *testing.T) {
 			for _, tc := range []struct{ tool, want string }{
 				{tool: "wiki_health", want: "Error scanning the wiki: " + lock.cause},
 				// ListArticles runs before the link scan here, so its error is the one returned.
-				{tool: "get_wiki_statistics", want: "failed to list articles: " + lock.cause},
+				{tool: "get_wiki_overview", want: "failed to list articles: " + lock.cause},
 			} {
 				resp := toolCall(t, srv, `{"name":"`+tc.tool+`","arguments":{}}`)
 				if !resp.IsError || len(resp.Content) != 1 || resp.Content[0].Text != tc.want {

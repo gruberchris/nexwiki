@@ -77,8 +77,9 @@ type ArticleOutput struct {
 // list_agent_memories, list_agent_plans, and list_agent_skills. One shape for all four means an
 // agent learns to read a NexWiki listing once.
 type DocumentListOutput struct {
-	Count     int       `json:"count"`
-	Documents []Article `json:"documents"`
+	Count      int       `json:"count"`
+	Documents  []Article `json:"documents"`
+	NextCursor string    `json:"next_cursor,omitempty"`
 }
 
 // SkippedDocument is one entry a backlink scan left out, as the two tools that answer backlink
@@ -383,8 +384,9 @@ func articleOutputSchema() map[string]interface{} {
 
 func documentListOutputSchema(documentsDescription string) map[string]interface{} {
 	return schemaObject(map[string]interface{}{
-		"count":     schemaOf("integer", "Number of documents returned."),
-		"documents": schemaArrayOf(articleSchema(false), documentsDescription),
+		"count":       schemaOf("integer", "Number of documents returned."),
+		"documents":   schemaArrayOf(articleSchema(false), documentsDescription),
+		"next_cursor": schemaOf("string", "Optional opaque cursor for retrieving the next page of results; absent when on the last page."),
 	}, "count", "documents")
 }
 
@@ -474,4 +476,34 @@ func activityOutputSchema() map[string]interface{} {
 		"count":  schemaOf("integer", "Number of events returned."),
 		"events": schemaArrayOf(event, "Matching events, oldest first."),
 	}, "count", "events")
+}
+
+// OverviewOutput is the `get_wiki_overview` payload.
+type OverviewOutput struct {
+	TotalArticles  int               `json:"total_articles"`
+	Articles       []Article         `json:"articles"`
+	RecentActivity []LogEvent        `json:"recent_activity"`
+	Statistics     *StatisticsOutput `json:"statistics,omitempty"`
+	StatusTags     *StatusTagsOutput `json:"status_tags,omitempty"`
+}
+
+func overviewOutputSchema() map[string]interface{} {
+	event := schemaObject(map[string]interface{}{
+		"id":        schemaOf("string", "Event identifier."),
+		"timestamp": schemaOf("string", "RFC3339 time the event occurred."),
+		"source":    schemaOf("string", "'mcp' for AI tool calls, 'api' for web UI actions, 'lifecycle' for the plan lifecycle worker."),
+		"action":    schemaOf("string", "One of: "+strings.Join(activityLogActions, ", ")+"."),
+		"tool":      schemaOf("string", "MCP tool name, or the web or lifecycle operation when one applies (e.g. 'delete_tag', 'plan_lifecycle'); empty for ordinary web UI actions."),
+		"slug":      schemaOf("string", "Slug of the affected document."),
+		"title":     schemaOf("string", "Title of the affected document."),
+		"agent":     schemaOf("string", "Who performed the action."),
+	}, "timestamp", "source", "action")
+
+	return schemaObject(map[string]interface{}{
+		"total_articles":  schemaOf("integer", "Total number of documents in the knowledge base."),
+		"articles":        schemaArrayOf(articleSchema(false), "Compact index of documents in the knowledge base."),
+		"recent_activity": schemaArrayOf(event, "Recent activity events."),
+		"statistics":      statisticsOutputSchema(),
+		"status_tags":     statusTagsOutputSchema(),
+	}, "total_articles", "articles")
 }

@@ -166,7 +166,7 @@ func hostCheckRequest(method, path, host string) *http.Request {
 	var req *http.Request
 	if method == http.MethodPost {
 		req = httptest.NewRequest(method, path, strings.NewReader(
-			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_wiki_article",`+
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"save_article",`+
 				`"arguments":{"title":"Host Check Write","content":"# Written"}}}`))
 		req.Header.Set("Content-Type", "application/json")
 	} else {

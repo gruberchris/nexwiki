@@ -29,9 +29,9 @@ func TestQuickSuccessiveMCPEditsAreBothAttributed(t *testing.T) {
 	persistPrimaryActivity(t, srv)
 	const agent = "Quick Agent"
 
-	callMCP(t, srv, `{"name":"create_wiki_article","arguments":{"title":"Attribution","content":"# v1"}}`, agent)
-	callMCP(t, srv, `{"name":"edit_wiki_article","arguments":{"slug":"attribution","title":"Attribution","content":"# v2","loaded_version":1}}`, agent)
-	callMCP(t, srv, `{"name":"edit_wiki_article","arguments":{"slug":"attribution","title":"Attribution","content":"# v3","loaded_version":2}}`, agent)
+	callMCP(t, srv, `{"name":"save_article","arguments":{"title":"Attribution","content":"# v1"}}`, agent)
+	callMCP(t, srv, `{"name":"save_article","arguments":{"slug":"attribution","title":"Attribution","content":"# v2","loaded_version":1}}`, agent)
+	callMCP(t, srv, `{"name":"save_article","arguments":{"slug":"attribution","title":"Attribution","content":"# v3","loaded_version":2}}`, agent)
 
 	// Both edits are in the activity log, each with the revision it produced.
 	found, _ := srv.toolGetRecentActivity(json.RawMessage(`{"action":"edit","source":"mcp"}`))

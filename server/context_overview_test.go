@@ -31,17 +31,17 @@ func TestMCPGetContextOverview(t *testing.T) {
 		t.Fatalf("seed 5 failed: %v", err)
 	}
 
-	resp := toolCall(t, srv, `{"name":"get_context_overview","arguments":{}}`)
+	resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`)
 	if resp.IsError {
-		t.Fatalf("get_context_overview failed: %s", resp.Content[0].Text)
+		t.Fatalf("get_wiki_overview failed: %s", resp.Content[0].Text)
 	}
 	text := resp.Content[0].Text
 
 	for _, want := range []string{
-		"== Wiki Articles (2) ==",
-		"== Agent Memories (1) ==",
-		"== Agent Plans (1) ==",
-		"== Agent Skills (1) ==",
+		"=== Wiki Articles (2) ===",
+		"=== Agent Memories (1) ===",
+		"=== Agent Plans (1) ===",
+		"=== Agent Skills (1) ===",
 		"- Described Article (described-article) — explicit summary [notes]",
 		"- Bare Article (bare-article) — First prose line becomes the preview.",
 		"- A Memory (a-memory)",
@@ -53,21 +53,13 @@ func TestMCPGetContextOverview(t *testing.T) {
 		}
 	}
 
-	// Section filter restricts output
-	memOnly := toolCall(t, srv, `{"name":"get_context_overview","arguments":{"type":"memories"}}`)
+	// Filter by type using list_articles
+	memOnly := toolCall(t, srv, `{"name":"list_articles","arguments":{"type":"memories"}}`)
 	if memOnly.IsError {
-		t.Fatalf("filtered overview failed: %s", memOnly.Content[0].Text)
+		t.Fatalf("filtered list failed: %s", memOnly.Content[0].Text)
 	}
-	if !strings.Contains(memOnly.Content[0].Text, "== Agent Memories (1) ==") {
-		t.Errorf("filtered overview missing memories section: %s", memOnly.Content[0].Text)
-	}
-	if strings.Contains(memOnly.Content[0].Text, "== Wiki Articles") {
-		t.Errorf("filtered overview should not include articles section: %s", memOnly.Content[0].Text)
-	}
-
-	// Invalid filter is a tool error
-	bad := toolCall(t, srv, `{"name":"get_context_overview","arguments":{"type":"bogus"}}`)
-	if !bad.IsError {
-		t.Error("expected error for invalid type filter")
+	memOut := memOnly.StructuredContent.(DocumentListOutput)
+	if memOut.Count != 1 || memOut.Documents[0].Slug != "a-memory" {
+		t.Errorf("expected 1 memory, got %+v", memOut)
 	}
 }

@@ -209,11 +209,7 @@ func TestSavesThatAreNotTitleEditsKeepTheSlug(t *testing.T) {
 			setup: revertable,
 			save:  rest((*Server).HandleRevertArticle, http.MethodPost, `{"version":1}`),
 		},
-		{
-			name:  "MCP revert_article_version",
-			setup: revertable,
-			save:  mcp(`{"name":"revert_article_version","arguments":{"slug":"my-slug","version":1}}`),
-		},
+
 		{
 			name:  "REST verify",
 			setup: doc(""),
@@ -230,34 +226,34 @@ func TestSavesThatAreNotTitleEditsKeepTheSlug(t *testing.T) {
 			save:  rest((*Server).HandleUpdateArticleTags, http.MethodPut, `{"tags":["fresh"],"loaded_version":1}`),
 		},
 		{
-			name:  "MCP update_article_tags",
+			name:  "MCP save_article tags",
 			setup: doc(""),
-			save:  mcp(`{"name":"update_article_tags","arguments":{"slug":"my-slug","tags":["fresh"],"loaded_version":1}}`),
+			save:  mcp(`{"name":"save_article","arguments":{"slug":"my-slug","title":"Other Title","content":"body","tags":["fresh"],"loaded_version":1}}`),
 		},
 		{
-			name:  "MCP append_agent_memory",
+			name:  "MCP append_article for memory",
 			setup: doc(memory),
-			save:  mcp(`{"name":"append_agent_memory","arguments":{"slug":"my-slug","content_to_append":"more"}}`),
+			save:  mcp(`{"name":"append_article","arguments":{"slug":"my-slug","content":"more"}}`),
 		},
 		{
-			name:  "MCP append_agent_plan",
+			name:  "MCP append_article for plan",
 			setup: doc(plan + "status: draft\n"),
-			save:  mcp(`{"name":"append_agent_plan","arguments":{"slug":"my-slug","content_to_append":"more"}}`),
+			save:  mcp(`{"name":"append_article","arguments":{"slug":"my-slug","content":"more"}}`),
 		},
 		{
-			name:  "MCP edit_agent_memory without a title",
+			name:  "MCP save_article memory without a title change",
 			setup: doc(memory),
-			save:  mcp(`{"name":"edit_agent_memory","arguments":{"slug":"my-slug","loaded_version":1,"description":"clarified"}}`),
+			save:  mcp(`{"name":"save_article","arguments":{"slug":"my-slug","title":"Other Title","content":"body","loaded_version":1,"description":"clarified"}}`),
 		},
 		{
-			name:  "MCP edit_agent_plan without a title",
+			name:  "MCP save_article plan without a title change",
 			setup: doc(plan + "status: draft\n"),
-			save:  mcp(`{"name":"edit_agent_plan","arguments":{"slug":"my-slug","loaded_version":1,"status":"implementing"}}`),
+			save:  mcp(`{"name":"save_article","arguments":{"slug":"my-slug","title":"Other Title","content":"body","loaded_version":1,"status":"implementing"}}`),
 		},
 		{
-			name:  "MCP edit_agent_skill without a title",
+			name:  "MCP save_article skill without a title change",
 			setup: doc(skill),
-			save:  mcp(`{"name":"edit_agent_skill","arguments":{"slug":"my-slug","loaded_version":1,"status":"ready"}}`),
+			save:  mcp(`{"name":"save_article","arguments":{"slug":"my-slug","title":"Other Title","content":"body","loaded_version":1,"status":"ready"}}`),
 		},
 		{
 			name:  "OKF bundle re-import",
@@ -320,13 +316,13 @@ func TestExplicitTitleEditStillRenames(t *testing.T) {
 				t.Fatalf("status %d: %s", w.Code, w.Body.String())
 			}
 		}},
-		{"MCP edit_wiki_article", "", func(t *testing.T, srv *Server) {
-			if resp := toolCall(t, srv, `{"name":"edit_wiki_article","arguments":{"slug":"my-slug","title":"Brand New Title","content":"body","loaded_version":1}}`); resp.IsError {
+		{"MCP save_article", "", func(t *testing.T, srv *Server) {
+			if resp := toolCall(t, srv, `{"name":"save_article","arguments":{"slug":"my-slug","title":"Brand New Title","content":"body","loaded_version":1}}`); resp.IsError {
 				t.Fatalf("tool call failed: %s", resp.Content[0].Text)
 			}
 		}},
-		{"MCP edit_agent_plan with a title", "type: AI-Agent-Plan\nstatus: draft\n", func(t *testing.T, srv *Server) {
-			if resp := toolCall(t, srv, `{"name":"edit_agent_plan","arguments":{"slug":"my-slug","loaded_version":1,"title":"Brand New Title"}}`); resp.IsError {
+		{"MCP save_article plan with a title", "type: AI-Agent-Plan\nstatus: draft\n", func(t *testing.T, srv *Server) {
+			if resp := toolCall(t, srv, `{"name":"save_article","arguments":{"slug":"my-slug","type":"AI-Agent-Plan","title":"Brand New Title","content":"body","loaded_version":1}}`); resp.IsError {
 				t.Fatalf("tool call failed: %s", resp.Content[0].Text)
 			}
 		}},
@@ -556,9 +552,9 @@ func TestCreateOverMisplacedFileIsAConflict(t *testing.T) {
 		}
 	}
 
-	resp := toolCall(t, srv, `{"name":"create_wiki_article","arguments":{"title":"Bar Copy","content":"HIJACKED"}}`)
+	resp := toolCall(t, srv, `{"name":"save_article","arguments":{"title":"Bar Copy","content":"HIJACKED"}}`)
 	if !resp.IsError || !strings.Contains(resp.Content[0].Text, refusal) {
-		t.Errorf("create_wiki_article: expected the refusal, got %+v", resp)
+		t.Errorf("save_article: expected the refusal, got %+v", resp)
 	}
 
 	unchanged()

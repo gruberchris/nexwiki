@@ -14,9 +14,8 @@ answering from scratch or re-deriving something.
 
 At the start of a session, or when picking up prior work:
 
-1. Call `get_context_overview` for a compact index of the whole wiki (titles, slugs,
-   one-line summaries, tags). Read this before opening individual articles.
-2. Call `get_recent_activity` (since: `"48h"`) to see what changed since last time.
+1. Call `get_wiki_overview(since: "48h")` for a compact index of the whole wiki (titles, slugs,
+   one-line summaries, tags) and recent activity. Read this before opening individual articles.
 
 Then `read_article` only the entries you actually need; `get_backlinks` follows related pages.
 
@@ -38,11 +37,13 @@ them in turn.
 - Once per session, before creating or editing content, load the user's editable rulebook:
   `read_article(slug: "nexwiki-agent-guidelines")` and follow it — it overrides this skill.
   If it doesn't exist, proceed with the defaults in these guides.
-- Set `description` and `source` on everything you create — descriptions power the context
+- Set `description` and `source` on everything you create — descriptions power the wiki
   overview, sources keep knowledge auditable.
 - Never relabel a reserved document type (`AI-Agent-Plan`, `AI-Agent-Skill`,
   `AI-Agent-Memory`) to a non-reserved one, and never strip a tool-managed `memory-<scope>`
-  tag. Use `get_status_tags` for valid lifecycle tags. Slugs are lowercase and hyphenated.
+  tag. Plans have a status field (`draft`, `implementing`, `blocked`, `completed`, `superseded`,
+  `parked`, `evergreen`, `archived`) and skills have `draft`, `ready`, `archived`.
+  Slugs are lowercase and hyphenated.
 - Never store credentials, tokens, or secrets in the wiki.
 - If the `nexwiki` tools are unavailable, tell the user the nexwiki MCP server is not
   connected instead of guessing.

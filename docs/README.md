@@ -26,7 +26,7 @@ An advanced technical and user guide covering the flat-file gzipped backup and c
 ### 3. [NexWiki Model Context Protocol (MCP) Server Guide](./mcp_server.md)
 A comprehensive technical manual describing the always-on Go MCP engine:
 * **Transport Layers**: Connecting AI clients over standard input/output (Stdio) or Streamable HTTP network streams.
-* **Exposed Tools**: In-depth explanations of all twenty-nine exposed tools including read, search, context overview, backlinks, memory lifecycle, optimistic locked writes, reverts, tag management, status tags, activity history, [OKF v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format) bundle import/export, and dead internal-link scanners.
+* **Exposed Tools**: In-depth explanations of all nine consolidated tools including search, read, unified document save with optimistic locking, append, listing with pagination, deletion, wiki overview, backlinks, and wiki health auditing.
 * **Client Configurations**: Step-by-step setup guides for Claude Desktop and Cursor IDE.
 
 ### 4. [NexWiki Tags & AI Agent Memories Guide](./tags.md)
@@ -66,13 +66,13 @@ A comprehensive technical manual describing the upgraded CodeMirror 6 composing 
 
 ### 9. [NexWiki Collaborative Plans Metadata & Version Displays Guide](./plan_metadata_version_display.md)
 A detailed guide explaining how to programmatically manage plan metadata and view document version tracking in the UI:
-* **Programmatic Metadata Updates**: Modifying plan titles, adjusting tag classifications, and preserving critical protected tags with the `edit_agent_plan` MCP tool.
+* **Programmatic Metadata Updates**: Modifying plan titles, adjusting tag classifications, and preserving critical protected tags with the `save_article` MCP tool.
 * **Version Display**: Displaying document version tracking dynamically in both view and edit header modes.
 * **Version suffix for Edited Dates**: Displaying version numbers dynamically prepended to absolute edited timestamps, leaving creation dates fully untouched.
 
 ### 10. [NexWiki Second Brain Workflow Guide](./second_brain_workflow_guide.md)
 A step-by-step walkthrough of using NexWiki as an AI second brain with your agent CLI (Claude Code, Cursor, Copilot CLI):
-* **One-Time Setup**: Deploying the 29-tool build, connecting over Streamable HTTP, and activating session-start orientation via `CLAUDE.md`.
+* **One-Time Setup**: Deploying the 9-tool build, connecting over Streamable HTTP, and activating session-start orientation via `CLAUDE.md`.
 * **The Session Loop**: Progressive disclosure with `get_context_overview`, catching up via `get_recent_activity`, selective reads with backlinks, plan lifecycle, and memory hygiene.
 * **Capture-and-Compile**: The `inbox` tag convention and the `ingest-source` skill implementing the one-source-at-a-time Karpathy ingestion loop.
 * **Tuning Tips**: Activity log filtering, description/source discipline, and transport caveats.

@@ -24,12 +24,12 @@ func seedStructuredFixture(t *testing.T) *Server {
 		return resp
 	}
 
-	mustCall(`{"name":"create_wiki_article","arguments":{"title":"Bleve Notes","content":"# Bleve\n\nLinks to [[Search Design]] and [[Never Written]].","description":"How search is indexed","tags":["search"],"edit_summary":"Initial"}}`)
-	mustCall(`{"name":"create_wiki_article","arguments":{"title":"Search Design","content":"# Search Design\n\nThe design.","description":"Design notes","edit_summary":"Initial"}}`)
-	mustCall(`{"name":"edit_wiki_article","arguments":{"slug":"search-design","title":"Search Design","content":"# Search Design\n\nRevised.","loaded_version":1,"edit_summary":"Revised the design"}}`)
-	mustCall(`{"name":"create_agent_memory","arguments":{"memory_kind":"project","title":"Chose Bleve","content":"# Decision\n\nBleve over Elasticsearch.","memory_type":"nexwiki","description":"Search engine decision","source":"design review"}}`)
-	mustCall(`{"name":"create_agent_plan","arguments":{"title":"Ship Structured Output","content":"# Plan\n\nSteps.","project_context":"nexwiki","description":"Structured output rollout"}}`)
-	mustCall(`{"name":"create_agent_skill","arguments":{"title":"Wiki Style Guide","content":"# Style\n\nRules.","description":"How to write here"}}`)
+	mustCall(`{"name":"save_article","arguments":{"title":"Bleve Notes","content":"# Bleve\n\nLinks to [[Search Design]] and [[Never Written]].","description":"How search is indexed","tags":["search"],"edit_summary":"Initial"}}`)
+	mustCall(`{"name":"save_article","arguments":{"title":"Search Design","content":"# Search Design\n\nThe design.","description":"Design notes","edit_summary":"Initial"}}`)
+	mustCall(`{"name":"save_article","arguments":{"slug":"search-design","title":"Search Design","content":"# Search Design\n\nRevised.","loaded_version":1,"edit_summary":"Revised the design"}}`)
+	mustCall(`{"name":"save_article","arguments":{"type":"AI-Agent-Memory","memory_kind":"project","title":"Chose Bleve","content":"# Decision\n\nBleve over Elasticsearch.","memory_type":"nexwiki","description":"Search engine decision","source":"design review"}}`)
+	mustCall(`{"name":"save_article","arguments":{"type":"AI-Agent-Plan","title":"Ship Structured Output","content":"# Plan\n\nSteps.","project_context":"nexwiki","description":"Structured output rollout"}}`)
+	mustCall(`{"name":"save_article","arguments":{"type":"AI-Agent-Skill","title":"Wiki Style Guide","content":"# Style\n\nRules.","description":"How to write here"}}`)
 
 	return srv
 }
@@ -39,18 +39,12 @@ func seedStructuredFixture(t *testing.T) *Server {
 // TestEveryDeclaredOutputSchemaIsCovered, so adding an Output without a test is not possible.
 func structuredCalls() map[string]string {
 	return map[string]string{
-		"search_wiki":         `{"name":"search_wiki","arguments":{"query":"bleve"}}`,
-		"read_article":        `{"name":"read_article","arguments":{"slug":"search-design"}}`,
-		"list_articles":       `{"name":"list_articles","arguments":{}}`,
-		"list_agent_memories": `{"name":"list_agent_memories","arguments":{}}`,
-		"list_agent_plans":    `{"name":"list_agent_plans","arguments":{}}`,
-		"list_agent_skills":   `{"name":"list_agent_skills","arguments":{}}`,
-		"get_backlinks":       `{"name":"get_backlinks","arguments":{"slug":"search-design"}}`,
-		"get_article_history": `{"name":"get_article_history","arguments":{"slug":"search-design"}}`,
-		"get_wiki_statistics": `{"name":"get_wiki_statistics","arguments":{}}`,
-		"get_status_tags":     `{"name":"get_status_tags","arguments":{}}`,
-		"get_recent_activity": `{"name":"get_recent_activity","arguments":{}}`,
-		"wiki_health":         `{"name":"wiki_health","arguments":{}}`,
+		"search_wiki":       `{"name":"search_wiki","arguments":{"query":"bleve"}}`,
+		"read_article":      `{"name":"read_article","arguments":{"slug":"search-design"}}`,
+		"list_articles":     `{"name":"list_articles","arguments":{}}`,
+		"get_backlinks":     `{"name":"get_backlinks","arguments":{"slug":"search-design"}}`,
+		"get_wiki_overview": `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`,
+		"wiki_health":       `{"name":"wiki_health","arguments":{}}`,
 	}
 }
 
@@ -224,9 +218,9 @@ func TestStructuredOutputCarriesRealData(t *testing.T) {
 
 	t.Run("typed listings return only their own type", func(t *testing.T) {
 		for _, tc := range []struct{ call, wantType string }{
-			{`{"name":"list_agent_memories","arguments":{}}`, ContentTypeMemory},
-			{`{"name":"list_agent_plans","arguments":{}}`, ContentTypePlan},
-			{`{"name":"list_agent_skills","arguments":{}}`, ContentTypeSkill},
+			{`{"name":"list_articles","arguments":{"type":"memories"}}`, ContentTypeMemory},
+			{`{"name":"list_articles","arguments":{"type":"plans"}}`, ContentTypePlan},
+			{`{"name":"list_articles","arguments":{"type":"skills"}}`, ContentTypeSkill},
 		} {
 			var out DocumentListOutput
 			decodeStructured(t, toolCall(t, srv, tc.call), &out)
@@ -246,52 +240,40 @@ func TestStructuredOutputCarriesRealData(t *testing.T) {
 		}
 	})
 
-	t.Run("get_article_history exposes revertible version numbers", func(t *testing.T) {
-		var out HistoryOutput
-		decodeStructured(t, toolCall(t, srv, `{"name":"get_article_history","arguments":{"slug":"search-design"}}`), &out)
-		if out.Slug != "search-design" {
-			t.Errorf("slug = %q, want search-design", out.Slug)
+	t.Run("read_article exposes historical versions", func(t *testing.T) {
+		var out ArticleOutput
+		decodeStructured(t, toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"search-design","version":1}}`), &out)
+		if out.Article.Slug != "search-design" {
+			t.Errorf("slug = %q, want search-design", out.Article.Slug)
 		}
-		if out.Count == 0 {
-			t.Fatal("expected at least one stored revision after an edit")
-		}
-		for _, rev := range out.Versions {
-			if rev.Version <= 0 {
-				t.Errorf("revision has no usable version number: %+v", rev)
-			}
+		if out.Article.Version != 1 {
+			t.Errorf("expected version 1, got %d", out.Article.Version)
 		}
 	})
 
-	t.Run("get_wiki_statistics names the page a broken link wants", func(t *testing.T) {
-		var out StatisticsOutput
-		decodeStructured(t, toolCall(t, srv, `{"name":"get_wiki_statistics","arguments":{}}`), &out)
-		if out.BrokenLinkCount != len(out.BrokenLinks) {
-			t.Errorf("broken_link_count %d disagrees with %d entries", out.BrokenLinkCount, len(out.BrokenLinks))
+	t.Run("get_wiki_overview carries statistics, status tags, and recent activity", func(t *testing.T) {
+		var out OverviewOutput
+		decodeStructured(t, toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`), &out)
+		if out.Statistics == nil || out.StatusTags == nil {
+			t.Fatal("expected statistics and status tags in overview")
+		}
+		if out.Statistics.BrokenLinkCount != len(out.Statistics.BrokenLinks) {
+			t.Errorf("broken_link_count %d disagrees with %d entries", out.Statistics.BrokenLinkCount, len(out.Statistics.BrokenLinks))
 		}
 		var found bool
-		for _, bl := range out.BrokenLinks {
+		for _, bl := range out.Statistics.BrokenLinks {
 			if bl.TargetSlug == "never-written" && bl.FromSlug == "bleve-notes" {
 				found = true
 			}
 		}
 		if !found {
-			t.Errorf("the seeded broken link is missing: %+v", out.BrokenLinks)
+			t.Errorf("the seeded broken link is missing: %+v", out.Statistics.BrokenLinks)
 		}
-	})
-
-	t.Run("get_status_tags returns the canonical list", func(t *testing.T) {
-		var out StatusTagsOutput
-		decodeStructured(t, toolCall(t, srv, `{"name":"get_status_tags","arguments":{}}`), &out)
-		if len(out.StatusTags) != len(StatusTags) {
-			t.Errorf("returned %d status tags, want %d", len(out.StatusTags), len(StatusTags))
+		if len(out.StatusTags.StatusTags) != len(StatusTags) {
+			t.Errorf("returned %d status tags, want %d", len(out.StatusTags.StatusTags), len(StatusTags))
 		}
-	})
-
-	t.Run("get_recent_activity returns the events it counted", func(t *testing.T) {
-		var out ActivityOutput
-		decodeStructured(t, toolCall(t, srv, `{"name":"get_recent_activity","arguments":{}}`), &out)
-		if out.Count != len(out.Events) {
-			t.Errorf("count %d disagrees with %d events", out.Count, len(out.Events))
+		if out.RecentActivity == nil {
+			t.Errorf("expected recent activity slice")
 		}
 	})
 }
@@ -306,7 +288,7 @@ func TestErrorResultsCarryNoStructuredContent(t *testing.T) {
 		`{"name":"read_article","arguments":{"slug":"no-such-article"}}`,
 		`{"name":"get_backlinks","arguments":{"slug":"no-such-article"}}`,
 		`{"name":"search_wiki","arguments":{"query":"anything","type":["nonsense"]}}`,
-		`{"name":"get_recent_activity","arguments":{"since":"not-a-duration"}}`,
+		`{"name":"get_wiki_overview","arguments":{"since":"not-a-duration"}}`,
 	} {
 		resp := toolCall(t, srv, call)
 		if !resp.IsError {
@@ -326,13 +308,9 @@ func TestEmptyListingsSerializeAsArrays(t *testing.T) {
 	srv := newMCPServer(t) // untouched wiki: only the seeded home page exists
 
 	for name, call := range map[string]string{
-		"list_agent_memories": `{"name":"list_agent_memories","arguments":{}}`,
-		"list_agent_plans":    `{"name":"list_agent_plans","arguments":{}}`,
-		"list_agent_skills":   `{"name":"list_agent_skills","arguments":{}}`,
-		"list_articles":       `{"name":"list_articles","arguments":{}}`,
-		"get_wiki_statistics": `{"name":"get_wiki_statistics","arguments":{}}`,
-		"get_recent_activity": `{"name":"get_recent_activity","arguments":{}}`,
-		"wiki_health":         `{"name":"wiki_health","arguments":{}}`,
+		"list_articles":     `{"name":"list_articles","arguments":{}}`,
+		"get_wiki_overview": `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`,
+		"wiki_health":       `{"name":"wiki_health","arguments":{}}`,
 	} {
 		resp := toolCall(t, srv, call)
 		encoded, err := json.Marshal(resp.StructuredContent)
@@ -351,7 +329,7 @@ func TestEmptyListingsSerializeAsArrays(t *testing.T) {
 func TestProseOnlyToolsAreUnchangedOnTheWire(t *testing.T) {
 	srv := seedStructuredFixture(t)
 
-	resp := toolCall(t, srv, `{"name":"get_context_overview","arguments":{}}`)
+	resp := toolCall(t, srv, `{"name":"save_article","arguments":{"title":"Prose Only","content":"# Body"}}`)
 	encoded, err := json.Marshal(resp)
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
@@ -367,7 +345,7 @@ func TestProseOnlyToolsAreUnchangedOnTheWire(t *testing.T) {
 func TestStructuredOutputSurvivesBothEras(t *testing.T) {
 	srv := newMCPServer(t)
 	params := modernParams(t, ModernProtocolVersion, map[string]interface{}{
-		"name": "get_status_tags", "arguments": map[string]interface{}{},
+		"name": "get_wiki_overview", "arguments": map[string]interface{}{},
 	})
 
 	envelope, status := callModern(t, srv, "tools/call", params, nil)
@@ -382,7 +360,11 @@ func TestStructuredOutputSurvivesBothEras(t *testing.T) {
 	if !ok {
 		t.Fatalf("structuredContent did not survive the modern envelope: %v", result)
 	}
-	if tags, ok := structured["status_tags"].([]interface{}); !ok || len(tags) != len(StatusTags) {
+	st, ok := structured["status_tags"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("modern structuredContent did not carry status_tags: %v", structured)
+	}
+	if tags, ok := st["status_tags"].([]interface{}); !ok || len(tags) != len(StatusTags) {
 		t.Errorf("modern structuredContent lost its payload: %v", structured)
 	}
 
@@ -397,16 +379,16 @@ func TestStructuredOutputSurvivesBothEras(t *testing.T) {
 		var found bool
 		for _, raw := range tools {
 			entry := raw.(map[string]interface{})
-			if entry["name"] != "get_status_tags" {
+			if entry["name"] != "get_wiki_overview" {
 				continue
 			}
 			found = true
 			if _, present := entry["outputSchema"]; !present {
-				t.Errorf("%s era: get_status_tags is missing its outputSchema", era)
+				t.Errorf("%s era: get_wiki_overview is missing its outputSchema", era)
 			}
 		}
 		if !found {
-			t.Errorf("%s era: get_status_tags is absent from tools/list", era)
+			t.Errorf("%s era: get_wiki_overview is absent from tools/list", era)
 		}
 	}
 }

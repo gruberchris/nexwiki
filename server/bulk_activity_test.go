@@ -360,6 +360,9 @@ func TestHandleImportOKFBundlePublishesEachSavedDocument(t *testing.T) {
 // "read" with no slug and no live update. It goes through the HTTP endpoint so the agent is resolved
 // exactly as for any other call: here the forwarded client name beats the primary's fallback.
 func TestMCPImportOKFBundleLogsEachSavedDocument(t *testing.T) {
+	toolsByName["import_okf_bundle"] = &importOkfBundleTool
+	t.Cleanup(func() { delete(toolsByName, "import_okf_bundle") })
+
 	srv := newTestServer(t)
 	srv.AgentName = "Primary Fallback"
 	if _, err := srv.Storage.SaveArticle("", "Existing Article", "# old", "", "", "", "", nil, ContentTypeWiki); err != nil {
