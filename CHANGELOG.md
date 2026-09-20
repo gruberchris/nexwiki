@@ -6,6 +6,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+- **Consolidate MCP Tool Surface from 29 Tools to 9 High-Efficiency Tools**:
+  - The exposed Model Context Protocol (MCP) tool surface is consolidated from 29 granular tools down to 9 high-efficiency tools using a Unified Document Model. This reduces prompt context overhead by ~80% (from ~9,250 tokens down to ~1,850 tokens in standard MCP clients) and eliminates LLM tool-choice hesitation and ambiguity.
+  - The 9 exposed tools are: `search_wiki`, `read_article`, `save_article`, `append_article`, `list_articles`, `delete_article`, `get_wiki_overview`, `get_backlinks`, and `wiki_health`.
+  - Canonical documentation across `docs/mcp_server.md`, `README.md`, `AGENTS.md`, and all guides updated to reflect the 9-tool surface.
+  - The `nexwiki` agent skill and reference guides (`remember.md`, `plan.md`, `search.md`, `ingest.md`) updated to direct agents to the consolidated workflows.
+
+### Added
+- **`save_article` Unified Document Upsert**:
+  - Replaces 9 individual create, edit, and tag-update tools (`create_wiki_article`, `edit_wiki_article`, `create_agent_memory`, `edit_agent_memory`, `create_agent_plan`, `edit_agent_plan`, `create_agent_skill`, `edit_agent_skill`, `update_article_tags`).
+  - Supports all OKF document types (`Wiki`, `AI-Agent-Memory`, `AI-Agent-Plan`, `AI-Agent-Skill`), optimistic locking via `loaded_version`, plan lifecycle status validation, memory scope tagging (`memory-<scope>`), secret redaction, and revision logging.
+- **`append_article` Direct Content Appending**:
+  - Replaces `append_agent_memory` and `append_agent_plan`, enabling additive note-taking and progress logging to any document with optimistic locking support.
+- **`get_wiki_overview` Unified Orientation Tool**:
+  - Replaces `get_context_overview`, `get_recent_activity`, `get_wiki_statistics`, and `get_status_tags`. Combines the progressive disclosure article/memory index, recent activity within a `since` window, recognized status vocabulary, and optional link-graph statistics (`include_stats`).
+- **Historical Revision Retrieval in `read_article`**:
+  - `read_article` accepts an optional `version` parameter to load historical snapshots directly, superseding `get_article_history`.
+- **Filtering and Pagination in `list_articles`**:
+  - `list_articles` accepts `type` (filtering by `Wiki`, `AI-Agent-Memory`, `AI-Agent-Plan`, or `AI-Agent-Skill`), `status`, and `tag` filters, along with cursor pagination.
+- **Unified Deletion in `delete_article`**:
+  - `delete_article` handles deletion across all document types.
+- **Consolidated Tools End-to-End Integration Suite**:
+  - `TestConsolidatedToolsEndToEnd` exercises all 9 tools across complete document creation, revision, locking, query, and deletion lifecycles.
+
+### Removed
+- **Redundant MCP Micro-Tools and Typed CRUD Endpoints**:
+  - Retired 20 duplicate tools from the MCP tool surface: `create_wiki_article`, `edit_wiki_article`, `delete_wiki_article`, `update_article_tags`, `get_article_history`, `revert_article_version`, `create_agent_memory`, `append_agent_memory`, `edit_agent_memory`, `delete_agent_memory`, `list_agent_memories`, `create_agent_plan`, `append_agent_plan`, `edit_agent_plan`, `list_agent_plans`, `create_agent_skill`, `edit_agent_skill`, `list_agent_skills`, `get_status_tags`, and `get_recent_activity`.
+  - Removed `export_okf_bundle` and `import_okf_bundle` from the real-time MCP server tool registry (retained for CLI and REST usage).
+
+### Fixed
+- **MCP Activity Logging and Real-Time Event Dispatch for `save_article`**:
+  - `mcpToolAction` in `server/mcp.go` now recognizes the `save_` tool prefix as a mutation rather than falling back to `"read"`. New documents created via `save_article` publish `article-added` and edits publish `article-edited` WebSocket/SSE events with accurate revision numbers.
+
 ## [0.20.0] — 2026-09-19
 
 ### Added
@@ -628,7 +661,8 @@ Completes the memory-enforcement work begun in 0.14.0. That release moved three 
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/gruberchris/nexwiki/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/gruberchris/nexwiki/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/gruberchris/nexwiki/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/gruberchris/nexwiki/compare/v0.17.0...v0.17.1
