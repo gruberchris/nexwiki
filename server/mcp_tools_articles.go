@@ -1488,7 +1488,8 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 
 		var tags []string
 		if sArgs.Tags != nil {
-			if docType == ContentTypeMemory {
+			switch docType {
+			case ContentTypeMemory:
 				var scopeTags []string
 				if sArgs.MemoryType != "" {
 					scopeTags = []string{MemoryScopeTagPrefix + Slugify(sArgs.MemoryType)}
@@ -1500,7 +1501,7 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 					}
 				}
 				tags = validateAndCleanUserTags(sArgs.Tags, scopeTags, docType)
-			} else if docType == ContentTypePlan {
+			case ContentTypePlan:
 				var contextTags []string
 				if sArgs.ProjectContext != "" {
 					if ctx := Slugify(sArgs.ProjectContext); ctx != "" {
@@ -1518,7 +1519,7 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 						tags = append(tags, t)
 					}
 				}
-			} else {
+			default:
 				tags = validateAndCleanUserTags(sArgs.Tags, nil, docType)
 			}
 		} else {
@@ -1616,13 +1617,14 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 	}
 
 	var tags []string
-	if docType == ContentTypeMemory {
+	switch docType {
+	case ContentTypeMemory:
 		var scopeTags []string
 		if sArgs.MemoryType != "" {
 			scopeTags = []string{MemoryScopeTagPrefix + Slugify(sArgs.MemoryType)}
 		}
 		tags = validateAndCleanUserTags(sArgs.Tags, scopeTags, docType)
-	} else if docType == ContentTypePlan {
+	case ContentTypePlan:
 		var contextTags []string
 		if sArgs.ProjectContext != "" {
 			if ctx := Slugify(sArgs.ProjectContext); ctx != "" {
@@ -1640,7 +1642,7 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 				tags = append(tags, t)
 			}
 		}
-	} else {
+	default:
 		tags = validateAndCleanUserTags(sArgs.Tags, nil, docType)
 	}
 	if err := ValidateStatusFreeTags(docType, tags); err != nil {
@@ -1984,4 +1986,3 @@ func (srv *Server) toolGetWikiOverview(args json.RawMessage) (interface{}, *JSON
 		},
 	}, nil
 }
-

@@ -507,4 +507,3 @@ func overviewOutputSchema() map[string]interface{} {
 		"status_tags":     statusTagsOutputSchema(),
 	}, "total_articles", "articles")
 }
-
