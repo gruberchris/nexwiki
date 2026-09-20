@@ -3,12 +3,12 @@
 Use when the user states a durable fact, decision, or preference, or when you learn
 something non-obvious worth keeping across sessions.
 
-1. **Search first** — `list_agent_memories` and/or `search_wiki` — so you never create a
+1. **Search first** — `list_articles(type: "memories")` and/or `search_wiki` — so you never create a
    blind duplicate.
 2. **Append or create**:
-   - If a closely related memory exists, `append_agent_memory` to it, or correct it in
-     place with `edit_agent_memory`.
-   - Otherwise `create_agent_memory` with a concise one-insight body, a **required**
+   - If a closely related memory exists, `append_article(slug, content)` to it, or correct it in
+     place with `save_article` (passing `slug`, `title`, `content`, and `loaded_version`).
+   - Otherwise `save_article` with `type: "AI-Agent-Memory"`, a concise one-insight body, a **required**
      one-line `description`, a **required** `source` (how you learned it), and **both**
      memory axes:
      - `memory_kind` (**required**) — what sort of fact this is: `project` (goals and
@@ -21,8 +21,8 @@ something non-obvious worth keeping across sessions.
      *why* the correction was given and *how to apply it*, not just what was said.
 
      `description` and `source` are refused if absent or blank. Write real values rather
-     than a placeholder: the description is what `get_context_overview` shows, and the
+     than a placeholder: the description is what `get_wiki_overview` shows, and the
      source is what lets the fact be re-verified later.
-3. **Keep it clean** — retire fully superseded memories with `delete_agent_memory`. Never
+3. **Keep it clean** — retire fully superseded memories with `delete_article(slug)`. Never
    let near-duplicates pile up.
 4. Report the memory's slug and exactly what you wrote.
