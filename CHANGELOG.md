@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-09-19
+
 ### Changed
 - **Consolidate MCP Tool Surface from 29 Tools to 9 High-Efficiency Tools**:
   - The exposed Model Context Protocol (MCP) tool surface is consolidated from 29 granular tools down to 9 high-efficiency tools using a Unified Document Model. This reduces prompt context overhead by ~80% (from ~9,250 tokens down to ~1,850 tokens in standard MCP clients) and eliminates LLM tool-choice hesitation and ambiguity.
@@ -661,7 +663,8 @@ Completes the memory-enforcement work begun in 0.14.0. That release moved three 
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/gruberchris/nexwiki/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/gruberchris/nexwiki/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/gruberchris/nexwiki/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/gruberchris/nexwiki/compare/v0.17.1...v0.18.0
