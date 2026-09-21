@@ -129,6 +129,7 @@ To run a stdio MCP server alongside your running web instance — or standalone,
 - **📂 Flat-File Markdown & OKF v0.2**: All pages persist as human-readable Markdown files with conformant Open Knowledge Format front matter and five trust signals (provenance, trust, freshness, lifecycle, and computations). ([OKF Guide](docs/okf_v02_guide.md))
 - **🧠 Isolated AI Agent Memories & Custom Skills**: Dedicated storage for agent plans, skills, and memories, cleanly segregated from standard notes with two-axis memory classification (`memory_kind` and `memory_type`). ([Skills Guide](docs/aiagent_skills.md) · [Tags & Memory Guide](docs/tags.md))
 - **🕒 Gzipped History & Visual Diffs**: Compressed `.md.gz` revision snapshots with split or unified visual diffs, instant rollbacks, and optimistic locking conflict guards. ([Version Control Guide](docs/version_control.md))
+- **🧹 History Redaction & Audit**: Purge a document's earlier revisions without deleting it (`save_article(purge_history: true)`), and prove a term is gone from every stored revision with `search_wiki(include_history: true)`. ([History Redaction Guide](docs/history_redaction_guide.md))
 - **🔍 Bleve Full-Text Search Engine**: Embedded Bleve index with real-time indexing, boolean query expressions, term scoring, and highlighted matching snippets. ([User Guide](docs/user_guide.md))
 - **📡 Real-Time SSE Updates & Activity Drawer**: Single-connection Server-Sent Events push live document edits, glowing unread badges, and detailed audit history to the slide-in Activity Drawer. ([Editor & Activity Guide](docs/editor_activity_linter_guide.md))
 - **📊 Responsive 4K Reader & Mermaid Diagrams**: Viewport-scaling reading column for ultra-wide displays, native theme-aware Mermaid SVG diagram rendering, and clean PDF exports. ([Reader & Dashboard Guide](docs/reader_dashboard_guide.md))
@@ -152,3 +153,4 @@ Explore in-depth technical manuals, architectural specifications, and workflow g
 - [Production Deployment & Reverse Proxy Guide](docs/production_deployment.md) — Caddy/Nginx reverse proxy, TLS, and auth boundaries.
 - [Developer Setup & Build Automation Guide](docs/developer_guide.md) — Local development, Vite hot-reloading, and cross-compilation.
 - [Release Engineering & Versioning Guide](docs/release_guide.md) — CI quality gates, tag automation, and semantic versioning.
+- [History Redaction & Audit Guide](docs/history_redaction_guide.md) — Purging old revisions, auditing every revision for a term, and fixing a document's type in place.

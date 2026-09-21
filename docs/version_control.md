@@ -69,6 +69,12 @@ If a page has been edited incorrectly, you can roll it back to the exact content
 
 ---
 
+## 🧹 Removing Text From History (Purge)
+
+Because every revision is kept, rewriting a page does not remove what it used to say. When text must go for good — an embargoed name, personal details — save the clean version with `save_article(..., purge_history: true)` (or `"purge_history": true` on `PUT /api/articles/{slug}`). Every revision older than the one just written is permanently deleted, body and metadata alike; the page, its URL, and its version counter are untouched, and the next save continues the numbering. A purged version can no longer be inspected or reverted to. Verify with `search_wiki(query, include_history: true)`. See the [History Redaction & Audit Guide](./history_redaction_guide.md).
+
+---
+
 ## 🛡️ Edit Conflict Protection (Optimistic Locking)
 
 To prevent multiple users (or browser tabs) from accidentally overwriting and erasing each other's work:

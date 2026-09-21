@@ -16,7 +16,7 @@ Because you are using NexWiki as a global tool connected via MCP, **you cannot k
 
 ## 🏆 The Solution: Centralized Skills-Based Governance
 
-NexWiki solves this by using its native **AI Agent Skills Registry** combined with **Schema-Driven Prerequisite Hooking** to implement zero-configuration, centralized governance.
+NexWiki solves this by using its native **AI Agent Skills Registry** combined with **Server-Instruction Prerequisite Hooking** to implement zero-configuration, centralized governance.
 
 ```mermaid
 graph TD
@@ -27,11 +27,11 @@ graph TD
     subgraph NexWiki Production Server
         mcp[MCP Server Engine]
         guidelines["Centralized Guidelines Skill (nexwiki-agent-guidelines)"]
-        tools["create_wiki_article / create_agent_plan"]
+        tools["save_article / append_article"]
     end
 
-    Agent -->|1. List Tools| mcp
-    mcp -->|2. Returns Tool Schemas with Guidelines Hook| Agent
+    Agent -->|1. Initialize| mcp
+    mcp -->|2. Returns Server Instructions with Guidelines Hook| Agent
     Agent -->|3. Must load guidelines first| guidelines
     guidelines -->|4. Returns Core SOPs| Agent
     Agent -->|5. Apply Style Memories & Save Plan| tools
@@ -43,22 +43,20 @@ graph TD
 
 ### 1. Centralized "Wrench" Skill (`nexwiki-agent-guidelines`)
 Instead of duplicating rules in local files across countless folders, all instructions are stored centrally inside a single, live, editable page in NexWiki named **NexWiki Agent Guidelines** (slug: `nexwiki-agent-guidelines`). NexWiki seeds a default version of this page automatically the first time the server starts, so the hooks below resolve out of the box; you then refine it in the UI. 
-* Because its OKF `type` is `AI-Agent-Skill` (set automatically by `create_agent_skill`), it is registered on NexWiki's Custom AI Skills Registry.
+* Because its OKF `type` is `AI-Agent-Skill` (`save_article(type: "AI-Agent-Skill")`, or the **AI Skill** button in the UI), it is registered on NexWiki's Custom AI Skills Registry.
 * You can edit these agent rules directly from your browser in the NexWiki UI. **Any changes you save are instantly propagated to all connected AI agents globally.**
 
-> **The slug must be exactly `nexwiki-agent-guidelines`.** The MCP tool schema hooks are hard-coded to reference this slug. If the article does not exist, the agent will get a `not found` error when it tries to load the guidelines and may proceed without any rules applied.
+> **The slug must be exactly `nexwiki-agent-guidelines`.** The MCP server instructions are hard-coded to reference this slug. If the article does not exist, the agent will get a `not found` error when it tries to load the guidelines and may proceed without any rules applied.
 
 ---
 
-### 2. Schema-Driven Prerequisite Hooking
-To ensure the agent actually reads these guidelines without any manual user prompting, we embed explicit prerequisites directly into the **MCP tool schema descriptions** (`server/mcp.go`). 
+### 2. Server-Instruction Prerequisite Hooking
+To ensure the agent actually reads these guidelines without any manual user prompting, the MCP server embeds an explicit prerequisite in the **`instructions` it returns when a client initializes** (`agentInstructions()` in `server/mcp_modern.go`), which MCP clients place in the model's context before it selects any tool:
+> *`This NexWiki server is the user's persistent second brain. Use it to store plans and memories and to look up prior knowledge — do not keep that only in chat. At session start, load the operating rules with read_article(slug: "nexwiki-agent-guidelines"), then call get_wiki_overview(since: "48h") for a compact index and the recent activity. Save multi-step work with save_article(type: "AI-Agent-Plan"), durable facts with save_article(type: "AI-Agent-Memory", setting memory_kind, description and source), and search before writing.`*
 
-For example, the description for `create_wiki_article` is registered as:
-> *`Create a brand new wiki article. Set 'title' to the subject's human-readable name — never a tool name, an action verb, or a placeholder, since the slug is derived from it. (IMPORTANT: If you have not already loaded the global operational guidelines skill this session, load it once with 'read_article(slug: "nexwiki-agent-guidelines")' to understand formatting and style-guide check requirements. If it is already in your context, do not re-read it — call this tool.)`*
+When your agent connects from *any* external workspace, the LLM planner reads this prerequisite and executes `read_article(slug: "nexwiki-agent-guidelines")` in its first turn, before drafting or saving any content. Clients that ignore server instructions need the one-time client setup in §3.
 
-When your agent parses these tools in *any* external workspace, the LLM planner reads this prerequisite and executes `read_article(slug: "nexwiki-agent-guidelines")` in its first turn, before drafting or saving any content.
-
-**The prerequisite is scoped to "once per session" on purpose.** An earlier phrasing said the agent must *always* load the guidelines before executing the tool, which reads as a precondition to re-check on every attempt. Combined with the guidelines' own "search for a style guide before writing" rule, that closes a cycle — intent to create → re-read guidelines → search → intent to create — with no exit. Models that track which prerequisites they have already satisfied break out of it; smaller local models generally do not, and will alternate between `read_article` and `search_wiki` until they are stopped. Keep both halves bounded: the tool description says load it *once*, and §0 of the seeded guidelines says a search returning nothing is a completed check.
+**The prerequisite is scoped to "once per session" on purpose.** An earlier phrasing said the agent must *always* load the guidelines before executing the tool, which reads as a precondition to re-check on every attempt. Combined with the guidelines' own "search for a style guide before writing" rule, that closes a cycle — intent to create → re-read guidelines → search → intent to create — with no exit. Models that track which prerequisites they have already satisfied break out of it; smaller local models generally do not, and will alternate between `read_article` and `search_wiki` until they are stopped. Keep both halves bounded: the server instructions say load it *at session start*, and §0 of the seeded guidelines says a search returning nothing is a completed check.
 
 ---
 
@@ -122,7 +120,7 @@ Reference the guidelines from `.github/copilot-instructions.md` in each reposito
 > *"This project uses a NexWiki second brain over MCP. At the start of a session, call `read_article(slug: "nexwiki-agent-guidelines")` once and follow it when creating articles, plans, or memories."*
 
 #### Option E: Any MCP-Compatible Agent
-1. The agent calls `list_agent_skills()` to discover the available skills.
+1. The agent calls `list_articles(type: "skills")` to discover the available skills.
 2. It calls `read_article(slug: "nexwiki-agent-guidelines")` once to load the operating rules.
 3. That content becomes active instructions for the rest of the session.
 
@@ -134,12 +132,12 @@ Reference the guidelines from `.github/copilot-instructions.md` in each reposito
 Imagine you are working in a Python service (`/Projects/python-api`) and tell Cursor/Claude: *"Add a wiki page about our new PostgreSQL database schema."*
 
 **The Agent's Step-by-Step Execution:**
-1. **Agent retrieves tools**: The agent parses the MCP tools list and sees `create_wiki_article`.
-2. **Schema Hook Triggers**: The description of `create_wiki_article` warns that it *must* first load the operational guidelines.
+1. **Agent connects**: The agent initializes the MCP session and sees `save_article` in the tools list.
+2. **Instruction Hook Triggers**: The server instructions tell it to load the operational guidelines at session start, before writing.
 3. **Agent loads guidelines**: The agent calls `read_article(slug="nexwiki-agent-guidelines")` and learns it must check memories for style guides.
-4. **Agent checks style memories**: The agent calls `list_agent_memories(memory_type="rules")` or searches for `style guide`. It discovers `sql-dialect-article-format-template`.
+4. **Agent checks style memories**: The agent calls `list_articles(type="memories", tag="memory-rules")` or `search_wiki(query="style guide", type="memories")`. It discovers `sql-dialect-article-format-template`.
 5. **Agent reads template**: It calls `read_article(slug="sql-dialect-article-format-template")`, discovering the required schema table headers and syntax blocks.
-6. **Agent creates page**: The agent drafts a beautiful, perfectly formatted Postgres article conforming to the wiki's rules, and saves it using `create_wiki_article`.
+6. **Agent creates page**: The agent drafts a beautiful, perfectly formatted Postgres article conforming to the wiki's rules, and saves it using `save_article` (type `Wiki`, the default on create).
 
 ---
 
@@ -147,9 +145,9 @@ Imagine you are working in a Python service (`/Projects/python-api`) and tell Cu
 Imagine you are working in a legacy project (`/Projects/legacy-system`) and tell your agent: *"We need to plan the migration of this legacy database to MySQL."*
 
 **The Agent's Step-by-Step Execution:**
-1. **Schema Hook Triggers**: The agent outlines a migration plan in its planner. It notes that the MCP `create_agent_plan` tool description requires it to first load `nexwiki-agent-guidelines`.
+1. **Instruction Hook Triggers**: The agent outlines a migration plan in its planner. It notes that the MCP server instructions require it to first load `nexwiki-agent-guidelines`.
 2. **Agent loads guidelines**: The agent calls `read_article(slug="nexwiki-agent-guidelines")` and confirms it must save any plans persistently in the wiki.
-3. **Agent saves plan**: The agent automatically executes `create_agent_plan`, creating the page `mysql-database-migration-plan` with the `project_context` set to `legacy-system`.
+3. **Agent saves plan**: The agent automatically executes `save_article(type="AI-Agent-Plan")`, creating the page `mysql-database-migration-plan` with the `project_context` set to `legacy-system`.
 4. **Agent reports slug**: The agent provides you with the slug and link, keeping both the local workspace and your knowledge base perfectly in sync.
 
 ---
@@ -159,18 +157,18 @@ Imagine your agent has finished implementing a plan it previously created (e.g.,
 
 **The Agent's Step-by-Step Execution:**
 1. **Agent completes implementation**: The agent finishes all the coding tasks outlined in the plan.
-2. **Agent appends final notes**: The agent calls `append_agent_plan(slug="mysql-database-migration-plan")` to document the implementation: any plan deviations, files created, tools used, unexpected challenges, or other observations.
-3. **Agent marks plan as completed**: The agent calls `edit_agent_plan(slug="mysql-database-migration-plan", tags=["completed"], loaded_version=<current_version>)` to add the `completed` status tag.
-4. **Protected type preserved**: The plan's OKF `type` (`AI-Agent-Plan`) is immutable on edits and cannot be relabeled to a non-reserved type.
+2. **Agent appends final notes**: The agent calls `append_article(slug="mysql-database-migration-plan")` to document the implementation: any plan deviations, files created, tools used, unexpected challenges, or other observations.
+3. **Agent marks plan as completed**: The agent reads the plan, then calls `save_article(slug="mysql-database-migration-plan", title=..., content=..., status="completed", loaded_version=<current_version>)` to set the `completed` lifecycle status. Lifecycle status is its own field, not a tag.
+4. **Type preserved**: The call omits `type`, so the plan stays `AI-Agent-Plan`. An ordinary edit never changes a document's type; only an explicit `type` argument relabels it.
 5. **Agent reports completion**: The agent confirms the plan is now marked as completed with final notes appended.
 
 ---
 
 ## 📋 Crafting Your `nexwiki-agent-guidelines` Skill
 
-This skill is the single most important document in your NexWiki instance when using AI agents. If it does not exist, the schema hooks in `create_wiki_article`, `create_agent_memory`, and `create_agent_plan` will fail silently — the agent will get a not-found error and proceed without any governance at all.
+This skill is the single most important document in your NexWiki instance when using AI agents. If it does not exist, the prerequisite in the MCP server instructions will fail silently — the agent will get a not-found error and proceed without any governance at all.
 
-NexWiki **seeds a default version automatically** the first time the server starts, so it exists before you connect any agent — you just refine it. To (re)create it manually, use the **AI Skill** button in the sidebar and set the title to `NexWiki Agent Guidelines` (which slugifies to `nexwiki-agent-guidelines`; do not add extra words like "Core" or the slug won't match the hooks).
+NexWiki **seeds a default version automatically** the first time the server starts, so it exists before you connect any agent — you just refine it. To (re)create it manually, use the **AI Skill** button in the sidebar and set the title to `NexWiki Agent Guidelines` (which slugifies to `nexwiki-agent-guidelines`; do not add extra words like "Core" or the slug won't match the hook).
 
 ### What to Include
 
@@ -178,16 +176,16 @@ Write this skill as a numbered list of imperative directives — not prose. Agen
 
 **1. Session orientation (progressive disclosure)**
 ```markdown
-At session start, call `get_context_overview` to load a compact index of the entire wiki
+At session start, call `get_wiki_overview` to load a compact index of the entire wiki
 (titles, slugs, one-line summaries, tags) before reading anything. Then call `read_article`
 only on the entries you actually need — do not bulk-read articles to orient yourself.
-If resuming work, call `get_recent_activity` (e.g., since: "24h") to see what changed
-since your last session.
+If resuming work, pass a window (e.g., `get_wiki_overview(since: "24h")`) to see what
+changed since your last session.
 ```
 
 **2. Memory search before writing**
 ```markdown
-Before creating any wiki article, always call `list_agent_memories` or `search_wiki` 
+Before creating any wiki article, always call `list_articles(type: "memories")` or `search_wiki`
 for formatting memories, style guides, or templates relevant to the article type.
 If a style guide memory exists, read it and follow it exactly.
 ```
@@ -195,17 +193,18 @@ If a style guide memory exists, read it and follow it exactly.
 **3. Plan-saving behavior**
 ```markdown
 Any implementation task with more than two steps must be saved as a Collaborative AI Plan 
-using `create_agent_plan` before work begins. Set `project_context` to the project name.
-Append progress using `append_agent_plan` after each major milestone.
-To correct or rewrite plan steps, use `edit_agent_plan` with a `content` field (full replacement).
-Mark plans completed with `edit_agent_plan` (add "completed" tag) once done.
+using `save_article(type: "AI-Agent-Plan")` before work begins. Set `project_context` to the project name.
+Append progress using `append_article` after each major milestone.
+To correct or rewrite plan steps, use `save_article` with the plan's `slug`, `loaded_version`,
+and a `content` field (full replacement).
+Mark plans completed with `save_article` (`status: "completed"`) once done.
 ```
 
 **4. Tag and slug rules**
 ```markdown
-Never relabel a reserved document `type` (`AI-Agent-Plan`, `AI-Agent-Skill`, `AI-Agent-Memory`) to a non-reserved one, and never strip a tool-managed `memory-<scope>` tag.
+Never pass `type` when editing a reserved document (`AI-Agent-Plan`, `AI-Agent-Skill`, `AI-Agent-Memory`) unless asked to relabel it — an explicit `type` changes the document's class — and never strip a tool-managed `memory-<scope>` tag.
 Article slugs must be lowercase, hyphenated, and descriptive (e.g., "go-api-database-schema").
-Use `get_status_tags` to see valid lifecycle tags (draft, wip, completed, etc.).
+`get_wiki_overview` lists the valid lifecycle statuses under `status_tags` (draft, implementing, completed, etc.).
 ```
 
 **5. Memory creation and hygiene guidelines**
@@ -214,8 +213,9 @@ Memories must be succinct — bullet points over paragraphs. One clear insight p
 Use project-scoped memory_type (e.g., "nexwiki") for project-specific knowledge.
 Use topic-scoped memory_type (e.g., "docker") for cross-project reusable knowledge.
 Omit memory_type only for general, broadly applicable knowledge.
-When a memory turns out to be stale or wrong, correct it in place with `edit_agent_memory`
-(do not create a near-duplicate). Retire fully superseded memories with `delete_agent_memory`.
+When a memory turns out to be stale or wrong, correct it in place with `save_article`
+(its `slug` plus `loaded_version`; do not create a near-duplicate). Retire fully superseded
+memories with `delete_article`.
 Set the `description` (one-line summary) and `source` (provenance) fields on everything
 you create — descriptions power the context overview; sources keep knowledge auditable.
 ```
@@ -236,7 +236,7 @@ Keep the guideline skill lean. Bloated context slows agents down and risks being
 |---|---|
 | Project-specific configs (API keys, folder paths, repo names) | A project-scoped AI memory (`memory_type: "myproject"`) |
 | Per-language coding standards | Individual topic skills (e.g., `go-coding-standards`) |
-| Content that changes per task | Agent memory logs (`create_agent_memory`) |
+| Content that changes per task | Agent memory logs (`save_article(type: "AI-Agent-Memory")`) |
 | Verbose explanations of NexWiki internals | Cross-reference `read_article(slug: "nexwiki-agent-guidelines")` is enough |
 | Credentials, tokens, or secrets | Never store these in NexWiki |
 

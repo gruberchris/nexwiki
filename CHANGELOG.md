@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- **History purge — redact without deleting**: `save_article` takes `purge_history: true` on an update (with `loaded_version`), and `PUT /api/articles/{slug}` takes `"purge_history": true`. After the save, every earlier revision of the document is permanently deleted from `data/history/` — body and front matter alike — and the document's earlier activity-log entries (durable log, rotated archives, and the live feed) are retitled to its current title and slug. The document, slug, type, status, backlinks, and version counter are unchanged. The response reports `revisions_removed` and `activity_entries_retitled`. See the [History Redaction & Audit Guide](docs/history_redaction_guide.md).
+- **History search**: `search_wiki` takes `include_history: true` to scan every stored revision and live file for the query as a case-insensitive literal substring, returning `history_matches: [{slug, title, version, current}]` in `structuredContent` and in the prose. The type, tag, and archived filters do not narrow this scan.
+- **`type` on REST creation**: `POST /api/articles` accepts `type` (and `memory_kind` for a memory); it no longer forces `Wiki`.
+
+### Changed
+- **`type` is honoured on update**: `save_article` and `PUT /api/articles/{slug}` change a document's type when `type` is passed, instead of silently discarding it. Omitting `type` still keeps the current one. `status`, `memory_kind`, `memory_type`, and `project_context` are validated against the new type. Into a plan without a status enters at `draft`; into Wiki or a memory drops the lifecycle status; a plan or skill status the new type rejects must be replaced explicitly; leaving a memory drops its `memory-<scope>` tags. The update response now echoes `Type:` and, on a change, `Type: Old → New`.
+- **An unknown type is an error**: `save_article` (create and update), `list_articles`, `POST`/`PUT /api/articles` (400), and the OKF importer over an existing slug reject an unrecognized type naming the valid values, instead of falling back to `Wiki`. `Attested Computation` is accepted by its canonical spelling.
+- **The OKF importer relabels an existing document only by a declared type**: a bundle entry with no `type` keeps the existing document's type.
+
+### Fixed
+- **`search_wiki` advertised only half its filters**: `memory_kind` and `include_archived` were honoured but absent from the input schema, so an agent reading `tools/list` could not discover them. Both are now declared.
+- **`get_wiki_overview` violated its own output schema**: `statistics.broken_links` serialized as `null` whenever `include_stats` was off or nothing was broken, so strict clients rejected every call. It is now always an array.
+- **Agents were told to call tools that do not exist**: the connect-time MCP instructions, the seeded `nexwiki-agent-guidelines`, the MCP prompts, `wiki_health` findings, and the docs named retired tools (`create_agent_plan`, `get_context_overview`, `get_recent_activity`, `get_status_tags`, …). They now name only the nine registered tools, and a test fails if any agent-facing text names an unregistered one.
+
 ## [0.21.0] — 2026-09-19
 
 ### Changed

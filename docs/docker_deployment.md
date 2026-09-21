@@ -126,7 +126,7 @@ NexWiki persists all state on disk inside the `/app/data` directory. When runnin
 ├── activity.jsonl      # Real-time append-only activity audit trail
 ├── activity-*.jsonl    # Rotated activity log archives (or activity.jsonl.<N>)
 ├── custom_themes.json  # UI-customized themes palette (created on theme save)
-└── okf-export-*.zip    # OKF bundles written by the export_okf_bundle MCP tool
+└── okf-export-*.zip    # OKF bundles left by older versions' MCP export tool (no longer written)
 ```
 
 ### Storage Details:
@@ -135,7 +135,7 @@ NexWiki persists all state on disk inside the `/app/data` directory. When runnin
 * **`history/`**: Every save writes a gzip-compressed snapshot of that version to a folder matching the article slug (e.g., `history/project-phoenix/3.md.gz`). Version history and revert read these snapshots, so include `history/` in backups to keep earlier versions restorable.
 * **`search.bleve/`**: The local search database holds an exclusive file lock while running. NexWiki handles graceful shutdown (`SIGTERM` / `SIGINT`), flushing and closing the Bleve database safely within Docker's 10-second shutdown window.
 * **`activity.jsonl`**: Rotates automatically into timestamped `activity-<UTC>.jsonl` archives (or `activity.jsonl.<N>` if an archive with that timestamp already exists) whenever the active log exceeds 10 MB. Archived logs are retained according to `NEXWIKI_ACTIVITY_MAX_ARCHIVES`.
-* **`okf-export-<UTC>.zip`**: Each `export_okf_bundle` call writes a bundle here and returns its path. NexWiki never deletes these, so remove exports you no longer need. The web UI's OKF export (`GET /api/okf/export`) downloads the bundle instead of writing it here.
+* **`okf-export-<UTC>.zip`**: Older versions of NexWiki exposed an MCP export tool that wrote a bundle here and returned its path. The current MCP surface has no export tool, so nothing writes these files any more, and NexWiki never deletes the ones already present — remove exports you no longer need. To export now, use the web UI's OKF export (`GET /api/okf/export`), which downloads the bundle instead of writing it here.
 * **Temporary files**: `.nexwiki-<n>.tmp` files can appear briefly in `articles/`, `history/`, and `assets/` while a save is in progress, or be left behind by a crash. NexWiki removes leftovers at startup; see [Article Files on Disk](./production_deployment.md#article-files-on-disk).
 
 ---

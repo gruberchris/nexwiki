@@ -10,7 +10,7 @@ Every Collaborative AI Plan (`AI-Agent-Plan`) moves through a closed, validated 
 
 ```mermaid
 stateDiagram-v2
-    [*] --> draft: create_agent_plan
+    [*] --> draft: save_article(type AI-Agent-Plan)
 
     draft --> implementing: work begins
     draft --> parked: deferred before starting
@@ -55,7 +55,7 @@ stateDiagram-v2
 
 ## Enforcement
 
-* Every plan has **exactly one** status, drawn from the eight. `create_agent_plan` defaults a status-less plan to `draft`, and an unrecognized value is rejected with a message naming the right one — an agent cannot invent `in-flight` or reach for `wip`.
+* Every plan has **exactly one** status, drawn from the eight. `save_article` defaults a status-less new plan to `draft`, and an unrecognized value is rejected with a message naming the right one — an agent cannot invent `in-flight` or reach for `wip`.
 * **Status never travels in tags.** A lifecycle word used as a *tag* on a plan or a skill is rejected, because a plan tagged `completed` whose field says `implementing` is two contradictory sources of truth. Project-context tags and topics are unaffected.
 * **An ordinary edit preserves state.** `status` is omitted-means-preserve on every write path, so editing a plan's body, renaming it, or changing its tags can never silently reset a `completed` plan to `draft`.
 * **Values are validated strictly; transitions are log-and-allow.** A jump outside the designed state machine (say, `draft` straight to `archived`) is applied but noted to the server log — a human correcting a mis-set plan must always win.
@@ -120,7 +120,7 @@ Each change is logged to stderr with a per-document edit summary, and the sweep 
 
 ## Working With the Lifecycle as an Agent
 
-* `get_status_tags` returns the plan and skill vocabularies. No other document type has a status.
-* Create plans with `create_agent_plan` (starts in `draft`, or pass `status`), move them with `edit_agent_plan`'s `status` argument, and log progress with `append_agent_plan` (which never touches status or tags).
-* `list_agent_plans(status: "implementing")` filters by state; `wiki_health` reports a per-state census of the whole plan corpus and exempts `parked`/`evergreen` plans from its staleness check.
+* `get_wiki_overview` returns the plan and skill vocabularies in its structured output (`plan_status_tags`, `skill_status_tags`). No other document type has a status.
+* Create plans with `save_article(type: "AI-Agent-Plan")` (starts in `draft`, or pass `status`), move them with `save_article`'s `status` argument on an update (`slug` plus `loaded_version`; omitting `status` preserves it), and log progress with `append_article` (which never touches status or tags).
+* `list_articles(type: "plans", status: "implementing")` filters by state; `wiki_health` reports a per-state census of the whole plan corpus and exempts `parked`/`evergreen` plans from its staleness check.
 * Searching archived content: `search_wiki(tags: ["archived"])` or `include_archived: true` — an explicit `archived` tag facet implies inclusion.

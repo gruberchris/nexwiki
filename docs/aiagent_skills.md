@@ -8,7 +8,7 @@ This guide details what AI skills are, how to manage them inside NexWiki, how th
 
 ## ⚠️ Before You Start: Create the Core Guidelines Skill
 
-If you are connecting AI agents (Claude Desktop, Cursor, etc.) to NexWiki, the **most important skill to create first** is the `nexwiki-agent-guidelines` skill. The MCP tool descriptions for `create_wiki_article`, `create_agent_plan`, and `create_agent_memory` all instruct agents to load this skill before acting. If it does not exist, agents will error and proceed without any governance rules.
+If you are connecting AI agents (Claude Desktop, Cursor, etc.) to NexWiki, the **most important skill to create first** is the `nexwiki-agent-guidelines` skill. The instructions the MCP server sends every client at initialization tell agents to load this skill at session start, before writing anything. If it does not exist, agents will error and proceed without any governance rules.
 
 See **[AI Agent Integration Guide](agent_integration_guide.md)** → *Crafting Your `nexwiki-agent-guidelines` Skill* for exactly what to write and what to leave out.
 
@@ -33,7 +33,7 @@ NexWiki makes creating and managing AI Skills extremely easy:
 ### 1. Creating a Skill
 To create a Custom AI Skill inside NexWiki:
 - Click the **AI Skill** button in the sidebar (under the Create New Page buttons), or click the **Create Custom Skill** card on the dashboard homepage.
-- This opens the editor in **Custom AI Skill Mode** (marked by a premium indigo Wrench badge). The document's OKF `type` is set to `AI-Agent-Skill` automatically — there is no tag to apply, and the type is immutable on subsequent edits. AI agents create skills the same way via the `create_agent_skill` MCP tool.
+- This opens the editor in **Custom AI Skill Mode** (marked by a premium indigo Wrench badge). The document's OKF `type` is set to `AI-Agent-Skill` automatically — there is no tag to apply, and ordinary edits never change it (only an explicit `type` on an update relabels a document). AI agents create skills the same way via the `save_article` MCP tool with `type: "AI-Agent-Skill"`.
 - Write your skill instructions (in standard `SKILL.md` format) and click **Save Page**.
 
 ### 2. Collapsible Sidebar Folder
@@ -55,7 +55,7 @@ If you are explicitly looking for a skill, it will appear in your search results
 1. Your search query contains `aiagent` or `ai-agent` (e.g. `ai-agent docker`). This opts **every** agent-typed document — skills, plans, and memories — back into the results.
 2. Your search query matches the skill's **title** or **slug** (e.g. `docker-clean`).
 
-You can also enumerate skills directly, bypassing search entirely, with the `list_agent_skills` MCP tool or `GET /api/skills`.
+You can also enumerate skills directly, bypassing search entirely, with the `list_articles(type: "skills")` MCP tool or `GET /api/skills`.
 
 ---
 
