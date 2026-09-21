@@ -43,7 +43,7 @@ func (s *StringOrArray) UnmarshalJSON(data []byte) error {
 var searchWikiTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "search_wiki",
-		"description": "Perform full-text searches across the entire NexWiki knowledge base using Bleve query parsing. Searches all document types by default — wiki articles, agent memories, plans, and skills. Returns scored matches with highlighted snippets. Use 'type' and 'tag' to narrow.",
+		"description": "Perform full-text searches across the entire NexWiki knowledge base using Bleve query parsing. Searches all document types by default — wiki articles, agent memories, plans, and skills. Returns scored matches with highlighted snippets. Use 'type' and 'tag' to narrow. Set 'include_history: true' to also scan every stored revision (version history included) for the literal text — the way to verify a redaction.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -63,6 +63,10 @@ var searchWikiTool = toolDef{
 					"type":        "integer",
 					"description": "Optional maximum number of results (default 40, maximum 200).",
 				},
+				"include_history": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional. Also scan every stored revision of every document — version history plus the live files — for the query as a case-insensitive literal substring over the whole file, front matter included, and return the matching (slug, version) pairs as history_matches. Use it to audit a redaction: an empty history_matches means no revision anywhere still contains the text. The type, tag, and archived filters do not narrow this scan. Surrounding double quotes are stripped; nothing else is interpreted.",
+				},
 			},
 			"required": []string{"query"},
 		},
@@ -81,6 +85,7 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		Limit           int           `json:"limit"`
 		IncludeArchived bool          `json:"include_archived"`
 		MemoryKind      string        `json:"memory_kind"`
+		IncludeHistory  bool          `json:"include_history"`
 	}
 	var searchArgs SearchArgs
 	if e := decodeToolArgs(args, &searchArgs); e != nil {
@@ -179,18 +184,78 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		}
 	}
 
+	out := SearchOutput{
+		Query:           searchArgs.Query,
+		Count:           len(hits),
+		Types:           searchArgs.Type,
+		Tags:            tags,
+		MemoryKind:      memoryKind,
+		IncludeArchived: searchArgs.IncludeArchived,
+		Results:         hits,
+	}
+
+	if searchArgs.IncludeHistory {
+		term := historySearchTerm(searchArgs.Query)
+		matches, err := srv.Storage.SearchHistory(term)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning version history: " + srv.clientError(err)}}}, nil
+		}
+		out.IncludeHistory = true
+		out.HistoryMatchCount = len(matches)
+		if len(matches) > maxHistoryMatches {
+			matches = matches[:maxHistoryMatches]
+		}
+		out.HistoryMatches = &matches
+		text += renderHistoryMatches(term, matches, out.HistoryMatchCount, len(facets) > 0)
+	}
+
 	return ToolResponse{
-		Content: []ToolContent{{Type: "text", Text: text}},
-		StructuredContent: SearchOutput{
-			Query:           searchArgs.Query,
-			Count:           len(hits),
-			Types:           searchArgs.Type,
-			Tags:            tags,
-			MemoryKind:      memoryKind,
-			IncludeArchived: searchArgs.IncludeArchived,
-			Results:         hits,
-		},
+		Content:           []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: out,
 	}, nil
+}
+
+// maxHistoryMatches caps the history_matches list. An audit term is normally rare; a common word
+// would otherwise put every revision of the wiki into one response.
+const maxHistoryMatches = 500
+
+// historySearchTerm is the literal the history scan looks for: the query with surrounding
+// whitespace and one pair of surrounding double quotes removed, since an agent reaching for an
+// exact phrase will quote it the way the Bleve query syntax asks.
+func historySearchTerm(query string) string {
+	term := strings.TrimSpace(query)
+	if len(term) >= 2 && strings.HasPrefix(term, `"`) && strings.HasSuffix(term, `"`) {
+		term = term[1 : len(term)-1]
+	}
+	return term
+}
+
+// renderHistoryMatches is the prose half of history_matches.
+func renderHistoryMatches(term string, matches []HistoryMatch, total int, filtered bool) string {
+	var b strings.Builder
+	b.WriteString("\n== Version history scan ==\n")
+	fmt.Fprintf(&b, "Scanned every stored revision (history and live files) for %q as a case-insensitive literal substring, front matter included.\n", term)
+	if filtered {
+		b.WriteString("The type, tag, memory-kind, and archived filters above do not narrow this scan; it covers every document.\n")
+	} else {
+		b.WriteString("Filters never narrow this scan; it covers every document.\n")
+	}
+	if total == 0 {
+		b.WriteString("No revision of any document contains it.\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "%d revision(s) contain it:\n", total)
+	for _, m := range matches {
+		state := "earlier revision"
+		if m.Current {
+			state = "current"
+		}
+		fmt.Fprintf(&b, "- %s (slug: %s) version %d — %s\n", m.Title, m.Slug, m.Version, state)
+	}
+	if total > len(matches) {
+		fmt.Fprintf(&b, "... %d more not listed; narrow the term.\n", total-len(matches))
+	}
+	return b.String()
 }
 
 // plainSnippet converts a search snippet from the HTML the browser renders (entity-escaped text
@@ -438,9 +503,11 @@ func (srv *Server) toolListArticles(args json.RawMessage) (interface{}, *JSONRPC
 	var filtered []Article
 	targetType := ""
 	if strings.TrimSpace(lArgs.Type) != "" {
-		targetType = ResolveSearchType(lArgs.Type)
+		// An unknown type is reported, never answered with a listing of wiki articles — which is
+		// what the old Wiki fallback did, and an agent could not tell it from a correct result.
+		targetType = ResolveDocumentType(lArgs.Type)
 		if targetType == "" {
-			targetType = normalizeType(lArgs.Type)
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + unknownDocumentTypeError(lArgs.Type).Error()}}}, nil
 		}
 	}
 
@@ -1352,7 +1419,7 @@ func formatTrustTier(tier string) string {
 var saveArticleTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "save_article",
-		"description": "Create or update any document (wiki article, agent memory, plan, or skill). If 'slug' is provided and matches an existing document, it updates it; otherwise it creates a new document. Supports optimistic locking via 'loaded_version'.",
+		"description": "Create or update any document (wiki article, agent memory, plan, or skill). If 'slug' is provided and matches an existing document, it updates it; otherwise it creates a new document. Supports optimistic locking via 'loaded_version'. On an update, passing 'type' changes the document's type (omit it to keep the current one); an unknown type is an error. Redaction: set 'purge_history: true' on an update to keep only the revision this call writes and permanently delete every earlier revision — body and metadata — from version history. That is not a deletion of anything a reader sees today: the document, its slug, type, status, and backlinks are unchanged.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1370,8 +1437,8 @@ var saveArticleTool = toolDef{
 				},
 				"type": map[string]interface{}{
 					"type":        "string",
-					"description": "Document type: 'Wiki' (default), 'AI-Agent-Memory', 'AI-Agent-Plan', or 'AI-Agent-Skill'.",
-					"enum":        []string{"Wiki", "AI-Agent-Memory", "AI-Agent-Plan", "AI-Agent-Skill"},
+					"description": "Document type: 'Wiki' (default on create), 'AI-Agent-Memory', 'AI-Agent-Plan', 'AI-Agent-Skill', or 'Attested Computation'. On an update, omit to keep the current type, or pass one to change it: status, memory_kind, memory_type and project_context are then applied against the new type. Moving into AI-Agent-Plan without a status enters at 'draft' (or keeps a status already valid for a plan); moving into Wiki or AI-Agent-Memory drops the lifecycle status; a plan or skill status the new type does not accept must be replaced with an explicit 'status'; leaving AI-Agent-Memory drops the memory-<scope> tags and memory_kind. An unknown value is an error, never a silent Wiki.",
+					"enum":        []string{"Wiki", "AI-Agent-Memory", "AI-Agent-Plan", "AI-Agent-Skill", "Attested Computation"},
 				},
 				"description": map[string]interface{}{
 					"type":        "string",
@@ -1411,6 +1478,10 @@ var saveArticleTool = toolDef{
 					"type":        "string",
 					"description": "Optional revision log description summarizing the edit.",
 				},
+				"purge_history": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional, update only; requires 'loaded_version'. After this save succeeds, permanently delete every earlier revision of the document from version history, keeping only the revision this call writes, and retitle the document's earlier activity-log entries to its current title. Use it to redact text (including description, source, tags, or title) from history. It is not a deletion of anything a reader sees today: the document, its slug, type, status, backlinks, and version counter are unchanged. The response lists the revisions removed. Verify with search_wiki(include_history: true).",
+				},
 			},
 			"required": []string{"title", "content"},
 		},
@@ -1435,6 +1506,7 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		ProjectContext string   `json:"project_context"`
 		LoadedVersion  *int     `json:"loaded_version"`
 		EditSummary    string   `json:"edit_summary"`
+		PurgeHistory   bool     `json:"purge_history"`
 	}
 	var sArgs SaveArgs
 	if e := decodeToolArgs(args, &sArgs); e != nil {
@@ -1461,20 +1533,31 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 	}
 
 	if existing != nil {
+		// A purge deletes revisions, so it is only ever applied to revisions the caller has seen:
+		// without loaded_version a concurrent edit could land in between and be purged unseen.
+		if sArgs.PurgeHistory && sArgs.LoadedVersion == nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf(
+				"Error: purge_history requires 'loaded_version' — read the document first (read_article(slug: %q)) and pass its version. You cannot purge revisions you have not seen.", existing.Slug)}}}, nil
+		}
 		if sArgs.LoadedVersion != nil {
 			if existing.Version > 0 && *sArgs.LoadedVersion != existing.Version {
 				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: versionConflictMessage(existing.Type, existing.Slug, existing.Version, *sArgs.LoadedVersion)}}}, nil
 			}
 		}
 
-		docType := existing.Type
-		var statusOverride *string
+		// The type is resolved first, and strictly, because every other classification argument
+		// below is validated and applied against the type the document is becoming.
+		docType, err := resolveRequestedType(sArgs.Type, existing.Type)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+		}
+		var statusArg *string
 		if sArgs.Status != "" {
-			st := NormalizeStatus(sArgs.Status)
-			if err := ValidateStatus(docType, st); err != nil {
-				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
-			}
-			statusOverride = &st
+			statusArg = &sArgs.Status
+		}
+		statusOverride, err := resolveTypeChangeStatus(existing.Type, existing.Status, docType, statusArg)
+		if err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
 		}
 
 		var kindOverride *string
@@ -1493,7 +1576,7 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 				var scopeTags []string
 				if sArgs.MemoryType != "" {
 					scopeTags = []string{MemoryScopeTagPrefix + Slugify(sArgs.MemoryType)}
-				} else {
+				} else if existing.Type == ContentTypeMemory {
 					for _, t := range existing.Tags {
 						if strings.HasPrefix(t, MemoryScopeTagPrefix) {
 							scopeTags = append(scopeTags, t)
@@ -1524,6 +1607,11 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 			}
 		} else {
 			tags = append([]string(nil), existing.Tags...)
+			// A memory-<scope> tag is tool-managed on a memory and stray data on anything else, so
+			// a document leaving the memory class leaves its scope tags behind.
+			if existing.Type == ContentTypeMemory && docType != ContentTypeMemory {
+				tags = stripMemoryScopeTags(tags)
+			}
 			if sArgs.MemoryType != "" && docType == ContentTypeMemory {
 				newScope := MemoryScopeTagPrefix + Slugify(sArgs.MemoryType)
 				var withoutScope []string
@@ -1558,6 +1646,11 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 		summary := sArgs.EditSummary
 		if summary == "" {
 			summary = fmt.Sprintf("Updated %s", existing.Title)
+			if sArgs.PurgeHistory {
+				// The kept revision is the only one left, so its default summary must not repeat
+				// the old title the purge may exist to remove.
+				summary = fmt.Sprintf("Updated %s; earlier revisions purged", sArgs.Title)
+			}
 		}
 
 		overrides := ArticleOverrides{
@@ -1572,20 +1665,29 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error saving article: %s", srv.clientError(err))}}}, nil
 		}
 
-		respText := fmt.Sprintf("Success! Document '%s' (slug: %s) updated successfully.\nNew Version: %d\nLast Edited: %s\n",
-			art.Title, art.Slug, art.Version, art.Timestamp.Format(time.RFC3339))
+		respText := fmt.Sprintf("Success! Document '%s' (slug: %s) updated successfully.\n%sNew Version: %d\nLast Edited: %s\n",
+			art.Title, art.Slug, typeChangeNote(existing.Type, art.Type), art.Version, art.Timestamp.Format(time.RFC3339))
 		respText = secretNote + respText
+
+		if sArgs.PurgeHistory {
+			report, err := srv.purgeDocumentHistory(art)
+			if err != nil {
+				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: respText + fmt.Sprintf(
+					"\nError: the save succeeded, but purging the earlier revisions failed: %s. Retry with save_article(purge_history: true) and loaded_version %d.\n",
+					srv.clientError(err), art.Version)}}}, nil
+			}
+			respText += report.text()
+		}
 		return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 	}
 
-	docType := ContentTypeWiki
-	if sArgs.Type != "" {
-		resolved := ResolveSearchType(sArgs.Type)
-		if resolved != "" {
-			docType = resolved
-		} else {
-			docType = normalizeType(sArgs.Type)
-		}
+	if sArgs.PurgeHistory {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: purge_history applies only to an update of an existing document: pass the document's 'slug' and the 'loaded_version' you read. A new document has no earlier revisions to purge."}}}, nil
+	}
+
+	docType, err := resolveRequestedType(sArgs.Type, ContentTypeWiki)
+	if err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
 	}
 
 	targetSlug := Slugify(sArgs.Title)

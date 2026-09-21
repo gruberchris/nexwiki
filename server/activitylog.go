@@ -454,3 +454,97 @@ func readEventFile(path string) (events []LogEvent, earliest time.Time, exists b
 	}
 	return events, earliest, true, nil
 }
+
+// RetitleEvents rewrites the recorded identity of one document's earlier events — the durable log
+// and every rotated archive — so each event whose slug is in slugs names newSlug and title instead.
+// It returns how many events changed.
+//
+// This is part of a history purge. Events carry the title a document had when each one was
+// recorded, so a purge that deleted the old revisions but left the log alone would leave a
+// redacted title readable in the activity feed. It holds the log's lock for the whole rewrite, so
+// no append can land in a file while it is being replaced, and then reopens the active file: a
+// rewrite replaces it atomically, and the old handle would keep appending to the replaced file.
+func (al *ActivityLog) RetitleEvents(slugs map[string]bool, newSlug, title string) (int, error) {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+
+	changed, activeRewritten, err := retitleActivityFiles(al.dataDir, slugs, newSlug, title)
+	if activeRewritten {
+		if cerr := al.file.Close(); cerr != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: closing activity log after a rewrite failed: %v\n", cerr)
+		}
+		file, oerr := os.OpenFile(al.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if oerr != nil {
+			return changed, fmt.Errorf("reopening activity log after a rewrite failed: %w", oerr)
+		}
+		al.file = file
+		al.size = 0
+		if info, serr := file.Stat(); serr == nil {
+			al.size = info.Size()
+		}
+	}
+	return changed, err
+}
+
+// retitleActivityFiles is RetitleEvents without a live writer, for a data directory whose log no
+// process has open. It reports how many events changed and whether the active file was rewritten.
+//
+// Each file is rewritten atomically and only if something in it changed. A line that does not
+// parse as an event is kept byte for byte. An archive's modification time is restored after the
+// rewrite, because activity.jsonl.N archives are ordered by it (see activityArchive).
+func retitleActivityFiles(dataDir string, slugs map[string]bool, newSlug, title string) (int, bool, error) {
+	active := ActivityLogPath(dataDir)
+	files := append([]string{active}, listActivityArchives(dataDir)...)
+
+	total := 0
+	activeRewritten := false
+	for _, path := range files {
+		info, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return total, activeRewritten, err
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return total, activeRewritten, err
+		}
+
+		lines := strings.SplitAfter(string(raw), "\n")
+		changedHere := 0
+		for i, line := range lines {
+			body := strings.TrimRight(line, "\n")
+			if body == "" {
+				continue
+			}
+			var ev LogEvent
+			if json.Unmarshal([]byte(body), &ev) != nil || !slugs[ev.Slug] {
+				continue
+			}
+			if ev.Slug == newSlug && ev.Title == title {
+				continue
+			}
+			ev.Slug, ev.Title = newSlug, title
+			encoded, err := json.Marshal(ev)
+			if err != nil {
+				return total, activeRewritten, err
+			}
+			lines[i] = string(encoded) + strings.TrimPrefix(line, body)
+			changedHere++
+		}
+		if changedHere == 0 {
+			continue
+		}
+		if err := writeFileAtomic(path, []byte(strings.Join(lines, "")), info.Mode().Perm()); err != nil {
+			return total, activeRewritten, fmt.Errorf("failed to rewrite %s: %w", filepath.Base(path), err)
+		}
+		if path == active {
+			activeRewritten = true
+		} else {
+			_ = os.Chtimes(path, info.ModTime(), info.ModTime())
+		}
+		total += changedHere
+	}
+	return total, activeRewritten, nil
+}

@@ -317,6 +317,7 @@ func main() {
 		log.Printf("Warning: activity log persistence disabled: %v", err)
 	} else {
 		openActivityLog = activityLog
+		srv.ActivityLog = activityLog
 		eventBus.SetPersist(func(ev server.LogEvent) {
 			if err := activityLog.Append(ev); err != nil {
 				log.Printf("Warning: failed to persist activity event: %v", err)

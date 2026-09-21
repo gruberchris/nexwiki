@@ -50,6 +50,16 @@ type SearchOutput struct {
 	MemoryKind      string      `json:"memory_kind,omitempty"`
 	IncludeArchived bool        `json:"include_archived"`
 	Results         []SearchHit `json:"results"`
+
+	// IncludeHistory echoes include_history. When set, HistoryMatches is always present — an
+	// empty list is the finding "no stored revision contains this", which is the point of asking.
+	IncludeHistory bool `json:"include_history,omitempty"`
+	// HistoryMatches lists every stored revision (history snapshots and live files) whose whole
+	// serialized file contains the query as a case-insensitive literal substring, capped at
+	// maxHistoryMatches. Never narrowed by the type, tag, or archived filters.
+	HistoryMatches *[]HistoryMatch `json:"history_matches,omitempty"`
+	// HistoryMatchCount is the total before the cap, so a truncated list is detectable.
+	HistoryMatchCount int `json:"history_match_count,omitempty"`
 }
 
 // DocumentLink is a bare title/slug reference, used where a full document summary would be noise.
@@ -366,6 +376,14 @@ func searchOutputSchema() map[string]interface{} {
 		"memory_kind":      schemaOf("string", "Memory kind the search was narrowed to; absent when unfiltered."),
 		"include_archived": schemaOf("boolean", "Whether archived documents were included."),
 		"results":          schemaArrayOf(hit, "Matches, highest scoring first."),
+		"include_history":  schemaOf("boolean", "Whether every stored revision was also scanned; absent when it was not."),
+		"history_matches": schemaArrayOf(schemaObject(map[string]interface{}{
+			"slug":    schemaOf("string", "Slug of the document the revision belongs to."),
+			"title":   schemaOf("string", "The document's current title (a revision's own title is not repeated)."),
+			"version": schemaOf("integer", "Revision number; pass it to read_article(version) to inspect it."),
+			"current": schemaOf("boolean", "True when this revision is the live document, false for an earlier revision in history."),
+		}, "slug", "title", "version", "current"), "Present only with include_history: every stored revision whose whole file (front matter included) contains the query as a case-insensitive literal substring, sorted by slug then version. Not narrowed by type, tag, or archived filters. Empty means no revision anywhere contains it."),
+		"history_match_count": schemaOf("integer", "Total history matches before the list was capped; absent when there were none or include_history was not set."),
 	}, "query", "count", "results")
 }
 
