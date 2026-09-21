@@ -497,7 +497,8 @@ func DeriveTrustTier(verifications []OKFVerification) string {
 	return TrustTierMachineConfirmed
 }
 
-// pinnedMemoryKinds are the kinds get_context_overview lists first.
+// pinnedMemoryKinds are the kinds get_wiki_overview lists as pinned memories (and the legacy
+// get_context_overview lists first).
 //
 // `user` and `feedback` are what an agent needs regardless of the task it is about to start:
 // who it is working with, and the corrections that person has already given. Every other kind is
@@ -505,7 +506,7 @@ func DeriveTrustTier(verifications []OKFVerification) string {
 // agent from reading the whole memory index to find them.
 var pinnedMemoryKinds = map[string]bool{"user": true, "feedback": true}
 
-// isPinnedMemoryKind reports whether a kind leads the memory listing in the context overview.
+// isPinnedMemoryKind reports whether a memory of this kind is pinned in the overview.
 func isPinnedMemoryKind(kind string) bool {
 	return pinnedMemoryKinds[NormalizeMemoryKind(kind)]
 }

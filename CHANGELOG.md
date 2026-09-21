@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING: `get_wiki_overview` is a bounded orientation, not an index**: the structured `articles` field is removed, and the prose no longer lists every document. On a wiki of 660 documents the default call returned about 926,000 characters — for the call every session is told to make first. It now returns, in both prose and `structuredContent`, a payload whose size does not grow with the wiki: `total_articles`, `counts` by type (`wiki`, `memories`, `plans`, `skills`, and `computations` when present), `plan_status_counts`, `pinned_memories` (memories of kind `user` or `feedback`, newest first, at most 25, with `pinned_memory_total`), `active_plans` (plans `implementing` or `blocked`, newest first, at most 25, with `active_plan_total`), `recent_activity`, `status_tags`, `statistics`, and `next_steps`. Compact entries carry a one-line description truncated to 200 characters. For the full document index call `list_articles` (with `type`, `status`, or `tag` filters and cursor paging); to find a topic call `search_wiki`. `since` and `include_stats` are unchanged.
+- The connect-time MCP instructions, the seeded `nexwiki-agent-guidelines`, the `nexwiki` agent skill, and the guides describe the overview accurately and point at `list_articles` and `search_wiki` for the full index. An existing wiki keeps its own `nexwiki-agent-guidelines` page; edit its orientation section to match.
+
 ## [0.22.0] — 2026-09-21
 
 ### Added

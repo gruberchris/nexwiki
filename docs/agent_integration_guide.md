@@ -52,7 +52,7 @@ Instead of duplicating rules in local files across countless folders, all instru
 
 ### 2. Server-Instruction Prerequisite Hooking
 To ensure the agent actually reads these guidelines without any manual user prompting, the MCP server embeds an explicit prerequisite in the **`instructions` it returns when a client initializes** (`agentInstructions()` in `server/mcp_modern.go`), which MCP clients place in the model's context before it selects any tool:
-> *`This NexWiki server is the user's persistent second brain. Use it to store plans and memories and to look up prior knowledge — do not keep that only in chat. At session start, load the operating rules with read_article(slug: "nexwiki-agent-guidelines"), then call get_wiki_overview(since: "48h") for a compact index and the recent activity. Save multi-step work with save_article(type: "AI-Agent-Plan"), durable facts with save_article(type: "AI-Agent-Memory", setting memory_kind, description and source), and search before writing.`*
+> *`This NexWiki server is the user's persistent second brain. Use it to store plans and memories and to look up prior knowledge — do not keep that only in chat. At session start, load the operating rules with read_article(slug: "nexwiki-agent-guidelines"), then call get_wiki_overview(since: "48h") for counts, the user and feedback memories, the plans in flight, and the recent activity; list_articles gives the full document index and search_wiki finds a topic. Save multi-step work with save_article(type: "AI-Agent-Plan"), durable facts with save_article(type: "AI-Agent-Memory", setting memory_kind, description and source), and search before writing.`*
 
 When your agent connects from *any* external workspace, the LLM planner reads this prerequisite and executes `read_article(slug: "nexwiki-agent-guidelines")` in its first turn, before drafting or saving any content. Clients that ignore server instructions need the one-time client setup in §3.
 
@@ -176,9 +176,11 @@ Write this skill as a numbered list of imperative directives — not prose. Agen
 
 **1. Session orientation (progressive disclosure)**
 ```markdown
-At session start, call `get_wiki_overview` to load a compact index of the entire wiki
-(titles, slugs, one-line summaries, tags) before reading anything. Then call `read_article`
-only on the entries you actually need — do not bulk-read articles to orient yourself.
+At session start, call `get_wiki_overview` before reading anything: it returns document
+counts, the user and feedback memories, the plans in flight, and recent activity. For the full
+index call `list_articles` (filter by type, status, or tag); to find a topic call `search_wiki`.
+Then call `read_article` only on the entries you actually need — do not bulk-read articles to
+orient yourself.
 If resuming work, pass a window (e.g., `get_wiki_overview(since: "24h")`) to see what
 changed since your last session.
 ```

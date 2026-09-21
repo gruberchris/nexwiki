@@ -4,7 +4,7 @@ This guide walks through, step by step, how to use NexWiki as an AI **second bra
 
 The workflow combines three ideas from the second-brain literature (captured in the wiki articles `karpathy-second-brain-method` and `meta-ai-second-brain`):
 
-1. **Progressive disclosure** (Meta): the agent loads a lean index of the whole wiki first, then reads only what it needs.
+1. **Progressive disclosure** (Meta): the agent loads a small, bounded orientation first, then lists, searches, and reads only what it needs.
 2. **Compile at ingest, don't retrieve at query time** (Karpathy): knowledge is synthesized into persistent, cross-linked pages the moment it enters the system, so it compounds across sessions.
 3. **The MCP bridge + skills registry** as the infrastructure that lets any agent participate.
 
@@ -70,7 +70,7 @@ What a well-configured agent does every session, in order:
 
 ### Step 1 — Orient (progressive disclosure)
 
-The agent calls **`get_wiki_overview(since: "48h")`** and receives the entire wiki as one compact index — title, slug, one-line description, tags, and updated date per entry, grouped into Wiki Articles / Agent Memories / Agent Plans / Agent Skills sections, along with recent activity events. This is the "lean root context": a few hundred tokens instead of bulk-reading articles.
+The agent calls **`get_wiki_overview(since: "48h")`** and receives a bounded orientation: document counts by type and plan status, the `user` and `feedback` memories that apply to every task, the plans in flight (`implementing` or `blocked`), recent activity events, and the status vocabularies. This is the "lean root context": its size stays the same however large the wiki grows. It deliberately does not list every document — for that the agent calls **`list_articles`** filtered by `type`, `status`, or `tag`, and for a topic it calls **`search_wiki`**.
 
 ### Step 2 — Drill in selectively
 
@@ -116,7 +116,7 @@ Paste anything into a quick wiki article tagged **`inbox`** (or just hand the ag
 Say *"ingest my inbox"* or *"ingest this article: \<URL\>"*. The agent loads the **`ingest-source`** skill from your wiki's Skills Registry, which walks it through:
 
 1. Load the governance skill and style guides.
-2. Orient with `get_wiki_overview` to avoid duplicates.
+2. Search with `search_wiki` (and `list_articles` when scanning a type or tag) to avoid duplicates.
 3. Read the source **fully** before writing.
 4. Synthesize a proper wiki article — a compilation in the wiki's voice, not a transcript — with `save_article`, setting `description` and `source` (the citation), and
 5. Cross-link to related pages — `[[WikiLinks]]` or absolute `/articles/<slug>` Markdown links, whichever the wiki's house style prefers — and add backlinks from 1–3 closely related existing pages.
@@ -151,7 +151,7 @@ That sequence exercises every piece of the system: the ingest skill, overview + 
 
 * **Activity log filtering**: activity events land in the activity log too — included in `get_wiki_overview(since: "48h")`.
 * **`since` formats**: `get_wiki_overview` accepts Go durations (`30m`, `24h`, `168h` for a week) or RFC3339 timestamps in its `since` argument.
-* **Descriptions pay rent**: the one-line `description` field is what makes `get_wiki_overview` powerful. Encourage agents (via the guidelines skill) to set it on everything they create; add them yourself in the editor's description input when writing manually.
+* **Descriptions pay rent**: the one-line `description` field is what `list_articles` and `get_wiki_overview` show for each entry. Encourage agents (via the guidelines skill) to set it on everything they create; add them yourself in the editor's description input when writing manually.
 * **Sources keep knowledge auditable**: a `source` can be a URL, a document reference, or simply `"conversation with Chris, 2026-06-11"`. Six months later, provenance is the difference between trusting and re-verifying a note.
 * **Stdio fallback**: each stdio client spawns its own `nexwiki -mcp-only` process. If the web server is already running, that process proxies to it. Otherwise it opens the data directory itself, and a web server started on that directory while it runs exits with a search-index lock error — so start the web server first. See [Connecting Clients](./mcp_server.md#-connecting-clients).
 

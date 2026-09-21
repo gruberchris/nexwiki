@@ -43,8 +43,11 @@ These rules bound every other rule on this page. Orientation is a prerequisite, 
   look at its recent activity. Do not restart the task from the beginning.
 
 ## 1. Orient at session start (progressive disclosure)
-- Call ` + "`get_wiki_overview(since: \"48h\")`" + ` to load a compact index of the whole wiki and what
-  changed recently before reading anything.
+- Call ` + "`get_wiki_overview(since: \"48h\")`" + ` before reading anything. It returns document counts,
+  the ` + "`user`" + ` and ` + "`feedback`" + ` memories (read them — they apply to every task), the plans in flight,
+  and what changed recently. It does not list every document.
+- For the full index, call ` + "`list_articles`" + ` filtered by ` + "`type`" + `, ` + "`status`" + `, or ` + "`tag`" + `; to find a
+  topic, call ` + "`search_wiki`" + `.
 - Then ` + "`read_article`" + ` only on the entries you actually need — do not bulk-read to orient.
 
 ## 2. Search before you write — once
@@ -68,8 +71,8 @@ These rules bound every other rule on this page. Orientation is a prerequisite, 
 ## 4. Memory hygiene
 - Keep memories succinct — one clear insight each, bullets over paragraphs.
 - Give every memory a ` + "`description`" + ` and a ` + "`source`" + `. The description is what
-  ` + "`get_wiki_overview`" + ` shows, so a memory without one is invisible when an agent
-  orients itself; the source is what makes the fact re-verifiable, and origin cannot be recovered
+  ` + "`list_articles`" + ` and ` + "`get_wiki_overview`" + ` show, so a memory without one is invisible when an
+  agent orients itself; the source is what makes the fact re-verifiable, and origin cannot be recovered
   after the fact. Write real values — a placeholder defeats the point.
 - A memory has **two independent axes**, and both are set at creation:
   - **Kind** — ` + "`memory_kind`" + `, a closed vocabulary of four: ` + "`project`" + `

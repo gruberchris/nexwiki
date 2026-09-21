@@ -38,18 +38,20 @@ func TestMCPGetContextOverview(t *testing.T) {
 	text := resp.Content[0].Text
 
 	for _, want := range []string{
-		"=== Wiki Articles (2) ===",
-		"=== Agent Memories (1) ===",
-		"=== Agent Plans (1) ===",
-		"=== Agent Skills (1) ===",
-		"- Described Article (described-article) — explicit summary [notes]",
-		"- Bare Article (bare-article) — First prose line becomes the preview.",
-		"- A Memory (a-memory)",
-		"- A Plan (a-plan)",
-		"- A Skill (a-skill)",
+		"NexWiki Knowledge Base Overview (5 articles total)",
+		"Documents: 2 wiki · 1 memories · 1 plans · 1 skills",
+		"== Next Steps ==",
+		"list_articles",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("overview missing %q in output:\n%s", want, text)
+		}
+	}
+	// The overview is not an index: documents that are neither pinned memories nor active plans
+	// are counted, not listed. list_articles is where they are listed.
+	for _, absent := range []string{"(described-article)", "(bare-article)", "(a-memory)", "(a-skill)"} {
+		if strings.Contains(text, absent) {
+			t.Errorf("overview lists %s; it must count documents, not list them:\n%s", absent, text)
 		}
 	}
 

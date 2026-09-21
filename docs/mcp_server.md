@@ -551,15 +551,44 @@ Permanently delete any document (wiki article, agent memory, plan, or skill) and
 ---
 
 ### 7. `get_wiki_overview`
-Consolidated orientation tool: returns a compact progressive-disclosure index, recent activity since specified duration, and basic repository statistics. This is the recommended first call of any agent session.
+Session orientation in one bounded call: document counts by type and plan status, the `user` and `feedback` memories that apply to any task, the plans in flight, recent activity since a duration, and the status vocabularies. This is the recommended first call of any agent session. It is **not** an index and does not list every document: use `list_articles` (with `type`, `status`, or `tag` filters and cursor paging) for the full listing, and `search_wiki` to find documents on a topic.
 
 * **Arguments**:
   * `since` (string, *optional*): Optional filter for recent activity. Accepts a Go duration (e.g. `24h`, `48h`) or RFC3339 timestamp. Defaults to `48h`.
   * `include_stats` (boolean, *optional*): Optional; set `true` to scan and include full link graph health and broken link statistics.
 * **Behavior**:
-  Performs a metadata-only pass over the entire knowledge base to assemble a sectioned directory index grouped by type: Wiki Articles, Agent Memories, Agent Plans, and Agent Skills. Queries the durable activity log (`data/activity.jsonl`) for events since the specified duration. When `include_stats` is true, scans the link graph for broken links and unreadable files.
+  Performs a metadata-only pass over the knowledge base and returns a payload whose size does not grow with the number of documents:
+  * **Counts** of wiki articles, memories, plans, and skills (plus Attested Computations when there are any), and the number of plans in each lifecycle status.
+  * **Pinned memories**: memories of kind `user` or `feedback`, newest-updated first, at most 25. Archived memories are excluded. `pinned_memory_total` is the count before the cap.
+  * **Active plans**: plans with status `implementing` or `blocked`, newest-updated first, at most 25, with their tags (at most 10). `active_plan_total` is the count before the cap.
+  * **Recent activity**: at most 20 events since `since`, from the durable activity log (`data/activity.jsonl`).
+  * **Status vocabularies** for plans and skills.
+  * **Next steps**: a pointer to `list_articles` and `search_wiki`.
+
+  Each compact entry's description is its `description` (or the first line of its body when it has none), collapsed to one line and truncated to 200 characters with an ellipsis, so one long description cannot inflate the response. When `include_stats` is true, it also scans the link graph for broken links, unreadable files, and misplaced documents. The prose and the structured output are rendered from the same data. Example prose:
+
+  ```text
+  NexWiki Knowledge Base Overview (660 articles total)
+  Documents: 197 wiki · 42 memories · 414 plans · 7 skills
+  Plans by status: draft 30 · implementing 12 · blocked 1 · completed 180 · archived 191
+  Plan statuses: draft, implementing, blocked, completed, superseded, parked, evergreen, archived
+  Skill statuses: draft, ready, archived
+
+  == Pinned Memories (user and feedback: 9) ==
+  - Operator Profile (operator-profile) <user> — Who the operator is and how they work
+  - No Issues In Pull Requests (no-issues-in-pull-requests) <feedback> — PRs describe the change; raise concerns in conversation
+
+  == Active Plans (implementing or blocked: 13) ==
+  - Compact Wiki Overview (compact-wiki-overview) [implementing] — Bound the orientation payload [nexwiki] (updated 2026-09-21)
+
+  == Recent Activity (3 events since 48h) ==
+  - 2026-09-21 10:02:11 [mcp/edit] save_article → 'Compact Wiki Overview' (compact-wiki-overview)
+
+  == Next Steps ==
+  This overview does not list every document. For the full index call list_articles, filtered by type ('articles', 'memories', 'plans', 'skills'), status, or tag and paged with cursor. To find documents about a topic call search_wiki. Open any entry with read_article(slug).
+  ```
 * **Annotations**: Title: `Get Wiki Overview`, `readOnlyHint`: `true`, `openWorldHint`: `false`.
-* **Structured output**: `structuredContent` as `{total_articles, articles[], recent_activity[], statistics?, status_tags?}`. `statistics.broken_links` is always an array — empty when `include_stats` is off or nothing is broken. `status_tags` carries the closed plan and skill status vocabularies.
+* **Structured output**: `structuredContent` as `{total_articles, counts{wiki, memories, plans, skills, computations?}, plan_status_counts{<status>…, other?}, pinned_memories[{title, slug, description?, memory_kind}], pinned_memory_total, active_plans[{title, slug, status, description?, timestamp, tags?}], active_plan_total, recent_activity[], statistics, status_tags, next_steps}`. `plan_status_counts` carries every status in the plan vocabulary, zero included. `statistics.broken_links` is always an array — empty when `include_stats` is off or nothing is broken. `status_tags` carries the closed plan and skill status vocabularies. There is no `articles` field: the full listing is `list_articles`.
 
 ---
 

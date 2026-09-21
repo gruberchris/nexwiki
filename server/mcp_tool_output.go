@@ -496,13 +496,61 @@ func activityOutputSchema() map[string]interface{} {
 	}, "count", "events")
 }
 
-// OverviewOutput is the `get_wiki_overview` payload.
+// OverviewOutput is the `get_wiki_overview` payload: a bounded orientation, not an index.
+//
+// It used to carry every document's full metadata under `articles`, which on a wiki of a few
+// hundred documents was close to a million characters — for the call every session is told to
+// make first. Every field here is either a fixed-size summary or a list capped at
+// maxOverviewEntries, so the payload does not grow with the wiki. The full listing is
+// list_articles' job, and NextSteps says so.
 type OverviewOutput struct {
-	TotalArticles  int               `json:"total_articles"`
-	Articles       []Article         `json:"articles"`
-	RecentActivity []LogEvent        `json:"recent_activity"`
-	Statistics     *StatisticsOutput `json:"statistics,omitempty"`
-	StatusTags     *StatusTagsOutput `json:"status_tags,omitempty"`
+	TotalArticles int            `json:"total_articles"`
+	Counts        OverviewCounts `json:"counts"`
+	// PlanStatusCounts reports every plan status in the closed vocabulary, zero included, plus
+	// "other" when a plan carries no status or one outside the vocabulary.
+	PlanStatusCounts map[string]int `json:"plan_status_counts"`
+	// PinnedMemories are the `user` and `feedback` memories — what applies to any task —
+	// newest-updated first and capped; PinnedMemoryTotal is the count before the cap.
+	PinnedMemories    []OverviewMemory `json:"pinned_memories"`
+	PinnedMemoryTotal int              `json:"pinned_memory_total"`
+	// ActivePlans are the plans in flight (implementing or blocked), newest-updated first and
+	// capped; ActivePlanTotal is the count before the cap.
+	ActivePlans     []OverviewPlan    `json:"active_plans"`
+	ActivePlanTotal int               `json:"active_plan_total"`
+	RecentActivity  []LogEvent        `json:"recent_activity"`
+	Statistics      *StatisticsOutput `json:"statistics,omitempty"`
+	StatusTags      *StatusTagsOutput `json:"status_tags,omitempty"`
+	// NextSteps tells the agent where the rest of the wiki is: list_articles for the full index,
+	// search_wiki for a topic.
+	NextSteps string `json:"next_steps"`
+}
+
+// OverviewCounts is the number of documents of each type.
+type OverviewCounts struct {
+	Wiki     int `json:"wiki"`
+	Memories int `json:"memories"`
+	Plans    int `json:"plans"`
+	Skills   int `json:"skills"`
+	// Computations is present only when the wiki holds Attested Computation documents.
+	Computations int `json:"computations,omitempty"`
+}
+
+// OverviewMemory is a compact pinned-memory entry.
+type OverviewMemory struct {
+	Title       string `json:"title"`
+	Slug        string `json:"slug"`
+	Description string `json:"description,omitempty"`
+	MemoryKind  string `json:"memory_kind"`
+}
+
+// OverviewPlan is a compact active-plan entry.
+type OverviewPlan struct {
+	Title       string    `json:"title"`
+	Slug        string    `json:"slug"`
+	Status      string    `json:"status"`
+	Description string    `json:"description,omitempty"`
+	Timestamp   time.Time `json:"timestamp"`
+	Tags        []string  `json:"tags,omitempty"`
 }
 
 func overviewOutputSchema() map[string]interface{} {
@@ -517,11 +565,52 @@ func overviewOutputSchema() map[string]interface{} {
 		"agent":     schemaOf("string", "Who performed the action."),
 	}, "timestamp", "source", "action")
 
+	descNote := fmt.Sprintf("One-line summary (the first body line when the document has none), truncated to %d characters with an ellipsis.", maxOverviewDescriptionRunes)
+
+	planStatusProps := map[string]interface{}{}
+	for _, status := range PlanStatusTags {
+		planStatusProps[status] = schemaOf("integer", fmt.Sprintf("Plans with status '%s'.", status))
+	}
+	planStatusProps["other"] = schemaOf("integer", "Plans with no status or one outside the vocabulary; absent when there are none.")
+	planStatusCounts := schemaObject(planStatusProps, PlanStatusTags...)
+	planStatusCounts["description"] = "Number of plans in each lifecycle status. Every status in the vocabulary is present, zero included."
+
+	counts := schemaObject(map[string]interface{}{
+		"wiki":         schemaOf("integer", "Wiki articles."),
+		"memories":     schemaOf("integer", "Agent memories."),
+		"plans":        schemaOf("integer", "Agent plans."),
+		"skills":       schemaOf("integer", "Agent skills."),
+		"computations": schemaOf("integer", "Attested Computation documents; absent when there are none."),
+	}, "wiki", "memories", "plans", "skills")
+	counts["description"] = "Number of documents of each type."
+
+	memory := schemaObject(map[string]interface{}{
+		"title":       schemaOf("string", "Memory title."),
+		"slug":        schemaOf("string", "Memory slug; pass it to read_article."),
+		"description": schemaOf("string", descNote+" Absent when the memory has neither."),
+		"memory_kind": schemaOf("string", "'user' or 'feedback'."),
+	}, "title", "slug", "memory_kind")
+
+	plan := schemaObject(map[string]interface{}{
+		"title":       schemaOf("string", "Plan title."),
+		"slug":        schemaOf("string", "Plan slug; pass it to read_article."),
+		"status":      schemaOf("string", "'implementing' or 'blocked'."),
+		"description": schemaOf("string", descNote+" Absent when the plan has neither."),
+		"timestamp":   schemaOf("string", "RFC3339 last-modified time."),
+		"tags":        schemaStringArray(fmt.Sprintf("The plan's tags, at most %d.", maxOverviewTags)),
+	}, "title", "slug", "status", "timestamp")
+
 	return schemaObject(map[string]interface{}{
-		"total_articles":  schemaOf("integer", "Total number of documents in the knowledge base."),
-		"articles":        schemaArrayOf(articleSchema(false), "Compact index of documents in the knowledge base."),
-		"recent_activity": schemaArrayOf(event, "Recent activity events."),
-		"statistics":      statisticsOutputSchema(),
-		"status_tags":     statusTagsOutputSchema(),
-	}, "total_articles", "articles")
+		"total_articles":      schemaOf("integer", "Total number of documents in the knowledge base."),
+		"counts":              counts,
+		"plan_status_counts":  planStatusCounts,
+		"pinned_memories":     schemaArrayOf(memory, fmt.Sprintf("Memories of kind 'user' or 'feedback' — what applies to any task — newest-updated first, at most %d. Archived memories are excluded.", maxOverviewEntries)),
+		"pinned_memory_total": schemaOf("integer", "Number of pinned memories before the cap."),
+		"active_plans":        schemaArrayOf(plan, fmt.Sprintf("Plans with status 'implementing' or 'blocked', newest-updated first, at most %d.", maxOverviewEntries)),
+		"active_plan_total":   schemaOf("integer", "Number of active plans before the cap."),
+		"recent_activity":     schemaArrayOf(event, "Recent activity events within the 'since' window, oldest first, at most 20."),
+		"statistics":          statisticsOutputSchema(),
+		"status_tags":         statusTagsOutputSchema(),
+		"next_steps":          schemaOf("string", "Where to go next: list_articles for the full document index, search_wiki for a topic, read_article for an entry."),
+	}, "total_articles", "counts", "plan_status_counts", "pinned_memories", "pinned_memory_total", "active_plans", "active_plan_total", "recent_activity", "next_steps")
 }

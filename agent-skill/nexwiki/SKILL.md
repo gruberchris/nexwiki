@@ -14,8 +14,10 @@ answering from scratch or re-deriving something.
 
 At the start of a session, or when picking up prior work:
 
-1. Call `get_wiki_overview(since: "48h")` for a compact index of the whole wiki (titles, slugs,
-   one-line summaries, tags) and recent activity. Read this before opening individual articles.
+1. Call `get_wiki_overview(since: "48h")`. It returns document counts, the `user` and
+   `feedback` memories (they apply to every task), the plans in flight, and recent activity.
+   It does not list every document: use `list_articles` (filter by `type`, `status`, or `tag`)
+   for the full index and `search_wiki` to find a topic.
 
 Then `read_article` only the entries you actually need; `get_backlinks` follows related pages.
 
