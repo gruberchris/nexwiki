@@ -21,9 +21,13 @@ import (
 // is indistinguishable from the bug it hides.
 var ErrInvalidDocumentType = errors.New("unknown document type")
 
-// ErrInvalidTypeChange reports a status or type combination a save cannot apply — an explicit
-// status the target type does not accept, or a lifecycle state that does not survive the change.
+// ErrInvalidTypeChange reports a lifecycle state that does not survive a type change: the
+// document's current plan or skill status is not valid for the type it is becoming, and the
+// caller passed no replacement.
 var ErrInvalidTypeChange = errors.New("invalid type change")
+
+// ErrInvalidStatus reports an explicit status the document's (resolved) type does not accept.
+var ErrInvalidStatus = errors.New("invalid status")
 
 // ResolveDocumentType maps a caller-supplied type name to its canonical OKF type, or "" when it
 // names none. It accepts everything search_wiki's type facet accepts (the canonical names,
@@ -89,7 +93,7 @@ func resolveTypeChangeStatus(oldType, oldStatus, newType string, statusArg *stri
 			return &st, nil
 		}
 		if err := ValidateStatus(newType, st); err != nil {
-			return nil, fmt.Errorf("%w: %s", ErrInvalidTypeChange, err.Error())
+			return nil, fmt.Errorf("%w: %s", ErrInvalidStatus, err.Error())
 		}
 		return &st, nil
 	}

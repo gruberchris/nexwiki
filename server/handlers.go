@@ -490,7 +490,7 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 	case err != nil && strings.Contains(err.Error(), "article not found"):
 		writeError(w, http.StatusNotFound, "article not found")
 		return
-	case errors.Is(err, ErrInvalidDocumentType), errors.Is(err, ErrInvalidTypeChange):
+	case errors.Is(err, ErrInvalidDocumentType), errors.Is(err, ErrInvalidTypeChange), errors.Is(err, ErrInvalidStatus):
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	case err != nil:
