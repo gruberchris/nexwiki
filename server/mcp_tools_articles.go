@@ -1884,8 +1884,12 @@ func (srv *Server) toolGetWikiOverview(args json.RawMessage) (interface{}, *JSON
 		events = []LogEvent{}
 	}
 
+	// BrokenLinks is always a list: the output schema declares an array, and a nil slice would
+	// serialize as null whenever include_stats is off or no link is broken — which made every
+	// call fail schema validation in a strict client.
 	stats := &StatisticsOutput{
 		TotalArticles: len(articles),
+		BrokenLinks:   []BrokenLinkRef{},
 	}
 	if oArgs.IncludeStats {
 		if graph, gErr := srv.Storage.ScanLinkGraph(); gErr == nil {
@@ -1893,7 +1897,9 @@ func (srv *Server) toolGetWikiOverview(args json.RawMessage) (interface{}, *JSON
 			stats.MisplacedDocumentCount = len(graph.Misplaced)
 			stats.TotalLinks = graph.TotalLinks
 			stats.BrokenLinkCount = len(graph.Broken)
-			stats.BrokenLinks = graph.Broken
+			if graph.Broken != nil {
+				stats.BrokenLinks = graph.Broken
+			}
 		}
 	}
 
