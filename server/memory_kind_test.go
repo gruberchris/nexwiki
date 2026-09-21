@@ -296,7 +296,7 @@ func TestUnkindedMemoriesAreReportedNotRewritten(t *testing.T) {
 		if len(out.UnkindedMemories) != 1 || out.UnkindedMemories[0].Slug != "legacy-fact" {
 			t.Errorf("unkinded_memories = %+v, want the legacy memory", out.UnkindedMemories)
 		}
-		if !strings.Contains(out.UnkindedMemories[0].Detail, "edit_agent_memory") {
+		if !strings.Contains(out.UnkindedMemories[0].Detail, "save_article") {
 			t.Error("the finding must name the tool that fixes it")
 		}
 	})

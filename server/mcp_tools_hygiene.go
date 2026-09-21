@@ -155,7 +155,7 @@ func findDuplicateMemories(memories []Article, outbound map[string][]LinkRef) []
 					OtherSlug: group[j].Slug,
 					Scope:     scope,
 					Detail: fmt.Sprintf("Closely resembles '%s'. Check whether they agree; if so merge them with "+
-						"edit_agent_memory, and if they conflict fix the wrong one rather than leaving both.", group[j].Title),
+						"save_article, and if they conflict fix the wrong one rather than leaving both.", group[j].Title),
 				})
 			}
 		}
@@ -377,7 +377,7 @@ func (s nearDuplicateScan) report() string {
 	}
 	b.WriteString("\nThe memory was still created — this is a title heuristic, and parallel documents " +
 		"legitimately share titles. If it duplicates one of the above, fold it in with " +
-		"append_agent_memory or edit_agent_memory and retire this one with delete_agent_memory. " +
+		"append_article or save_article and retire this one with delete_article. " +
 		"If they are genuinely separate, link them to each other and this check will stop pairing them.\n")
 	return b.String()
 }

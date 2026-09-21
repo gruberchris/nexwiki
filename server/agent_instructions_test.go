@@ -90,7 +90,7 @@ func TestAgentInstructionsDoNotTeachStatusTags(t *testing.T) {
 // must actually teach the field, otherwise an agent has no way to learn where state lives.
 func TestAgentInstructionsNameTheStatusField(t *testing.T) {
 	guidelines := strings.ToLower(defaultAgentGuidelines)
-	for _, want := range []string{"status", "get_status_tags"} {
+	for _, want := range []string{"status", "status_tags"} {
 		if !strings.Contains(guidelines, want) {
 			t.Errorf("the seeded agent guidelines never mention %q — an agent cannot learn the lifecycle from them", want)
 		}

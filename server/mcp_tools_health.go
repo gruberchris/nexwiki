@@ -202,7 +202,7 @@ func healthOutputSchema() map[string]interface{} {
 		"unsourced_memories":         schemaArrayOf(finding, "Memories missing provenance, up to the limit."),
 		"unkinded_memory_count":      schemaOf("integer", "Agent memories carrying no memory_kind — written before the kind axis existed."),
 		"unkinded_memories":          schemaArrayOf(finding, "Unclassified memories, up to the limit. This is the backfill worklist."),
-		"contested_memory_count":     schemaOf("integer", "Agent memories holding an unresolved conflict, recorded via edit_agent_memory with change_intent 'contradict'."),
+		"contested_memory_count":     schemaOf("integer", "Agent memories holding an unresolved conflict: a contested claim awaiting a human decision."),
 		"contested_memories":         schemaArrayOf(finding, "Contested memories awaiting adjudication, up to the limit."),
 		"stale_plan_count":           schemaOf("integer", "In-flight plans untouched for longer than stale_days. Excludes plans tagged finished or parked."),
 		"stale_plans":                schemaArrayOf(finding, "Stale plans, up to the limit."),
@@ -396,13 +396,13 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 			if strings.TrimSpace(doc.Source) == "" {
 				unsourced = append(unsourced, HealthFinding{
 					Slug: slug, Title: doc.Title, Type: doc.Type,
-					Detail: "Memory has no 'source'. A fact with no provenance cannot be re-verified later; set source with edit_agent_memory.",
+					Detail: "Memory has no 'source'. A fact with no provenance cannot be re-verified later; set source with save_article.",
 				})
 			}
 			if doc.MemoryKind == "" {
 				unkinded = append(unkinded, HealthFinding{
 					Slug: slug, Title: doc.Title, Type: doc.Type,
-					Detail: "Memory has no 'memory_kind', so kind-filtered recall cannot find it. Classify it with edit_agent_memory: 'project', 'reference', 'user', or 'feedback'.",
+					Detail: "Memory has no 'memory_kind', so kind-filtered recall cannot find it. Classify it with save_article (memory_kind): 'project', 'reference', 'user', or 'feedback'.",
 				})
 			}
 			if hasTag(doc.Tags, ContestedTag) {

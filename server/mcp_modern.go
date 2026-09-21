@@ -348,9 +348,10 @@ func legacyServerCapabilities() map[string]interface{} {
 func agentInstructions() string {
 	return "This NexWiki server is the user's persistent second brain. Use it to store plans and " +
 		"memories and to look up prior knowledge — do not keep that only in chat. At session start, load the " +
-		"operating rules with read_article(slug: \"" + AgentGuidelinesSlug + "\"), then get_context_overview " +
-		"and get_recent_activity(since: \"48h\") to orient. Save multi-step work with create_agent_plan, " +
-		"durable facts with create_agent_memory (setting description and source), and search before writing."
+		"operating rules with read_article(slug: \"" + AgentGuidelinesSlug + "\"), then call " +
+		"get_wiki_overview(since: \"48h\") for a compact index and the recent activity. Save multi-step work with " +
+		"save_article(type: \"AI-Agent-Plan\"), durable facts with save_article(type: \"AI-Agent-Memory\", " +
+		"setting memory_kind, description and source), and search before writing."
 }
 
 // handleModernMethod dispatches a request that opted into the per-request-metadata era. It shares

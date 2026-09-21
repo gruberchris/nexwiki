@@ -51,7 +51,7 @@ func TestDuplicateCheckWarnsButStillWrites(t *testing.T) {
 	if !strings.Contains(text, "% title overlap") {
 		t.Errorf("the warning must report the measured overlap:\n%s", text)
 	}
-	for _, tool := range []string{"append_agent_memory", "edit_agent_memory"} {
+	for _, tool := range []string{"append_article", "save_article"} {
 		if !strings.Contains(text, tool) {
 			t.Errorf("the warning must suggest %s:\n%s", tool, text)
 		}

@@ -299,7 +299,7 @@ func articleSchema(withContent bool) map[string]interface{} {
 		"edit_summary":      schemaOf("string", "Summary of the most recent edit."),
 		"tags":              schemaStringArray("Tags carried by the document, including status and memory-scope tags."),
 		"archived_at":       schemaOf("string", "RFC3339 archival time; absent unless the document is archived."),
-		"status":            schemaOf("string", "Lifecycle status. Plans and skills use a closed vocabulary (see get_status_tags); other documents may use any value or none."),
+		"status":            schemaOf("string", "Lifecycle status. Plans and skills use a closed vocabulary (get_wiki_overview lists them under status_tags); other documents may use any value or none."),
 		"status_changed_at": schemaOf("string", "RFC3339 time a plan last changed lifecycle status; drives the auto-archive/auto-delete timers. Only present on AI-Agent-Plan documents."),
 		"memory_kind":       schemaOf("string", "What sort of fact a memory holds: project, reference, user, or feedback. Only present on AI-Agent-Memory documents, and absent on memories written before the kind axis existed (wiki_health lists those as unkinded_memories). Independent of the memory-<scope> tag, which is reach rather than kind."),
 		"generated": schemaObject(map[string]interface{}{

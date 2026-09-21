@@ -80,18 +80,11 @@ func (srv *Server) getPrompt(params json.RawMessage) (interface{}, *JSONRPCError
 		promptText := fmt.Sprintf(`You are an AI assistant tasked with creating a new article titled "%s" in the user's NexWiki knowledge base.
 
 Before you begin writing the article, you MUST follow these steps to ensure format consistency, provenance, and alignment with user rules:
-1. Call 'list_agent_memories' or search for memory articles using 'search_wiki' specifically looking for "rules", "formatting", or "style guide" memories regarding this type of article (e.g., programming language guides, system architecture templates, etc.).
+1. Call 'list_articles' with type "memories", or 'search_wiki', specifically looking for "rules", "formatting", or "style guide" memories regarding this type of article (e.g., programming language guides, system architecture templates, etc.).
 2. If any formatting guidelines or style memories are found, read their contents using 'read_article'.
 3. Incorporate those styles, sections, structure, and constraints strictly into the new article's content.
 4. Write the article content in clean, semantic Markdown. When citing external documentation, specifications, or reference materials, use OKF v0.2 footnote links matching source identifiers (e.g. '[^id]: https://...' or inline citations '[^id]').
-5. Save the article using 'create_wiki_article'. When sources are known, provide the structured 'sources' array with credibility signals:
-   - id: identifier matching inline footnotes (e.g., 'src1')
-   - resource: canonical URL, URI, or reference
-   - title: document or page title
-   - author: optional creator or publisher
-   - usage_count: optional reference count
-   - last_modified: optional ISO 8601 timestamp
-   Set 'stale_after' if the concept has a known freshness expiration date.
+5. Save the article using 'save_article' (type "Wiki"). Set 'description' to a one-line summary and 'source' to where the material came from; list every cited reference as a footnote in the body so each one stays attached to the claim it supports.
    Include a helpful edit summary detailing the style guidelines and sources you incorporated.
 6. Let the user know you successfully incorporated the specific style rules and provenance sources you recorded.`, title)
 
@@ -127,11 +120,11 @@ Before you begin writing the article, you MUST follow these steps to ensure form
 Please follow these strict steps:
 1. Collaboratively outline the plan with the user, dividing it into clear objectives, architectural details, technical requirements, and task checklists.
 2. Format the plan using rich, clean Markdown.
-3. Save the initial plan in NexWiki immediately using the 'create_agent_plan' tool. Make sure to specify the project_context as "%s".
+3. Save the initial plan in NexWiki immediately using the 'save_article' tool with type "AI-Agent-Plan". Make sure to specify the project_context as "%s".
 4. Inform the user that the plan is saved in NexWiki, provide the article slug, and ask for their feedback or approval on the plan.
-5. As tasks are completed or updated during implementation, use 'append_agent_plan' to log the progress and update the checklists.
-6. When the plan is fully implemented, use 'append_agent_plan' to add final notes documenting anything worth noting (plan deviations, files created, tools used, unexpected challenges, or other observations).
-7. After adding final notes, use 'edit_agent_plan' with status: "completed" to close the plan. Lifecycle state is the 'status' field, not a tag — a status word passed in 'tags' is rejected.
+5. As tasks are completed or updated during implementation, use 'append_article' to log the progress and update the checklists.
+6. When the plan is fully implemented, use 'append_article' to add final notes documenting anything worth noting (plan deviations, files created, tools used, unexpected challenges, or other observations).
+7. After adding final notes, use 'save_article' with the plan's slug, its current loaded_version, and status: "completed" to close the plan. Lifecycle state is the 'status' field, not a tag — a status word passed in 'tags' is rejected.
 
 IMPORTANT: The reserved AI-Agent-Plan type must NEVER be relabelled unless explicitly instructed by the user.`, project, title, project)
 
