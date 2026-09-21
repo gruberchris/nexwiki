@@ -208,7 +208,7 @@ func healthOutputSchema() map[string]interface{} {
 		"stale_plans":                schemaArrayOf(finding, "Stale plans, up to the limit."),
 		"stale_concept_count":        schemaOf("integer", "Concepts whose freshness expiration (stale_after) has passed."),
 		"stale_concepts":             schemaArrayOf(finding, "Concepts whose freshness expiration has passed, up to the limit."),
-		"unreferenced_skill_count":   schemaOf("integer", "Skills no live document links or names in a read_article call. Excludes the nexwiki-agent-guidelines skill, which the MCP tool descriptions reference from code."),
+		"unreferenced_skill_count":   schemaOf("integer", "Skills no live document links or names in a read_article call. Excludes the nexwiki-agent-guidelines skill, which the connect-time MCP instructions reference from code."),
 		"unreferenced_skills":        schemaArrayOf(finding, "Unreferenced skills, up to the limit."),
 		"cold_days":                  schemaOf("integer", "Recency threshold applied to memories."),
 		"cold_memory_scan_ran":       schemaOf("boolean", "False when the activity log does not reach back cold_days, in which case the cold-memory check was skipped rather than reporting every memory."),

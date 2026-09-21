@@ -402,3 +402,34 @@ func TestRetitleActivityFilesPreservesArchivesAndOtherEvents(t *testing.T) {
 		t.Errorf("archive mtime changed %v → %v; fallback archives are ordered by it", info.ModTime(), after.ModTime())
 	}
 }
+
+// TestSearchIncludeHistoryAcceptsQueriesBleveRejects: the history scan takes the query literally,
+// so an audit term that happens to be invalid Bleve syntax (an IP range, a regex fragment) must
+// still be scanned rather than failing the whole call.
+func TestSearchIncludeHistoryAcceptsQueriesBleveRejects(t *testing.T) {
+	srv := newPurgeServer(t)
+	saveCall(t, srv, map[string]interface{}{"title": "Regex Notes", "content": "# Notes\n\nThe pattern /[/ breaks parsers."})
+
+	if plain := agentCall(t, srv, "search_wiki", map[string]interface{}{"query": "/[/"}); !plain.IsError {
+		t.Skip("Bleve now accepts this query; pick another invalid one")
+	}
+	m, text := historyScan(t, srv, "/[/", nil)
+	if len(m) != 1 || m[0].Slug != "regex-notes" {
+		t.Errorf("history_matches = %+v, want the note", m)
+	}
+	if !strings.Contains(text, "Index search failed") {
+		t.Errorf("the failed index half must be reported:\n%s", text)
+	}
+}
+
+// TestSearchWikiDeclaresEveryFilterItHonours: memory_kind and include_archived were decoded and
+// applied by the handler but missing from the input schema, so no agent reading tools/list could
+// find them.
+func TestSearchWikiDeclaresEveryFilterItHonours(t *testing.T) {
+	props := searchWikiTool.Schema["inputSchema"].(map[string]interface{})["properties"].(map[string]interface{})
+	for _, name := range []string{"query", "type", "tag", "limit", "memory_kind", "include_archived", "include_history"} {
+		if _, ok := props[name]; !ok {
+			t.Errorf("search_wiki honours %q but its input schema does not declare it", name)
+		}
+	}
+}

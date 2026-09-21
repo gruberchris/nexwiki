@@ -63,6 +63,15 @@ var searchWikiTool = toolDef{
 					"type":        "integer",
 					"description": "Optional maximum number of results (default 40, maximum 200).",
 				},
+				"memory_kind": map[string]interface{}{
+					"type":        "string",
+					"enum":        MemoryKinds,
+					"description": "Optional: restrict results to AI-Agent-Memory documents of this kind ('project', 'reference', 'user', or 'feedback'). Ask for 'user' and 'feedback' to load what is known about the operator.",
+				},
+				"include_archived": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional: include archived documents, which are otherwise left out.",
+				},
 				"include_history": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Optional. Also scan every stored revision of every document — version history plus the live files — for the query as a case-insensitive literal substring over the whole file, front matter included, and return the matching (slug, version) pairs as history_matches. Use it to audit a redaction: an empty history_matches means no revision anywhere still contains the text. The type, tag, and archived filters do not narrow this scan. Surrounding double quotes are stripped; nothing else is interpreted.",
@@ -122,8 +131,15 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		IncludeArchived: searchArgs.IncludeArchived,
 		MemoryKind:      memoryKind,
 	})
+	bleveNote := ""
 	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
+		if !searchArgs.IncludeHistory {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
+		}
+		// The history scan takes the query literally, so a query the Bleve parser rejects is still
+		// a valid audit term. Report the index half as failed and run the scan anyway.
+		results = nil
+		bleveNote = fmt.Sprintf("Index search failed for this query (%s); the version history scan below takes it literally.\n", srv.clientError(err))
 	}
 
 	// Describe the applied facets so the agent can tell "no such knowledge" from "my filter
@@ -165,11 +181,11 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		})
 	}
 
-	var text string
+	text := bleveNote
 	if len(hits) == 0 {
-		text = fmt.Sprintf("No documents found matching query: '%s'%s\n", searchArgs.Query, facetStr)
+		text += fmt.Sprintf("No documents found matching query: '%s'%s\n", searchArgs.Query, facetStr)
 	} else {
-		text = fmt.Sprintf("Found %d matching documents in NexWiki%s:\n\n", len(hits), facetStr)
+		text += fmt.Sprintf("Found %d matching documents in NexWiki%s:\n\n", len(hits), facetStr)
 		for i, hit := range hits {
 			tagsStr := ""
 			if len(hit.Tags) > 0 {
@@ -456,7 +472,7 @@ var listArticlesTool = toolDef{
 			"properties": map[string]interface{}{
 				"type": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional filter by document type: 'articles', 'memories', 'plans', 'skills', or OKF types ('Wiki', 'AI-Agent-Memory', etc.).",
+					"description": "Optional filter by document type: 'articles', 'memories', 'plans', 'skills', or OKF types ('Wiki', 'AI-Agent-Memory', 'Attested Computation', etc.). An unknown value is an error.",
 				},
 				"status": map[string]interface{}{
 					"type":        "string",
