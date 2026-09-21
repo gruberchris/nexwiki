@@ -2442,7 +2442,12 @@ type ArticleEdit struct {
 	// MemoryKind is a pointer for the same reason again: nil preserves a memory's existing
 	// classification, so editing a memory's body cannot silently blank the axis that decides
 	// how it is recalled.
-	MemoryKind    *string
+	MemoryKind *string
+	// Type changes the document's type when non-nil and non-empty; nil or empty keeps it. An
+	// unknown value is refused with ErrInvalidDocumentType rather than coerced. Status,
+	// memory-kind, and tag handling then follow the type the document is becoming — see
+	// resolveTypeChangeStatus.
+	Type          *string
 	LoadedVersion int
 
 	// OKF v0.2 optional edit fields
@@ -2457,8 +2462,8 @@ type ArticleEdit struct {
 // performing them separately lets a concurrent writer land in between, so the guard passes and
 // the other session's edit is silently overwritten anyway.
 //
-// The document type is immutable here; regular edits never relabel a reserved OKF class. This is the
-// title edit, so the slug follows edit.Title, as the web editor expects when it opens the saved
+// The document type is kept unless edit.Type names a new one explicitly; an ordinary edit, which
+// omits it, can never relabel a document. This is the title edit, so the slug follows edit.Title, as the web editor expects when it opens the saved
 // article at the slug the title yields.
 func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, error) {
 	s.writeMu.Lock()
@@ -2494,15 +2499,35 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 		resource = *edit.Resource
 	}
 
-	// Preserve tool-managed memory-scope tags a user edit must not be able to drop or forge.
+	requestedType := ""
+	if edit.Type != nil {
+		requestedType = *edit.Type
+	}
+	newType, err := resolveRequestedType(requestedType, existing.Type)
+	if err != nil {
+		return nil, err
+	}
+	status, err := resolveTypeChangeStatus(existing.Type, existing.Status, newType, edit.Status)
+	if err != nil {
+		return nil, err
+	}
+
+	// Preserve tool-managed memory-scope tags a user edit must not be able to drop or forge. They
+	// are tool-managed only on a memory, so a document leaving the memory class leaves them behind.
+	var scopeSource []string
+	if existing.Type == ContentTypeMemory {
+		scopeSource = existing.Tags
+	}
 	cleanedTags := existing.Tags
 	if edit.Tags != nil {
-		cleanedTags = validateAndCleanUserTags(*edit.Tags, existing.Tags, existing.Type)
+		cleanedTags = validateAndCleanUserTags(*edit.Tags, scopeSource, newType)
+	} else if existing.Type == ContentTypeMemory && newType != ContentTypeMemory {
+		cleanedTags = stripMemoryScopeTags(existing.Tags)
 	}
 
 	return s.saveArticleLocked(slug, edit.Title, edit.Content, description, source, resource,
-		edit.EditSummary, cleanedTags, existing.Type, ArticleOverrides{
-			Status:     edit.Status,
+		edit.EditSummary, cleanedTags, newType, ArticleOverrides{
+			Status:     status,
 			MemoryKind: edit.MemoryKind,
 			Sources:    edit.Sources,
 			StaleAfter: edit.StaleAfter,

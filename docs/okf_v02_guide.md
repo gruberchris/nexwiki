@@ -213,22 +213,22 @@ graph LR
    - Files with legacy status tags (e.g. `wip`, `completed`, `draft`) automatically have their status extracted into the `status` field.
    - Missing OKF v0.2 trust fields (`verified`, `generated`, `stale_after`) default safely to zero-values without error. An article without verifications is classified as `unverified`.
 2. **Bundle Export**:
-   - `export_okf_bundle` generates an **OKF v0.2 conformant ZIP archive**.
+   - `GET /api/okf/export` (the web UI's OKF export) generates an **OKF v0.2 conformant ZIP archive**. There is no MCP export tool.
    - Root `index.md` explicitly declares `okf_version: "0.2"`.
    - Categorized directories: `wiki/`, `aimemories/`, `aiplans/`, `aiskills/`, and `computations/` (for Attested Computations).
    - Date-grouped activity history in `log.md`.
 3. **Bundle Import**:
-   - `import_okf_bundle` seamlessly accepts both OKF v0.1 and OKF v0.2 bundles.
+   - `POST /api/okf/import` (the web UI's OKF import) seamlessly accepts both OKF v0.1 and OKF v0.2 bundles. There is no MCP import tool.
    - Permissive conformance report (OKF §9): documents missing a `type` default to `Wiki` and are logged in `missing_type` instead of failing the import.
    - Preserves all metadata, citations, trust tiers, and lifecycle statuses across round-trips.
 
 ---
 
-## 🤖 Using OKF v0.2 via MCP Tools
+## 🤖 Using OKF v0.2 via MCP Tools and the REST API
 
-AI agents connected to NexWiki can inspect and manipulate OKF v0.2 signals through standard MCP tools:
+AI agents connected to NexWiki can inspect OKF v0.2 signals through standard MCP tools. Writing the structured provenance and freshness fields (`sources`, `stale_after`, `verified`) goes through the REST API or the web editor: the MCP `save_article` tool sets the single-string `source` and `description`, and an update through it preserves any `sources`, `stale_after`, and `verified` values already on the document.
 
-### 1. `create_wiki_article`
+### 1. Create: `POST /api/articles`
 Supports `sources` and `stale_after` in addition to standard fields:
 ```json
 {
@@ -245,19 +245,19 @@ Supports `sources` and `stale_after` in addition to standard fields:
   "stale_after": "2027-01-01"
 }
 ```
+An agent limited to MCP creates the same article with `save_article(title, content, description, source: "https://www.postgresql.org/docs/16/warm-standby.html")`; the parser mirrors a single `source` into `sources[0].resource`.
 
-### 2. `edit_wiki_article`
-Updates or appends sources and freshness boundaries alongside optimistic locking (`loaded_version`):
+### 2. Update: `PUT /api/articles/{slug}`
+Updates or replaces sources and freshness boundaries alongside optimistic locking (`loaded_version`):
 ```json
 {
-  "slug": "postgresql-replica-lag-diagnostics",
   "title": "PostgreSQL Replica Lag Diagnostics",
   "content": "Updated runbook content...",
   "loaded_version": 1,
   "stale_after": "2027-06-01"
 }
 ```
-*Note: Omit `sources` or `stale_after` to preserve existing values; pass empty array `[]` or empty string `""` to clear.*
+*Note: Omit `sources` or `stale_after` to preserve existing values; pass an empty array `[]` to clear `sources`. Send the document's `tags` too: this endpoint always replaces the tag set, so an omitted `tags` key clears them.* Over MCP, the equivalent body edit is `save_article(slug: "postgresql-replica-lag-diagnostics", title, content, loaded_version: 1)`.
 
 ### 3. `read_article`
 Returns all trust signals in the header prose and in `structuredContent`:

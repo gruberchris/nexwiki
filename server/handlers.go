@@ -27,6 +27,12 @@ type Server struct {
 	Version                string
 	Port                   string
 
+	// ActivityLog is the durable activity log this process writes, when it owns one. A history
+	// purge rewrites earlier events through it, under its lock, so the rewrite cannot race an
+	// append. Nil means no live writer: the purge then rewrites the files in the data directory
+	// directly.
+	ActivityLog *ActivityLog
+
 	// AgentName is the attribution recorded in the activity log for MCP callers that do not
 	// identify themselves. Optional; set from -agent-name / NEXWIKI_AGENT_NAME. It is a field
 	// rather than a NewServer parameter because it is optional configuration with a working
@@ -199,12 +205,17 @@ type ArticleRequest struct {
 	LoadedVersion int      `json:"loaded_version"` // Version loaded by client for conflict validation
 	Tags          []string `json:"tags"`           // Tags list
 	Status        *string  `json:"status"`         // Optional lifecycle status; omit to preserve
-	// MemoryKind classifies an AI-Agent-Memory; omit to preserve. Only meaningful on the update
-	// path — REST creation always produces a Wiki article, which has no kind.
-	MemoryKind *string           `json:"memory_kind"`
-	Sources    []OKFSource       `json:"sources,omitempty"`
-	StaleAfter string            `json:"stale_after,omitempty"`
-	Verified   []OKFVerification `json:"verified,omitempty"`
+	// MemoryKind classifies an AI-Agent-Memory; omit to preserve.
+	MemoryKind *string `json:"memory_kind"`
+	// Type is the document type. On create, omitted means Wiki; on update, omitted keeps the
+	// current type and a value changes it. An unknown value is a 400, never a silent Wiki.
+	Type *string `json:"type"`
+	// PurgeHistory, on update only, deletes every revision older than the one this request writes.
+	// Requires loaded_version. See Storage.PurgeHistory.
+	PurgeHistory bool              `json:"purge_history"`
+	Sources      []OKFSource       `json:"sources,omitempty"`
+	StaleAfter   string            `json:"stale_after,omitempty"`
+	Verified     []OKFVerification `json:"verified,omitempty"`
 }
 
 type CreateArticleReq = ArticleRequest
@@ -282,6 +293,34 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.PurgeHistory {
+		writeError(w, http.StatusBadRequest, "purge_history applies only to an update (PUT) of an existing article; a new article has no earlier revisions")
+		return
+	}
+
+	// The type is validated like every other write path's: omitted is Wiki, unknown is refused.
+	requestedType := ""
+	if req.Type != nil {
+		requestedType = *req.Type
+	}
+	docType, err := resolveRequestedType(requestedType, ContentTypeWiki)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Status != nil && NormalizeStatus(*req.Status) != "" {
+		if err := ValidateStatus(docType, NormalizeStatus(*req.Status)); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if req.MemoryKind != nil {
+		if err := ValidateMemoryKind(docType, NormalizeMemoryKind(*req.MemoryKind), false); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
 	// Verify if slug already exists before writing
 	slug := Slugify(req.Title)
 	if _, err := srv.Storage.GetArticle(slug); err == nil {
@@ -290,7 +329,11 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clean tags (existingTags is nil on creation)
-	cleanedTags := validateAndCleanUserTags(req.Tags, nil, ContentTypeWiki)
+	cleanedTags := validateAndCleanUserTags(req.Tags, nil, docType)
+	if err := ValidateStatusFreeTags(docType, cleanedTags); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	description := ""
 	if req.Description != nil {
@@ -309,6 +352,9 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 		Status:    req.Status,
 		Generated: &OKFGenerated{By: "human:local", At: time.Now()},
 	}
+	if docType == ContentTypeMemory {
+		overrides.MemoryKind = req.MemoryKind
+	}
 	if len(req.Sources) > 0 {
 		overrides.Sources = &req.Sources
 	}
@@ -324,8 +370,7 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 		overrides.Verified = &req.Verified
 	}
 
-	// Regular article creation always produces a Wiki document; reserved types are tool-only.
-	art, err := srv.Storage.SaveArticleWithOverrides("", req.Title, req.Content, description, source, resource, req.EditSummary, cleanedTags, ContentTypeWiki, overrides)
+	art, err := srv.Storage.SaveArticleWithOverrides("", req.Title, req.Content, description, source, resource, req.EditSummary, cleanedTags, docType, overrides)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errMisplacedOccupant) {
@@ -390,6 +435,11 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "title is required")
 		return
 	}
+	// A purge deletes revisions, so it only applies to the revision the caller loaded.
+	if req.PurgeHistory && req.LoadedVersion <= 0 {
+		writeError(w, http.StatusBadRequest, "purge_history requires loaded_version: load the article first and send its version")
+		return
+	}
 
 	var overridesSources *[]OKFSource
 	if req.Sources != nil {
@@ -426,6 +476,7 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		// lifecycle state must not be able to silently reset a completed plan.
 		Status:        req.Status,
 		MemoryKind:    req.MemoryKind,
+		Type:          req.Type,
 		LoadedVersion: req.LoadedVersion,
 		Sources:       overridesSources,
 		StaleAfter:    overridesStaleAfter,
@@ -439,9 +490,22 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 	case err != nil && strings.Contains(err.Error(), "article not found"):
 		writeError(w, http.StatusNotFound, "article not found")
 		return
+	case errors.Is(err, ErrInvalidDocumentType), errors.Is(err, ErrInvalidTypeChange), errors.Is(err, ErrInvalidStatus):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, srv.clientError(err))
 		return
+	}
+
+	var purge *HistoryPurgeReport
+	if req.PurgeHistory {
+		purge, err = srv.purgeDocumentHistory(art)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf(
+				"the edit was saved as version %d, but purging the earlier revisions failed: %s", art.Version, srv.clientError(err)))
+			return
+		}
 	}
 
 	if srv.EventBus != nil {
@@ -467,6 +531,16 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if purge != nil {
+		// The article as usual, plus what the purge removed, so a client can state the outcome
+		// rather than assume it.
+		writeJSON(w, http.StatusOK, struct {
+			*Article
+			RevisionsRemoved        []int `json:"revisions_removed"`
+			ActivityEntriesRetitled int   `json:"activity_entries_retitled"`
+		}{art, purge.RevisionsRemoved, purge.ActivityEntriesRetitled})
+		return
+	}
 	writeJSON(w, http.StatusOK, art)
 }
 

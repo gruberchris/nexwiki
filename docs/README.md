@@ -73,7 +73,7 @@ A detailed guide explaining how to programmatically manage plan metadata and vie
 ### 10. [NexWiki Second Brain Workflow Guide](./second_brain_workflow_guide.md)
 A step-by-step walkthrough of using NexWiki as an AI second brain with your agent CLI (Claude Code, Cursor, Copilot CLI):
 * **One-Time Setup**: Deploying the 9-tool build, connecting over Streamable HTTP, and activating session-start orientation via `CLAUDE.md`.
-* **The Session Loop**: Progressive disclosure with `get_context_overview`, catching up via `get_recent_activity`, selective reads with backlinks, plan lifecycle, and memory hygiene.
+* **The Session Loop**: Progressive disclosure and catching up on recent activity with `get_wiki_overview`, selective reads with backlinks, plan lifecycle, and memory hygiene.
 * **Capture-and-Compile**: The `inbox` tag convention and the `ingest-source` skill implementing the one-source-at-a-time Karpathy ingestion loop.
 * **Tuning Tips**: Activity log filtering, description/source discipline, and transport caveats.
 
@@ -153,6 +153,13 @@ A guide detailing the automated release process, versioning rules, and CI/CD pip
 * **Changelog Stamping Workflow**: Promoting `[Unreleased]` changes in `CHANGELOG.md` via pull requests.
 * **Automated Tag-Driven Pipeline**: Triggering `.github/workflows/release.yml` with `v*` Git tags to publish multi-arch binaries, SHA256 checksums, and GHCR container images.
 * **Verification & Roll-Forward**: Post-release verification steps and roll-forward practices for defect remediation.
+
+### 21. [NexWiki History Redaction & Audit Guide](./history_redaction_guide.md)
+How to take text out of the wiki without deleting the document that held it, and prove it is gone:
+* **History Purge**: `save_article(purge_history: true)` (or `purge_history` on `PUT /api/articles/{slug}`) keeps only the revision it writes and permanently deletes every earlier one — body and metadata — while the document, slug, type, status, and backlinks stay untouched.
+* **Activity Log Retitling**: How earlier activity entries are rewritten to the current title and slug, so a redacted title does not survive in the feed.
+* **History Search**: `search_wiki(include_history: true)` scans every stored revision for a literal term and returns `(slug, version)` matches, unaffected by filters.
+* **Fixing a Document's Type**: Relabelling a document in place with an explicit `type`, and the status and tag rules a type change follows.
 
 ---
 

@@ -40,8 +40,13 @@ them in turn.
 - Set `description` and `source` on everything you create — descriptions power the wiki
   overview, sources keep knowledge auditable.
 - Never relabel a reserved document type (`AI-Agent-Plan`, `AI-Agent-Skill`,
-  `AI-Agent-Memory`) to a non-reserved one, and never strip a tool-managed `memory-<scope>`
-  tag. Plans have a status field (`draft`, `implementing`, `blocked`, `completed`, `superseded`,
+  `AI-Agent-Memory`) to a non-reserved one unless the user asks, and never strip a tool-managed
+  `memory-<scope>` tag. Omitting `type` on an update keeps the current type. A document saved
+  with the wrong type is fixed in place with `save_article` (its `slug`, `loaded_version`, and
+  the right `type`) — never by deleting and recreating it; confirm with `list_articles(type: …)`.
+- To remove text from a document's history (a name under embargo, personal details), rewrite it
+  with `save_article(..., loaded_version, purge_history: true)`, then verify with
+  `search_wiki(query, include_history: true)`. That keeps the document; `delete_article` does not. Plans have a status field (`draft`, `implementing`, `blocked`, `completed`, `superseded`,
   `parked`, `evergreen`, `archived`) and skills have `draft`, `ready`, `archived`.
   Slugs are lowercase and hyphenated.
 - Never store credentials, tokens, or secrets in the wiki.

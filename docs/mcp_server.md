@@ -402,7 +402,7 @@ State is per resolved agent, bounded (8 lookups each, 64 agents, least-recently-
 
 ## 🛠️ Exposed MCP Tools
 
-> **Native OKF storage & document `type`.** Every NexWiki `.md` file is a conformant Open Knowledge Format (OKF v0.2) concept document at rest (real YAML front matter, with dual-era OKF v0.1 backward compatibility). Each document carries a `type` — `Wiki`, `Attested Computation`, or one of the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags remain: **status tags** (e.g. `wip`, `completed`, `inbox`) and tool-managed **memory-scope tags** (`memory-<scope>`).
+> **Native OKF storage & document `type`.** Every NexWiki `.md` file is a conformant Open Knowledge Format (OKF v0.2) concept document at rest (real YAML front matter, with dual-era OKF v0.1 backward compatibility). Each document carries a `type` — `Wiki`, `Attested Computation`, or one of the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes. The type is set at creation and changes only when a write names a new one explicitly (see [changing a document's type](#changing-a-documents-type)). The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags remain: **status tags** (e.g. `wip`, `completed`, `inbox`) and tool-managed **memory-scope tags** (`memory-<scope>`).
 
 > **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port; if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely. If it detects a running NexWiki web server on its `-port`, it proxies all MCP traffic to it and never opens the data directory, so the primary executes every call and records its successful tool calls in the activity log (see [Sidecar proxy mode](#-sidecar-proxy-mode)). With no NexWiki web server, it opens the data directory itself, serves all tools from the in-process storage layer, and persists the activity log directly. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
 
@@ -416,10 +416,13 @@ Performs a high-speed, full-text search across the **entire** knowledge base usi
   * `type` (string, *optional*): Optional document type to restrict search to: `articles`, `memories`, `plans`, `skills`, or canonical OKF types (`Wiki`, `AI-Agent-Memory`, etc.). Omit to search every type.
   * `tag` (string, *optional*): Optional tag a result must carry (case-insensitive), e.g. `wip` or `memory-nexwiki`.
   * `limit` (integer, *optional*): Optional maximum number of results (default `40`, maximum `200`).
+  * `memory_kind` (string, *optional*): Restrict results to memories of this kind: `project`, `reference`, `user`, or `feedback`. An unknown kind is an error.
+  * `include_archived` (boolean, *optional*): Include archived documents, which are otherwise left out.
+  * `include_history` (boolean, *optional*): Also scan **every stored revision** of every document — version history plus the live files — for the query as a case-insensitive literal substring over the whole file, front matter included, and return the matching `(slug, version)` pairs. One pair of surrounding double quotes is stripped; no other syntax is interpreted. The `type`, `tag`, `memory_kind`, and archived filters **do not narrow** this scan, and the response says so. Use it to verify a redaction: an empty list means no revision anywhere contains the text. A query the Bleve parser rejects (say `/[/`) still runs the history scan; the index half is reported as failed.
 * **Behavior**:
   Executes the query against the local Bleve index and converts scored matches into a readable text block, reporting each hit's document `Type` so you can tell a memory from an article. HTML `<mark>` highlights become Markdown bold (`**`) to save context. When facets are applied they are echoed in the response header line, so an empty result set is distinguishable from an over-narrow filter. An unrecognized `type` value is reported as an error rather than silently returning nothing.
 * **Annotations**: Title: `Search Wiki`, `readOnlyHint`: `true`, `openWorldHint`: `false`.
-* **Structured output**: `structuredContent` as `{query, count, type, tags, memory_kind, include_archived, results[]}`. Each result carries `title`, `slug`, `type`, `score`, `timestamp`, `tags`, and plain-text `snippets`.
+* **Structured output**: `structuredContent` as `{query, count, type, tags, memory_kind, include_archived, results[], include_history?, history_matches?, history_match_count?}`. Each result carries `title`, `slug`, `type`, `score`, `timestamp`, `tags`, and plain-text `snippets`. With `include_history`, `history_matches` is always present (empty when nothing matched) and lists `{slug, title, version, current}` — `title` is the document's current title and `current` is true for the live revision — sorted by slug then version and capped at 500; `history_match_count` is the uncapped total.
 
 > **Search spans everything by default — agents and browser alike.** Search spans every document type unless you narrow it with `type`, in both the MCP tool and the browser search view (`GET /api/search`).
 
@@ -434,6 +437,9 @@ Performs a high-speed, full-text search across the **entire** knowledge base usi
 
 // In-flight plans, newest handful
 { "query": "migration", "type": "plans", "tag": "wip", "limit": 5 }
+
+// Does any revision of any document still mention this name?
+{ "query": "Acme Corp", "include_history": true }
 ```
 
 ---
@@ -452,13 +458,13 @@ Retrieves the raw Markdown content, front-matter configurations, and inbound bac
 ---
 
 ### 3. `save_article`
-Create or update any document (wiki article, agent memory, plan, or skill). If `slug` is provided and matches an existing document, it updates/revises it; if omitted or not existing, it creates a new document. Supports optimistic concurrency locking via `loaded_version`.
+Create or update any document (wiki article, agent memory, plan, or skill). If `slug` is provided and matches an existing document, it updates/revises it; if omitted or not existing, it creates a new document. Supports optimistic concurrency locking via `loaded_version`. On an update, `type` changes the document's type, and `purge_history` redacts its earlier revisions.
 
 * **Arguments**:
   * `title` (string, **required**): Human-readable title of the document. Never use a bare tool verb.
   * `content` (string, **required**): Raw Markdown body content of the document.
   * `slug` (string, *optional*): Optional slug. If provided and matches an existing document, updates/revises it; if omitted or not existing, creates a new document.
-  * `type` (string, *optional*): Document type: `Wiki` (default), `AI-Agent-Memory`, `AI-Agent-Plan`, or `AI-Agent-Skill`.
+  * `type` (string, *optional*): Document type: `Wiki` (default on create), `AI-Agent-Memory`, `AI-Agent-Plan`, `AI-Agent-Skill`, or `Attested Computation` (the aliases `articles`, `memories`, `plans`, `skills` are accepted too). On an update, omit it to keep the current type, or pass one to change it — see [changing a document's type](#changing-a-documents-type). An unknown value is an error naming the valid ones, never a silent `Wiki`.
   * `description` (string, *optional*): Optional one-line summary, shown in list indexes and overview.
   * `source` (string, *optional*): Optional provenance: URL, document, ticket, or session context.
   * `status` (string, *optional*): Optional lifecycle status for plans (`draft`, `implementing`, `blocked`, `completed`, `superseded`, `parked`, `evergreen`, `archived`) or skills (`draft`, `ready`, `archived`).
@@ -468,11 +474,31 @@ Create or update any document (wiki article, agent memory, plan, or skill). If `
   * `project_context` (string, *optional*): Optional project context for `AI-Agent-Plan`. Generates custom project tag.
   * `loaded_version` (integer, *optional*): Optional active version number from `read_article` to enforce optimistic concurrency locking on edits.
   * `edit_summary` (string, *optional*): Optional revision log description summarizing the edit.
+  * `purge_history` (boolean, *optional*): Update only, and requires `loaded_version`. After the save succeeds, permanently delete every earlier revision of the document from version history — body and front matter — keeping only the revision this call wrote, and retitle the document's earlier activity-log entries to its current title and slug. It is **not** a deletion of anything a reader sees today: the document, slug, type, status, backlinks, and version counter are unchanged. See the [History Redaction & Audit Guide](./history_redaction_guide.md).
 * **Behavior**:
   Automatically handles slug generation from title (or uses provided slug), validates document type and title against bare tool verbs, and verifies secret scanning on content, description, and source. When revising an existing document, validates `loaded_version` against disk for optimistic concurrency control, increments version, creates a gzipped history backup snapshot, updates flat-file storage, and refreshes Bleve search indexing.
-  When saving an `AI-Agent-Memory`, validates `memory_kind`, applies scoped `memory-<memory_type>` tag, and runs advisory near-duplicate memory checks against other memories in the same scope.
+  When saving an `AI-Agent-Memory`, validates `memory_kind` and applies the scoped `memory-<memory_type>` tag. (Near-duplicate memories are reported by `wiki_health`, not at write time.)
+  The success response names the document's type — `Type: AI-Agent-Plan`, or `Type: Wiki → AI-Agent-Plan` when this save changed it. With `purge_history`, it also reports `revisions_removed: [..]`, `activity_entries_retitled: N`, and which revision survives.
 * **Annotations**: Title: `Save Article`, `readOnlyHint`: `false`, `destructiveHint`: `true`, `idempotentHint`: `false`, `openWorldHint`: `false`.
 * **Structured output**: None (prose response confirming success or reporting validation/concurrency conflict errors).
+
+#### Changing a document's type
+
+A document created with the wrong type — a plan saved as a `Wiki`, say — is invisible to `list_articles(type: "plans")` while reading perfectly well by slug. Fix it in place with `save_article` (its `slug`, `loaded_version`, and the right `type`); never delete and recreate it, which destroys its history and backlinks. The same rules apply to `PUT /api/articles/{slug}` with a `"type"` field:
+
+* **Omitting `type` keeps the current one.** An ordinary edit can never reclassify a document; an explicit `type` is the instruction to relabel it.
+* The type is resolved **first**, and `status`, `memory_kind`, `memory_type`, and `project_context` are validated and applied against the type the document is becoming.
+* Into `AI-Agent-Plan` with no `status`: a status already valid for a plan is kept, otherwise it enters at `draft`.
+* Into `Wiki` or `AI-Agent-Memory`: the lifecycle status is dropped unless `status` is passed.
+* A plan or skill status the new type does not accept (`implementing` onto a skill, `ready` onto a plan) with no `status` passed is **refused** — a lifecycle state is never silently converted. Pass the status you want.
+* Leaving `AI-Agent-Memory` drops the `memory-<scope>` tags and the `memory_kind`.
+* A same-type re-save is an ordinary edit. Verify a change through `list_articles(type: …)`, not a read.
+
+```jsonc
+{ "slug": "kimmydb-cold-start", "title": "KimmyDB Cold Start", "content": "...", "loaded_version": 3,
+  "type": "AI-Agent-Plan", "project_context": "kimmydb", "status": "implementing" }
+// → Type: Wiki → AI-Agent-Plan
+```
 
 > **A conflict names the value to retry with.** Every optimistic-locking failure reports the version on disk *and* the exact `loaded_version` to send next:
 > ```
@@ -500,7 +526,7 @@ Append text or logs to the end of an existing document without modifying its met
 List articles, memories, plans, and skills in the knowledge base. Filter by type, status, or tag. Supports limit and cursor pagination.
 
 * **Arguments**:
-  * `type` (string, *optional*): Optional filter by document type: `articles`, `memories`, `plans`, `skills`, or OKF types (`Wiki`, `AI-Agent-Memory`, etc.).
+  * `type` (string, *optional*): Optional filter by document type: `articles`, `memories`, `plans`, `skills`, or OKF types (`Wiki`, `AI-Agent-Memory`, `Attested Computation`, etc.). An unknown value is an error naming the valid ones — it never falls back to listing wiki articles.
   * `status` (string, *optional*): Optional filter by lifecycle status (e.g. `draft`, `implementing`, `completed`, `ready`).
   * `tag` (string, *optional*): Optional filter by tag (case-insensitive).
   * `limit` (integer, *optional*): Optional maximum number of documents to return per page (default `50`).
@@ -518,7 +544,7 @@ Permanently delete any document (wiki article, agent memory, plan, or skill) and
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the document to delete.
 * **Behavior**:
-  Permanently deletes the Markdown file, all historical `.md.gz` backup snapshots, and any uploaded media assets associated with the slug. De-indexes the document from Bleve search. Deleting an already-deleted or non-existent document changes nothing further (`idempotentHint: true`).
+  Permanently deletes the Markdown file, all historical `.md.gz` backup snapshots, and any uploaded media assets associated with the slug. De-indexes the document from Bleve search. Deleting an already-deleted or non-existent document changes nothing further (`idempotentHint: true`). To remove text from a document's history **without** deleting the document, use `save_article` with `purge_history: true` instead.
 * **Annotations**: Title: `Delete Article`, `readOnlyHint`: `false`, `destructiveHint`: `true`, `idempotentHint`: `true`, `openWorldHint`: `false`.
 * **Structured output**: None (prose response confirming deletion).
 
@@ -533,7 +559,7 @@ Consolidated orientation tool: returns a compact progressive-disclosure index, r
 * **Behavior**:
   Performs a metadata-only pass over the entire knowledge base to assemble a sectioned directory index grouped by type: Wiki Articles, Agent Memories, Agent Plans, and Agent Skills. Queries the durable activity log (`data/activity.jsonl`) for events since the specified duration. When `include_stats` is true, scans the link graph for broken links and unreadable files.
 * **Annotations**: Title: `Get Wiki Overview`, `readOnlyHint`: `true`, `openWorldHint`: `false`.
-* **Structured output**: `structuredContent` as `{total_articles, articles[], recent_activity[], statistics?, status_tags?}`.
+* **Structured output**: `structuredContent` as `{total_articles, articles[], recent_activity[], statistics?, status_tags?}`. `statistics.broken_links` is always an array — empty when `include_stats` is off or nothing is broken. `status_tags` carries the closed plan and skill status vocabularies.
 
 ---
 

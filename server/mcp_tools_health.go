@@ -202,13 +202,13 @@ func healthOutputSchema() map[string]interface{} {
 		"unsourced_memories":         schemaArrayOf(finding, "Memories missing provenance, up to the limit."),
 		"unkinded_memory_count":      schemaOf("integer", "Agent memories carrying no memory_kind — written before the kind axis existed."),
 		"unkinded_memories":          schemaArrayOf(finding, "Unclassified memories, up to the limit. This is the backfill worklist."),
-		"contested_memory_count":     schemaOf("integer", "Agent memories holding an unresolved conflict, recorded via edit_agent_memory with change_intent 'contradict'."),
+		"contested_memory_count":     schemaOf("integer", "Agent memories holding an unresolved conflict: a contested claim awaiting a human decision."),
 		"contested_memories":         schemaArrayOf(finding, "Contested memories awaiting adjudication, up to the limit."),
 		"stale_plan_count":           schemaOf("integer", "In-flight plans untouched for longer than stale_days. Excludes plans tagged finished or parked."),
 		"stale_plans":                schemaArrayOf(finding, "Stale plans, up to the limit."),
 		"stale_concept_count":        schemaOf("integer", "Concepts whose freshness expiration (stale_after) has passed."),
 		"stale_concepts":             schemaArrayOf(finding, "Concepts whose freshness expiration has passed, up to the limit."),
-		"unreferenced_skill_count":   schemaOf("integer", "Skills no live document links or names in a read_article call. Excludes the nexwiki-agent-guidelines skill, which the MCP tool descriptions reference from code."),
+		"unreferenced_skill_count":   schemaOf("integer", "Skills no live document links or names in a read_article call. Excludes the nexwiki-agent-guidelines skill, which the connect-time MCP instructions reference from code."),
 		"unreferenced_skills":        schemaArrayOf(finding, "Unreferenced skills, up to the limit."),
 		"cold_days":                  schemaOf("integer", "Recency threshold applied to memories."),
 		"cold_memory_scan_ran":       schemaOf("boolean", "False when the activity log does not reach back cold_days, in which case the cold-memory check was skipped rather than reporting every memory."),
@@ -396,13 +396,13 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 			if strings.TrimSpace(doc.Source) == "" {
 				unsourced = append(unsourced, HealthFinding{
 					Slug: slug, Title: doc.Title, Type: doc.Type,
-					Detail: "Memory has no 'source'. A fact with no provenance cannot be re-verified later; set source with edit_agent_memory.",
+					Detail: "Memory has no 'source'. A fact with no provenance cannot be re-verified later; set source with save_article.",
 				})
 			}
 			if doc.MemoryKind == "" {
 				unkinded = append(unkinded, HealthFinding{
 					Slug: slug, Title: doc.Title, Type: doc.Type,
-					Detail: "Memory has no 'memory_kind', so kind-filtered recall cannot find it. Classify it with edit_agent_memory: 'project', 'reference', 'user', or 'feedback'.",
+					Detail: "Memory has no 'memory_kind', so kind-filtered recall cannot find it. Classify it with save_article (memory_kind): 'project', 'reference', 'user', or 'feedback'.",
 				})
 			}
 			if hasTag(doc.Tags, ContestedTag) {

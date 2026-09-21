@@ -247,3 +247,22 @@ func deliverOrMark[T any](ch chan T, msg, missed T) {
 		}
 	}
 }
+
+// RetitleEvents rewrites the in-memory history the same way ActivityLog.RetitleEvents rewrites the
+// durable log: every buffered event whose slug is in slugs is renamed to newSlug and title. The
+// buffer is what the activity drawer and get_wiki_overview fall back to, so a history purge that
+// skipped it would leave a redacted title on screen until the process restarted.
+func (eb *EventBus) RetitleEvents(slugs map[string]bool, newSlug, title string) int {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	changed := 0
+	for i := range eb.buffer {
+		ev := &eb.buffer[i]
+		if !slugs[ev.Slug] || (ev.Slug == newSlug && ev.Title == title) {
+			continue
+		}
+		ev.Slug, ev.Title = newSlug, title
+		changed++
+	}
+	return changed
+}

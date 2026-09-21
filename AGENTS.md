@@ -94,7 +94,7 @@ curl -X POST http://localhost:5808/api/mcp \
 ```
 
 ### Document types and system tags
-Every NexWiki `.md` file is a conformant **Open Knowledge Format (OKF v0.2)** concept document at rest (real YAML front matter). Each carries a `type` — exactly one of **`Wiki`** or the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, which only the agent tools set. The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags that remain: **status tags** (e.g. `draft`, `implementing`, `completed`) and tool-managed **memory-scope tags** (`memory-<scope>`).
+Every NexWiki `.md` file is a conformant **Open Knowledge Format (OKF v0.2)** concept document at rest (real YAML front matter). Each carries a `type` — exactly one of **`Wiki`** or the reserved **`AI-Agent-Memory`** / **`AI-Agent-Plan`** / **`AI-Agent-Skill`** classes, set by `save_article`'s `type` argument. An update that omits `type` keeps the current one; an explicit `type` relabels the document (see [docs/mcp_server.md](./docs/mcp_server.md#changing-a-documents-type)). The legacy `aiagent-*` *class* tags are gone; the class is now the `type`. System tags that remain: **status tags** (e.g. `draft`, `implementing`, `completed`) and tool-managed **memory-scope tags** (`memory-<scope>`).
 
 ---
 
@@ -258,9 +258,9 @@ curl -X POST http://localhost:5808/api/mcp \
 ## 🧠 Design Tips for AI Agents Interacting with NexWiki
 
 If you are prompting or building an agent to work with NexWiki, teach it these best practices:
-1. **Orient First (Progressive Disclosure)**: Start a session with `get_context_overview` — a compact index of the whole wiki (title, slug, one-line summary, tags, updated date) for a few hundred tokens. Then `read_article` only the entries you actually need. Use `get_recent_activity(since: "48h")` to catch up on what changed.
+1. **Orient First (Progressive Disclosure)**: Start a session with `get_wiki_overview` — a compact index of the whole wiki (title, slug, one-line summary, tags, updated date) for a few hundred tokens, plus the recent activity. Then `read_article` only the entries you actually need. Pass `since` (e.g. `get_wiki_overview(since: "48h")`, the default) to set how far back the activity catch-up reaches.
 2. **Resolve Slugs Intelligently**: When linking or reading, always use the URL-safe slug (e.g. `setup-guide`) rather than the raw article title.
 3. **Handle Internal Links**: NexWiki files link internally in two equivalent forms — `[[Double Bracket]]` WikiLinks and absolute `[text](/articles/target-slug)` Markdown links. Both are counted by the link graph, both are healed on rename, and both are checked by `wiki_health`. When displaying a WikiLink to users, resolve it to `/articles/target-slug` or explain it as a reference. Use `get_backlinks` to traverse the graph in reverse before editing or deleting a page.
-4. **Context Management**: Raw Markdown files can occasionally grow large. Prefer `get_context_overview` or `search_wiki` to locate key articles/sections before reading an entire article if context window limits are a concern.
-5. **Respect Reserved Types**: Never relabel a reserved `AI-Agent-*` document `type` to a non-reserved one, and never strip a tool-managed `memory-<scope>` tag. Call `get_status_tags` before applying lifecycle tags.
+4. **Context Management**: Raw Markdown files can occasionally grow large. Prefer `get_wiki_overview` or `search_wiki` to locate key articles/sections before reading an entire article if context window limits are a concern.
+5. **Respect Reserved Types**: Omit `type` when editing a reserved `AI-Agent-*` document — an explicit `type` on a `save_article` update relabels it — and never strip a tool-managed `memory-<scope>` tag. Lifecycle state goes in `status`, not tags; `get_wiki_overview`'s `status_tags` output lists the valid plan and skill values.
 6. **Load the Governance Skill**: Before creating or editing content, read the live `nexwiki-agent-guidelines` skill page — it is the user's editable rulebook and overrides generic defaults.

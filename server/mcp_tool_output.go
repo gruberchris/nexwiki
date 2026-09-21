@@ -50,6 +50,16 @@ type SearchOutput struct {
 	MemoryKind      string      `json:"memory_kind,omitempty"`
 	IncludeArchived bool        `json:"include_archived"`
 	Results         []SearchHit `json:"results"`
+
+	// IncludeHistory echoes include_history. When set, HistoryMatches is always present — an
+	// empty list is the finding "no stored revision contains this", which is the point of asking.
+	IncludeHistory bool `json:"include_history,omitempty"`
+	// HistoryMatches lists every stored revision (history snapshots and live files) whose whole
+	// serialized file contains the query as a case-insensitive literal substring, capped at
+	// maxHistoryMatches. Never narrowed by the type, tag, or archived filters.
+	HistoryMatches *[]HistoryMatch `json:"history_matches,omitempty"`
+	// HistoryMatchCount is the total before the cap, so a truncated list is detectable.
+	HistoryMatchCount int `json:"history_match_count,omitempty"`
 }
 
 // DocumentLink is a bare title/slug reference, used where a full document summary would be noise.
@@ -289,7 +299,7 @@ func articleSchema(withContent bool) map[string]interface{} {
 		"edit_summary":      schemaOf("string", "Summary of the most recent edit."),
 		"tags":              schemaStringArray("Tags carried by the document, including status and memory-scope tags."),
 		"archived_at":       schemaOf("string", "RFC3339 archival time; absent unless the document is archived."),
-		"status":            schemaOf("string", "Lifecycle status. Plans and skills use a closed vocabulary (see get_status_tags); other documents may use any value or none."),
+		"status":            schemaOf("string", "Lifecycle status. Plans and skills use a closed vocabulary (get_wiki_overview lists them under status_tags); other documents may use any value or none."),
 		"status_changed_at": schemaOf("string", "RFC3339 time a plan last changed lifecycle status; drives the auto-archive/auto-delete timers. Only present on AI-Agent-Plan documents."),
 		"memory_kind":       schemaOf("string", "What sort of fact a memory holds: project, reference, user, or feedback. Only present on AI-Agent-Memory documents, and absent on memories written before the kind axis existed (wiki_health lists those as unkinded_memories). Independent of the memory-<scope> tag, which is reach rather than kind."),
 		"generated": schemaObject(map[string]interface{}{
@@ -366,6 +376,14 @@ func searchOutputSchema() map[string]interface{} {
 		"memory_kind":      schemaOf("string", "Memory kind the search was narrowed to; absent when unfiltered."),
 		"include_archived": schemaOf("boolean", "Whether archived documents were included."),
 		"results":          schemaArrayOf(hit, "Matches, highest scoring first."),
+		"include_history":  schemaOf("boolean", "Whether every stored revision was also scanned; absent when it was not."),
+		"history_matches": schemaArrayOf(schemaObject(map[string]interface{}{
+			"slug":    schemaOf("string", "Slug of the document the revision belongs to."),
+			"title":   schemaOf("string", "The document's current title (a revision's own title is not repeated)."),
+			"version": schemaOf("integer", "Revision number; pass it to read_article(version) to inspect it."),
+			"current": schemaOf("boolean", "True when this revision is the live document, false for an earlier revision in history."),
+		}, "slug", "title", "version", "current"), "Present only with include_history: every stored revision whose whole file (front matter included) contains the query as a case-insensitive literal substring, sorted by slug then version. Not narrowed by type, tag, or archived filters. Empty means no revision anywhere contains it."),
+		"history_match_count": schemaOf("integer", "Total history matches before the list was capped; absent when there were none or include_history was not set."),
 	}, "query", "count", "results")
 }
 

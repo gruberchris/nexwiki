@@ -51,7 +51,7 @@ verified:
 ### 2. Removing and Deleting Tags
 * **Remove a tag from an article**: Click the tiny `×` on the tag badge in the Editor, then save the page.
 * **Delete a tag globally**: If you want to remove a tag from all articles in the wiki, click the tag badge in the **Filter by Tag** cloud in the sidebar, or issue a `DELETE /api/tags/{tag}` request. This will completely remove the tag — every case-insensitive variant of it (`Foo`, `foo`, `FOO`) in one sweep — from the front-matter of every article containing it. The sweep works document by document, so other edits are not blocked behind it; if it is interrupted (the server stops, or one document fails to save), the response reports how many documents were `rewritten`, `skipped`, and `failed`, and issuing the same request again finishes the remainder.
-* **Update tags programmatically**: Connected clients and AI agents can update tags using the `PUT /api/articles/{slug}/tags` API endpoint or the `update_article_tags` MCP tool. This performs a tag-only update without loading or rewriting the main page body, offering high speed and preventing accidental modifications to page contents.
+* **Update tags programmatically**: Connected clients can update tags using the `PUT /api/articles/{slug}/tags` API endpoint. This performs a tag-only update without loading or rewriting the main page body, offering high speed and preventing accidental modifications to page contents. MCP agents pass `tags` to `save_article` instead (with the document's `slug`, current `title` and `content`, and `loaded_version`); passing `tags` replaces the user tags, omitting it keeps them.
 
 *Note: NexWiki does not allow global tag renaming. To rename a tag, apply the new tag name to the desired articles and delete the old tag.*
 
@@ -136,7 +136,7 @@ export NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS=30
 ### Setting a Status
 
 * **In the Editor**: use the **Status** dropdown beside the Tags row. It appears only when editing a plan or a skill — the two types that have a status. Statuses render as a colored badge on article cards and in the article header.
-* **Via MCP**: pass `status` to `create_agent_plan`, `edit_agent_plan`, `create_agent_skill`, or `edit_agent_skill`. Call `get_status_tags` for the two vocabularies. `list_agent_plans` takes a `status` filter.
+* **Via MCP**: pass `status` to `save_article` when creating or updating a plan or skill (omitting it on an update preserves the current status). `get_wiki_overview` returns the two vocabularies in its structured output (`plan_status_tags`, `skill_status_tags`, and their union `status_tags`). `list_articles` takes a `status` filter, e.g. `list_articles(type: "plans", status: "implementing")`.
 * **Via REST API**: include `"status"` in the `POST /api/articles` or `PUT /api/articles/{slug}` body. Omitting it **preserves** the current status, so an editor that does not manage lifecycle state cannot silently reset a completed plan.
 
 Every write path enforces the contract: a save that leaves a plan without a valid status, gives a skill an unrecognized one, or puts a lifecycle word in either one's tags is rejected with an error naming the valid vocabulary.
@@ -151,10 +151,10 @@ There are five recognized document types:
 
 | `type` | Created by | Description |
 |---|---|---|
-| `Wiki` | `create_wiki_article` / the web UI | The default for all regular articles. The primary non-reserved type. |
-| `AI-Agent-Memory` | `create_agent_memory` | Durable agent knowledge (troubleshooting logs, decisions, conventions, rules). Protected from bulk deletion. |
-| `AI-Agent-Plan` | `create_agent_plan` | Roadmaps that **either** you or the agent can create, edit, and complete. |
-| `AI-Agent-Skill` | `create_agent_skill` / the UI Skill button | Reusable procedural agent instructions (`SKILL.md` format). Exposed as a custom Skills Registry. |
+| `Wiki` | `save_article` (the default type) / the web UI | The default for all regular articles. The primary non-reserved type. |
+| `AI-Agent-Memory` | `save_article(type: "AI-Agent-Memory")` | Durable agent knowledge (troubleshooting logs, decisions, conventions, rules). |
+| `AI-Agent-Plan` | `save_article(type: "AI-Agent-Plan")` | Roadmaps that **either** you or the agent can create, edit, and complete. |
+| `AI-Agent-Skill` | `save_article(type: "AI-Agent-Skill")` / the UI Skill button | Reusable procedural agent instructions (`SKILL.md` format). Exposed as a custom Skills Registry. |
 | `Attested Computation` | Import / API | OKF v0.2 executable scripts, runtimes, typed parameters, and attestation specifications. |
 
 > **Historical note:** earlier versions of NexWiki keyed these classes off `aiagent-*` tag prefixes. Those class tags were removed when NexWiki adopted OKF — the class now lives in `type`. You will not find `aiagent-plan` or `aiagent-memory-*` tags on current documents.
@@ -167,8 +167,8 @@ Ask two different questions about any memory, and NexWiki answers them with two 
 |---|---|---|
 | Vocabulary | **Closed**: `project`, `reference`, `user`, `feedback` | **Open**: any project or topic name |
 | Stored as | the `memory_kind` **field** | the tool-managed `memory-<scope>` **tag** |
-| Set with | `memory_kind` (**required** at creation) | `memory_type` (optional) |
-| Filter with | `list_agent_memories(memory_kind:)`, `search_wiki(memory_kind:)` | `list_agent_memories(memory_type:)` |
+| Set with | `memory_kind` (optional, but always set it on a new memory) | `memory_type` (optional) |
+| Filter with | `search_wiki(memory_kind:)` | `list_articles(type: "memories", tag: "memory-<scope>")`, `search_wiki(tag:)` |
 
 The split is not arbitrary — it is the same rule NexWiki learned the hard way with lifecycle status: **closed vocabularies are fields, open vocabularies are tags.** A single value with a fixed set of options stored inside an unordered folksonomy forces "exactly one" counting and a denylist for near-misses; a dedicated field makes the invalid states unrepresentable instead of merely detectable.
 
@@ -183,11 +183,11 @@ The two axes are **independent**, and the full cross-product is legal. A `feedba
 
 `user` and `feedback` are the two kinds that had nowhere to live before this axis existed, and their absence is why the second brain was split in half: every stored memory was a technical fact about a system, while everything known about *the person* lived in one client's local files, invisible to every other agent on the MCP server.
 
-**Memories written before the kind axis existed carry none.** They stay valid, readable and editable — the requirement is on creation, not on saving — and `wiki_health` lists them under `unkinded_memories` as a burn-down worklist. Nothing backfills them automatically: deciding `project` versus `reference` for an existing memory is a judgment call per memory, not a mechanical rewrite.
+**Memories written before the kind axis existed carry none.** They stay valid, readable and editable — no write path refuses a memory without a kind — and `wiki_health` lists them under `unkinded_memories` as a burn-down worklist. Nothing backfills them automatically: deciding `project` versus `reference` for an existing memory is a judgment call per memory, not a mechanical rewrite.
 
 ### 🧷 Memory scope tags
 
-The one system tag that remains is the **memory-scope tag**, `memory-<scope>`. It is set from the `memory_type` argument of `create_agent_memory` and narrows a memory to a project or topic:
+The one system tag that remains is the **memory-scope tag**, `memory-<scope>`. It is set from the `memory_type` argument of `save_article` (on an `AI-Agent-Memory`) and narrows a memory to a project or topic:
 
 | `memory_type` | Scope tag applied | Use for |
 |---|---|---|
@@ -195,17 +195,17 @@ The one system tag that remains is the **memory-scope tag**, `memory-<scope>`. I
 | `docker`, `golang` (any topic) | `memory-docker` | Reusable knowledge across projects |
 | *(omitted)* | *(none)* | Knowledge with no clear project or topic home |
 
-Scope tags are **tool-managed**: preserved automatically by `edit_agent_memory` and `update_article_tags`, hidden from the sidebar tag cloud, and not freely assignable by users to non-memory documents. Filter memories by scope with `list_agent_memories(memory_type: "nexwiki")`, and by both axes at once with `list_agent_memories(memory_type: "nexwiki", memory_kind: "reference")`.
+Scope tags are **tool-managed**: preserved automatically when `save_article` or `PUT /api/articles/{slug}/tags` replaces a memory's user tags, hidden from the sidebar tag cloud, and not freely assignable by users to non-memory documents. Filter memories by scope with `list_articles(type: "memories", tag: "memory-nexwiki")`, and by both axes at once with `search_wiki(query: "...", type: "memories", tag: "memory-nexwiki", memory_kind: "reference")`.
 
 In the web UI, kind renders as a badge beside the status badge on cards and in the article header, is edited from a **Kind** dropdown in the editor (memories only), and is matched by the filter bar alongside titles, tags and status — so typing `feedback` finds the corrections, and `feedback || user` finds everything known about the operator.
 
-> **Preservation applies only to `AI-Agent-Memory` documents.** That is the only class where the tag is genuinely tool-managed — `create_agent_memory` derives it from `memory_type`, and dropping it would orphan the memory from its scope. A `memory-*` tag sitting on a `Wiki`, `AI-Agent-Plan`, or `AI-Agent-Skill` document is stray data that no tool puts there, so it is **removable** by replacing that document's tags. It was not always: until this was fixed, such a tag survived every edit and `DeleteTagGlobally` refused it too, leaving it permanently stuck. Forging a new scope tag onto a non-memory document is still refused.
+> **Preservation applies only to `AI-Agent-Memory` documents.** That is the only class where the tag is genuinely tool-managed — `save_article` derives it from `memory_type`, and dropping it would orphan the memory from its scope. A `memory-*` tag sitting on a `Wiki`, `AI-Agent-Plan`, or `AI-Agent-Skill` document is stray data that no tool puts there, so it is **removable** by replacing that document's tags. It was not always: until this was fixed, such a tag survived every edit and `DeleteTagGlobally` refused it too, leaving it permanently stuck. Forging a new scope tag onto a non-memory document is still refused.
 
 ### 🛡️ Type rules & validation
 To preserve integrity while keeping documents fully collaborative:
-1. **Types are tool-assigned.** There is no user-facing type picker. The reserved `AI-Agent-*` values are set solely by `create_agent_memory` / `_plan` / `_skill`.
-2. **Types are immutable on edit.** A reserved type is preserved through every edit and may **never** be relabelled to a non-reserved type. `update_article_tags` never touches `type` at all.
-3. **Memories resist bulk deletion.** `delete_wiki_article` refuses a document of type `AI-Agent-Memory` and steers the agent to `delete_agent_memory`, so curated memories survive cleanup sweeps.
+1. **Types are tool-assigned.** There is no user-facing type picker. The reserved `AI-Agent-*` values are set by the `type` argument of `save_article` (or the REST `type` field), and by the web UI's dedicated creation buttons such as **AI Skill**.
+2. **An ordinary edit never changes the type.** An update that omits `type` keeps the current one. Relabelling is explicit: passing a different `type` changes the class, and the lifecycle fields follow — a document moved into `AI-Agent-Plan` enters at `draft` (unless its status is already a valid plan status), one moved into `Wiki` or `AI-Agent-Memory` drops its status, a plan or skill status the new type does not accept must be replaced with an explicit `status`, and a document leaving `AI-Agent-Memory` drops its `memory-<scope>` tags and `memory_kind`. An unknown type is an error, never a silent `Wiki`. The tag-only `PUT /api/articles/{slug}/tags` never touches `type` at all.
+3. **Deletion is per document.** `delete_article` removes exactly one document by slug, whatever its type; `wiki_health` is the place to find memories that are candidates for retirement (near-duplicates, unsourced, unkinded).
 4. **Freedom to edit & delete.** You can still fully edit, append to, and delete any AI-created document from the web UI, and add or remove its free user tags however you like.
 
 ### 🧹 Default search & sidebar isolation
@@ -231,7 +231,7 @@ Imagine you are building a full-stack web application. You can use standard tagg
 To see all your frontend guides, click the `frontend` tag pill in your sidebar tag cloud.
 
 ### 2. Collaborative Plan Tracking (type `AI-Agent-Plan`)
-When you launch a complex project, either you or your connected AI assistant can create an implementation roadmap. `create_agent_plan` sets `type: AI-Agent-Plan` and applies a project tag from its `project_context` argument (e.g. `nexwiki`):
+When you launch a complex project, either you or your connected AI assistant can create an implementation roadmap. `save_article(type: "AI-Agent-Plan")` sets `type: AI-Agent-Plan` and applies a project tag from its `project_context` argument (e.g. `nexwiki`):
 ```markdown
 # Migration to Go 1.22 Plan 🚀
 
@@ -241,12 +241,12 @@ When you launch a complex project, either you or your connected AI assistant can
 ```
 The page slug is named directly after the feature (e.g. `migration-to-go-122`). Both you and your AI agent can collaboratively edit, check tasks, and complete this plan. The page remains safely stored under your **📋 AI plans** directory, keeping your main wiki page list clean.
 
-When the work is finished, the agent appends closing notes with `append_agent_plan` and then sets `status: "completed"` via `edit_agent_plan`. The `AI-Agent-Plan` type is preserved through both operations.
+When the work is finished, the agent appends closing notes with `append_article` and then sets `status: "completed"` via `save_article`. Neither call passes `type`, so the `AI-Agent-Plan` type is preserved through both.
 
 ### 3. AI-Driven Troubleshooting Log (type `AI-Agent-Memory`)
-If a server build fails, the agent can document the investigation with `create_agent_memory`:
+If a server build fails, the agent can document the investigation with `save_article(type: "AI-Agent-Memory")`:
 * **Title**: `Go Build Error May 2026`
 * **`memory_type`**: `nexwiki` → applies the tool-managed scope tag `memory-nexwiki`
 * **Additional user tags**: `backend`
 * **Content**: Logs the specific error message, hypotheses tested, steps taken, and the final solution (e.g., importing the missing `strings` package).
-* **Benefit**: The next time a build error occurs, the agent (or you!) can run `list_agent_memories(memory_type: "nexwiki")`, or search `ai-agent build error`, to find past resolutions instantly — avoiding repeated debugging.
+* **Benefit**: The next time a build error occurs, the agent (or you!) can run `list_articles(type: "memories", tag: "memory-nexwiki")`, or search `ai-agent build error`, to find past resolutions instantly — avoiding repeated debugging.

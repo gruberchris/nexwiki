@@ -1,7 +1,7 @@
 # Collaborative Plans Metadata Updates & Document Version Displays 🛠️🕒
 
 NexWiki provides powerful tools for combining human editing and programmatic AI management. This guide covers two premium features designed to streamline collaborative editing, track document revisions, and allow AI agents to manage project plans programmatically:
-1. **Programmatic Metadata Updates (`edit_agent_plan` MCP Tool)**
+1. **Programmatic Metadata Updates (`save_article` MCP Tool)**
 2. **Version Number & Relative Time Displays in the UI**
 
 ---
@@ -10,22 +10,23 @@ NexWiki provides powerful tools for combining human editing and programmatic AI 
 
 Collaborative AI plans are saved on disk as OKF documents with real YAML front matter carrying their `type`, tags, titles, and edit summaries. Previously, AI agents could create plans or append content but could not edit existing metadata such as tags or titles without using the frontend GUI. 
 
-The **`edit_agent_plan`** MCP tool bridges this gap, allowing AI agents to programmatically rename plans, replace plan content, adjust tag classifications, and perform bulk metadata updates safely.
+The **`save_article`** MCP tool bridges this gap. Called with the `slug` of an existing plan, it updates that plan in place, allowing AI agents to programmatically rename plans, replace plan content, adjust tag classifications, move the lifecycle `status`, and perform bulk metadata updates safely.
 
 ### 🔒 Governance & Protections
 To maintain workspace integrity and prevent conflict:
-* **Optimistic Locking**: Just like standard article edits, `edit_agent_plan` requires a positive `loaded_version` parameter. If a concurrent session has committed updates to disk in the meantime, the tool rejects the operation with a version conflict error, preventing overwrite collisions.
-* **Type Preservation**: The document's reserved OKF `type: AI-Agent-Plan` is preserved through every edit, regardless of the tags array submitted. The type is the class discriminator and is immutable — it can never be relabelled to a non-reserved type. (Older NexWiki builds enforced this with a protected `aiagent-plan` *tag*; that tag no longer exists.)
-* **Plan Verification**: The target document must be of type `AI-Agent-Plan`. The tool rejects requests targeting standard wiki articles, memories, or skills.
-* **Content Replacement**: Passing `content` fully replaces the plan body. Omit it to preserve the existing body, and use `append_agent_plan` when you only want to add progress notes.
+* **Optimistic Locking**: Pass the `loaded_version` you got from `read_article`. If a concurrent session has committed updates to disk in the meantime, the tool rejects the operation with a version conflict error, preventing overwrite collisions. (`loaded_version` is optional, but an edit without it cannot detect a collision.)
+* **Type Preservation**: An edit that omits `type` keeps the plan's reserved OKF `type: AI-Agent-Plan`, regardless of the tags array submitted. The type changes only when you pass `type` explicitly — which relabels the document and applies that type's status rules — so an ordinary metadata update never needs it. (Older NexWiki builds enforced the class with a protected `aiagent-plan` *tag*; that tag no longer exists.)
+* **Plan Arguments**: On a plan, `status` must be one of the eight plan lifecycle statuses (omit it to preserve the current one), and `project_context` adds a project tag. Lifecycle words are rejected as tags.
+* **Content Replacement**: `title` and `content` are required on every call, and `content` fully replaces the plan body — read the plan first and send its current body back when you only mean to change metadata. Omitted `tags`, `description`, and `source` are preserved. Use `append_article` when you only want to add progress notes.
 
 ### 🔌 Tool Arguments & Signature
 ```json
 {
-  "name": "edit_agent_plan",
+  "name": "save_article",
   "arguments": {
     "slug": "unique-plan-slug",
-    "title": "New Plan Title (Optional)",
+    "title": "New Plan Title",
+    "content": "<the plan body, unchanged or revised>",
     "tags": ["project-alpha", "milestone-1"],
     "loaded_version": 2,
     "edit_summary": "Renamed plan and categorized with milestone tag"
@@ -43,10 +44,11 @@ curl -X POST http://localhost:5808/api/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "edit_agent_plan",
+      "name": "save_article",
       "arguments": {
         "slug": "database-migration-plan",
         "title": "Production Database Migration Plan",
+        "content": "# Production Database Migration Plan\n\n- [ ] Snapshot the current database\n- [ ] Run the migration in staging",
         "tags": ["postgres", "q3-goals"],
         "loaded_version": 1,
         "edit_summary": "Promoted title and tagged with Postgres DB stack"

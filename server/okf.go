@@ -354,7 +354,28 @@ func (s *Storage) ImportOKFBundle(data []byte) (*OKFImportReport, error) {
 			overrides.Attester = art.Attester
 		}
 
-		saved, err := s.SaveArticleWithOverrides(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, normalizeType(art.Type), overrides)
+		// The type follows the rule every other write path follows. A new document is typed
+		// permissively (OKF §9, flagged above). An existing one is relabelled only by a type the
+		// bundle actually declares — an explicit instruction — and an undeclared type keeps the one
+		// it has. A declared type that names nothing is refused for that entry rather than turning
+		// an existing plan or memory into a Wiki.
+		importType := normalizeType(art.Type)
+		if oldSlug != "" {
+			declared := strings.TrimSpace(art.DeclaredType)
+			switch {
+			case declared == "":
+				importType = ""
+			case ResolveDocumentType(declared) == "":
+				report.Warnings = append(report.Warnings, fmt.Sprintf("%s: not imported — %s; the existing document '%s' was left unchanged",
+					f.Name, unknownDocumentTypeError(declared).Error(), oldSlug))
+				report.Skipped++
+				continue
+			default:
+				importType = ResolveDocumentType(declared)
+			}
+		}
+
+		saved, err := s.SaveArticleWithOverrides(oldSlug, art.Title, body, art.Description, art.Source, art.Resource, summary, importTags, importType, overrides)
 		if err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: save failed: %s", f.Name, errText(err)))
 			continue

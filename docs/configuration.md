@@ -95,7 +95,7 @@ Therefore, in Docker, the data directory is consistently `/app/data`, which must
 Before configuring and exposing NexWiki, understand the system trust model:
 
 ### 1. Unauthenticated Architecture
-NexWiki has **no built-in user accounts, passwords, session tokens, or API keys**. Any client with network access to the listening port has complete read, write, and delete access across all articles, assets, and MCP tools (including `delete_wiki_article` and bundle imports).
+NexWiki has **no built-in user accounts, passwords, session tokens, or API keys**. Any client with network access to the listening port has complete read, write, and delete access across all articles, assets, and MCP tools (including `delete_article` and OKF bundle imports).
 
 * **Designed Scope**: Single-user operation on a trusted local workstation or private virtual network (Tailscale, WireGuard, private VPC).
 * **Public Internet Exposure**: **Never** expose NexWiki directly to the public internet without an authenticating reverse proxy (e.g., Caddy with `basic_auth`, OAuth2 Proxy, Cloudflare Access) or VPN.
@@ -124,7 +124,7 @@ NexWiki also validates every request's `Host` header, before origin checks and h
 > **Migration note:** clients that reach NexWiki by a hostname rather than an IP or `localhost` must have that origin listed in `NEXWIKI_ALLOWED_ORIGINS`, or their requests receive `403`. This covers setups using Docker service names (e.g. `http://nexwiki:5808`), `host.docker.internal`, `.local` mDNS names, Tailscale MagicDNS hostnames, or Kubernetes service DNS names — list the origin those clients use, and its hostname is accepted as a `Host` value too.
 
 ### 4. Secret Scanning (`NEXWIKI_SECRET_SCAN`)
-When AI agents perform writes via MCP (`create_wiki_article`, `edit_wiki_article`, `create_agent_memory`, `create_agent_plan`, `create_agent_skill`, `import_okf_bundle`), NexWiki analyzes the content, description, and source fields for credential patterns (private keys, AWS/GitHub/OpenAI/Anthropic tokens, Slack webhooks, JWTs):
+When AI agents write via MCP (`save_article`, which scans content, description, and source; `append_article`, which scans the appended text), NexWiki analyzes those fields for credential patterns (private keys, AWS/GitHub/OpenAI/Anthropic tokens, Slack webhooks, JWTs). The OKF bundle importer (`POST /api/okf/import`) scans every document's body, description, and source too, but only in `refuse` mode, and at document granularity: an offending document is skipped and reported in the import's warnings instead of aborting the whole import. Writes from the web editor and the `/api/articles` endpoints are not scanned.
 * `refuse` (default): Immediately aborts the tool call, returning an actionable error message with the byte offset and pattern type. **The actual secret value is never echoed back in the error**, preventing it from entering agent logs or transcripts.
 * `warn`: Accepts the write but appends a warning to the tool response.
 * `off`: Disables pattern scanning.
