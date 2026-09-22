@@ -71,8 +71,9 @@ export function ActivityFilterHelpModal({ onClose }: ActivityFilterHelpModalProp
 
         <p className="text-[10px] text-themeTextMuted pt-1 border-t border-themeBorder">
           Filters match against actions, sources, tools, slugs, titles, and agents. Operators are case-insensitive.
-          Older events keep the tool name they were logged with, so retired tools such as list_articles
-          (now search_wiki without a query) and get_backlinks (now part of read_article) still match them.
+          Older events keep the tool name they were logged with. Retired tools such as list_articles
+          (now search_wiki without a query) and get_backlinks (now part of read_article) no longer
+          log new events, but filtering by those names still matches older events.
         </p>
       </div>
     </div>

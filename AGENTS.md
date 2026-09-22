@@ -83,7 +83,7 @@ Every tool carries MCP **annotations** (`readOnlyHint`, `destructiveHint`, `idem
 
 All four read tools additionally declare an **`outputSchema`** and return `structuredContent` alongside their prose, so an agent parses data instead of scraping sentences — `read_article` hands back `version` as a number to pass straight to `save_article` or `append_article` as `loaded_version`. The text is always still emitted, and both halves are rendered from the same value so they cannot disagree (`read_article` ships its Markdown body in both `content[0].text` and `structuredContent.article.content`, ensuring full interoperability across text-only and structured MCP clients). See [docs/mcp_server.md](./docs/mcp_server.md#-structured-output--parse-data-dont-scrape-prose).
 
-📖 **The complete reference — every tool, argument, and behavior — lives in [docs/mcp_server.md](./docs/mcp_server.md).** It is kept in lockstep with `server/mcp.go`; this file intentionally does not duplicate it.
+📖 **The complete reference — every tool, argument, and behavior — lives in [docs/mcp_server.md](./docs/mcp_server.md).** It is kept in lockstep with the tool registry in `server/mcp_tools.go` (tool definitions live in `server/mcp_tools_*.go`); this file intentionally does not duplicate it.
 
 Agents can also enumerate tools at runtime with the standard `tools/list` MCP method:
 

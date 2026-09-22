@@ -208,15 +208,14 @@ To preserve integrity while keeping documents fully collaborative:
 3. **Deletion is per document.** `delete_article` removes exactly one document by slug, whatever its type; `wiki_health` is the place to find memories that are candidates for retirement (near-duplicates, unsourced, unkinded).
 4. **Freedom to edit & delete.** You can still fully edit, append to, and delete any AI-created document from the web UI, and add or remove its free user tags however you like.
 
-### 🧹 Default search & sidebar isolation
-AI documents are isolated by **type**, keeping your personal workspace tidy:
+### 🧹 Sidebar isolation & search
+The sidebar isolates AI documents by **type**, keeping your personal workspace tidy:
 * **Sidebar directories** — the sidebar splits documents into four sections by `type`:
   * **📚 Articles** — documents of type `Wiki`.
   * **📋 AI plans** — collapsible folder, type `AI-Agent-Plan`.
   * **🛠️ AI skills** — collapsible folder, type `AI-Agent-Skill`.
   * **🤖 AI memories** — collapsible folder, type `AI-Agent-Memory`.
-* **Default search** — a standard search returns only `Wiki` documents. Everything with a reserved type is excluded, even when it shares project tags with your regular pages.
-* **Explicit search bypass** — include `aiagent` or `ai-agent` anywhere in the query to opt every agent document back into the results (e.g. `ai-agent build error`). Searching an exact slug or title also resolves the document directly.
+* **Search spans every type** — search is not isolated. The browser search view (`GET /api/search`) and the MCP `search_wiki` tool both return articles, plans, skills, and memories alike. The `GET /api/search` response and `search_wiki` output carry each result's document type; the browser results view does not display it. Agents narrow a search with `search_wiki`'s `type` filter (e.g. `type: "memories"`); the browser search view has no type filter.
 
 ---
 

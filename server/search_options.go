@@ -124,9 +124,9 @@ func (o SearchOptions) allowsType(art *Article, typeFilter map[string]bool, quer
 	return false
 }
 
-// searchTypeAliases maps the friendly names used across the tool surface (get_context_overview
-// uses the same vocabulary) onto OKF document types, so an agent never has to spell out
-// "AI-Agent-Memory" to filter for memories.
+// searchTypeAliases maps the friendly names used across the tool surface (search_wiki's and
+// save_article's `type` arguments both accept them) onto OKF document types, so an agent never has
+// to spell out "AI-Agent-Memory" to filter for memories.
 var searchTypeAliases = map[string]string{
 	"article":  ContentTypeWiki,
 	"articles": ContentTypeWiki,

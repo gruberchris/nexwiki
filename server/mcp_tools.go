@@ -30,8 +30,8 @@ type toolDef struct {
 //
 // This matters because the specification's defaults are pessimistic: an unannotated tool is
 // assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations therefore
-// tells every client that all 27 tools might destroy data and reach arbitrary external systems,
-// so a cautious client prompts the user for each one — including get_context_overview, the very
+// tells every client that every tool might destroy data and reach arbitrary external systems,
+// so a cautious client prompts the user for each one — including get_wiki_overview, the very
 // tool the agent skill says to call first in every session. That friction is what makes agents
 // stop reaching for a tool at all.
 //

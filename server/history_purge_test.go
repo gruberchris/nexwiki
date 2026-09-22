@@ -343,6 +343,14 @@ func TestSearchIncludeHistory(t *testing.T) {
 	if !strings.Contains(text, "do not narrow this scan") {
 		t.Errorf("the response must say the filters do not narrow the scan:\n%s", text)
 	}
+	// The status filter is one of them, and the prose must name it among the ones that do not apply.
+	m, text = historyScan(t, srv, "body.", map[string]interface{}{"status": "implementing"})
+	if len(m) != 1 {
+		t.Errorf("a status filter narrowed the history scan: %+v", m)
+	}
+	if !strings.Contains(text, "type, tag, status, memory-kind, and archived filters above do not narrow this scan") {
+		t.Errorf("the response must name the status filter among those that do not narrow the scan:\n%s", text)
+	}
 
 	// A document written before version history existed has only its live file.
 	legacy := "---\ntitle: Legacy Page\nslug: legacy-page\ntype: Wiki\n---\n# Legacy\n\nMentions an EmbargoedName.\n"

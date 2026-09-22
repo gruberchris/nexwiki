@@ -48,12 +48,9 @@ When viewing any page registered as an AI skill, NexWiki renders a beautiful, gl
 
 ## 🔍 How AI Skills Interact with Search
 
-To keep your standard wiki searches focused, **AI skills do not appear in standard wiki search results by default.** Search returns only documents of type `Wiki`, so skills are filtered out alongside AI Memories and Plans.
+**AI skills appear in search results alongside every other document type.** Search spans every type by default — wiki articles, AI Memories, Plans, and skills — in both the browser search view (`GET /api/search`) and the MCP `search_wiki` tool. The `GET /api/search` response and `search_wiki` output carry each result's document type; the browser results view does not display it.
 
-However, NexWiki includes a smart **Explicit Search Bypass** rule:
-If you are explicitly looking for a skill, it will appear in your search results *only* if:
-1. Your search query contains `aiagent` or `ai-agent` (e.g. `ai-agent docker`). This opts **every** agent-typed document — skills, plans, and memories — back into the results.
-2. Your search query matches the skill's **title** or **slug** (e.g. `docker-clean`).
+To narrow a search to skills only, pass a type filter to the MCP tool: `search_wiki(query: "docker", type: "skills")`. The browser search view has no type filter; it always searches everything.
 
 You can also enumerate skills directly, bypassing search entirely, with `search_wiki(type: "skills")` — no query — or `GET /api/skills`.
 

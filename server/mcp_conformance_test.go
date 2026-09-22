@@ -19,8 +19,8 @@ import (
 // requirement per subtest, each named for the section it comes from. The distinction matters
 // because of how the failure they exist to prevent presents itself: a client validates a result
 // against a schema and rejects the whole response, so a single missing field does not degrade one
-// feature — it makes the server look empty. Claude Code reported a healthy connection and zero of
-// the 9 tools because `ttlMs` was absent from `tools/list`.
+// feature — it makes the server look empty. Claude Code reported a healthy connection and zero
+// tools because `ttlMs` was absent from `tools/list`.
 //
 // So the assertions here are deliberately about shape rather than behaviour, and they are stated as
 // the specification states them. When one fails, the subtest name is the rule that broke.

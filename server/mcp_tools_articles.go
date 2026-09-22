@@ -10,8 +10,10 @@ import (
 	"time"
 )
 
-// This file holds the wiki article tools: search, read, list, create, edit, tag, delete, history, revert,
-// and the legacy context overview. get_wiki_overview lives in mcp_tools_overview.go.
+// This file holds the wiki article tools: search_wiki, read_article, save_article, append_article,
+// and delete_article. It also keeps the retired per-operation article tools (create, edit, tag,
+// delete, history, revert, and the context overview), which are not registered and are reachable
+// only from tests via enableLegacyTools. get_wiki_overview lives in mcp_tools_overview.go.
 // Each tool pairs its JSON schema with its handler in one place, so the two can never
 // drift apart. Registration order lives in mcp_tools.go.
 
@@ -505,7 +507,7 @@ func renderHistoryMatches(term string, matches []HistoryMatch, total int, filter
 	b.WriteString("\n== Version history scan ==\n")
 	fmt.Fprintf(&b, "Scanned every stored revision (history and live files) for %q as a case-insensitive literal substring, front matter included.\n", term)
 	if filtered {
-		b.WriteString("The type, tag, memory-kind, and archived filters above do not narrow this scan; it covers every document.\n")
+		b.WriteString("The type, tag, status, memory-kind, and archived filters above do not narrow this scan; it covers every document.\n")
 	} else {
 		b.WriteString("Filters never narrow this scan; it covers every document.\n")
 	}
@@ -653,7 +655,7 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 	// The front-matter configuration and full Markdown body as prose.
 	//
 	// Version is part of this header because it is the one field an agent must carry from a read
-	// into edit_wiki_article as loaded_version.
+	// into save_article (or append_article) as loaded_version when it changes the document.
 	text := fmt.Sprintf("Type: %s\nTitle: %s\nSlug: %s\nVersion: %d\nCreated: %s\nUpdated: %s%s%s%s%s%s%s%s%s\n\n%s",
 		art.Type, art.Title, art.Slug, art.Version, art.CreatedAt.Format(time.RFC3339), art.Timestamp.Format(time.RFC3339),
 		descStr, resourceStr, sourceStr, sourcesStr, tagsStr, trustTierStr, compStr, staleWarning, art.Content)
