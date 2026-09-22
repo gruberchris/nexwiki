@@ -343,6 +343,14 @@ func TestSearchIncludeHistory(t *testing.T) {
 	if !strings.Contains(text, "do not narrow this scan") {
 		t.Errorf("the response must say the filters do not narrow the scan:\n%s", text)
 	}
+	// The status filter is one of them, and the prose must name it among the ones that do not apply.
+	m, text = historyScan(t, srv, "body.", map[string]interface{}{"status": "implementing"})
+	if len(m) != 1 {
+		t.Errorf("a status filter narrowed the history scan: %+v", m)
+	}
+	if !strings.Contains(text, "type, tag, status, memory-kind, and archived filters above do not narrow this scan") {
+		t.Errorf("the response must name the status filter among those that do not narrow the scan:\n%s", text)
+	}
 
 	// A document written before version history existed has only its live file.
 	legacy := "---\ntitle: Legacy Page\nslug: legacy-page\ntype: Wiki\n---\n# Legacy\n\nMentions an EmbargoedName.\n"
@@ -427,7 +435,7 @@ func TestSearchIncludeHistoryAcceptsQueriesBleveRejects(t *testing.T) {
 // find them.
 func TestSearchWikiDeclaresEveryFilterItHonours(t *testing.T) {
 	props := searchWikiTool.Schema["inputSchema"].(map[string]interface{})["properties"].(map[string]interface{})
-	for _, name := range []string{"query", "type", "tag", "limit", "memory_kind", "include_archived", "include_history"} {
+	for _, name := range []string{"query", "type", "tag", "status", "limit", "cursor", "memory_kind", "include_archived", "include_history"} {
 		if _, ok := props[name]; !ok {
 			t.Errorf("search_wiki honours %q but its input schema does not declare it", name)
 		}

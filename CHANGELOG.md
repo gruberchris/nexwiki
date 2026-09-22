@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- **`delete_article` refuses to break links silently**: it runs the same inbound-link scan as `read_article` first and refuses, deleting nothing, while other documents link to the target, naming every one. An incomplete scan — a failed walk, or unreadable files or misplaced documents it skipped — is refused too, so an empty list never reads as "nothing links here". Pass the new optional `break_links: true` to delete anyway; the response then lists the documents that now hold broken links. Self-links never block.
+
+### Changed
+- **BREAKING: `search_wiki` is also the document index**: `query` is optional. Without one, `search_wiki` returns the filtered, cursor-paged index `list_articles` returned — most recently updated first, 50 per page by default, archived documents included by default. With one, it runs the scored full-text search as before (40 per page by default, at most 200, archived documents excluded by default).
+  - Both modes accept `type`, `tag`, `status`, `memory_kind`, `include_archived`, `limit` and `cursor`, so a filter means the same thing in either. A `tag` or `status` of `archived` includes archived documents even over an explicit `include_archived: false`.
+  - Query mode pages with `cursor`/`next_cursor` over the 200 best-scoring hits, and `count` is now the total across all pages rather than the length of the page.
+  - `include_history` requires a query; without one the call is rejected.
+  - Type validation is uniform: an unknown `type` is an error in both modes, and query mode now accepts `Attested Computation`.
+- **`read_article` lists every backlink**: its `Linked from:` prose names every linking document, as the structured `backlinks` always did; the 15-entry cap is gone. It is now the way to see what references a page.
+- **`save_article`'s schema states each rule once**: the description and the argument descriptions no longer repeat each other, cutting the schema from 4,829 to 4,107 characters. Behavior is unchanged.
+- **The MCP tool surface is 7 tools, down from 9**. `docs/mcp_server.md`, the guides, the `nexwiki` agent skill, and the activity filter help name only the registered tools; older activity-log events keep the retired tool names they were logged with.
+
+### Removed
+- **BREAKING: `get_backlinks` is removed**: `read_article` returns the same inbound links in both link forms, in its prose and in `structuredContent.backlinks`.
+- **BREAKING: `list_articles` is removed**: call `search_wiki` without a `query`, with the same `type`, `status`, `tag`, `limit` and `cursor` arguments.
+- **BREAKING: `get_wiki_overview` no longer takes `include_stats` or returns `statistics`**: broken links, unreadable files and misplaced documents are `wiki_health`'s report, from the same link-graph scan, and `total_links` moved to `wiki_health` unchanged. `total_articles` stays at the top level.
+
 ### Fixed
 
 - `PUT /api/articles/{slug}` no longer clears a document's tags when the request omits `tags`. An omitted or `null` `tags` key now preserves the current set, matching `description`, `source`, `status`, `type` and the MCP `save_article` tool; an explicit `[]` still clears it. The web editor always sends its full tag list and is unaffected.

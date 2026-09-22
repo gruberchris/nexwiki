@@ -39,17 +39,29 @@ type SearchHit struct {
 	Snippets  []string  `json:"snippets,omitempty"`
 }
 
-// SearchOutput is the `search_wiki` payload. Query and the applied facets are echoed back so an
-// agent reading only the structured half can still tell "no such knowledge" from "my filter
-// excluded it" — the same distinction the prose spells out.
+// SearchOutput is the `search_wiki` payload, in both of its modes. Query and the applied facets are
+// echoed back so an agent reading only the structured half can still tell "no such knowledge"
+// from "my filter excluded it" — the same distinction the prose spells out.
+//
+// Exactly one of Results and Documents is present: Results for a search, Documents for the index.
+// They stay two fields because they are two shapes — a scored hit with snippets, and a document's
+// full metadata — and folding them into one list would leave every field of each optional in
+// the schema. omitzero rather than omitempty is what makes "one of them" hold: the mode that
+// owns a list always sets it non-nil, so an empty page still serializes as [] (a schema
+// declaring an array does not match null), while the other mode leaves it nil and it is dropped.
 type SearchOutput struct {
-	Query           string      `json:"query"`
+	Query string `json:"query,omitempty"`
+	// Count is every match across all pages, not the length of this page; a search counts
+	// within the maxSearchLimit best-scoring hits, the most one search ever considers.
 	Count           int         `json:"count"`
 	Types           []string    `json:"type,omitempty"`
 	Tags            []string    `json:"tags,omitempty"`
+	Status          string      `json:"status,omitempty"`
 	MemoryKind      string      `json:"memory_kind,omitempty"`
 	IncludeArchived bool        `json:"include_archived"`
-	Results         []SearchHit `json:"results"`
+	Results         []SearchHit `json:"results,omitzero"`
+	Documents       []Article   `json:"documents,omitzero"`
+	NextCursor      string      `json:"next_cursor,omitempty"`
 
 	// IncludeHistory echoes include_history. When set, HistoryMatches is always present — an
 	// empty list is the finding "no stored revision contains this", which is the point of asking.
@@ -76,24 +88,27 @@ type DocumentLink struct {
 type ArticleOutput struct {
 	Article   Article        `json:"article"`
 	Backlinks []DocumentLink `json:"backlinks"`
-	// SkippedDocumentCount and SkippedDocuments are the skipped-entries indicator: what the
-	// backlink computation could not see. Present only when something was skipped; the two fields
-	// and their meaning are documented on BacklinksOutput, which carries the same pair.
+	// SkippedDocumentCount is how many entries the backlink scan skipped: unreadable files and
+	// directories plus the misplaced documents that link to this page. Any of them may hold an
+	// inbound link Backlinks does not show, so a nonzero count means Backlinks is a lower bound,
+	// not the answer. SkippedDocuments lists the first maxSkippedDocuments of them, sorted by path;
+	// the count is always the total. Both are absent when nothing was skipped — the only case in
+	// which Backlinks is the whole truth.
 	SkippedDocumentCount int               `json:"skipped_document_count,omitempty"`
 	SkippedDocuments     []SkippedDocument `json:"skipped_documents,omitempty"`
 }
 
-// DocumentListOutput is the shared payload of every list-shaped tool: list_articles,
-// list_agent_memories, list_agent_plans, and list_agent_skills. One shape for all four means an
-// agent learns to read a NexWiki listing once.
+// DocumentListOutput is the shared payload of the legacy list-shaped tools: list_agent_memories,
+// list_agent_plans, and list_agent_skills. search_wiki's index mode carries the same fields
+// (count, documents, next_cursor) inside SearchOutput, so an agent reads a listing the same way.
 type DocumentListOutput struct {
 	Count      int       `json:"count"`
 	Documents  []Article `json:"documents"`
 	NextCursor string    `json:"next_cursor,omitempty"`
 }
 
-// SkippedDocument is one entry a backlink scan left out, as the two tools that answer backlink
-// questions report it: a file the scan could not read or parse, or a directory it could not list
+// SkippedDocument is one entry a backlink scan left out, as read_article and delete_article
+// report it: a file the scan could not read or parse, or a directory it could not list
 // (reason "unreadable"), or a document not stored as <slug>.md directly in the article directory
 // (reason "misplaced"). An unreadable entry may link to the target and the scan cannot say; a
 // misplaced one links to it but is no backlink. The indicator exists so "no articles link to
@@ -105,28 +120,13 @@ type SkippedDocument struct {
 	Reason string `json:"reason"`         // "unreadable" or "misplaced"
 }
 
-// BacklinksOutput is the `get_backlinks` payload.
-type BacklinksOutput struct {
-	Slug      string    `json:"slug"`
-	Count     int       `json:"count"`
-	Backlinks []Article `json:"backlinks"`
-	// SkippedDocumentCount is how many entries the scan skipped: unreadable files and
-	// directories plus the misplaced documents that link to the target. Any of them may hold an
-	// inbound link the list does not show, so a nonzero count means Count is a lower bound, not
-	// the answer. SkippedDocuments lists the first maxSkippedDocuments of them, sorted by path;
-	// the count is always the total. Both are absent when nothing was skipped — the only case in
-	// which Count is the whole truth.
-	SkippedDocumentCount int               `json:"skipped_document_count,omitempty"`
-	SkippedDocuments     []SkippedDocument `json:"skipped_documents,omitempty"`
-}
-
 // maxSkippedDocuments caps skipped_documents: the indicator's job is to say the backlink list may
 // be incomplete, not to repeat wiki_health's full report, and the count carries the total anyway.
 const maxSkippedDocuments = 20
 
 // skippedDocuments turns a backlink scan's skipped entries into the capped skipped_documents list
-// both backlink-answering tools publish. Sorted by path, like every health report, so two runs of
-// the same wiki diff clean.
+// read_article publishes and delete_article's refusal names. Sorted by path, like every health
+// report, so two runs of the same wiki diff clean.
 func skippedDocuments(scan backlinkScan) []SkippedDocument {
 	if len(scan.unreadable) == 0 && len(scan.misplaced) == 0 {
 		return nil
@@ -145,16 +145,15 @@ func skippedDocuments(scan backlinkScan) []SkippedDocument {
 	return skipped
 }
 
-// skippedDocumentCount is the total the indicator reports. One helper, because get_backlinks and
-// read_article must never disagree about the number.
+// skippedDocumentCount is the total the indicator reports. One helper, because read_article and
+// delete_article must never disagree about the number.
 func skippedDocumentCount(scan backlinkScan) int {
 	return len(scan.unreadable) + len(scan.misplaced)
 }
 
-// skippedDocumentsNote is the prose half of the indicator: the line get_backlinks and read_article
-// append when their scan skipped entries, so a text-only client gets the same warning the
-// structured payload carries, with the pointer to wiki_health's full detail. Empty when nothing
-// was skipped.
+// skippedDocumentsNote is the prose half of the indicator: the line read_article appends when its
+// scan skipped entries, so a text-only client gets the same warning the structured payload
+// carries, with the pointer to wiki_health's full detail. Empty when nothing was skipped.
 func skippedDocumentsNote(scan backlinkScan) string {
 	var parts []string
 	if n := len(scan.unreadable); n > 0 {
@@ -167,6 +166,25 @@ func skippedDocumentsNote(scan backlinkScan) string {
 		return ""
 	}
 	return fmt.Sprintf("Note: the backlink scan skipped %s that may link to this page; wiki_health lists them in detail.", strings.Join(parts, " and "))
+}
+
+// skippedDocumentsList renders skippedDocuments as one "- path (reason)" line per entry, for prose
+// that must name the entries rather than count them: delete_article's refusal, where the agent
+// has to decide about each one. The cap and its total match the structured indicator.
+func skippedDocumentsList(scan backlinkScan) string {
+	skipped := skippedDocuments(scan)
+	lines := make([]string, 0, len(skipped)+1)
+	for _, d := range skipped {
+		line := fmt.Sprintf("- %s (%s", d.Path, d.Reason)
+		if d.Slug != "" {
+			line += ", slug " + d.Slug
+		}
+		lines = append(lines, line+")")
+	}
+	if more := skippedDocumentCount(scan) - len(skipped); more > 0 {
+		lines = append(lines, fmt.Sprintf("- and %d more; wiki_health lists them all", more))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // RevisionRef is one entry in an article's revision history. Deliberately not a full Article:
@@ -369,22 +387,25 @@ func searchOutputSchema() map[string]interface{} {
 	}, "title", "slug", "type", "score", "timestamp")
 
 	return schemaObject(map[string]interface{}{
-		"query":            schemaOf("string", "The query that was run."),
-		"count":            schemaOf("integer", "Number of results returned."),
-		"type":             schemaStringArray("Document types the search was restricted to; absent when unrestricted."),
+		"query":            schemaOf("string", "The query that was run; absent in index mode."),
+		"count":            schemaOf("integer", "Matches across all pages, not just this one. A search counts within its 200 best-scoring hits."),
+		"type":             schemaStringArray("Document types the results were restricted to; absent when unrestricted."),
 		"tags":             schemaStringArray("Tags every result was required to carry; absent when unfiltered."),
-		"memory_kind":      schemaOf("string", "Memory kind the search was narrowed to; absent when unfiltered."),
+		"status":           schemaOf("string", "Lifecycle status the results were narrowed to; absent when unfiltered."),
+		"memory_kind":      schemaOf("string", "Memory kind the results were narrowed to; absent when unfiltered."),
 		"include_archived": schemaOf("boolean", "Whether archived documents were included."),
-		"results":          schemaArrayOf(hit, "Matches, highest scoring first."),
+		"results":          schemaArrayOf(hit, "Search mode only: this page of matches, highest scoring first."),
+		"documents":        schemaArrayOf(articleSchema(false), "Index mode only: this page of documents, most recently updated first."),
+		"next_cursor":      schemaOf("string", "Pass as 'cursor' for the next page; absent on the last page."),
 		"include_history":  schemaOf("boolean", "Whether every stored revision was also scanned; absent when it was not."),
 		"history_matches": schemaArrayOf(schemaObject(map[string]interface{}{
 			"slug":    schemaOf("string", "Slug of the document the revision belongs to."),
 			"title":   schemaOf("string", "The document's current title (a revision's own title is not repeated)."),
 			"version": schemaOf("integer", "Revision number; pass it to read_article(version) to inspect it."),
 			"current": schemaOf("boolean", "True when this revision is the live document, false for an earlier revision in history."),
-		}, "slug", "title", "version", "current"), "Present only with include_history: every stored revision whose whole file (front matter included) contains the query as a case-insensitive literal substring, sorted by slug then version. Not narrowed by type, tag, or archived filters. Empty means no revision anywhere contains it."),
+		}, "slug", "title", "version", "current"), "Present only with include_history: every stored revision whose whole file (front matter included) contains the query as a case-insensitive literal substring, sorted by slug then version. Not narrowed by any filter. Empty means no revision anywhere contains it."),
 		"history_match_count": schemaOf("integer", "Total history matches before the list was capped; absent when there were none or include_history was not set."),
-	}, "query", "count", "results")
+	}, "count", "include_archived")
 }
 
 func articleOutputSchema() map[string]interface{} {
@@ -394,7 +415,7 @@ func articleOutputSchema() map[string]interface{} {
 		// stay at articleSchema(false) — a listing is metadata, and a structured index that
 		// inlined every body would be unusable.
 		"article":                articleSchema(true),
-		"backlinks":              schemaArrayOf(documentLinkSchema(), "Documents whose body links here via a WikiLink."),
+		"backlinks":              schemaArrayOf(documentLinkSchema(), "Every document whose body links here, in either internal link form: [[WikiLink]] or [text](/articles/<slug>). Self-links are not listed."),
 		"skipped_document_count": schemaOf("integer", "Entries the backlink scan skipped: unreadable files and directories it could not read or list, plus misplaced documents that link to this page. Any of them may hold an inbound link backlinks does not show. Absent when nothing was skipped; wiki_health lists every entry in full."),
 		"skipped_documents":      schemaArrayOf(skippedDocumentSchema(), "The first skipped entries, up to 20, sorted by path; skipped_document_count is the total. Absent when nothing was skipped."),
 	}, "article", "backlinks")
@@ -408,8 +429,7 @@ func documentListOutputSchema(documentsDescription string) map[string]interface{
 	}, "count", "documents")
 }
 
-// skippedDocumentSchema describes one SkippedDocument. get_backlinks and read_article both publish
-// the skipped-entries indicator, and one builder keeps the two wordings from drifting — the same
+// skippedDocumentSchema describes one SkippedDocument, kept in its own builder for the same
 // reasoning that gave brokenLinkSchema its single home.
 func skippedDocumentSchema() map[string]interface{} {
 	return schemaObject(map[string]interface{}{
@@ -417,16 +437,6 @@ func skippedDocumentSchema() map[string]interface{} {
 		"slug":   schemaOf("string", "The document's slug, declared in its front matter or derived from its title. Present only on misplaced entries; an unreadable file has no slug to report."),
 		"reason": schemaOf("string", "Why the scan skipped it: 'unreadable' (could not be read, parsed, or listed) or 'misplaced' (not stored as <slug>.md directly in the article directory)."),
 	}, "path", "reason")
-}
-
-func backlinksOutputSchema() map[string]interface{} {
-	return schemaObject(map[string]interface{}{
-		"slug":                   schemaOf("string", "The slug whose inbound links were requested."),
-		"count":                  schemaOf("integer", "Number of inbound links found."),
-		"backlinks":              schemaArrayOf(articleSchema(false), "Documents linking to the target, most recently updated first."),
-		"skipped_document_count": schemaOf("integer", "Entries the scan skipped: unreadable files and directories it could not read or list, plus misplaced documents that link to the target. Any of them may hold an inbound link backlinks does not show, so a nonzero count means count is a lower bound. Absent when nothing was skipped; wiki_health lists every entry in full."),
-		"skipped_documents":      schemaArrayOf(skippedDocumentSchema(), "The first skipped entries, up to 20, sorted by path; skipped_document_count is the total. Absent when nothing was skipped."),
-	}, "slug", "count", "backlinks")
 }
 
 func historyOutputSchema() map[string]interface{} {
@@ -502,7 +512,9 @@ func activityOutputSchema() map[string]interface{} {
 // hundred documents was close to a million characters — for the call every session is told to
 // make first. Every field here is either a fixed-size summary or a list capped at
 // maxOverviewEntries, so the payload does not grow with the wiki. The full listing is
-// list_articles' job, and NextSteps says so.
+// search_wiki's job (without a query), and NextSteps says so. Link-graph statistics (broken
+// links, unreadable and misplaced files) are not here either: they cost a full scan, and
+// wiki_health reports the same scan with the lists attached.
 type OverviewOutput struct {
 	TotalArticles int            `json:"total_articles"`
 	Counts        OverviewCounts `json:"counts"`
@@ -518,10 +530,9 @@ type OverviewOutput struct {
 	ActivePlans     []OverviewPlan    `json:"active_plans"`
 	ActivePlanTotal int               `json:"active_plan_total"`
 	RecentActivity  []LogEvent        `json:"recent_activity"`
-	Statistics      *StatisticsOutput `json:"statistics,omitempty"`
 	StatusTags      *StatusTagsOutput `json:"status_tags,omitempty"`
-	// NextSteps tells the agent where the rest of the wiki is: list_articles for the full index,
-	// search_wiki for a topic.
+	// NextSteps tells the agent where the rest of the wiki is: search_wiki without a query for the
+	// full index, and with one for a topic.
 	NextSteps string `json:"next_steps"`
 }
 
@@ -609,8 +620,7 @@ func overviewOutputSchema() map[string]interface{} {
 		"active_plans":        schemaArrayOf(plan, fmt.Sprintf("Plans with status 'implementing' or 'blocked', newest-updated first, at most %d.", maxOverviewEntries)),
 		"active_plan_total":   schemaOf("integer", "Number of active plans before the cap."),
 		"recent_activity":     schemaArrayOf(event, "Recent activity events within the 'since' window, oldest first, at most 20."),
-		"statistics":          statisticsOutputSchema(),
 		"status_tags":         statusTagsOutputSchema(),
-		"next_steps":          schemaOf("string", "Where to go next: list_articles for the full document index, search_wiki for a topic, read_article for an entry."),
+		"next_steps":          schemaOf("string", "Where to go next: search_wiki without a query for the full document index, with one for a topic, read_article for an entry."),
 	}, "total_articles", "counts", "plan_status_counts", "pinned_memories", "pinned_memory_total", "active_plans", "active_plan_total", "recent_activity", "next_steps")
 }

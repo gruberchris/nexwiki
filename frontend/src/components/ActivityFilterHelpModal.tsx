@@ -64,13 +64,16 @@ export function ActivityFilterHelpModal({ onClose }: ActivityFilterHelpModalProp
             <div className="space-y-1.5">
               <Row code="AI && create" desc='Show creations made by the "AI Agent"' />
               <Row code="User !delete" desc="User activity excluding deletions" />
-              <Row code="mcp !list_articles" desc="MCP activity excluding list operations" />
+              <Row code="mcp !search_wiki" desc="MCP activity excluding searches and index listings" />
             </div>
           </div>
         </div>
 
         <p className="text-[10px] text-themeTextMuted pt-1 border-t border-themeBorder">
           Filters match against actions, sources, tools, slugs, titles, and agents. Operators are case-insensitive.
+          Older events keep the tool name they were logged with. Retired tools such as list_articles
+          (now search_wiki without a query) and get_backlinks (now part of read_article) no longer
+          log new events, but filtering by those names still matches older events.
         </p>
       </div>
     </div>

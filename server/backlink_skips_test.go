@@ -37,25 +37,26 @@ func newBacklinkSkipFixture(t *testing.T) *Server {
 	return srv
 }
 
-// TestGetBacklinksReportsSkippedEntries pins the #162 indicator on get_backlinks: the unreadable
-// and misplaced entries the scan could not count as backlinks are reported beside the list, with
-// a count that matches the scan and entries that carry a reason.
-func TestGetBacklinksReportsSkippedEntries(t *testing.T) {
+// TestReadArticleReportsSkippedEntries pins the #162 indicator on read_article, the tool that
+// answers "what links here" since get_backlinks was retired: the unreadable and misplaced entries
+// the scan could not count as backlinks are reported beside the list, in the structured output and
+// the prose, with a count that matches the scan and entries that carry a reason.
+func TestReadArticleReportsSkippedEntries(t *testing.T) {
 	srv := newBacklinkSkipFixture(t)
 
-	resp := toolCall(t, srv, `{"name":"get_backlinks","arguments":{"slug":"hub-page"}}`)
-	if resp.IsError {
-		t.Fatalf("get_backlinks failed: %s", resp.Content[0].Text)
+	read := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"hub-page"}}`)
+	if read.IsError {
+		t.Fatalf("read_article failed: %s", read.Content[0].Text)
 	}
-	var out BacklinksOutput
-	decodeStructured(t, resp, &out)
+	var out ArticleOutput
+	decodeStructured(t, read, &out)
 
 	// The readable referrer is still a backlink; the skips are reported beside it, not instead.
-	if out.Count != 1 || len(out.Backlinks) != 1 || out.Backlinks[0].Slug != "spoke" {
-		t.Errorf("backlinks = %d %+v, want one from spoke", out.Count, out.Backlinks)
+	if len(out.Backlinks) != 1 || out.Backlinks[0].Slug != "spoke" {
+		t.Errorf("backlinks = %+v, want one from spoke", out.Backlinks)
 	}
 
-	// The count matches what the scan itself recorded.
+	// The count matches what the scan itself recorded, and the list is the helpers' own.
 	scan, err := srv.Storage.scanBacklinks("hub-page")
 	if err != nil {
 		t.Fatalf("scanBacklinks failed: %v", err)
@@ -65,6 +66,9 @@ func TestGetBacklinksReportsSkippedEntries(t *testing.T) {
 	}
 	if want := skippedDocumentCount(scan); out.SkippedDocumentCount != want {
 		t.Errorf("skipped_document_count = %d, want %d", out.SkippedDocumentCount, want)
+	}
+	if want := skippedDocuments(scan); !reflect.DeepEqual(out.SkippedDocuments, want) {
+		t.Errorf("skipped_documents = %+v, the helper built %+v", out.SkippedDocuments, want)
 	}
 
 	// The entries carry their reason, sorted by path: broken.md before linker-copy.md.
@@ -78,42 +82,14 @@ func TestGetBacklinksReportsSkippedEntries(t *testing.T) {
 		t.Errorf("misplaced entry = %+v, want path linker-copy.md, reason misplaced, slug hub-linker", out.SkippedDocuments[1])
 	}
 
-	// The prose says it too, and points where the detail lives.
-	if !strings.Contains(resp.Content[0].Text, "Note: the backlink scan skipped 1 unreadable entry and 1 misplaced document") ||
-		!strings.Contains(resp.Content[0].Text, "wiki_health lists them in detail") {
-		t.Errorf("prose missing the skipped-entries note: %s", resp.Content[0].Text)
-	}
-}
-
-// TestReadArticleReportsSkippedEntries pins the same indicator on read_article: the same list
-// get_backlinks carries, inside the read's structured output and its prose.
-func TestReadArticleReportsSkippedEntries(t *testing.T) {
-	srv := newBacklinkSkipFixture(t)
-
-	read := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"hub-page"}}`)
-	if read.IsError {
-		t.Fatalf("read_article failed: %s", read.Content[0].Text)
-	}
-	var out ArticleOutput
-	decodeStructured(t, read, &out)
-
-	if out.SkippedDocumentCount != 2 || len(out.SkippedDocuments) != 2 {
-		t.Fatalf("skipped indicator = %d %+v, want both skipped entries", out.SkippedDocumentCount, out.SkippedDocuments)
-	}
-	// The note rides in the Linked from block when there is one to ride in.
+	// The note rides in the Linked from block when there is one to ride in, and points where the
+	// detail lives.
 	if !strings.Contains(read.Content[0].Text, "Linked from: Spoke (spoke)") {
 		t.Errorf("read_article missing Linked from section: %s", read.Content[0].Text)
 	}
-	if !strings.Contains(read.Content[0].Text, "Note: the backlink scan skipped 1 unreadable entry and 1 misplaced document") {
+	if !strings.Contains(read.Content[0].Text, "Note: the backlink scan skipped 1 unreadable entry and 1 misplaced document") ||
+		!strings.Contains(read.Content[0].Text, "wiki_health lists them in detail") {
 		t.Errorf("read_article missing the skipped-entries note: %s", read.Content[0].Text)
-	}
-
-	// The same list get_backlinks reports, built by the same helpers.
-	bl := toolCall(t, srv, `{"name":"get_backlinks","arguments":{"slug":"hub-page"}}`)
-	var blOut BacklinksOutput
-	decodeStructured(t, bl, &blOut)
-	if !reflect.DeepEqual(out.SkippedDocuments, blOut.SkippedDocuments) {
-		t.Errorf("read_article skipped_documents = %+v, get_backlinks reported %+v", out.SkippedDocuments, blOut.SkippedDocuments)
 	}
 
 	// An article with no readable backlinks still gets the indicator — that is the case the
@@ -137,10 +113,10 @@ func TestReadArticleReportsSkippedEntries(t *testing.T) {
 	}
 }
 
-// TestBacklinkToolsOmitSkippedIndicatorOnCleanCorpus pins the other half of the contract: on a
+// TestReadArticleOmitsSkippedIndicatorOnCleanCorpus pins the other half of the contract: on a
 // corpus with nothing skipped, the indicator is absent, not zero-filled, so a clean wiki's
 // responses are byte-for-byte what they always were.
-func TestBacklinkToolsOmitSkippedIndicatorOnCleanCorpus(t *testing.T) {
+func TestReadArticleOmitsSkippedIndicatorOnCleanCorpus(t *testing.T) {
 	srv := newMCPServer(t)
 	for _, doc := range []struct{ title, body string }{
 		{"Hub Page", "# Hub"},
@@ -152,7 +128,6 @@ func TestBacklinkToolsOmitSkippedIndicatorOnCleanCorpus(t *testing.T) {
 	}
 
 	for _, call := range []string{
-		`{"name":"get_backlinks","arguments":{"slug":"hub-page"}}`,
 		`{"name":"read_article","arguments":{"slug":"hub-page"}}`,
 		`{"name":"read_article","arguments":{"slug":"spoke"}}`,
 	} {
@@ -187,11 +162,11 @@ func TestBacklinksSkippedEntriesAreCapped(t *testing.T) {
 			[]byte("---\ntitle: [unclosed\n---\nLinks [[Hub Page]]\n"), old)
 	}
 
-	resp := toolCall(t, srv, `{"name":"get_backlinks","arguments":{"slug":"hub-page"}}`)
+	resp := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"hub-page"}}`)
 	if resp.IsError {
-		t.Fatalf("get_backlinks failed: %s", resp.Content[0].Text)
+		t.Fatalf("read_article failed: %s", resp.Content[0].Text)
 	}
-	var out BacklinksOutput
+	var out ArticleOutput
 	decodeStructured(t, resp, &out)
 
 	if want := maxSkippedDocuments + 5; out.SkippedDocumentCount != want {

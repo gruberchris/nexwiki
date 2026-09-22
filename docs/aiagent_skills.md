@@ -8,7 +8,7 @@ This guide details what AI skills are, how to manage them inside NexWiki, how th
 
 ## ⚠️ Before You Start: Skills Are Procedures, Not Standing Rules
 
-A skill is loaded when an agent looks for it — through `search_wiki`, `list_articles(type: "skills")`, or a link from another document. Nothing makes an agent read a particular skill at session start. Rules you want applied to **every** task belong in `feedback` and `user` memories instead, which `get_wiki_overview` returns as `pinned_memories` at the start of every session.
+A skill is loaded when an agent looks for it — through `search_wiki` (with a query, or `search_wiki(type: "skills")` to list them all), or a link from another document. Nothing makes an agent read a particular skill at session start. Rules you want applied to **every** task belong in `feedback` and `user` memories instead, which `get_wiki_overview` returns as `pinned_memories` at the start of every session.
 
 See **[AI Agent Integration Guide](agent_integration_guide.md)** → *Writing Good Operator Memories* for what to pin and what to leave to a skill.
 
@@ -48,14 +48,11 @@ When viewing any page registered as an AI skill, NexWiki renders a beautiful, gl
 
 ## 🔍 How AI Skills Interact with Search
 
-To keep your standard wiki searches focused, **AI skills do not appear in standard wiki search results by default.** Search returns only documents of type `Wiki`, so skills are filtered out alongside AI Memories and Plans.
+**AI skills appear in search results alongside every other document type.** Search spans every type by default — wiki articles, AI Memories, Plans, and skills — in both the browser search view (`GET /api/search`) and the MCP `search_wiki` tool. The `GET /api/search` response and `search_wiki` output carry each result's document type; the browser results view does not display it.
 
-However, NexWiki includes a smart **Explicit Search Bypass** rule:
-If you are explicitly looking for a skill, it will appear in your search results *only* if:
-1. Your search query contains `aiagent` or `ai-agent` (e.g. `ai-agent docker`). This opts **every** agent-typed document — skills, plans, and memories — back into the results.
-2. Your search query matches the skill's **title** or **slug** (e.g. `docker-clean`).
+To narrow a search to skills only, pass a type filter to the MCP tool: `search_wiki(query: "docker", type: "skills")`. The browser search view has no type filter; it always searches everything.
 
-You can also enumerate skills directly, bypassing search entirely, with the `list_articles(type: "skills")` MCP tool or `GET /api/skills`.
+You can also enumerate skills directly, bypassing search entirely, with `search_wiki(type: "skills")` — no query — or `GET /api/skills`.
 
 ---
 

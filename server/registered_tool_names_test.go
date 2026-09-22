@@ -11,17 +11,20 @@ import (
 	"testing"
 )
 
-// unregisteredToolNames are tool names NexWiki once exposed and still defines as dead handlers,
-// but no longer registers. An agent told to call one gets "tool not found" — or, worse, reaches
-// for save_article without the arguments the instruction assumed. Connect-time instructions, a
+// unregisteredToolNames are tool names NexWiki once exposed but no longer registers; most are
+// still defined as dead handlers, while get_backlinks and list_articles were removed outright
+// (read_article lists every backlink, and delete_article refuses while any exist unless
+// break_links is true; search_wiki without a query is the document index). An
+// agent told to call one gets "tool not found" — or, worse, reaches for save_article without the
+// arguments the instruction assumed. Connect-time instructions, a
 // since-retired seeded instructions page, and the bundled skill used to name eighteen of them.
 var unregisteredToolNames = []string{
 	"append_agent_memory", "append_agent_plan", "create_agent_memory", "create_agent_plan",
 	"create_agent_skill", "create_wiki_article", "delete_agent_memory", "delete_wiki_article",
 	"edit_agent_memory", "edit_agent_plan", "edit_agent_skill", "edit_wiki_article",
-	"export_okf_bundle", "get_article_history", "get_context_overview", "get_recent_activity",
+	"export_okf_bundle", "get_article_history", "get_backlinks", "get_context_overview", "get_recent_activity",
 	"get_status_tags", "get_wiki_statistics", "import_okf_bundle", "list_agent_memories",
-	"list_agent_plans", "list_agent_skills", "revert_article_version", "update_article_tags",
+	"list_agent_plans", "list_agent_skills", "list_articles", "revert_article_version", "update_article_tags",
 }
 
 // toolShapedName matches an identifier that reads like a tool call: an imperative verb, then an

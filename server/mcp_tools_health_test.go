@@ -173,6 +173,10 @@ func TestWikiHealthFindsEachCategory(t *testing.T) {
 		if !found {
 			t.Errorf("the seeded broken link is missing: %+v", out.BrokenLinks)
 		}
+		// The fixture is well under the default limit, so the list is complete.
+		if out.BrokenLinkCount != len(out.BrokenLinks) {
+			t.Errorf("broken_link_count %d disagrees with %d entries", out.BrokenLinkCount, len(out.BrokenLinks))
+		}
 	})
 
 	t.Run("memories missing provenance", func(t *testing.T) {
@@ -276,6 +280,56 @@ func TestWikiHealthProseMatchesStructure(t *testing.T) {
 			t.Errorf("prose is missing %q:\n%s", want, text)
 		}
 	}
+}
+
+// TestWikiHealthReportsTotalLinks pins total_links, which moved here when get_wiki_overview lost
+// include_stats. It is graph.TotalLinks, the number the overview's statistics reported: every
+// internal link scanned, in either form, broken ones included.
+func TestWikiHealthReportsTotalLinks(t *testing.T) {
+	srv := newMCPServer(t)
+	health := func() (HealthOutput, ToolResponse) {
+		t.Helper()
+		resp := toolCall(t, srv, `{"name":"wiki_health","arguments":{}}`)
+		if resp.IsError {
+			t.Fatalf("wiki_health failed: %s", resp.Content[0].Text)
+		}
+		var out HealthOutput
+		decodeStructured(t, resp, &out)
+		return out, resp
+	}
+
+	// The seeded home dashboard carries links of its own; count only what the test adds.
+	before, _ := health()
+
+	seed := func(title, content string) {
+		if _, err := srv.Storage.SaveArticle("", title, content, "", "", "", "seed", nil, ""); err != nil {
+			t.Fatalf("seeding %q failed: %v", title, err)
+		}
+	}
+	seed("Target Page", "# Target")
+	seed("Linker", "A WikiLink, [[Target Page]], and a Markdown link, [the target](/articles/target-page).")
+	seed("Dangler", "Points nowhere: [gone](/articles/no-such-page).")
+
+	out, resp := health()
+	if got, want := out.TotalLinks, before.TotalLinks+3; got != want {
+		t.Errorf("total_links = %d, want %d (one live link in each form plus one broken)", got, want)
+	}
+	if got, want := out.BrokenLinkCount, before.BrokenLinkCount+1; got != want {
+		t.Errorf("broken_link_count = %d, want %d", got, want)
+	}
+
+	graph, err := srv.Storage.ScanLinkGraph()
+	if err != nil {
+		t.Fatalf("ScanLinkGraph failed: %v", err)
+	}
+	if out.TotalLinks != graph.TotalLinks {
+		t.Errorf("total_links = %d, want graph.TotalLinks = %d", out.TotalLinks, graph.TotalLinks)
+	}
+	if want := "Internal links scanned: " + itoa(out.TotalLinks) + "\n"; strings.Count(resp.Content[0].Text, "Internal links scanned: ") != 1 ||
+		!strings.Contains(resp.Content[0].Text, want) {
+		t.Errorf("prose should show %q once:\n%s", want, resp.Content[0].Text)
+	}
+	assertMatchesOutputSchema(t, resp, wikiHealthTool.Output)
 }
 
 func itoa(n int) string {
@@ -416,7 +470,7 @@ func TestScanLinkGraphCountsMarkdownLinks(t *testing.T) {
 		t.Errorf("Display() = %q — a Markdown link rendered as [[…]] sends the author looking for text that is not in the file", got)
 	}
 
-	// 3. get_backlinks sees it too; agents run it before a rename.
+	// 3. The backlink scan sees it too; read_article lists it, and agents read a page before a rename.
 	backlinks, err := srv.Storage.GetBacklinks("target-page")
 	if err != nil {
 		t.Fatalf("GetBacklinks failed: %v", err)
@@ -801,43 +855,30 @@ func TestWikiHealthCapsUnreadableFiles(t *testing.T) {
 	}
 }
 
-// TestWikiStatisticsCountsUnreadableFiles pins that get_wiki_statistics reports the number
-// wiki_health does. Both count with ScanLinkGraph, and two tools disagreeing about the same wiki
-// would leave an agent unsure which to believe.
-func TestWikiStatisticsCountsUnreadableFiles(t *testing.T) {
+// TestWikiHealthCountsUnreadableFiles pins the unreadable count across the article tree: a broken
+// file at the top level and one in a subfolder both count, and a clean wiki counts none.
+func TestWikiHealthCountsUnreadableFiles(t *testing.T) {
 	srv := newMCPServer(t)
 	captureLog(t)
 
-	stats := func() (StatisticsOutput, ToolResponse) {
-		t.Helper()
-		resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`)
-		var out OverviewOutput
-		decodeStructured(t, resp, &out)
-		if out.Statistics == nil {
-			t.Fatalf("expected Statistics in overview")
-		}
-		return *out.Statistics, resp
-	}
-
-	clean, resp := stats()
-	if clean.UnreadableFileCount != 0 || strings.Contains(resp.Content[0].Text, "Issues:") {
-		t.Errorf("a clean wiki should report 0 unreadable files, got %d:\n%s", clean.UnreadableFileCount, resp.Content[0].Text)
+	if clean := healthReport(t, srv, `{}`); clean.UnreadableFileCount != 0 {
+		t.Errorf("a clean wiki should report 0 unreadable files, got %d", clean.UnreadableFileCount)
 	}
 
 	writeBrokenArticle(t, srv, "one.md")
 	writeBrokenArticle(t, srv, "nested/two.md")
 
-	got, resp := stats()
-	health := healthReport(t, srv, `{}`)
-	if got.UnreadableFileCount != 2 || got.UnreadableFileCount != health.UnreadableFileCount {
-		t.Errorf("get_wiki_overview reports %d unreadable files, wiki_health %d; want 2 from both",
-			got.UnreadableFileCount, health.UnreadableFileCount)
+	resp := toolCall(t, srv, `{"name":"wiki_health","arguments":{}}`)
+	var got HealthOutput
+	decodeStructured(t, resp, &got)
+	if got.UnreadableFileCount != 2 {
+		t.Errorf("wiki_health reports %d unreadable files, want 2", got.UnreadableFileCount)
 	}
-	if !strings.Contains(resp.Content[0].Text, "Issues: 2 unreadable files/dirs") {
+	if !strings.Contains(resp.Content[0].Text, "Unreadable article files and folders (skipped by every check): 2") {
 		t.Errorf("prose is missing unreadable count:\n%s", resp.Content[0].Text)
 	}
 
-	assertMatchesOutputSchema(t, resp, getWikiOverviewTool.Output)
+	assertMatchesOutputSchema(t, resp, wikiHealthTool.Output)
 }
 
 // TestUnreadableForClientHidesDataDir pins that an error handed to an MCP client names paths
@@ -1053,7 +1094,7 @@ func TestWikiHealthUnreadableErrorHidesDataDir(t *testing.T) {
 
 // TestWikiHealthReportsUnreadableDirectory pins how a folder the scan cannot list reaches a client:
 // one entry whose path ends in /, an error naming it without the server's path, a remedy that fits
-// a directory rather than a file, and a place in get_wiki_statistics' count.
+// a directory rather than a file, and a place in the unreadable count.
 func TestWikiHealthReportsUnreadableDirectory(t *testing.T) {
 	srv := newMCPServer(t)
 	captureLog(t)
@@ -1102,17 +1143,6 @@ func TestWikiHealthReportsUnreadableDirectory(t *testing.T) {
 		}
 	}
 	assertMatchesOutputSchema(t, resp, wikiHealthTool.Output)
-
-	statsResp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`)
-	var ov OverviewOutput
-	decodeStructured(t, statsResp, &ov)
-	if ov.Statistics == nil {
-		t.Fatalf("expected Statistics in overview")
-	}
-	if ov.Statistics.UnreadableFileCount != out.UnreadableFileCount {
-		t.Errorf("get_wiki_overview reports %d unreadable entries, wiki_health %d; the directory must count in both",
-			ov.Statistics.UnreadableFileCount, out.UnreadableFileCount)
-	}
 }
 
 // TestScanErrorsHideDataDir pins the error text of a scan that fails outright: when the article

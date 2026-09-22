@@ -12,7 +12,7 @@ import (
 // This file holds get_wiki_overview, the orientation call every agent session is told to make
 // first. Because every session pays for it, its response is bounded: counts, the memories that
 // apply to any task, the plans in flight, recent activity, and the status vocabularies. It is
-// not an index — list_articles lists documents, search_wiki finds them — and nothing in it grows
+// not an index — search_wiki lists documents without a query and finds them with one — and nothing in it grows
 // with the number of documents in the wiki.
 
 const (
@@ -30,24 +30,21 @@ const (
 // overviewNextSteps is the pointer to the rest of the wiki, carried in both the prose and the
 // structured output.
 const overviewNextSteps = "This overview does not list every document. For the full index call " +
-	"list_articles, filtered by type ('articles', 'memories', 'plans', 'skills'), status, or tag and " +
-	"paged with cursor. To find documents about a topic call search_wiki. Open any entry with read_article(slug)."
+	"search_wiki without a query, filtered by type ('articles', 'memories', 'plans', 'skills'), status, or tag and " +
+	"paged with cursor. To find documents about a topic give search_wiki a query. Open any entry with read_article(slug)."
 
 var getWikiOverviewTool = toolDef{
 	Schema: map[string]interface{}{
 		"name": "get_wiki_overview",
 		"description": "Session orientation in one bounded call: document counts by type and plan status, the user and feedback memories that apply to any task, the plans in flight (implementing or blocked), recent activity since a duration, and the status vocabularies. " +
-			"It does not list every document — use list_articles (type/status/tag filters, cursor paging) for the full index and search_wiki for a topic.",
+			"It does not list every document — search_wiki without a query is the full index (type/status/tag filters, cursor paging), and with one finds a topic. " +
+			"Broken links and other link-graph problems are wiki_health's job.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"since": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional filter for recent activity. Accepts a Go duration (e.g. '24h', '48h') or RFC3339 timestamp. Defaults to '48h'.",
-				},
-				"include_stats": map[string]interface{}{
-					"type":        "boolean",
-					"description": "Optional; set true to scan and include full link graph health and broken link statistics.",
 				},
 			},
 		},
@@ -59,8 +56,7 @@ var getWikiOverviewTool = toolDef{
 
 func (srv *Server) toolGetWikiOverview(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type OverviewArgs struct {
-		Since        string `json:"since"`
-		IncludeStats bool   `json:"include_stats"`
+		Since string `json:"since"`
 	}
 	var oArgs OverviewArgs
 	_ = json.Unmarshal(args, &oArgs)
@@ -91,27 +87,8 @@ func (srv *Server) toolGetWikiOverview(args json.RawMessage) (interface{}, *JSON
 		SkillStatusTags: SkillStatusTags,
 	}
 
-	// BrokenLinks is always a list: the output schema declares an array, and a nil slice would
-	// serialize as null whenever include_stats is off or no link is broken — which made every
-	// call fail schema validation in a strict client.
-	out.Statistics = &StatisticsOutput{
-		TotalArticles: len(articles),
-		BrokenLinks:   []BrokenLinkRef{},
-	}
-	if oArgs.IncludeStats {
-		if graph, gErr := srv.Storage.ScanLinkGraph(); gErr == nil {
-			out.Statistics.UnreadableFileCount = len(graph.Unreadable)
-			out.Statistics.MisplacedDocumentCount = len(graph.Misplaced)
-			out.Statistics.TotalLinks = graph.TotalLinks
-			out.Statistics.BrokenLinkCount = len(graph.Broken)
-			if graph.Broken != nil {
-				out.Statistics.BrokenLinks = graph.Broken
-			}
-		}
-	}
-
 	return ToolResponse{
-		Content:           []ToolContent{{Type: "text", Text: renderOverviewText(out, sinceStr, oArgs.IncludeStats)}},
+		Content:           []ToolContent{{Type: "text", Text: renderOverviewText(out, sinceStr)}},
 		StructuredContent: out,
 	}, nil
 }
@@ -253,7 +230,7 @@ func compactDescription(s string) string {
 
 // renderOverviewText renders the prose half of the overview from the same value the structured
 // output carries, so the two cannot disagree.
-func renderOverviewText(out OverviewOutput, sinceStr string, includeStats bool) string {
+func renderOverviewText(out OverviewOutput, sinceStr string) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "NexWiki Knowledge Base Overview (%d articles total)\n", out.TotalArticles)
@@ -290,7 +267,7 @@ func renderOverviewText(out OverviewOutput, sinceStr string, includeStats bool) 
 		b.WriteString("\n")
 	}
 	if out.PinnedMemoryTotal > len(out.PinnedMemories) {
-		fmt.Fprintf(&b, "%d more: list_articles(type: \"memories\") lists every memory.\n", out.PinnedMemoryTotal-len(out.PinnedMemories))
+		fmt.Fprintf(&b, "%d more: search_wiki(type: \"memories\") lists every memory.\n", out.PinnedMemoryTotal-len(out.PinnedMemories))
 	}
 	b.WriteString("\n")
 
@@ -309,7 +286,7 @@ func renderOverviewText(out OverviewOutput, sinceStr string, includeStats bool) 
 		fmt.Fprintf(&b, " (updated %s)\n", p.Timestamp.Format("2006-01-02"))
 	}
 	if out.ActivePlanTotal > len(out.ActivePlans) {
-		fmt.Fprintf(&b, "%d more: list_articles(type: \"plans\", status: \"implementing\") or (status: \"blocked\").\n", out.ActivePlanTotal-len(out.ActivePlans))
+		fmt.Fprintf(&b, "%d more: search_wiki(type: \"plans\", status: \"implementing\") or (status: \"blocked\").\n", out.ActivePlanTotal-len(out.ActivePlans))
 	}
 	b.WriteString("\n")
 
@@ -329,21 +306,6 @@ func renderOverviewText(out OverviewOutput, sinceStr string, includeStats bool) 
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
-
-	if includeStats && out.Statistics != nil {
-		stats := out.Statistics
-		b.WriteString("== Statistics ==\n")
-		fmt.Fprintf(&b, "- Total Articles: %d\n", stats.TotalArticles)
-		fmt.Fprintf(&b, "- Total Internal Links: %d\n", stats.TotalLinks)
-		fmt.Fprintf(&b, "- Broken Links: %d\n", stats.BrokenLinkCount)
-		for _, bl := range stats.BrokenLinks {
-			fmt.Fprintf(&b, "    * %s in %s (missing: %s)\n", bl.Display(), bl.FromSlug, bl.TargetSlug)
-		}
-		if stats.UnreadableFileCount > 0 || stats.MisplacedDocumentCount > 0 {
-			fmt.Fprintf(&b, "- Issues: %d unreadable files/dirs, %d misplaced docs\n", stats.UnreadableFileCount, stats.MisplacedDocumentCount)
-		}
-		b.WriteString("\n")
-	}
 
 	b.WriteString("== Next Steps ==\n")
 	b.WriteString(out.NextSteps + "\n")

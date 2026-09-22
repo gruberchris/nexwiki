@@ -79,7 +79,7 @@ On first launch, NexWiki automatically creates its data directory (`articles/`, 
 
 ## 🤖 Connecting AI Agents via MCP
 
-NexWiki contains an always-on Model Context Protocol (MCP) server exposing **9 built-in tools** for search, content retrieval, memory management, and agent planning.
+NexWiki contains an always-on Model Context Protocol (MCP) server exposing **7 built-in tools** for search, content retrieval, memory management, and agent planning.
 
 It implements the current **`2026-07-28`** MCP revision and the older `initialize`-based revisions on the same endpoint, so new and old clients work side by side with no configuration. Alongside tools it serves **resources** you can `@`-mention, **prompts**, **live subscriptions** over both transports, **cursor pagination**, and **argument completion** — type a few characters and your client completes the wiki page you meant. See [docs/mcp_server.md](./docs/mcp_server.md).
 
@@ -143,7 +143,7 @@ Explore in-depth technical manuals, architectural specifications, and workflow g
 
 - [User & Content Creation Guide](docs/user_guide.md) — Managing articles, trust signals, backlinks, and export options.
 - [Second Brain Workflow Guide](docs/second_brain_workflow_guide.md) — Orientation loop, progressive disclosure, and source ingestion.
-- [Model Context Protocol (MCP) Reference](docs/mcp_server.md) — Canonical reference for all 9 tools, annotations, and schemas.
+- [Model Context Protocol (MCP) Reference](docs/mcp_server.md) — Canonical reference for all 7 tools, annotations, and schemas.
 - [Agent Integration & SOP Guide](docs/agent_integration_guide.md) — Connect-time instructions, operator memories, and agent blueprints.
 - [Plan Lifecycle & State Machine Guide](docs/plan_lifecycle_guide.md) — Enforced plan statuses, auto-archiving, and retention timers.
 - [Open Knowledge Format (OKF v0.2) Guide](docs/okf_v02_guide.md) — Trust tiers, freshness expiration, and bundle import/export.

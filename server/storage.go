@@ -2291,21 +2291,11 @@ func (s *Storage) SearchArticlesWithOptions(queryStr string, opts SearchOptions)
 			snippets = frags
 		}
 
-		// Fallback snippet if Bleve returns empty fragments (extract first 150 characters).
-		// Bleve escapes the fragments it produces; this path must escape too, because the
-		// frontend renders snippets as raw HTML. Without it, an article body starting with
-		// <img src=x onerror=...> becomes stored XSS in the search dropdown.
-		if len(snippets) == 0 {
-			body := art.ContentPreview
-			if full, err := s.GetArticle(art.Slug); err == nil {
-				body = full.Content
-			}
-			runes := []rune(body)
-			limit := 150
-			if len(runes) < limit {
-				limit = len(runes)
-			}
-			snippets = []string{html.EscapeString(string(runes[:limit])) + "..."}
+		// Fallback snippet if Bleve returns empty fragments. A caller that pages the results
+		// itself skips it and fills it in for the page it returns: it costs a file read per
+		// hit, and nothing but the snippet depends on it.
+		if len(snippets) == 0 && !opts.skipFallbackSnippets {
+			snippets = s.fallbackSnippet(art.Slug, art.ContentPreview)
 		}
 
 		results = append(results, SearchResult{
@@ -2320,6 +2310,24 @@ func (s *Storage) SearchArticlesWithOptions(queryStr string, opts SearchOptions)
 	}
 
 	return results, nil
+}
+
+// fallbackSnippet is the snippet for a hit Bleve returned no fragments for: the first 150
+// characters of the body, or of preview when the full document cannot be read. Bleve escapes the
+// fragments it produces; this path must escape too, because the frontend renders snippets as raw
+// HTML. Without it, an article body starting with <img src=x onerror=...> becomes stored XSS in
+// the search dropdown.
+func (s *Storage) fallbackSnippet(slug, preview string) []string {
+	body := preview
+	if full, err := s.GetArticle(slug); err == nil {
+		body = full.Content
+	}
+	runes := []rune(body)
+	limit := 150
+	if len(runes) < limit {
+		limit = len(runes)
+	}
+	return []string{html.EscapeString(string(runes[:limit])) + "..."}
 }
 
 // Helpers for reading/writing Gzip files

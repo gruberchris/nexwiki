@@ -18,10 +18,10 @@ At the start of a session, or when picking up prior work:
    flight, recent activity, and `pinned_memories` — the operator's `user` and `feedback`
    memories. Those are the operator's standing preferences and corrections: follow them on
    every task, and where one conflicts with this skill, the memory wins.
-   The overview does not list every document: use `list_articles` (filter by `type`, `status`,
-   or `tag`) for the full index and `search_wiki` to find a topic.
+   The overview does not list every document: `search_wiki` without a `query` is the full
+   index (filter by `type`, `status`, or `tag`; page with `cursor`), and with one it finds a topic.
 
-Then `read_article` only the entries you actually need; `get_backlinks` follows related pages.
+Then `read_article` only the entries you actually need; its backlinks lead to related pages.
 Run each orientation call once: a search that finds nothing is an answer, not a reason to
 search again with reworded queries.
 
@@ -52,7 +52,7 @@ them in turn.
   `AI-Agent-Memory`) to a non-reserved one unless the user asks, and never strip a tool-managed
   `memory-<scope>` tag. Omitting `type` on an update keeps the current type. A document saved
   with the wrong type is fixed in place with `save_article` (its `slug`, `loaded_version`, and
-  the right `type`) — never by deleting and recreating it; confirm with `list_articles(type: …)`.
+  the right `type`) — never by deleting and recreating it; confirm with `search_wiki(type: …)`.
 - To remove text from a document's history (a name under embargo, personal details), rewrite it
   with `save_article(..., loaded_version, purge_history: true)`, then verify with
   `search_wiki(query, include_history: true)`. That keeps the document; `delete_article` does not —

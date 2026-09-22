@@ -122,5 +122,5 @@ Each change is logged to stderr with a per-document edit summary, and the sweep 
 
 * `get_wiki_overview` returns the plan and skill vocabularies in its structured output (`plan_status_tags`, `skill_status_tags`). No other document type has a status.
 * Create plans with `save_article(type: "AI-Agent-Plan")` (starts in `draft`, or pass `status`), move them with `save_article`'s `status` argument on an update (`slug` plus `loaded_version`; omitting `status` preserves it), and log progress with `append_article` (which never touches status or tags).
-* `list_articles(type: "plans", status: "implementing")` filters by state; `wiki_health` reports a per-state census of the whole plan corpus and exempts `parked`/`evergreen` plans from its staleness check.
+* `search_wiki(type: "plans", status: "implementing")` filters by state; `wiki_health` reports a per-state census of the whole plan corpus and exempts `parked`/`evergreen` plans from its staleness check.
 * Searching archived content: `search_wiki(tags: ["archived"])` or `include_archived: true` — an explicit `archived` tag facet implies inclusion.

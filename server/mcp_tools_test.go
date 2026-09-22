@@ -13,7 +13,7 @@ import (
 // the registry, the schema lived in one 760-line literal and the handler in a separate 1,180-line
 // switch, so adding a tool to one and forgetting the other compiled cleanly and shipped broken.
 func TestRegistryCoversEveryTool(t *testing.T) {
-	const expectedToolCount = 9
+	const expectedToolCount = 7
 
 	if len(mcpToolRegistry) != expectedToolCount {
 		t.Errorf("registry holds %d tools, expected %d — update the count in README.md, AGENTS.md, "+
@@ -222,7 +222,6 @@ func TestReadOnlyToolsCannotWrite(t *testing.T) {
 		"search_wiki":         `{"query":"body"}`,
 		"read_article":        fmt.Sprintf(`{"slug":%q}`, seed.Slug),
 		"get_article_history": fmt.Sprintf(`{"slug":%q}`, seed.Slug),
-		"get_backlinks":       fmt.Sprintf(`{"slug":%q}`, seed.Slug),
 		"get_recent_activity": `{"since":"24h"}`,
 	}
 

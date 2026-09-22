@@ -99,16 +99,14 @@ func TestWikiOverviewOnALargeCorpus(t *testing.T) {
 	t.Run("counts and caps", func(t *testing.T) {
 		checkOverviewCountsAndCaps(t, srv)
 	})
-	for _, stats := range []bool{false, true} {
-		t.Run(fmt.Sprintf("schema include_stats=%v", stats), func(t *testing.T) {
-			resp := toolCall(t, srv, fmt.Sprintf(`{"name":"get_wiki_overview","arguments":{"include_stats":%v}}`, stats))
-			assertMatchesOutputSchema(t, resp, toolsByName["get_wiki_overview"].Output)
-			encoded, _ := json.Marshal(resp.StructuredContent)
-			if strings.Contains(string(encoded), `"articles"`) {
-				t.Errorf("structured output still carries the removed articles field")
-			}
-		})
-	}
+	t.Run("schema", func(t *testing.T) {
+		resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`)
+		assertMatchesOutputSchema(t, resp, toolsByName["get_wiki_overview"].Output)
+		encoded, _ := json.Marshal(resp.StructuredContent)
+		if strings.Contains(string(encoded), `"articles"`) {
+			t.Errorf("structured output still carries the removed articles field")
+		}
+	})
 
 	first := overviewResponseSize(t, toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`))
 	seedOverviewBatch(t, srv, 2)
@@ -180,15 +178,15 @@ func checkOverviewCountsAndCaps(t *testing.T, srv *Server) {
 		"Plans by status: implementing 20 · blocked 10 · completed 10",
 		"== Pinned Memories (user and feedback: 30, showing 25) ==",
 		"== Active Plans (implementing or blocked: 30, showing 25) ==",
-		"list_articles",
+		"search_wiki without a query",
 		"search_wiki",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("prose is missing %q:\n%s", want, text)
 		}
 	}
-	if !strings.Contains(out.NextSteps, "list_articles") || !strings.Contains(out.NextSteps, "search_wiki") {
-		t.Errorf("next_steps must point at list_articles and search_wiki: %q", out.NextSteps)
+	if !strings.Contains(out.NextSteps, "search_wiki without a query") || !strings.Contains(out.NextSteps, "give search_wiki a query") {
+		t.Errorf("next_steps must point at search_wiki's index and its search: %q", out.NextSteps)
 	}
 	if !strings.Contains(text, out.NextSteps) {
 		t.Errorf("the prose must carry the same next_steps as the structured output")

@@ -34,17 +34,23 @@ func seedStructuredFixture(t *testing.T) *Server {
 	return srv
 }
 
-// structuredCalls pairs every tool that declares an outputSchema with a call that exercises it
-// against the fixture. A tool missing from this table is caught by
+// structuredCalls pairs every tool that declares an outputSchema with calls that exercise it
+// against the fixture — one per mode for a tool that has more than one, since each mode has to
+// satisfy the same published schema. A tool missing from this table is caught by
 // TestEveryDeclaredOutputSchemaIsCovered, so adding an Output without a test is not possible.
-func structuredCalls() map[string]string {
-	return map[string]string{
-		"search_wiki":       `{"name":"search_wiki","arguments":{"query":"bleve"}}`,
-		"read_article":      `{"name":"read_article","arguments":{"slug":"search-design"}}`,
-		"list_articles":     `{"name":"list_articles","arguments":{}}`,
-		"get_backlinks":     `{"name":"get_backlinks","arguments":{"slug":"search-design"}}`,
-		"get_wiki_overview": `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`,
-		"wiki_health":       `{"name":"wiki_health","arguments":{}}`,
+func structuredCalls() map[string][]string {
+	return map[string][]string{
+		"search_wiki": {
+			`{"name":"search_wiki","arguments":{"query":"bleve"}}`,
+			`{"name":"search_wiki","arguments":{"query":"bleve","limit":1}}`, // a page with next_cursor
+			`{"name":"search_wiki","arguments":{"query":"bleve","include_history":true}}`,
+			`{"name":"search_wiki","arguments":{}}`,          // index mode
+			`{"name":"search_wiki","arguments":{"limit":1}}`, // an index page with next_cursor
+			`{"name":"search_wiki","arguments":{"type":"memories","memory_kind":"project","include_archived":false}}`,
+		},
+		"read_article":      {`{"name":"read_article","arguments":{"slug":"search-design"}}`},
+		"get_wiki_overview": {`{"name":"get_wiki_overview","arguments":{}}`},
+		"wiki_health":       {`{"name":"wiki_health","arguments":{}}`},
 	}
 }
 
@@ -103,38 +109,40 @@ func TestOutputSchemasAreWellFormedObjects(t *testing.T) {
 func TestStructuredOutputMatchesSchema(t *testing.T) {
 	srv := seedStructuredFixture(t)
 
-	for name, call := range structuredCalls() {
-		t.Run(name, func(t *testing.T) {
-			tool, ok := toolsByName[name]
-			if !ok {
-				t.Fatalf("tool %q is not registered", name)
-			}
-			resp := toolCall(t, srv, call)
-			if resp.IsError {
-				t.Fatalf("tool returned an error: %s", resp.Content[0].Text)
-			}
-			if resp.StructuredContent == nil {
-				t.Fatal("tool declares an outputSchema but returned no structuredContent")
-			}
-			// The prose is still required: the spec asks for it, and clients predating
-			// structured output have nothing else to read.
-			if len(resp.Content) == 0 || strings.TrimSpace(resp.Content[0].Text) == "" {
-				t.Error("structured output must not replace the human-readable text content")
-			}
+	for name, calls := range structuredCalls() {
+		for i, call := range calls {
+			t.Run(fmt.Sprintf("%s/%d", name, i), func(t *testing.T) {
+				tool, ok := toolsByName[name]
+				if !ok {
+					t.Fatalf("tool %q is not registered", name)
+				}
+				resp := toolCall(t, srv, call)
+				if resp.IsError {
+					t.Fatalf("tool returned an error: %s", resp.Content[0].Text)
+				}
+				if resp.StructuredContent == nil {
+					t.Fatal("tool declares an outputSchema but returned no structuredContent")
+				}
+				// The prose is still required: the spec asks for it, and clients predating
+				// structured output have nothing else to read.
+				if len(resp.Content) == 0 || strings.TrimSpace(resp.Content[0].Text) == "" {
+					t.Error("structured output must not replace the human-readable text content")
+				}
 
-			// Validate the serialized form, which is what a client actually receives.
-			encoded, err := json.Marshal(resp.StructuredContent)
-			if err != nil {
-				t.Fatalf("structuredContent does not serialize: %v", err)
-			}
-			var decoded interface{}
-			if err := json.Unmarshal(encoded, &decoded); err != nil {
-				t.Fatalf("structuredContent does not round-trip: %v", err)
-			}
-			for _, problem := range validateAgainstSchema(decoded, tool.Output, "$") {
-				t.Error(problem)
-			}
-		})
+				// Validate the serialized form, which is what a client actually receives.
+				encoded, err := json.Marshal(resp.StructuredContent)
+				if err != nil {
+					t.Fatalf("structuredContent does not serialize: %v", err)
+				}
+				var decoded interface{}
+				if err := json.Unmarshal(encoded, &decoded); err != nil {
+					t.Fatalf("structuredContent does not round-trip: %v", err)
+				}
+				for _, problem := range validateAgainstSchema(decoded, tool.Output, "$") {
+					t.Error(problem)
+				}
+			})
+		}
 	}
 }
 
@@ -205,9 +213,9 @@ func TestStructuredOutputCarriesRealData(t *testing.T) {
 		}
 	})
 
-	t.Run("list_articles count matches the documents", func(t *testing.T) {
-		var out DocumentListOutput
-		decodeStructured(t, toolCall(t, srv, `{"name":"list_articles","arguments":{}}`), &out)
+	t.Run("search_wiki index count matches the documents", func(t *testing.T) {
+		var out SearchOutput
+		decodeStructured(t, toolCall(t, srv, `{"name":"search_wiki","arguments":{}}`), &out)
 		if out.Count != len(out.Documents) {
 			t.Errorf("count %d disagrees with %d documents", out.Count, len(out.Documents))
 		}
@@ -218,11 +226,11 @@ func TestStructuredOutputCarriesRealData(t *testing.T) {
 
 	t.Run("typed listings return only their own type", func(t *testing.T) {
 		for _, tc := range []struct{ call, wantType string }{
-			{`{"name":"list_articles","arguments":{"type":"memories"}}`, ContentTypeMemory},
-			{`{"name":"list_articles","arguments":{"type":"plans"}}`, ContentTypePlan},
-			{`{"name":"list_articles","arguments":{"type":"skills"}}`, ContentTypeSkill},
+			{`{"name":"search_wiki","arguments":{"type":"memories"}}`, ContentTypeMemory},
+			{`{"name":"search_wiki","arguments":{"type":"plans"}}`, ContentTypePlan},
+			{`{"name":"search_wiki","arguments":{"type":"skills"}}`, ContentTypeSkill},
 		} {
-			var out DocumentListOutput
+			var out SearchOutput
 			decodeStructured(t, toolCall(t, srv, tc.call), &out)
 			if out.Count == 0 {
 				t.Errorf("%s returned nothing; the fixture seeds one", tc.wantType)
@@ -251,23 +259,12 @@ func TestStructuredOutputCarriesRealData(t *testing.T) {
 		}
 	})
 
-	t.Run("get_wiki_overview carries statistics, status tags, and recent activity", func(t *testing.T) {
+	// Broken links are wiki_health's; TestWikiHealthFindsEachCategory pins them there.
+	t.Run("get_wiki_overview carries status tags and recent activity", func(t *testing.T) {
 		var out OverviewOutput
-		decodeStructured(t, toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`), &out)
-		if out.Statistics == nil || out.StatusTags == nil {
-			t.Fatal("expected statistics and status tags in overview")
-		}
-		if out.Statistics.BrokenLinkCount != len(out.Statistics.BrokenLinks) {
-			t.Errorf("broken_link_count %d disagrees with %d entries", out.Statistics.BrokenLinkCount, len(out.Statistics.BrokenLinks))
-		}
-		var found bool
-		for _, bl := range out.Statistics.BrokenLinks {
-			if bl.TargetSlug == "never-written" && bl.FromSlug == "bleve-notes" {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("the seeded broken link is missing: %+v", out.Statistics.BrokenLinks)
+		decodeStructured(t, toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`), &out)
+		if out.StatusTags == nil {
+			t.Fatal("expected status tags in overview")
 		}
 		if len(out.StatusTags.StatusTags) != len(StatusTags) {
 			t.Errorf("returned %d status tags, want %d", len(out.StatusTags.StatusTags), len(StatusTags))
@@ -286,7 +283,9 @@ func TestErrorResultsCarryNoStructuredContent(t *testing.T) {
 
 	for _, call := range []string{
 		`{"name":"read_article","arguments":{"slug":"no-such-article"}}`,
-		`{"name":"get_backlinks","arguments":{"slug":"no-such-article"}}`,
+		`{"name":"delete_article","arguments":{"slug":"no-such-article"}}`,
+		// Refused because bleve-notes links here: a refusal is an error result too.
+		`{"name":"delete_article","arguments":{"slug":"search-design"}}`,
 		`{"name":"search_wiki","arguments":{"query":"anything","type":["nonsense"]}}`,
 		`{"name":"get_wiki_overview","arguments":{"since":"not-a-duration"}}`,
 	} {
@@ -308,8 +307,8 @@ func TestEmptyListingsSerializeAsArrays(t *testing.T) {
 	srv := newMCPServer(t) // untouched wiki: only the seeded home page exists
 
 	for name, call := range map[string]string{
-		"list_articles":     `{"name":"list_articles","arguments":{}}`,
-		"get_wiki_overview": `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`,
+		"search_wiki":       `{"name":"search_wiki","arguments":{}}`,
+		"get_wiki_overview": `{"name":"get_wiki_overview","arguments":{}}`,
 		"wiki_health":       `{"name":"wiki_health","arguments":{}}`,
 	} {
 		resp := toolCall(t, srv, call)

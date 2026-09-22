@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -313,47 +314,98 @@ func TestGetBacklinks(t *testing.T) {
 	}
 }
 
-func TestMCPGetBacklinks(t *testing.T) {
+// TestMCPReadArticleBacklinks carries over what get_backlinks' own test asserted, now that the
+// tool is retired and read_article is where an agent asks what links to a page: both internal link
+// forms count, an unlinked page says nothing, and get_backlinks is gone from the registry.
+func TestMCPReadArticleBacklinks(t *testing.T) {
 	srv := newMCPServer(t)
 
 	_, _ = srv.Storage.SaveArticle("", "Hub Page", "# Hub", "the hub summary", "", "", "", nil, "")
 	_, _ = srv.Storage.SaveArticle("", "Spoke", "Points at [[Hub Page]].", "", "", "", "", nil, "")
+	_, _ = srv.Storage.SaveArticle("", "Pointer", "See [the hub](/articles/hub-page).", "", "", "", "", nil, "")
+
+	// The retired tool answers like any other unknown name.
+	gone := toolCall(t, srv, `{"name":"get_backlinks","arguments":{"slug":"hub-page"}}`)
+	if !gone.IsError || !strings.Contains(gone.Content[0].Text, "Tool not found: get_backlinks") {
+		t.Errorf("get_backlinks should be an unknown tool, got %+v", gone)
+	}
 
 	// Missing slug
-	_, rpcErr := srv.executeToolCallInternal([]byte(`{"name":"get_backlinks","arguments":{}}`))
+	_, rpcErr := srv.executeToolCallInternal([]byte(`{"name":"read_article","arguments":{}}`))
 	if rpcErr == nil {
 		t.Error("expected RPC error for missing slug")
 	}
 
 	// Unknown target
-	notFound := toolCall(t, srv, `{"name":"get_backlinks","arguments":{"slug":"nope"}}`)
+	notFound := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"nope"}}`)
 	if !notFound.IsError {
 		t.Error("expected error for unknown article")
 	}
 
-	// Happy path
-	resp := toolCall(t, srv, `{"name":"get_backlinks","arguments":{"slug":"hub-page"}}`)
-	if resp.IsError {
-		t.Fatalf("get_backlinks failed: %s", resp.Content[0].Text)
-	}
-	if !strings.Contains(resp.Content[0].Text, "Spoke (Slug: spoke") {
-		t.Errorf("expected spoke in backlinks output: %s", resp.Content[0].Text)
-	}
-
-	// Empty result
-	empty := toolCall(t, srv, `{"name":"get_backlinks","arguments":{"slug":"spoke"}}`)
-	if empty.IsError || !strings.Contains(empty.Content[0].Text, "No articles link to 'spoke'") {
-		t.Errorf("expected empty backlinks message, got: %s", empty.Content[0].Text)
-	}
-
-	// read_article appends the Linked from section on linked articles only
+	// Happy path: a [[WikiLink]] and a [text](/articles/<slug>) link, in both halves.
 	read := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"hub-page"}}`)
-	if !strings.Contains(read.Content[0].Text, "Linked from: Spoke (spoke)") {
+	if read.IsError {
+		t.Fatalf("read_article failed: %s", read.Content[0].Text)
+	}
+	for _, want := range []string{"Spoke (spoke)", "Pointer (pointer)"} {
+		if !strings.Contains(read.Content[0].Text, want) {
+			t.Errorf("read_article Linked from is missing %q: %s", want, read.Content[0].Text)
+		}
+	}
+	if !strings.Contains(read.Content[0].Text, "\n---\nLinked from: ") {
 		t.Errorf("read_article missing Linked from section: %s", read.Content[0].Text)
 	}
+	got := map[string]bool{}
+	for _, bl := range read.StructuredContent.(ArticleOutput).Backlinks {
+		got[bl.Slug] = true
+	}
+	if len(got) != 2 || !got["spoke"] || !got["pointer"] {
+		t.Errorf("structured backlinks = %v, want spoke and pointer", got)
+	}
+
+	// Empty result: no Linked from section, and backlinks is [] rather than absent.
 	readSpoke := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"spoke"}}`)
 	if strings.Contains(readSpoke.Content[0].Text, "Linked from:") {
 		t.Errorf("read_article should not show Linked from on unlinked article: %s", readSpoke.Content[0].Text)
+	}
+	if out := readSpoke.StructuredContent.(ArticleOutput); out.Backlinks == nil || len(out.Backlinks) != 0 {
+		t.Errorf("unlinked article backlinks = %#v, want an empty array", out.Backlinks)
+	}
+}
+
+// TestReadArticleListsEveryBacklink pins the removal of the prose cap. read_article's Linked from
+// line stopped at 15 with "and N more" while get_backlinks existed to give the rest; with that
+// tool retired, a text-only client has no other way to see backlink 16.
+func TestReadArticleListsEveryBacklink(t *testing.T) {
+	srv := newMCPServer(t)
+
+	_, _ = srv.Storage.SaveArticle("", "Popular", "# Popular", "", "", "", "", nil, "")
+	const linkers = 20
+	for i := 1; i <= linkers; i++ {
+		body := fmt.Sprintf("Links to [[Popular]] (%d).", i)
+		if i%2 == 0 {
+			body = fmt.Sprintf("Links to [popular](/articles/popular) (%d).", i)
+		}
+		if _, err := srv.Storage.SaveArticle("", fmt.Sprintf("Linker %02d", i), body, "", "", "", "", nil, ""); err != nil {
+			t.Fatalf("SaveArticle failed: %v", err)
+		}
+	}
+
+	resp := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"popular"}}`)
+	if resp.IsError {
+		t.Fatalf("read_article failed: %s", resp.Content[0].Text)
+	}
+	text := resp.Content[0].Text
+	for i := 1; i <= linkers; i++ {
+		if want := fmt.Sprintf("Linker %02d (linker-%02d)", i, i); !strings.Contains(text, want) {
+			t.Errorf("prose is missing %q", want)
+		}
+	}
+	if strings.Contains(text, "and 5 more") {
+		t.Errorf("prose still truncates the backlink list: %s", text)
+	}
+	if n := len(resp.StructuredContent.(ArticleOutput).Backlinks); n != linkers {
+		t.Errorf("structured backlinks = %d, want %d", n, linkers)
 	}
 }
 

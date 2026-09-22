@@ -453,8 +453,9 @@ func TestUnlistableArticleDirErrorsHideDataDir(t *testing.T) {
 			const want = "open articles: permission denied"
 
 			for _, call := range []string{
-				`{"name":"list_articles","arguments":{}}`,
-				`{"name":"get_backlinks","arguments":{"slug":"home"}}`,
+				`{"name":"search_wiki","arguments":{}}`,
+				// delete_article reports a failed inbound-link scan in its refusal.
+				`{"name":"delete_article","arguments":{"slug":"home"}}`,
 				`{"name":"get_wiki_overview","arguments":{}}`,
 				`{"name":"wiki_health","arguments":{}}`,
 			} {
@@ -464,6 +465,11 @@ func TestUnlistableArticleDirErrorsHideDataDir(t *testing.T) {
 					continue
 				}
 				assertHidesDataDir(t, srv, call, resp.Content[0].Text, want)
+			}
+			// The refusal above is a guard, not just an error message: nothing may be deleted when
+			// the scan could not run.
+			if _, err := srv.Storage.GetArticle("home"); err != nil {
+				t.Errorf("delete_article refused on a failed scan but home is gone: %v", err)
 			}
 
 			envelope := callJSON(t, srv, "resources/list", "")

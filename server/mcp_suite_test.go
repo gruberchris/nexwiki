@@ -70,12 +70,12 @@ func TestAllMCPToolsComprehensive(t *testing.T) {
 		}
 	})
 
-	// 3. Test list_articles (initial)
-	t.Run("list_articles_initial", func(t *testing.T) {
-		resp := mustCall("list_articles", map[string]interface{}{})
-		list, ok := resp.StructuredContent.(DocumentListOutput)
+	// 3. Test search_wiki without a query (the initial index)
+	t.Run("search_wiki_index_initial", func(t *testing.T) {
+		resp := mustCall("search_wiki", map[string]interface{}{})
+		list, ok := resp.StructuredContent.(SearchOutput)
 		if !ok {
-			t.Fatalf("expected DocumentListOutput, got %T", resp.StructuredContent)
+			t.Fatalf("expected SearchOutput, got %T", resp.StructuredContent)
 		}
 		if list.Documents == nil {
 			t.Errorf("documents slice should not be nil")
@@ -236,8 +236,9 @@ func TestAllMCPToolsComprehensive(t *testing.T) {
 		alphaVersion = out.Article.Version
 	})
 
-	// 10. Test get_backlinks
-	t.Run("get_backlinks", func(t *testing.T) {
+	// 10. Test backlinks: read_article lists inbound links (get_backlinks, which answered this
+	// before, is retired).
+	t.Run("backlinks", func(t *testing.T) {
 		// Create Beta Article linking to Alpha Article via [[Alpha Article]]
 		mustCall("create_wiki_article", map[string]interface{}{
 			"title":        "Beta Article",
@@ -246,25 +247,25 @@ func TestAllMCPToolsComprehensive(t *testing.T) {
 			"edit_summary": "Initial beta",
 		})
 
-		resp := mustCall("get_backlinks", map[string]interface{}{
+		resp := mustCall("read_article", map[string]interface{}{
 			"slug": "alpha-article",
 		})
-		bl, ok := resp.StructuredContent.(BacklinksOutput)
+		out, ok := resp.StructuredContent.(ArticleOutput)
 		if !ok {
-			t.Fatalf("expected BacklinksOutput, got %T", resp.StructuredContent)
+			t.Fatalf("expected ArticleOutput, got %T", resp.StructuredContent)
 		}
-		if bl.Count == 0 {
+		if len(out.Backlinks) == 0 {
 			t.Errorf("expected backlinks from Beta Article")
 		}
 		foundBeta := false
-		for _, b := range bl.Backlinks {
+		for _, b := range out.Backlinks {
 			if b.Slug == "beta-article" {
 				foundBeta = true
 				break
 			}
 		}
 		if !foundBeta {
-			t.Errorf("beta-article not found in backlinks: %+v", bl.Backlinks)
+			t.Errorf("beta-article not found in backlinks: %+v", out.Backlinks)
 		}
 	})
 

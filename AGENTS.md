@@ -75,15 +75,15 @@ To run a **stdio MCP server next to an already-running web primary** — which i
 
 ## 🛠️ Exposed MCP Tools
 
-The NexWiki MCP server registers and exposes **nine** semantic tools for AI agents, covering search, structured reads, unified document writes with optimistic locking, append, listing with pagination, deletion, progressive-disclosure wiki overview, backlink traversal, and wiki health auditing.
+The NexWiki MCP server registers and exposes **seven** semantic tools for AI agents, covering search and paged listing in one tool, structured reads with every backlink, unified document writes with optimistic locking, append, link-guarded deletion, progressive-disclosure wiki overview, and wiki health auditing.
 
 NexWiki also exposes **Resources** (`nexwiki://article/{slug}`) so a user can `@`-mention a wiki page directly, and **`subscriptions/listen`** so an agent is notified the moment a document is edited or the document set changes — on **both** Streamable HTTP and stdio. `completion/complete` autocompletes the `{slug}`, so a client discovers a page to mention instead of paging the whole resource list. See [docs/mcp_server.md](./docs/mcp_server.md#-resources---mention-a-wiki-page).
 
-Every tool carries MCP **annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`) so clients can auto-approve safe reads and confirm destructive writes. `openWorldHint` is `false` on all 9 — the entire surface is local. See [docs/mcp_server.md](./docs/mcp_server.md#-tool-annotations--fewer-approval-prompts).
+Every tool carries MCP **annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`) so clients can auto-approve safe reads and confirm destructive writes. `openWorldHint` is `false` on all 7 — the entire surface is local. See [docs/mcp_server.md](./docs/mcp_server.md#-tool-annotations--fewer-approval-prompts).
 
-Six read tools additionally declare an **`outputSchema`** and return `structuredContent` alongside their prose, so an agent parses data instead of scraping sentences — `read_article` hands back `version` as a number to pass straight to `save_article` or `append_article` as `loaded_version`. The text is always still emitted, and both halves are rendered from the same value so they cannot disagree (`read_article` ships its Markdown body in both `content[0].text` and `structuredContent.article.content`, ensuring full interoperability across text-only and structured MCP clients). See [docs/mcp_server.md](./docs/mcp_server.md#-structured-output--parse-data-dont-scrape-prose).
+All four read tools additionally declare an **`outputSchema`** and return `structuredContent` alongside their prose, so an agent parses data instead of scraping sentences — `read_article` hands back `version` as a number to pass straight to `save_article` or `append_article` as `loaded_version`. The text is always still emitted, and both halves are rendered from the same value so they cannot disagree (`read_article` ships its Markdown body in both `content[0].text` and `structuredContent.article.content`, ensuring full interoperability across text-only and structured MCP clients). See [docs/mcp_server.md](./docs/mcp_server.md#-structured-output--parse-data-dont-scrape-prose).
 
-📖 **The complete reference — every tool, argument, and behavior — lives in [docs/mcp_server.md](./docs/mcp_server.md).** It is kept in lockstep with `server/mcp.go`; this file intentionally does not duplicate it.
+📖 **The complete reference — every tool, argument, and behavior — lives in [docs/mcp_server.md](./docs/mcp_server.md).** It is kept in lockstep with the tool registry in `server/mcp_tools.go` (tool definitions live in `server/mcp_tools_*.go`); this file intentionally does not duplicate it.
 
 Agents can also enumerate tools at runtime with the standard `tools/list` MCP method:
 
@@ -109,7 +109,7 @@ Guides the agent to search for existing formatting/style guidelines and custom m
   * `title` (string, **required**): The title of the article to be created.
   * `description` (string, **optional**): A brief summary of what the article should cover.
 * **Behavior**:
-  Instructs the agent to call `list_articles` (with `type: "memories"`) or `search_wiki` to locate relevant style-guide memories, read them with `read_article`, incorporate the rules into the new article, and then save it with `save_article`.
+  Instructs the agent to make one `search_wiki` call — with a query, or without one and `type: "memories"` — to locate relevant style-guide memories, read them with `read_article`, incorporate the rules into the new article, and then save it with `save_article`.
 
 ---
 
@@ -178,7 +178,7 @@ If you compiled the binary on your local machine:
 }
 ```
 
-Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat window, confirming that all nine NexWiki MCP tools are ready to use!
+Restart Claude Desktop, and you will see the **hammer icon 🔨** in the chat window, confirming that all seven NexWiki MCP tools are ready to use!
 
 ---
 
@@ -194,7 +194,7 @@ NexWiki implements the modern **Streamable HTTP** transport at `/api/mcp`, servi
    * **URL**: `http://localhost:5808/api/mcp` (or your production domain e.g. `https://wiki.yourdomain.com/api/mcp`)
 5. Click **Save**.
 
-Cursor will establish a stream connection and immediately list all nine NexWiki tools in the sidebar. You can now use Cursor Composer or chat (`Cmd+K` / `Ctrl+K`) and reference your wiki directly during code generation!
+Cursor will establish a stream connection and immediately list all seven NexWiki tools in the sidebar. You can now use Cursor Composer or chat (`Cmd+K` / `Ctrl+K`) and reference your wiki directly during code generation!
 
 > Per-client setup for **Claude Code**, **GitHub Copilot CLI**, and other agent CLIs is documented in [docs/mcp_server.md](./docs/mcp_server.md#-connecting-clients).
 
@@ -246,8 +246,8 @@ curl -X POST http://localhost:5808/api/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "list_articles",
-      "arguments": {}
+      "name": "search_wiki",
+      "arguments": { "type": "plans" }
     },
     "id": 1
   }'
@@ -258,9 +258,9 @@ curl -X POST http://localhost:5808/api/mcp \
 ## 🧠 Design Tips for AI Agents Interacting with NexWiki
 
 If you are prompting or building an agent to work with NexWiki, teach it these best practices:
-1. **Orient First (Progressive Disclosure)**: Start a session with `get_wiki_overview` — a bounded orientation (document counts, the `user` and `feedback` memories, the plans in flight, and the recent activity) whose size does not grow with the wiki. It does not list every document: use `list_articles` (filter by `type`, `status`, or `tag`) for the full index and `search_wiki` for a topic. Then `read_article` only the entries you actually need. Pass `since` (e.g. `get_wiki_overview(since: "48h")`, the default) to set how far back the activity catch-up reaches.
+1. **Orient First (Progressive Disclosure)**: Start a session with `get_wiki_overview` — a bounded orientation (document counts, the `user` and `feedback` memories, the plans in flight, and the recent activity) whose size does not grow with the wiki. It does not list every document: `search_wiki` without a `query` is the full index (filter by `type`, `status`, or `tag`; page with `cursor`), and with one it finds a topic. Then `read_article` only the entries you actually need. Pass `since` (e.g. `get_wiki_overview(since: "48h")`, the default) to set how far back the activity catch-up reaches.
 2. **Resolve Slugs Intelligently**: When linking or reading, always use the URL-safe slug (e.g. `setup-guide`) rather than the raw article title.
-3. **Handle Internal Links**: NexWiki files link internally in two equivalent forms — `[[Double Bracket]]` WikiLinks and absolute `[text](/articles/target-slug)` Markdown links. Both are counted by the link graph, both are healed on rename, and both are checked by `wiki_health`. When displaying a WikiLink to users, resolve it to `/articles/target-slug` or explain it as a reference. Use `get_backlinks` to traverse the graph in reverse before editing or deleting a page.
+3. **Handle Internal Links**: NexWiki files link internally in two equivalent forms — `[[Double Bracket]]` WikiLinks and absolute `[text](/articles/target-slug)` Markdown links. Both are counted by the link graph, both are healed on rename, and both are checked by `wiki_health`. When displaying a WikiLink to users, resolve it to `/articles/target-slug` or explain it as a reference. `read_article` lists every page linking to the one it reads, so read a page to traverse the graph in reverse before editing or deleting it; `delete_article` refuses while such links exist unless called with `break_links: true`.
 4. **Context Management**: Raw Markdown files can occasionally grow large. Prefer `get_wiki_overview` or `search_wiki` to locate key articles/sections before reading an entire article if context window limits are a concern.
 5. **Respect Reserved Types**: Omit `type` when editing a reserved `AI-Agent-*` document — an explicit `type` on a `save_article` update relabels it — and never strip a tool-managed `memory-<scope>` tag. Lifecycle state goes in `status`, not tags; `get_wiki_overview`'s `status_tags` output lists the valid plan and skill values.
 6. **Follow the Pinned Memories**: `get_wiki_overview` returns the operator's `user` and `feedback` memories as `pinned_memories`. They are the operator's standing preferences and corrections — follow them over generic defaults. There is no separate rules page to load.

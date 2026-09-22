@@ -446,7 +446,7 @@ func TestMCPListArticles(t *testing.T) {
 	srv := newMCPServer(t)
 
 	// Empty (home is seeded but excluded)
-	resp := toolCall(t, srv, `{"name":"list_articles","arguments":{}}`)
+	resp := toolCall(t, srv, `{"name":"search_wiki","arguments":{}}`)
 	if resp.IsError {
 		t.Errorf("expected success, got error: %s", resp.Content[0].Text)
 	}
@@ -458,7 +458,7 @@ func TestMCPListArticles(t *testing.T) {
 	// After saves
 	_, _ = srv.Storage.SaveArticle("", "First Article", "# first", "", "", "", "", []string{"notes"}, "")
 	_, _ = srv.Storage.SaveArticle("", "Second Article", "# second", "", "", "", "", nil, "")
-	resp2 := toolCall(t, srv, `{"name":"list_articles","arguments":{}}`)
+	resp2 := toolCall(t, srv, `{"name":"search_wiki","arguments":{}}`)
 	if resp2.IsError {
 		t.Errorf("expected success, got error: %s", resp2.Content[0].Text)
 	}
@@ -766,10 +766,17 @@ func TestMCPGetWikiStatistics(t *testing.T) {
 func TestMCPSearchWiki(t *testing.T) {
 	srv := newMCPServer(t)
 
-	// Empty query: search_wiki returns an RPC error (missing required argument)
-	_, rpcErr := srv.executeToolCallInternal(json.RawMessage(`{"name":"search_wiki","arguments":{"query":""}}`))
-	if rpcErr == nil {
-		t.Error("expected RPC error for empty query")
+	// Empty or blank query: search_wiki lists the index instead of searching (it replaced
+	// list_articles), so this is a success carrying documents rather than results.
+	for _, q := range []string{`""`, `"   "`} {
+		resp := toolCall(t, srv, `{"name":"search_wiki","arguments":{"query":`+q+`}}`)
+		if resp.IsError {
+			t.Fatalf("query %s: expected the index, got error: %s", q, resp.Content[0].Text)
+		}
+		out := resp.StructuredContent.(SearchOutput)
+		if out.Documents == nil || out.Results != nil {
+			t.Errorf("query %s: expected index mode (documents, no results), got %+v", q, out)
+		}
 	}
 
 	// Valid query (no results in fresh storage)
@@ -951,7 +958,7 @@ func TestExecuteToolCallLogsActivity(t *testing.T) {
 	srv := newMCPServer(t)
 
 	// executeToolCall (not internal) should log to EventBus without error
-	params := json.RawMessage(`{"name":"list_articles","arguments":{}}`)
+	params := json.RawMessage(`{"name":"search_wiki","arguments":{}}`)
 	result, rpcErr := srv.executeToolCall(params, "Test Client")
 	if rpcErr != nil {
 		t.Fatalf("executeToolCall returned RPC error: %v", rpcErr)

@@ -160,7 +160,7 @@ The ordinary Bleve results are still returned alongside it. A term the Bleve que
 
 ## 🏷️ Fixing a document saved with the wrong type
 
-A document created as a `Wiki` that should have been an `AI-Agent-Plan` is invisible to `list_articles(type: "plans")`, even though it reads perfectly well by slug. Fix it **in place** — never by deleting and recreating it, which throws away its history and backlinks:
+A document created as a `Wiki` that should have been an `AI-Agent-Plan` is invisible to `search_wiki(type: "plans")`, even though it reads perfectly well by slug. Fix it **in place** — never by deleting and recreating it, which throws away its history and backlinks:
 
 ```jsonc
 // save_article
@@ -176,7 +176,7 @@ A document created as a `Wiki` that should have been an `AI-Agent-Plan` is invis
 // → Type: Wiki → AI-Agent-Plan
 ```
 
-Then confirm with `list_articles(type: "plans")`, not with a read — the listing is what was wrong.
+Then confirm with `search_wiki(type: "plans")`, not with a read — the listing is what was wrong.
 
 The rules, which apply equally to `PUT /api/articles/{slug}` with a `"type"` field:
 
@@ -186,6 +186,6 @@ The rules, which apply equally to `PUT /api/articles/{slug}` with a `"type"` fie
 * Into **`Wiki`** or **`AI-Agent-Memory`**: the lifecycle status is dropped (those types have none) unless you pass one.
 * A plan or skill **status the new type does not accept** (a plan at `implementing` becoming a skill, a skill at `ready` becoming a plan) is refused — pass an explicit `status`. A lifecycle state is never silently converted.
 * **Leaving `AI-Agent-Memory`** drops the `memory-<scope>` tags and the `memory_kind`.
-* An **unknown type** is an error naming the valid values — never a silent `Wiki`. The same holds for `list_articles(type)`, `POST /api/articles`, and OKF bundle imports over an existing slug.
+* An **unknown type** is an error naming the valid values — never a silent `Wiki`. The same holds for `search_wiki(type)`, `POST /api/articles`, and OKF bundle imports over an existing slug.
 
 Type changes are ordinary revisions: the previous type stays in history, and you can purge it like any other text.

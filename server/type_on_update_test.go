@@ -13,18 +13,18 @@ import (
 
 // These tests pin the fix for "save_article accepts `type` on update and silently discards it".
 //
-// Every type assertion goes through list_articles(type: …), never through a direct read. A direct
+// Every type assertion goes through search_wiki(type: …), never through a direct read. A direct
 // read passed throughout the original incident — the document read perfectly well by slug — and the
 // listing was what was wrong, so the listing is what has to be looked at.
 
-// slugsListedAs returns the slugs list_articles reports for a type filter.
+// slugsListedAs returns the slugs search_wiki's index reports for a type filter.
 func slugsListedAs(t *testing.T, srv *Server, docType string) map[string]bool {
 	t.Helper()
-	resp := toolCall(t, srv, fmt.Sprintf(`{"name":"list_articles","arguments":{"type":%q,"limit":1000}}`, docType))
+	resp := toolCall(t, srv, fmt.Sprintf(`{"name":"search_wiki","arguments":{"type":%q,"limit":1000}}`, docType))
 	if resp.IsError {
-		t.Fatalf("list_articles(type: %q) failed: %s", docType, resp.Content[0].Text)
+		t.Fatalf("search_wiki(type: %q) failed: %s", docType, resp.Content[0].Text)
 	}
-	var out DocumentListOutput
+	var out SearchOutput
 	decodeStructured(t, resp, &out)
 	slugs := map[string]bool{}
 	for _, d := range out.Documents {
@@ -39,10 +39,10 @@ func assertListedAs(t *testing.T, srv *Server, slug, wantType string) {
 	for _, typ := range []string{ContentTypeWiki, ContentTypeMemory, ContentTypePlan, ContentTypeSkill} {
 		listed := slugsListedAs(t, srv, typ)[slug]
 		if typ == wantType && !listed {
-			t.Errorf("%s is missing from list_articles(type: %q)", slug, typ)
+			t.Errorf("%s is missing from search_wiki(type: %q)", slug, typ)
 		}
 		if typ != wantType && listed {
-			t.Errorf("%s is listed under list_articles(type: %q), want only %q", slug, typ, wantType)
+			t.Errorf("%s is listed under search_wiki(type: %q), want only %q", slug, typ, wantType)
 		}
 	}
 }
@@ -183,7 +183,7 @@ func TestSaveArticleTypeChangeAppliesClassificationArgs(t *testing.T) {
 		t.Fatalf("relabel failed: %s", resp.Content[0].Text)
 	}
 	if !slugsListedAs(t, srv, "plans")[plan] {
-		t.Fatal("the relabelled plan is missing from list_articles(type: \"plans\")")
+		t.Fatal("the relabelled plan is missing from search_wiki(type: \"plans\")")
 	}
 	art, _ := srv.Storage.GetArticle(plan)
 	if art.Status != "implementing" || !hasTag(art.Tags, "kimmydb") {
@@ -257,7 +257,7 @@ func TestSaveArticleSameTypeIsIdempotent(t *testing.T) {
 }
 
 // TestUnknownTypeIsAnError is F3: an unrecognized type used to become Wiki silently, in
-// save_article create and list_articles alike. A typo that behaves exactly like the bug is
+// save_article create and list_articles (now search_wiki's index) alike. A typo that behaves exactly like the bug is
 // indistinguishable from it.
 func TestUnknownTypeIsAnError(t *testing.T) {
 	srv := newMCPServer(t)
@@ -279,13 +279,13 @@ func TestUnknownTypeIsAnError(t *testing.T) {
 		t.Error("a refused update must write nothing")
 	}
 
-	list := toolCall(t, srv, `{"name":"list_articles","arguments":{"type":"memorys"}}`)
+	list := toolCall(t, srv, `{"name":"search_wiki","arguments":{"type":"memorys"}}`)
 	if !list.IsError || !strings.Contains(list.Content[0].Text, "memorys") {
-		t.Errorf("list_articles with an unknown type must fail naming it, not list wiki articles: %s", list.Content[0].Text)
+		t.Errorf("search_wiki with an unknown type must fail naming it, not list wiki articles: %s", list.Content[0].Text)
 	}
 
 	// Attested Computation is a real type; spelled canonically, it is accepted for listing.
-	if list := toolCall(t, srv, `{"name":"list_articles","arguments":{"type":"Attested Computation"}}`); list.IsError {
+	if list := toolCall(t, srv, `{"name":"search_wiki","arguments":{"type":"Attested Computation"}}`); list.IsError {
 		t.Errorf("Attested Computation must be a valid list filter: %s", list.Content[0].Text)
 	}
 }

@@ -45,7 +45,7 @@ spinner() {
 
 # 1. Header: Agent CLI startup
 printf "  ${BOLD}${BLUE}Claude Code${RESET} ${DIM}v0.2.29${RESET} ${GRAY}•${RESET} ${WHITE}personal-wiki${RESET}\n"
-printf "  ${GREEN}●${RESET} ${DIM}Connected to${RESET} ${BOLD}${CYAN}nexwiki${RESET} ${DIM}MCP server (Streamable HTTP • 29 tools active)${RESET}\n\n"
+printf "  ${GREEN}●${RESET} ${DIM}Connected to${RESET} ${BOLD}${CYAN}nexwiki${RESET} ${DIM}MCP server (Streamable HTTP • 7 tools active)${RESET}\n\n"
 sleep 0.6
 
 # 2. User prompt
@@ -54,17 +54,17 @@ prompt_text="Ingest this Slack decision thread into my NexWiki under tag 'archit
 typewrite "${WHITE}${prompt_text}${RESET}" 0.018
 sleep 0.5
 
-# 3. Agent thinking & MCP tool call: create_wiki_article
+# 3. Agent thinking & MCP tool call: save_article
 spinner "Agent parsing Slack snippet & formatting OKF article..." 14
 
-printf "  ${CYAN}╭─${RESET} ${BOLD}MCP Tool Call: ${CYAN}nexwiki.create_wiki_article${RESET} ${CYAN}───────────────────────────────────╮${RESET}\n"
+printf "  ${CYAN}╭─${RESET} ${BOLD}MCP Tool Call: ${CYAN}nexwiki.save_article${RESET} ${CYAN}──────────────────────────────────────────╮${RESET}\n"
 printf "  ${CYAN}│${RESET}  ${BOLD}title:${RESET}   ${WHITE}\"API Rate Limiting Architecture Decision\"${RESET}                  ${CYAN}│${RESET}\n"
 printf "  ${CYAN}│${RESET}  ${BOLD}tags:${RESET}    ${YELLOW}[\"architecture\", \"rate-limiting\", \"redis\"]${RESET}                 ${CYAN}│${RESET}\n"
 printf "  ${CYAN}│${RESET}  ${BOLD}source:${RESET}  ${DIM}\"Slack #architecture-decisions (@sarah)\"${RESET}                   ${CYAN}│${RESET}\n"
 printf "  ${CYAN}│${RESET}  ${BOLD}type:${RESET}    ${PEACH}\"Wiki\" (OKF v0.2 front matter)${RESET}                           ${CYAN}│${RESET}\n"
 printf "  ${CYAN}╰────────────────────────────────────────────────────────────────────────╯${RESET}\n"
 
-spinner "Invoking create_wiki_article & writing to storage..." 15
+spinner "Invoking save_article & writing to storage..." 15
 
 printf "  ${GREEN}✔${RESET} ${BOLD}Article created:${RESET} ${CYAN}/articles/api-rate-limiting-architecture-decision${RESET}\n"
 printf "    ${DIM}Indexed in Bleve search index • 194 words • version 1 • 0 broken links${RESET}\n"

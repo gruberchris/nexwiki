@@ -2,7 +2,7 @@
 
 ## Trust model — read this before deploying
 
-**NexWiki has no authentication.** There are no accounts, no passwords, and no API tokens. Anyone who can reach the port has full read, write, and delete access to every article — and to every MCP tool, including `delete_wiki_article`, `import_okf_bundle`, and `export_okf_bundle`.
+**NexWiki has no authentication.** There are no accounts, no passwords, and no API tokens. Anyone who can reach the port has full read, write, and delete access to every article — to every MCP tool, including `delete_article`, and to every REST endpoint, including OKF bundle import and export (`POST /api/okf/import`, `GET /api/okf/export`) and version revert.
 
 NexWiki is designed for **a single user on a trusted machine or private network**. That is the supported deployment. Native binaries default to binding strictly to `127.0.0.1`, keeping unauthenticated access limited to the local machine, while containers bind to `0.0.0.0` for Docker port publishing.
 
@@ -48,11 +48,11 @@ DNS names are deliberately not auto-trusted by either rule. The Host check refus
 - Upload MIME types must agree with the file extension, and all assets are served with `X-Content-Type-Options: nosniff`.
 - Search snippets are HTML-escaped before rendering.
 - The HTTP server sets read and idle timeouts.
-- In `import_okf_bundle`, bundle paths are strictly validated and jailed to the wiki data directory, preventing arbitrary host filesystem reads.
+- OKF bundle import (`POST /api/okf/import`) takes an uploaded archive, never a host filesystem path, so it cannot be pointed at arbitrary host files; decompression is bounded per entry and per bundle.
 
 ## Secret scanning on agent writes
 
-Every MCP write path — create, edit and append across wiki articles, memories, plans and skills, plus `import_okf_bundle` — scans the `content`, `description` and `source` fields for credential-shaped text and **refuses the write** when it finds one.
+Every MCP write path — `save_article` and `append_article`, across wiki articles, memories, plans and skills — plus OKF bundle import (`POST /api/okf/import`) scans the `content`, `description` and `source` fields for credential-shaped text and **refuses the write** when it finds one.
 
 **Why refuse rather than redact.** A scanner on a live output stream redacts because the turn has to continue. A write can safely fail: the caller gets a recoverable error and rewrites the document. A redacted document is worse than a refused one — it reads as complete, and the hole is invisible to every later reader.
 
@@ -69,12 +69,12 @@ Be clear about what this does and does not do:
 - **It is a pattern scanner, so it catches shapes it knows.** High-signal issuer prefixes (AWS, GitHub, Slack, Anthropic, OpenAI-style, Google), PEM private-key headers, JWTs, and assignment-shaped `key = value` text. A credential in a format not on that list passes.
 - **No entropy scoring**, deliberately. A wiki is full of hashes, slugs, base64 fragments and long identifiers that carry no secret; an entropy threshold would make every one of them an argument, and a control people argue with gets turned off.
 - **A placeholder allowlist exists** so documentation *about* credentials stays writable — this wiki documents OAuth clients and token audiences, and a scanner that blocked those would be disabled within a day. Placeholders are matched against the matched text only, never the surrounding prose: an earlier version widened to a 40-byte window and that was a bypass, since a real credential near the word `example` (a hostname was enough) was let through.
-- **REST and web-UI writes are not scanned.** A human editing their own wiki is exercising judgment the scanner cannot second-guess; this control is about what agents write unattended.
-- **`revert_article_version` is not scanned.** It restores content that is already stored, so it is not intake. A credential written before this check existed stays in history until it is removed deliberately — closing the intake does not clean the past.
+- **REST and web-UI writes are not scanned**, apart from OKF bundle import. A human editing their own wiki is exercising judgment the scanner cannot second-guess; this control is about what agents write unattended.
+- **Reverting to an earlier version is not scanned.** Revert is a REST and web-UI action (`POST /api/articles/{slug}/revert`), and it restores content that is already stored, so it is not intake. A credential written before this check existed stays in history until it is removed deliberately — closing the intake does not clean the past.
 
 ## Agent attribution is not authentication
 
-The activity log records an `agent` for every change, `get_article_history` reports who made each revision, and the Activity drawer lets you filter by agent. **None of this is an identity claim.**
+The activity log records an `agent` for every change, the version history (`GET /api/articles/{slug}/history`, shown in the web UI) reports who made each revision, and the Activity drawer lets you filter by agent. **None of this is an identity claim.**
 
 The value comes from the MCP client's self-reported `clientInfo`, or from the server's configured `NEXWIKI_AGENT_NAME` for clients that report nothing. Any client can send any name. Since NexWiki is unauthenticated (see the trust model above), attribution is a convenience for telling *your own* agents apart — not evidence of who made a change, and not something to build an access decision on.
 

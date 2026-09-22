@@ -86,12 +86,12 @@ func TestConsolidatedToolsEndToEnd(t *testing.T) {
 		t.Fatalf("expected nexwiki project tag, got %v", planArt.Tags)
 	}
 
-	// 9. list_articles: filter by type, status, tag
-	listResp := toolCall(t, srv, `{"name":"list_articles","arguments":{"type":"plans"}}`)
+	// 9. search_wiki without a query: the index, filtered by type
+	listResp := toolCall(t, srv, `{"name":"search_wiki","arguments":{"type":"plans"}}`)
 	if listResp.IsError {
-		t.Fatalf("list_articles failed: %s", listResp.Content[0].Text)
+		t.Fatalf("search_wiki index failed: %s", listResp.Content[0].Text)
 	}
-	listOut := listResp.StructuredContent.(DocumentListOutput)
+	listOut := listResp.StructuredContent.(SearchOutput)
 	if listOut.Count != 1 || listOut.Documents[0].Slug != "migration-plan" {
 		t.Fatalf("expected 1 plan 'migration-plan', got %d docs", listOut.Count)
 	}
@@ -106,8 +106,8 @@ func TestConsolidatedToolsEndToEnd(t *testing.T) {
 		t.Fatalf("expected search hits for 'daemon', got 0")
 	}
 
-	// 11. get_wiki_overview: overview with stats
-	overResp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"since":"24h","include_stats":true}}`)
+	// 11. get_wiki_overview: orientation within a since window
+	overResp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"since":"24h"}}`)
 	if overResp.IsError {
 		t.Fatalf("get_wiki_overview failed: %s", overResp.Content[0].Text)
 	}
@@ -115,15 +115,15 @@ func TestConsolidatedToolsEndToEnd(t *testing.T) {
 	if overOut.TotalArticles < 3 {
 		t.Fatalf("expected at least 3 articles in overview, got %d", overOut.TotalArticles)
 	}
-	if overOut.Statistics == nil {
-		t.Fatalf("expected statistics in overview")
-	}
 
-	// 12. get_backlinks
+	// 12. read_article: inbound links (get_backlinks is retired; the read carries every backlink)
 	_ = toolCall(t, srv, `{"name":"save_article","arguments":{"title":"Other Page","content":"# Other Page Body"}}`)
-	blResp := toolCall(t, srv, `{"name":"get_backlinks","arguments":{"slug":"other-page"}}`)
+	blResp := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"other-page"}}`)
 	if blResp.IsError {
-		t.Fatalf("get_backlinks failed: %s", blResp.Content[0].Text)
+		t.Fatalf("read_article failed: %s", blResp.Content[0].Text)
+	}
+	if blOut, ok := blResp.StructuredContent.(ArticleOutput); !ok || blOut.Backlinks == nil {
+		t.Fatalf("expected ArticleOutput with a backlinks array, got %#v", blResp.StructuredContent)
 	}
 
 	// 13. delete_article: delete article
