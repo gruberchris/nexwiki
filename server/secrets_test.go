@@ -146,7 +146,7 @@ func TestSecretScanRefusesEveryDocumentClass(t *testing.T) {
 func TestSecretScanCoversEditAndAppend(t *testing.T) {
 	srv := newMCPServer(t)
 
-	if resp := toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","title":"Clean Memory","content":"# nothing sensitive","description":"d","source":"s"}}`); resp.IsError {
+	if resp := toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","title":"Clean Memory","content":"# nothing sensitive","memory_kind":"reference","description":"d","source":"s"}}`); resp.IsError {
 		t.Fatalf("setup failed: %s", resp.Content[0].Text)
 	}
 
@@ -239,7 +239,7 @@ func TestSecretScanModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call := `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","title":"Mode Memory","content":` + leak + `,"description":"d","source":"s"}}`
+	call := `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","title":"Mode Memory","content":` + leak + `,"memory_kind":"reference","description":"d","source":"s"}}`
 
 	t.Run("warn writes the document and annotates the response", func(t *testing.T) {
 		t.Setenv(envSecretScan, "warn")

@@ -96,7 +96,7 @@ describe('Viewer', () => {
   });
 });
 
-// The absolute Markdown form is what nexwiki-agent-guidelines tells authors to prefer, and it fell
+// The absolute Markdown form is what most internal links in a real wiki use, and it fell
 // through to the external-link branch: the wiki's own pages opened in a new tab with a full page
 // reload. Both internal forms must now look and behave identically (§3.21).
 describe('absolute /articles/ Markdown links', () => {

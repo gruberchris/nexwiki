@@ -20,8 +20,9 @@ something non-obvious worth keeping across sessions.
      The axes are independent; every combination is legal. A `feedback` memory should say
      *why* the correction was given and *how to apply it*, not just what was said.
 
-     `description` and `source` are refused if absent or blank. Write real values rather
-     than a placeholder: the description is what `list_articles` and `get_wiki_overview` show, and the
+     The server refuses a new memory whose `memory_kind`, `description`, or `source` is
+     absent or blank, and names each missing field. Write real values rather than a
+     placeholder: the description is what `list_articles` and `get_wiki_overview` show, and the
      source is what lets the fact be re-verified later.
 3. **Keep it clean** — retire fully superseded memories with `delete_article(slug)`. Never
    let near-duplicates pile up.

@@ -169,8 +169,7 @@ var editAgentSkillTool = toolDef{
 // toolEditAgentSkill completes the skill lifecycle. create_agent_skill and list_agent_skills have
 // always existed with no edit counterpart, so the only way to revise a skill through MCP was
 // edit_wiki_article — which works, but offers none of the type guarding the memory and plan tools
-// apply. That mattered most for nexwiki-agent-guidelines: the governance document every agent
-// loads is itself a skill, so the one document intended to be revised had no first-class edit path.
+// apply, so a skill intended to be revised had no first-class edit path.
 func (srv *Server) toolEditAgentSkill(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type EditSkillArgs struct {
 		Slug          string    `json:"slug"`

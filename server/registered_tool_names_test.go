@@ -13,8 +13,8 @@ import (
 
 // unregisteredToolNames are tool names NexWiki once exposed and still defines as dead handlers,
 // but no longer registers. An agent told to call one gets "tool not found" — or, worse, reaches
-// for save_article without the arguments the instruction assumed. Connect-time instructions, the
-// seeded guidelines, and the bundled skill used to name eighteen of them.
+// for save_article without the arguments the instruction assumed. Connect-time instructions, a
+// since-retired seeded instructions page, and the bundled skill used to name eighteen of them.
 var unregisteredToolNames = []string{
 	"append_agent_memory", "append_agent_plan", "create_agent_memory", "create_agent_plan",
 	"create_agent_skill", "create_wiki_article", "delete_agent_memory", "delete_wiki_article",
@@ -68,11 +68,10 @@ func registeredVocabulary(t *testing.T) map[string]bool {
 }
 
 // shippedAgentTexts gathers everything NexWiki itself tells an agent: connect-time instructions,
-// the seeded guidelines, the prompts, every registered tool's schema, and the bundled skill.
+// the prompts, every registered tool's schema, and the bundled skill.
 func shippedAgentTexts(t *testing.T) map[string]string {
 	t.Helper()
 	texts := agentFacingTexts(t)
-	texts["connect-time instructions"] = agentInstructions()
 	for _, tool := range mcpToolRegistry {
 		raw, err := json.Marshal(map[string]interface{}{"schema": tool.Schema, "output": tool.Output})
 		if err != nil {
@@ -104,7 +103,7 @@ func shippedAgentTexts(t *testing.T) map[string]string {
 
 // TestAgentTextsNameOnlyRegisteredTools is F5 of the save_article type report: the instructions
 // every agent receives at connect time told it to call four tools the server does not register,
-// and the seeded guidelines named eighteen. Tests built their own tool map, so CI never noticed.
+// and the since-retired seeded instructions page named eighteen. Tests built their own tool map, so CI never noticed.
 func TestAgentTextsNameOnlyRegisteredTools(t *testing.T) {
 	allowed := registeredVocabulary(t)
 	for source, text := range shippedAgentTexts(t) {

@@ -49,7 +49,7 @@ function preprocessWikiLinks(markdown: string): string {
  *
  * NexWiki has two internal link forms and they must behave identically: the `wikilink:` protocol
  * that preprocessWikiLinks emits for [[WikiLinks]], and absolute `/articles/<slug>` Markdown links,
- * which the agent guidelines tell authors to prefer and which make up the majority of real links.
+ * which authors prefer in body prose and which make up the majority of real links.
  * Any #fragment or ?query is dropped — it addresses a position within the article, not a different
  * article.
  */
@@ -94,7 +94,7 @@ export const Viewer: React.FC<ViewerProps> = ({ content, onNavigate, articles })
           a: ({ href, children, ...props }) => {
             // Both internal link forms resolve to a slug and must look and behave identically.
             // [[WikiLinks]] arrive as the custom wikilink: protocol from preprocessWikiLinks;
-            // absolute Markdown links are the form the agent guidelines tell authors to prefer,
+            // absolute Markdown links are the form most real internal links take,
             // and they fell through to the external-link branch below — opening the wiki's own
             // pages in a new tab with a full page reload.
             const slug = internalTargetSlug(href);

@@ -52,7 +52,7 @@ A comprehensive technical and user guide covering the customizable, dual-variant
 
 ### 7. [NexWiki AI Agent Integration & SOP Guide](./agent_integration_guide.md)
 An advanced governance and integration manual designed to help you configure external AI agents (Cursor, Claude Desktop, Copilot):
-* **Three Layers of Governance**: Custom tool schemas, workspace rules, and MCP Prompts.
+* **Rules in the Server, Conventions in Memories**: Connect-time instructions and tool descriptions carry the universal rules; your own conventions are `feedback` and `user` memories that `get_wiki_overview` pins at session start.
 * **Standard Operating Procedures (SOPs)**: Enforcing style checks, format rule lookups, and auto-saving project plans.
 * **Configuration Blueprints**: Setup guidelines and step-by-step examples.
 

@@ -370,8 +370,7 @@ func TestScanLinkGraphIgnoresCodeFences(t *testing.T) {
 }
 
 // TestScanLinkGraphCountsMarkdownLinks is the §3.21 regression test. The link graph read only
-// [[WikiLinks]], but the corpus — and nexwiki-agent-guidelines §5 — prefer absolute Markdown
-// links, so 84% of real internal links were invisible: broken-link detection reported 0 against
+// [[WikiLinks]], but the corpus prefers absolute Markdown links, so 84% of real internal links were invisible: broken-link detection reported 0 against
 // 26, orphan detection called 44 of 84 documents orphans, and get_backlinks under-reported
 // inbound references before a rename or delete. Revert ExtractLinkRefs' Markdown pass and all
 // three assertions below fail.
@@ -417,7 +416,7 @@ func TestScanLinkGraphCountsMarkdownLinks(t *testing.T) {
 		t.Errorf("Display() = %q — a Markdown link rendered as [[…]] sends the author looking for text that is not in the file", got)
 	}
 
-	// 3. get_backlinks sees it too; the guidelines tell agents to run it before a rename.
+	// 3. get_backlinks sees it too; agents run it before a rename.
 	backlinks, err := srv.Storage.GetBacklinks("target-page")
 	if err != nil {
 		t.Fatalf("GetBacklinks failed: %v", err)
@@ -552,8 +551,8 @@ func TestWikiHealthUnreferencedSkills(t *testing.T) {
 	_, _ = srv.Storage.SaveArticle("", "Referenced Only By Archived", "# s", "", "", "", "", nil, ContentTypeSkill)
 	// Reached by nothing at all.
 	_, _ = srv.Storage.SaveArticle("", "Wholly Unreferenced", "# s", "", "", "", "", nil, ContentTypeSkill)
-	// The governance skill is referenced from Go, so no document need name it.
-	_, _ = srv.Storage.SaveArticle("", agentGuidelinesTitle, "# g", "", "", "", "", nil, ContentTypeSkill)
+	// A skill named like the retired governance page gets no exemption: nothing in code names it.
+	_, _ = srv.Storage.SaveArticle("", "NexWiki Agent Rules", "# g", "", "", "", "", nil, ContentTypeSkill)
 
 	_, _ = srv.Storage.SaveArticle("", "Live Pointer",
 		"Call `read_article(slug: \"referenced-by-call\")`, then see [it](/articles/referenced-by-link).",
@@ -564,12 +563,12 @@ func TestWikiHealthUnreferencedSkills(t *testing.T) {
 
 	flagged := findingSlugs(healthReport(t, srv, `{}`).UnreferencedSkills)
 
-	for _, live := range []string{"referenced-by-call", "referenced-by-link", AgentGuidelinesSlug} {
+	for _, live := range []string{"referenced-by-call", "referenced-by-link"} {
 		if flagged[live] {
 			t.Errorf("%s is reachable and must not be flagged", live)
 		}
 	}
-	for _, dead := range []string{"wholly-unreferenced", "referenced-only-by-archived"} {
+	for _, dead := range []string{"wholly-unreferenced", "referenced-only-by-archived", "nexwiki-agent-rules"} {
 		if !flagged[dead] {
 			t.Errorf("%s is unreachable and should be flagged, got %v", dead, flagged)
 		}

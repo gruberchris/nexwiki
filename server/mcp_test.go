@@ -1151,8 +1151,8 @@ func TestMCPEditAgentPlanDescriptionAndSource(t *testing.T) {
 }
 
 // TestMCPEditAgentSkill covers the tool that did not exist: create_agent_skill and
-// list_agent_skills shipped without an edit counterpart, so revising a skill — including
-// nexwiki-agent-guidelines, the governance document every agent loads — had no first-class path.
+// list_agent_skills shipped without an edit counterpart, so revising a skill had no first-class
+// path.
 func TestMCPEditAgentSkill(t *testing.T) {
 	srv := newMCPServer(t)
 

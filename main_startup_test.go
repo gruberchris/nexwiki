@@ -281,14 +281,14 @@ func TestStorageFailureAfterBindReportsTheStorageError(t *testing.T) {
 	assertNothingStarted(t, stderr)
 }
 
-// TestStandaloneMCPOnlySeedsTheAgentGuidelines pins #165: a -mcp-only process that finds no web
-// server owns its data directory, so it seeds nexwiki-agent-guidelines before it answers the first
-// request, as the web server does. The request is waiting on stdin before the process starts.
-func TestStandaloneMCPOnlySeedsTheAgentGuidelines(t *testing.T) {
+// TestStandaloneMCPOnlyServesItsOwnWiki pins #165: a -mcp-only process that finds no web server
+// owns its data directory, so it opens that storage — seeding the home page, as the web server
+// does — before it answers the first request. The request is waiting on stdin before the process
+// starts.
+func TestStandaloneMCPOnlyServesItsOwnWiki(t *testing.T) {
 	home := t.TempDir()
 	dataDir := filepath.Join(home, "wiki")
-	request := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_article","arguments":{"slug":"` +
-		server.AgentGuidelinesSlug + `"}}}` + "\n"
+	request := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_article","arguments":{"slug":"home"}}}` + "\n"
 
 	// Nothing answers on a free port, so the probe finds no primary and the process runs standalone.
 	run := startMain(t, home, strings.NewReader(request), "-mcp-only", "-port", freePort(t), "-data", dataDir)
@@ -316,9 +316,9 @@ func TestStandaloneMCPOnlySeedsTheAgentGuidelines(t *testing.T) {
 		t.Fatalf("stdout is not a JSON-RPC response: %v\n%s", err, lines[0])
 	}
 	if resp.Result == nil || resp.Result.IsError || len(resp.Result.Content) == 0 {
-		t.Fatalf("read_article(%s) failed, so the skill was not seeded before serving: %s", server.AgentGuidelinesSlug, lines[0])
+		t.Fatalf("read_article(home) failed, so storage was not opened and seeded before serving: %s", lines[0])
 	}
-	if want := "Slug: " + server.AgentGuidelinesSlug; !strings.Contains(resp.Result.Content[0].Text, want) {
+	if want := "Slug: home"; !strings.Contains(resp.Result.Content[0].Text, want) {
 		t.Errorf("read_article returned no %q:\n%s", want, resp.Result.Content[0].Text)
 	}
 }
@@ -484,10 +484,10 @@ func TestNormalLaunchServesOnlyOnceSeededAndShutsDownOnSignal(t *testing.T) {
 
 	client := &http.Client{Timeout: time.Second}
 	defer client.CloseIdleConnections()
-	guidelines := "http://127.0.0.1:" + port + "/api/articles/" + server.AgentGuidelinesSlug
+	homePage := "http://127.0.0.1:" + port + "/api/articles/home"
 	deadline := time.Now().Add(time.Minute)
 	for {
-		resp, err := client.Get(guidelines)
+		resp, err := client.Get(homePage)
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
@@ -591,12 +591,11 @@ func TestSignalWhileStorageOpensIsHandledOnceItOpens(t *testing.T) {
 					t.Errorf("stderr does not say %q:\n%s", want, stderr)
 				}
 			}
-			for _, started := range []string{"Seeded default governance skill", "stdio MCP server loop", "Plan lifecycle worker", "web server is running"} {
+			for _, started := range []string{"stdio MCP server loop", "Plan lifecycle worker", "web server is running"} {
 				if strings.Contains(stderr, started) {
 					t.Errorf("main went on past opening storage (%q) despite the signal; stderr:\n%s", started, stderr)
 				}
 			}
-			assertNotExist(t, filepath.Join(dataDir, "articles", server.AgentGuidelinesSlug+".md"))
 
 			reopened, err := server.NewStorage(dataDir)
 			if err != nil {

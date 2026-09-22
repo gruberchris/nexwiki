@@ -10,8 +10,8 @@ import (
 )
 
 // The damper exists because of a real event: on 2026-08-18 an agent alternated read_article and
-// search_wiki for 31 minutes and ~170 MCP calls. The remediation for that was more prose in the
-// guidelines, and prose is what had already failed. These tests pin the behaviour that replaces it.
+// search_wiki for 31 minutes and ~170 MCP calls. The remediation for that was more prose in an
+// instructions page, and prose is what had already failed. These tests pin the behaviour that replaces it.
 //
 // Everything here goes through executeToolCall rather than the toolCall helper, because the damper
 // is keyed on the resolved agent and only that path carries one.
@@ -42,7 +42,7 @@ func TestDamperEscalatesOnRepeatedLookups(t *testing.T) {
 	srv := newMCPServer(t)
 
 	first := damperCall(t, srv, "agent-a", searchCall("docker build error"))
-	if strings.Contains(first, "repeats a lookup") || strings.Contains(first, "§0") {
+	if strings.Contains(first, "repeats a lookup") || strings.Contains(first, "COMPLETED check") {
 		t.Fatalf("a first lookup must be untouched:\n%s", first)
 	}
 
@@ -50,18 +50,15 @@ func TestDamperEscalatesOnRepeatedLookups(t *testing.T) {
 	if !strings.Contains(second, "repeats a lookup") {
 		t.Errorf("a second identical lookup should note the repeat:\n%s", second)
 	}
-	if strings.Contains(second, "§0") {
-		t.Errorf("the second notice should stay light, not cite §0 yet:\n%s", second)
+	if strings.Contains(second, "COMPLETED check") {
+		t.Errorf("the second notice should stay light, not escalate yet:\n%s", second)
 	}
 
 	third := damperCall(t, srv, "agent-a", searchCall("docker build error"))
-	if !strings.Contains(third, "§0") {
-		t.Errorf("the third repeat must cite §0 explicitly:\n%s", third)
-	}
 	if !strings.Contains(third, "COMPLETED check") {
 		t.Errorf("the third notice must state that the check is complete:\n%s", third)
 	}
-	if !strings.Contains(third, "create_") {
+	if !strings.Contains(third, "save_article") {
 		t.Errorf("the third notice must point at the action that ends the loop:\n%s", third)
 	}
 }
@@ -80,7 +77,7 @@ func TestDamperCatchesRewordedRepeats(t *testing.T) {
 
 	// Stop words and punctuation must not defeat it either.
 	third := damperCall(t, srv, "agent-a", searchCall("What is the error, for docker, when building?"))
-	if !strings.Contains(third, "§0") {
+	if !strings.Contains(third, "COMPLETED check") {
 		t.Errorf("stop words and punctuation must not hide a repeat:\n%s", third)
 	}
 }
@@ -133,7 +130,7 @@ func TestDamperResetsOnAWrite(t *testing.T) {
 	}
 
 	after := damperCall(t, srv, "agent-a", searchCall("docker build error"))
-	if strings.Contains(after, "repeats a lookup") || strings.Contains(after, "§0") {
+	if strings.Contains(after, "repeats a lookup") || strings.Contains(after, "COMPLETED check") {
 		t.Errorf("a write should have cleared the ring:\n%s", after)
 	}
 }

@@ -119,8 +119,8 @@ type HealthOutput struct {
 
 	// UnreferencedSkillCount and UnreferencedSkills report skills nothing points an agent at.
 	// Kept separate from Orphans because the remedy differs: an orphaned article wants a link
-	// from a related page, whereas an unreferenced skill wants a read_article call in the
-	// guidelines — or retiring.
+	// from a related page, whereas an unreferenced skill wants a read_article call in another
+	// document — or retiring.
 	UnreferencedSkillCount int             `json:"unreferenced_skill_count"`
 	UnreferencedSkills     []HealthFinding `json:"unreferenced_skills"`
 
@@ -208,7 +208,7 @@ func healthOutputSchema() map[string]interface{} {
 		"stale_plans":                schemaArrayOf(finding, "Stale plans, up to the limit."),
 		"stale_concept_count":        schemaOf("integer", "Concepts whose freshness expiration (stale_after) has passed."),
 		"stale_concepts":             schemaArrayOf(finding, "Concepts whose freshness expiration has passed, up to the limit."),
-		"unreferenced_skill_count":   schemaOf("integer", "Skills no live document links or names in a read_article call. Excludes the nexwiki-agent-guidelines skill, which the connect-time MCP instructions reference from code."),
+		"unreferenced_skill_count":   schemaOf("integer", "Skills no live document links or names in a read_article call."),
 		"unreferenced_skills":        schemaArrayOf(finding, "Unreferenced skills, up to the limit."),
 		"cold_days":                  schemaOf("integer", "Recency threshold applied to memories."),
 		"cold_memory_scan_ran":       schemaOf("boolean", "False when the activity log does not reach back cold_days, in which case the cold-memory check was skipped rather than reporting every memory."),
@@ -380,14 +380,14 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		// check counts both links and in-code slug mentions, and reusing the orphan check here
 		// would be wrong in both directions — measured on the real corpus, create-plan-skill (live
 		// and wanted) has 0 inbound links, while enhanced-memory-decision-making-skill (dead) also
-		// had 0 despite being named four times by the guidelines that referenced it.
+		// had 0 despite being named four times by the document that referenced it.
 		//
-		// The guidelines skill is always reachable: three tool descriptions name its slug in Go,
-		// so no document has to.
-		if doc.Type == ContentTypeSkill && slug != AgentGuidelinesSlug && !liveRefs[slug] {
+		// No skill is exempt: nothing in code names a skill's slug, so every skill is reached
+		// through a document or not at all.
+		if doc.Type == ContentTypeSkill && !liveRefs[slug] {
 			unreferencedSkills = append(unreferencedSkills, HealthFinding{
 				Slug: slug, Title: doc.Title, Type: doc.Type,
-				Detail: "Nothing points agents at this skill — no document links it or names its slug in a read_article call. Reference it from the guidelines or another skill, or archive it if it is retired.",
+				Detail: "Nothing points agents at this skill — no document links it or names its slug in a read_article call. Reference it from another document or skill, or archive it if it is retired.",
 			})
 		}
 

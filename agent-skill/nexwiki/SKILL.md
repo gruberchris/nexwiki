@@ -14,12 +14,16 @@ answering from scratch or re-deriving something.
 
 At the start of a session, or when picking up prior work:
 
-1. Call `get_wiki_overview(since: "48h")`. It returns document counts, the `user` and
-   `feedback` memories (they apply to every task), the plans in flight, and recent activity.
-   It does not list every document: use `list_articles` (filter by `type`, `status`, or `tag`)
-   for the full index and `search_wiki` to find a topic.
+1. Call `get_wiki_overview(since: "48h")` once. It returns document counts, the plans in
+   flight, recent activity, and `pinned_memories` — the operator's `user` and `feedback`
+   memories. Those are the operator's standing preferences and corrections: follow them on
+   every task, and where one conflicts with this skill, the memory wins.
+   The overview does not list every document: use `list_articles` (filter by `type`, `status`,
+   or `tag`) for the full index and `search_wiki` to find a topic.
 
 Then `read_article` only the entries you actually need; `get_backlinks` follows related pages.
+Run each orientation call once: a search that finds nothing is an answer, not a reason to
+search again with reworded queries.
 
 ## Route to the right behavior
 
@@ -36,11 +40,14 @@ them in turn.
 
 ## Always
 
-- Once per session, before creating or editing content, load the user's editable rulebook:
-  `read_article(slug: "nexwiki-agent-guidelines")` and follow it — it overrides this skill.
-  If it doesn't exist, proceed with the defaults in these guides.
 - Set `description` and `source` on everything you create — descriptions power the wiki
-  overview, sources keep knowledge auditable.
+  overview, sources keep knowledge auditable. For a memory they are required, together with
+  `memory_kind`: `save_article` refuses a new memory missing any of the three.
+- `content` always replaces the whole body. To change only metadata or status, pass the
+  current body back unchanged.
+- A `[[WikiLink]]` must name a document that exists in this wiki — never your own local memory
+  files, instruction files, tools, or scratch paths. Cite external references as plain URLs.
+- On a version conflict, retry once with the version the error names.
 - Never relabel a reserved document type (`AI-Agent-Plan`, `AI-Agent-Skill`,
   `AI-Agent-Memory`) to a non-reserved one unless the user asks, and never strip a tool-managed
   `memory-<scope>` tag. Omitting `type` on an update keeps the current type. A document saved
@@ -48,7 +55,8 @@ them in turn.
   the right `type`) — never by deleting and recreating it; confirm with `list_articles(type: …)`.
 - To remove text from a document's history (a name under embargo, personal details), rewrite it
   with `save_article(..., loaded_version, purge_history: true)`, then verify with
-  `search_wiki(query, include_history: true)`. That keeps the document; `delete_article` does not. Plans have a status field (`draft`, `implementing`, `blocked`, `completed`, `superseded`,
+  `search_wiki(query, include_history: true)`. That keeps the document; `delete_article` does not —
+  it is irreversible and a last resort. Plans have a status field (`draft`, `implementing`, `blocked`, `completed`, `superseded`,
   `parked`, `evergreen`, `archived`) and skills have `draft`, `ready`, `archived`.
   Slugs are lowercase and hyphenated.
 - Never store credentials, tokens, or secrets in the wiki.
