@@ -86,12 +86,12 @@ func TestConsolidatedToolsEndToEnd(t *testing.T) {
 		t.Fatalf("expected nexwiki project tag, got %v", planArt.Tags)
 	}
 
-	// 9. list_articles: filter by type, status, tag
-	listResp := toolCall(t, srv, `{"name":"list_articles","arguments":{"type":"plans"}}`)
+	// 9. search_wiki without a query: the index, filtered by type
+	listResp := toolCall(t, srv, `{"name":"search_wiki","arguments":{"type":"plans"}}`)
 	if listResp.IsError {
-		t.Fatalf("list_articles failed: %s", listResp.Content[0].Text)
+		t.Fatalf("search_wiki index failed: %s", listResp.Content[0].Text)
 	}
-	listOut := listResp.StructuredContent.(DocumentListOutput)
+	listOut := listResp.StructuredContent.(SearchOutput)
 	if listOut.Count != 1 || listOut.Documents[0].Slug != "migration-plan" {
 		t.Fatalf("expected 1 plan 'migration-plan', got %d docs", listOut.Count)
 	}

@@ -70,12 +70,12 @@ func TestAllMCPToolsComprehensive(t *testing.T) {
 		}
 	})
 
-	// 3. Test list_articles (initial)
-	t.Run("list_articles_initial", func(t *testing.T) {
-		resp := mustCall("list_articles", map[string]interface{}{})
-		list, ok := resp.StructuredContent.(DocumentListOutput)
+	// 3. Test search_wiki without a query (the initial index)
+	t.Run("search_wiki_index_initial", func(t *testing.T) {
+		resp := mustCall("search_wiki", map[string]interface{}{})
+		list, ok := resp.StructuredContent.(SearchOutput)
 		if !ok {
-			t.Fatalf("expected DocumentListOutput, got %T", resp.StructuredContent)
+			t.Fatalf("expected SearchOutput, got %T", resp.StructuredContent)
 		}
 		if list.Documents == nil {
 			t.Errorf("documents slice should not be nil")

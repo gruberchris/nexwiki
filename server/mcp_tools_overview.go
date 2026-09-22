@@ -12,7 +12,7 @@ import (
 // This file holds get_wiki_overview, the orientation call every agent session is told to make
 // first. Because every session pays for it, its response is bounded: counts, the memories that
 // apply to any task, the plans in flight, recent activity, and the status vocabularies. It is
-// not an index — list_articles lists documents, search_wiki finds them — and nothing in it grows
+// not an index — search_wiki lists documents without a query and finds them with one — and nothing in it grows
 // with the number of documents in the wiki.
 
 const (
@@ -30,14 +30,14 @@ const (
 // overviewNextSteps is the pointer to the rest of the wiki, carried in both the prose and the
 // structured output.
 const overviewNextSteps = "This overview does not list every document. For the full index call " +
-	"list_articles, filtered by type ('articles', 'memories', 'plans', 'skills'), status, or tag and " +
-	"paged with cursor. To find documents about a topic call search_wiki. Open any entry with read_article(slug)."
+	"search_wiki without a query, filtered by type ('articles', 'memories', 'plans', 'skills'), status, or tag and " +
+	"paged with cursor. To find documents about a topic give search_wiki a query. Open any entry with read_article(slug)."
 
 var getWikiOverviewTool = toolDef{
 	Schema: map[string]interface{}{
 		"name": "get_wiki_overview",
 		"description": "Session orientation in one bounded call: document counts by type and plan status, the user and feedback memories that apply to any task, the plans in flight (implementing or blocked), recent activity since a duration, and the status vocabularies. " +
-			"It does not list every document — use list_articles (type/status/tag filters, cursor paging) for the full index and search_wiki for a topic.",
+			"It does not list every document — search_wiki without a query is the full index (type/status/tag filters, cursor paging), and with one finds a topic.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -290,7 +290,7 @@ func renderOverviewText(out OverviewOutput, sinceStr string, includeStats bool) 
 		b.WriteString("\n")
 	}
 	if out.PinnedMemoryTotal > len(out.PinnedMemories) {
-		fmt.Fprintf(&b, "%d more: list_articles(type: \"memories\") lists every memory.\n", out.PinnedMemoryTotal-len(out.PinnedMemories))
+		fmt.Fprintf(&b, "%d more: search_wiki(type: \"memories\") lists every memory.\n", out.PinnedMemoryTotal-len(out.PinnedMemories))
 	}
 	b.WriteString("\n")
 
@@ -309,7 +309,7 @@ func renderOverviewText(out OverviewOutput, sinceStr string, includeStats bool) 
 		fmt.Fprintf(&b, " (updated %s)\n", p.Timestamp.Format("2006-01-02"))
 	}
 	if out.ActivePlanTotal > len(out.ActivePlans) {
-		fmt.Fprintf(&b, "%d more: list_articles(type: \"plans\", status: \"implementing\") or (status: \"blocked\").\n", out.ActivePlanTotal-len(out.ActivePlans))
+		fmt.Fprintf(&b, "%d more: search_wiki(type: \"plans\", status: \"implementing\") or (status: \"blocked\").\n", out.ActivePlanTotal-len(out.ActivePlans))
 	}
 	b.WriteString("\n")
 

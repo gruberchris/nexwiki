@@ -16,7 +16,7 @@ const (
 	memoryKindRequirement = "'memory_kind' (what sort of fact this is: 'project' for goals and " +
 		"constraints not derivable from the repo, 'reference' for a pointer to an external resource, " +
 		"'user' for who the operator is, 'feedback' for a correction the operator gave)"
-	memoryDescriptionRequirement = "'description' (a one-line summary; it is what list_articles and " +
+	memoryDescriptionRequirement = "'description' (a one-line summary; it is what search_wiki's index and " +
 		"get_wiki_overview show, so a memory without one is invisible when an agent orients itself)"
 	memorySourceRequirement = "'source' (where this knowledge came from; a fact with no provenance " +
 		"cannot be re-verified later, and its origin cannot be recovered afterwards)"

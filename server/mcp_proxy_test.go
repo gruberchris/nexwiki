@@ -84,8 +84,8 @@ func TestProxyForwardsLegacyCalls(t *testing.T) {
 	}
 
 	tools := msgs[0]["result"].(map[string]interface{})["tools"].([]interface{})
-	if len(tools) != 8 {
-		t.Errorf("proxied tools/list returned %d tools, want 8", len(tools))
+	if len(tools) != 7 {
+		t.Errorf("proxied tools/list returned %d tools, want 7", len(tools))
 	}
 	if msgs[0]["id"].(float64) != 1 || msgs[1]["id"].(float64) != 2 {
 		t.Error("responses must preserve their request ids and order")
@@ -400,8 +400,8 @@ func persistPrimaryActivity(t *testing.T, primary *Server) string {
 // they pin the whole precedence: per-request clientInfo, then the stdio client's handshake, then
 // the sidecar's own -agent-name, then the primary's.
 func TestProxyAttributesToolCallsToTheStdioClient(t *testing.T) {
-	const listCall = `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_articles","arguments":{}}}`
-	modernCall := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_articles","arguments":{},` +
+	const listCall = `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_wiki","arguments":{}}}`
+	modernCall := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_wiki","arguments":{},` +
 		`"_meta":{"io.modelcontextprotocol/protocolVersion":"` + ModernProtocolVersion + `",` +
 		`"io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"Modern Client"}}}}`
 
@@ -476,8 +476,8 @@ func TestProxyAttributesToolCallsToTheStdioClient(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadActivityLog failed: %v", err)
 			}
-			if len(events) != 1 || events[0].Tool != "list_articles" {
-				t.Fatalf("expected exactly one logged list_articles call, got %+v", events)
+			if len(events) != 1 || events[0].Tool != "search_wiki" {
+				t.Fatalf("expected exactly one logged search_wiki call, got %+v", events)
 			}
 			if events[0].Agent != tc.want {
 				t.Errorf("tool call through the sidecar attributed to %q, want %q", events[0].Agent, tc.want)
@@ -493,7 +493,7 @@ func TestProxyAttributesToolCallsToTheStdioClient(t *testing.T) {
 // entries of a bulk import, which log the resolved agent as given.
 func TestInvisibleConfiguredAgentNameIsTreatedAsUnset(t *testing.T) {
 	const invisible = "\x01\x1b\u200b\u200e\ufeff"
-	const listCall = `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_articles","arguments":{}}}`
+	const listCall = `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_wiki","arguments":{}}}`
 
 	built := NewMCPProxy("http://127.0.0.1:1/api/mcp", invisible, io.Discard)
 	defer built.stop()
@@ -532,8 +532,8 @@ func TestInvisibleConfiguredAgentNameIsTreatedAsUnset(t *testing.T) {
 			t.Errorf("%s event attributed to %q, want %q", ev.Tool, ev.Agent, DefaultAgentName)
 		}
 	}
-	if len(events) != 2 || !tools["list_articles"] || !tools["save_article"] {
-		t.Fatalf("expected one list_articles and one save_article event, got %+v", events)
+	if len(events) != 2 || !tools["search_wiki"] || !tools["save_article"] {
+		t.Fatalf("expected one search_wiki and one save_article event, got %+v", events)
 	}
 }
 

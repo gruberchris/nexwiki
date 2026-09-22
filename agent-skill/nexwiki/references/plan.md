@@ -3,7 +3,7 @@
 Any task with more than two steps must be saved as a plan **before** work begins — never
 just print a plan in chat.
 
-1. Check `list_articles(type: "plans")` for an existing plan on this topic.
+1. Check `search_wiki(type: "plans")` for an existing plan on this topic.
 2. If one exists, continue it with `append_article(slug, content)`. Otherwise call `save_article` with
    `type: "AI-Agent-Plan"`, a clear title, the steps, and `project_context` set to the project name.
 3. Use `append_article(slug, content)` for progress notes after each milestone.

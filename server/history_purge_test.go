@@ -427,7 +427,7 @@ func TestSearchIncludeHistoryAcceptsQueriesBleveRejects(t *testing.T) {
 // find them.
 func TestSearchWikiDeclaresEveryFilterItHonours(t *testing.T) {
 	props := searchWikiTool.Schema["inputSchema"].(map[string]interface{})["properties"].(map[string]interface{})
-	for _, name := range []string{"query", "type", "tag", "limit", "memory_kind", "include_archived", "include_history"} {
+	for _, name := range []string{"query", "type", "tag", "status", "limit", "cursor", "memory_kind", "include_archived", "include_history"} {
 		if _, ok := props[name]; !ok {
 			t.Errorf("search_wiki honours %q but its input schema does not declare it", name)
 		}

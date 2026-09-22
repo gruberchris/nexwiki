@@ -39,17 +39,29 @@ type SearchHit struct {
 	Snippets  []string  `json:"snippets,omitempty"`
 }
 
-// SearchOutput is the `search_wiki` payload. Query and the applied facets are echoed back so an
-// agent reading only the structured half can still tell "no such knowledge" from "my filter
-// excluded it" — the same distinction the prose spells out.
+// SearchOutput is the `search_wiki` payload, in both of its modes. Query and the applied facets are
+// echoed back so an agent reading only the structured half can still tell "no such knowledge"
+// from "my filter excluded it" — the same distinction the prose spells out.
+//
+// Exactly one of Results and Documents is present: Results for a search, Documents for the index.
+// They stay two fields because they are two shapes — a scored hit with snippets, and a document's
+// full metadata — and folding them into one list would leave every field of each optional in
+// the schema. omitzero rather than omitempty is what makes "one of them" hold: the mode that
+// owns a list always sets it non-nil, so an empty page still serializes as [] (a schema
+// declaring an array does not match null), while the other mode leaves it nil and it is dropped.
 type SearchOutput struct {
-	Query           string      `json:"query"`
+	Query string `json:"query,omitempty"`
+	// Count is every match across all pages, not the length of this page; a search counts
+	// within the maxSearchLimit best-scoring hits, the most one search ever considers.
 	Count           int         `json:"count"`
 	Types           []string    `json:"type,omitempty"`
 	Tags            []string    `json:"tags,omitempty"`
+	Status          string      `json:"status,omitempty"`
 	MemoryKind      string      `json:"memory_kind,omitempty"`
 	IncludeArchived bool        `json:"include_archived"`
-	Results         []SearchHit `json:"results"`
+	Results         []SearchHit `json:"results,omitzero"`
+	Documents       []Article   `json:"documents,omitzero"`
+	NextCursor      string      `json:"next_cursor,omitempty"`
 
 	// IncludeHistory echoes include_history. When set, HistoryMatches is always present — an
 	// empty list is the finding "no stored revision contains this", which is the point of asking.
@@ -86,9 +98,9 @@ type ArticleOutput struct {
 	SkippedDocuments     []SkippedDocument `json:"skipped_documents,omitempty"`
 }
 
-// DocumentListOutput is the shared payload of every list-shaped tool: list_articles,
-// list_agent_memories, list_agent_plans, and list_agent_skills. One shape for all four means an
-// agent learns to read a NexWiki listing once.
+// DocumentListOutput is the shared payload of the legacy list-shaped tools: list_agent_memories,
+// list_agent_plans, and list_agent_skills. search_wiki's index mode carries the same fields
+// (count, documents, next_cursor) inside SearchOutput, so an agent reads a listing the same way.
 type DocumentListOutput struct {
 	Count      int       `json:"count"`
 	Documents  []Article `json:"documents"`
@@ -375,22 +387,25 @@ func searchOutputSchema() map[string]interface{} {
 	}, "title", "slug", "type", "score", "timestamp")
 
 	return schemaObject(map[string]interface{}{
-		"query":            schemaOf("string", "The query that was run."),
-		"count":            schemaOf("integer", "Number of results returned."),
-		"type":             schemaStringArray("Document types the search was restricted to; absent when unrestricted."),
+		"query":            schemaOf("string", "The query that was run; absent in index mode."),
+		"count":            schemaOf("integer", "Matches across all pages, not just this one. A search counts within its 200 best-scoring hits."),
+		"type":             schemaStringArray("Document types the results were restricted to; absent when unrestricted."),
 		"tags":             schemaStringArray("Tags every result was required to carry; absent when unfiltered."),
-		"memory_kind":      schemaOf("string", "Memory kind the search was narrowed to; absent when unfiltered."),
+		"status":           schemaOf("string", "Lifecycle status the results were narrowed to; absent when unfiltered."),
+		"memory_kind":      schemaOf("string", "Memory kind the results were narrowed to; absent when unfiltered."),
 		"include_archived": schemaOf("boolean", "Whether archived documents were included."),
-		"results":          schemaArrayOf(hit, "Matches, highest scoring first."),
+		"results":          schemaArrayOf(hit, "Search mode only: this page of matches, highest scoring first."),
+		"documents":        schemaArrayOf(articleSchema(false), "Index mode only: this page of documents, most recently updated first."),
+		"next_cursor":      schemaOf("string", "Pass as 'cursor' for the next page; absent on the last page."),
 		"include_history":  schemaOf("boolean", "Whether every stored revision was also scanned; absent when it was not."),
 		"history_matches": schemaArrayOf(schemaObject(map[string]interface{}{
 			"slug":    schemaOf("string", "Slug of the document the revision belongs to."),
 			"title":   schemaOf("string", "The document's current title (a revision's own title is not repeated)."),
 			"version": schemaOf("integer", "Revision number; pass it to read_article(version) to inspect it."),
 			"current": schemaOf("boolean", "True when this revision is the live document, false for an earlier revision in history."),
-		}, "slug", "title", "version", "current"), "Present only with include_history: every stored revision whose whole file (front matter included) contains the query as a case-insensitive literal substring, sorted by slug then version. Not narrowed by type, tag, or archived filters. Empty means no revision anywhere contains it."),
+		}, "slug", "title", "version", "current"), "Present only with include_history: every stored revision whose whole file (front matter included) contains the query as a case-insensitive literal substring, sorted by slug then version. Not narrowed by any filter. Empty means no revision anywhere contains it."),
 		"history_match_count": schemaOf("integer", "Total history matches before the list was capped; absent when there were none or include_history was not set."),
-	}, "query", "count", "results")
+	}, "count", "include_archived")
 }
 
 func articleOutputSchema() map[string]interface{} {
@@ -497,7 +512,7 @@ func activityOutputSchema() map[string]interface{} {
 // hundred documents was close to a million characters — for the call every session is told to
 // make first. Every field here is either a fixed-size summary or a list capped at
 // maxOverviewEntries, so the payload does not grow with the wiki. The full listing is
-// list_articles' job, and NextSteps says so.
+// search_wiki's job (without a query), and NextSteps says so.
 type OverviewOutput struct {
 	TotalArticles int            `json:"total_articles"`
 	Counts        OverviewCounts `json:"counts"`
@@ -515,8 +530,8 @@ type OverviewOutput struct {
 	RecentActivity  []LogEvent        `json:"recent_activity"`
 	Statistics      *StatisticsOutput `json:"statistics,omitempty"`
 	StatusTags      *StatusTagsOutput `json:"status_tags,omitempty"`
-	// NextSteps tells the agent where the rest of the wiki is: list_articles for the full index,
-	// search_wiki for a topic.
+	// NextSteps tells the agent where the rest of the wiki is: search_wiki without a query for the
+	// full index, and with one for a topic.
 	NextSteps string `json:"next_steps"`
 }
 
@@ -606,6 +621,6 @@ func overviewOutputSchema() map[string]interface{} {
 		"recent_activity":     schemaArrayOf(event, "Recent activity events within the 'since' window, oldest first, at most 20."),
 		"statistics":          statisticsOutputSchema(),
 		"status_tags":         statusTagsOutputSchema(),
-		"next_steps":          schemaOf("string", "Where to go next: list_articles for the full document index, search_wiki for a topic, read_article for an entry."),
+		"next_steps":          schemaOf("string", "Where to go next: search_wiki without a query for the full document index, with one for a topic, read_article for an entry."),
 	}, "total_articles", "counts", "plan_status_counts", "pinned_memories", "pinned_memory_total", "active_plans", "active_plan_total", "recent_activity", "next_steps")
 }

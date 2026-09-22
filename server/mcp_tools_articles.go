@@ -40,44 +40,58 @@ func (s *StringOrArray) UnmarshalJSON(data []byte) error {
 	return errors.New("expected string or array of strings")
 }
 
+// searchWikiTool is both the search and the index. It used to be two tools, search_wiki and
+// list_articles, whose filters had drifted apart — the listing could narrow by status but not by
+// memory kind, the search the other way round — and whose two schemas every session paid for in
+// context. One tool with an optional query keeps both behaviors: the query picks the mode, and
+// every filter means the same thing in either.
 var searchWikiTool = toolDef{
 	Schema: map[string]interface{}{
-		"name":        "search_wiki",
-		"description": "Perform full-text searches across the entire NexWiki knowledge base using Bleve query parsing. Searches all document types by default — wiki articles, agent memories, plans, and skills. Returns scored matches with highlighted snippets. Use 'type' and 'tag' to narrow. Set 'include_history: true' to also scan every stored revision (version history included) for the literal text — the way to verify a redaction.",
+		"name": "search_wiki",
+		"description": "Search or list documents (articles, memories, plans, skills). With 'query': scored full-text search with snippets. " +
+			"Without: the document index, most recently updated first, with descriptions and statuses. Filters and cursor paging work in both; archived documents are listed but not searched by default. " +
+			"include_history also scans every stored revision for the query's literal text, to verify a redaction.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"query": map[string]interface{}{
 					"type":        "string",
-					"description": "The search keywords or query string. Supports wildcards, quotes for exact matches, and boolean terms.",
+					"description": "Bleve query: wildcards, quoted phrases, boolean terms. Omit to list the index.",
 				},
 				"type": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional document type to restrict search to: 'articles', 'memories', 'plans', 'skills', or OKF types ('Wiki', 'AI-Agent-Memory', etc.). Omit to search every type.",
+					"description": "'articles', 'memories', 'plans', 'skills', or an OKF type name. Unknown values are an error.",
 				},
 				"tag": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional tag a result must carry (case-insensitive), e.g. 'wip' or 'memory-nexwiki'.",
+					"description": "Required tag (case-insensitive).",
 				},
-				"limit": map[string]interface{}{
-					"type":        "integer",
-					"description": "Optional maximum number of results (default 40, maximum 200).",
+				"status": map[string]interface{}{
+					"type":        "string",
+					"description": "Lifecycle status, e.g. 'implementing'; 'archived' matches every archived document.",
 				},
 				"memory_kind": map[string]interface{}{
 					"type":        "string",
 					"enum":        MemoryKinds,
-					"description": "Optional: restrict results to AI-Agent-Memory documents of this kind ('project', 'reference', 'user', or 'feedback'). Ask for 'user' and 'feedback' to load what is known about the operator.",
+					"description": "Only memories of this kind; 'user' and 'feedback' describe the operator.",
 				},
 				"include_archived": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Optional: include archived documents, which are otherwise left out.",
+					"description": "Include archived documents (default: true without 'query', false with it).",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Page size: default 50 without 'query'; 40, maximum 200, with it.",
+				},
+				"cursor": map[string]interface{}{
+					"type":        "string",
+					"description": "next_cursor from the previous page; keep the other arguments the same.",
 				},
 				"include_history": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Optional. Also scan every stored revision of every document — version history plus the live files — for the query as a case-insensitive literal substring over the whole file, front matter included, and return the matching (slug, version) pairs as history_matches. Use it to audit a redaction: an empty history_matches means no revision anywhere still contains the text. The type, tag, and archived filters do not narrow this scan. Surrounding double quotes are stripped; nothing else is interpreted.",
+					"description": "Needs 'query'. Also scan every stored revision, front matter included, for the query as a case-insensitive literal (surrounding quotes stripped); returns history_matches, empty when no revision contains it. Filters do not narrow this scan.",
 				},
 			},
-			"required": []string{"query"},
 		},
 	},
 	Output:   searchOutputSchema(),
@@ -85,55 +99,261 @@ var searchWikiTool = toolDef{
 	Behavior: toolBehavior{Title: "Search Wiki", ReadOnly: true},
 }
 
-func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCError) {
-	type SearchArgs struct {
-		Query           string        `json:"query"`
-		Type            StringOrArray `json:"type"`
-		Tag             StringOrArray `json:"tag"`
-		Tags            StringOrArray `json:"tags"`
-		Limit           int           `json:"limit"`
-		IncludeArchived bool          `json:"include_archived"`
-		MemoryKind      string        `json:"memory_kind"`
-		IncludeHistory  bool          `json:"include_history"`
+// defaultIndexPageSize is the index mode's page size when the caller sets no limit — list_articles'
+// default, kept so a caller moving over from it gets the same pages. There is deliberately no
+// ceiling: an index entry is metadata only, so a large page is long but never a copy of the wiki.
+const defaultIndexPageSize = 50
+
+// searchWikiArgs is search_wiki's argument object. IncludeArchived is a pointer because its
+// default depends on the mode, so "not given" has to be told apart from an explicit false.
+type searchWikiArgs struct {
+	Query           string        `json:"query"`
+	Type            StringOrArray `json:"type"`
+	Tag             StringOrArray `json:"tag"`
+	Tags            StringOrArray `json:"tags"`
+	Status          string        `json:"status"`
+	MemoryKind      string        `json:"memory_kind"`
+	IncludeArchived *bool         `json:"include_archived"`
+	Limit           int           `json:"limit"`
+	Cursor          string        `json:"cursor"`
+	IncludeHistory  bool          `json:"include_history"`
+}
+
+// searchFilters is search_wiki's filters after validation, shared by both modes so a filter can
+// never mean one thing in a search and another in the index.
+type searchFilters struct {
+	types           map[string]bool // canonical document types; empty means every type
+	typeNames       []string        // the type names as the caller spelled them, for the echo
+	tags            []string
+	status          string // lowercased; "archived" matches IsArchived rather than the field
+	memoryKind      string
+	includeArchived bool
+}
+
+// matchesStatus applies the status filter the way list_articles always has: "archived" means
+// archived by any of IsArchived's three marks, since wiki articles and memories archive by tag and
+// have no status field to match; anything else is a case-insensitive match on the field.
+func (f searchFilters) matchesStatus(art *Article) bool {
+	switch f.status {
+	case "":
+		return true
+	case StatusArchived:
+		return IsArchived(art)
+	default:
+		return strings.EqualFold(art.Status, f.status)
 	}
-	var searchArgs SearchArgs
-	if e := decodeToolArgs(args, &searchArgs); e != nil {
+}
+
+// facetSuffix describes the applied filters so the agent can tell "no such knowledge" from "my
+// filter excluded it" — the difference between giving up and retrying with a wider search.
+// includeArchived is named only where it departs from the mode's default.
+func (f searchFilters) facetSuffix(indexMode bool) string {
+	var facets []string
+	if len(f.typeNames) > 0 {
+		facets = append(facets, "type: "+strings.Join(f.typeNames, ", "))
+	}
+	if len(f.tags) > 0 {
+		facets = append(facets, "tags: "+strings.Join(f.tags, ", "))
+	}
+	if f.status != "" {
+		facets = append(facets, "status: "+f.status)
+	}
+	if f.memoryKind != "" {
+		facets = append(facets, "memory kind: "+f.memoryKind)
+	}
+	if f.includeArchived && !indexMode {
+		facets = append(facets, "including archived")
+	}
+	if !f.includeArchived && indexMode {
+		facets = append(facets, "excluding archived")
+	}
+	if len(facets) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" [filtered by %s]", strings.Join(facets, "; "))
+}
+
+func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCError) {
+	var a searchWikiArgs
+	if e := decodeToolArgs(args, &a); e != nil {
 		return nil, e
 	}
-	if searchArgs.Query == "" {
-		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'query' argument"}
+	indexMode := strings.TrimSpace(a.Query) == ""
+	// The history scan looks for the query text, so without one there is nothing to scan for.
+	// Answering with the index instead would hand a redaction audit an answer to a question it
+	// did not ask, and an empty history_matches it would read as "the text is gone".
+	if a.IncludeHistory && indexMode {
+		return nil, &JSONRPCError{Code: -32602, Message: "Invalid arguments: 'include_history' requires a non-empty 'query' — the literal text to look for in every stored revision."}
 	}
 
-	tags := append([]string(nil), searchArgs.Tag...)
-	tags = append(tags, searchArgs.Tags...)
-
 	// Report a bad type name rather than silently returning nothing — an agent that typos
-	// "memorys" would otherwise conclude the knowledge simply is not there.
-	if unknown := ValidateSearchTypes(searchArgs.Type); len(unknown) > 0 {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf(
-			"Error: unknown document type(s): %s. Valid values: %s.",
-			strings.Join(unknown, ", "), strings.Join(SearchTypeNames(), ", "))}}}, nil
+	// "memorys" would otherwise conclude the knowledge simply is not there. ResolveDocumentType
+	// rather than ResolveSearchType, so Attested Computation documents can be asked for too.
+	f := searchFilters{types: map[string]bool{}}
+	var unknown []string
+	for _, name := range a.Type {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		canonical := ResolveDocumentType(name)
+		if canonical == "" {
+			unknown = append(unknown, strings.TrimSpace(name))
+			continue
+		}
+		f.types[canonical] = true
+		f.typeNames = append(f.typeNames, name)
+	}
+	if len(unknown) > 0 {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + unknownDocumentTypeError(strings.Join(unknown, ", ")).Error()}}}, nil
 	}
 	// Same reasoning as the type check above: an unrecognized kind must be reported, not answered
 	// with an empty result an agent would read as "no such knowledge".
-	memoryKind := NormalizeMemoryKind(searchArgs.MemoryKind)
-	if memoryKind != "" && !IsMemoryKind(memoryKind) {
+	f.memoryKind = NormalizeMemoryKind(a.MemoryKind)
+	if f.memoryKind != "" && !IsMemoryKind(f.memoryKind) {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf(
-			"Error: '%s' is not a memory kind. Valid values: %s.", memoryKind, strings.Join(MemoryKinds, ", "))}}}, nil
+			"Error: '%s' is not a memory kind. Valid values: %s.", f.memoryKind, strings.Join(MemoryKinds, ", "))}}}, nil
+	}
+	f.tags = append(append([]string(nil), a.Tag...), a.Tags...)
+	f.status = strings.ToLower(strings.TrimSpace(a.Status))
+
+	// Archived documents default in for the index and out for a search, the defaults the two
+	// tools had before they merged: list_articles listed everything, search_wiki hid archived
+	// hits. Keeping both means neither tool's callers see different results for the same call.
+	f.includeArchived = indexMode
+	if a.IncludeArchived != nil {
+		f.includeArchived = *a.IncludeArchived
+	}
+	// Asking for archived documents by status or by tag implies including them; otherwise
+	// the archived filter would discard every document the caller asked for, with no
+	// explanation. The tag test is storage's own (trimmed, case-insensitive — see
+	// SearchArticlesWithOptions), so the include_archived echoed back is the one it applies.
+	if f.status == StatusArchived {
+		f.includeArchived = true
+	}
+	for _, tag := range f.tags {
+		if strings.EqualFold(strings.TrimSpace(tag), StatusArchived) {
+			f.includeArchived = true
+		}
 	}
 
+	if indexMode {
+		return srv.searchWikiIndex(a, f)
+	}
+	return srv.searchWikiQuery(a, f)
+}
+
+// searchWikiIndex is search_wiki without a query: the filtered document index, most recently
+// updated first, paged by cursor. It is what list_articles was, down to the page size and the
+// cursor encoding, so a caller moving over from it pages identically.
+func (srv *Server) searchWikiIndex(a searchWikiArgs, f searchFilters) (interface{}, *JSONRPCError) {
+	articles, err := srv.Storage.ListArticles()
+	if err != nil {
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
+	}
+
+	tagFilter := lowercaseSet(f.tags)
+	var filtered []Article
+	for _, art := range articles {
+		if len(f.types) > 0 && !f.types[art.Type] {
+			continue
+		}
+		if !f.includeArchived && IsArchived(&art) {
+			continue
+		}
+		if !f.matchesStatus(&art) || !matchesAllTags(art.Tags, tagFilter) {
+			continue
+		}
+		// Kind narrows to memories of that kind, and to nothing else: no other class carries the
+		// field, so a match on "" would silently widen the facet to the whole corpus.
+		if f.memoryKind != "" && art.MemoryKind != f.memoryKind {
+			continue
+		}
+		fullArt, ok := srv.Storage.getArticleForScan(art.Slug)
+		if !ok {
+			continue
+		}
+		item := *fullArt
+		item.Content = ""
+		filtered = append(filtered, item)
+	}
+
+	pageSize := defaultIndexPageSize
+	if a.Limit > 0 {
+		pageSize = a.Limit
+	}
+	page, nextCursor, rpcErr := paginate(filtered, a.Cursor, pageSize)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+
+	facetStr := f.facetSuffix(true)
+	var text string
+	if len(page) == 0 {
+		text = fmt.Sprintf("No matching articles found%s.\n", facetStr)
+	} else {
+		text = fmt.Sprintf("NexWiki Directory Index (%d matching articles, showing %d)%s:\n\n", len(filtered), len(page), facetStr)
+		for i, art := range page {
+			articleType := "Wiki Article"
+			switch art.Type {
+			case ContentTypeMemory:
+				articleType = "Agent Memory"
+			case ContentTypePlan:
+				articleType = "Agent Plan"
+			case ContentTypeSkill:
+				articleType = "Agent Skill"
+			}
+
+			tagsStr := ""
+			if len(art.Tags) > 0 {
+				tagsStr = fmt.Sprintf(" | Tags: %s", strings.Join(art.Tags, ", "))
+			}
+			statusStr := ""
+			if art.Status != "" {
+				statusStr = fmt.Sprintf(" | Status: %s", art.Status)
+			}
+			text += fmt.Sprintf("[%d] %s (Slug: %s, Type: %s%s, Last Edited: %s%s)\n",
+				i+1, art.Title, art.Slug, articleType, statusStr, art.Timestamp.Format("2006-01-02 15:04:05"), tagsStr)
+			if art.Description != "" {
+				text += fmt.Sprintf("    Summary: %s\n", art.Description)
+			}
+		}
+		if nextCursor != "" {
+			text += fmt.Sprintf("\nNext page cursor: %s\n", nextCursor)
+		}
+	}
+
+	out := f.output(len(filtered), nextCursor)
+	out.Documents = nonNilDocuments(page)
+	return ToolResponse{
+		Content:           []ToolContent{{Type: "text", Text: text}},
+		StructuredContent: out,
+	}, nil
+}
+
+// searchWikiQuery is search_wiki with a query: scored full-text search, paged by cursor.
+//
+// Paging works by fetching every hit the index will score — maxSearchLimit, the ceiling a single
+// search has always had — filtering, and slicing one page out with the same offset cursor the
+// index mode uses. Asking storage for exactly one page instead cannot work: its filters run after
+// Bleve has scored and truncated, so page boundaries would shift with whatever each filter
+// dropped, and a page could repeat or skip a hit. Over one fixed, filtered list the pages are
+// disjoint and together are the whole result, and the first page is exactly what a call without a
+// cursor always returned.
+func (srv *Server) searchWikiQuery(a searchWikiArgs, f searchFilters) (interface{}, *JSONRPCError) {
 	// No legacyQueryHeuristics: an agent searching its own second brain sees every document
-	// type unless it explicitly narrows. Memories and plans are the point, not noise.
-	results, err := srv.Storage.SearchArticlesWithOptions(searchArgs.Query, SearchOptions{
-		Types:           searchArgs.Type,
-		Tags:            tags,
-		Limit:           searchArgs.Limit,
-		IncludeArchived: searchArgs.IncludeArchived,
-		MemoryKind:      memoryKind,
+	// type unless it explicitly narrows. Memories and plans are the point, not noise. The type
+	// filter is applied below rather than handed to storage, which knows only the four search
+	// types and would silently widen an Attested Computation filter to every type.
+	results, err := srv.Storage.SearchArticlesWithOptions(a.Query, SearchOptions{
+		Tags:                 f.tags,
+		Limit:                maxSearchLimit,
+		IncludeArchived:      f.includeArchived,
+		MemoryKind:           f.memoryKind,
+		skipFallbackSnippets: true,
 	})
 	bleveNote := ""
 	if err != nil {
-		if !searchArgs.IncludeHistory {
+		if !a.IncludeHistory {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
 		}
 		// The history scan takes the query literally, so a query the Bleve parser rejects is still
@@ -142,32 +362,48 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		bleveNote = fmt.Sprintf("Index search failed for this query (%s); the version history scan below takes it literally.\n", srv.clientError(err))
 	}
 
-	// Describe the applied facets so the agent can tell "no such knowledge" from "my filter
-	// excluded it" — the difference between giving up and retrying with a wider search.
-	var facets []string
-	if len(searchArgs.Type) > 0 {
-		facets = append(facets, "type: "+strings.Join(searchArgs.Type, ", "))
+	matched := make([]SearchResult, 0, len(results))
+	for _, res := range results {
+		if len(f.types) > 0 && !f.types[res.Type] {
+			continue
+		}
+		// A search result carries no status, so the filter reads the cached metadata — only
+		// when one was asked for.
+		if f.status != "" {
+			meta, err := srv.Storage.metaBySlug(res.Slug)
+			if err != nil || !f.matchesStatus(meta) {
+				continue
+			}
+		}
+		matched = append(matched, res)
 	}
-	if len(tags) > 0 {
-		facets = append(facets, "tags: "+strings.Join(tags, ", "))
+
+	pageSize := a.Limit
+	if pageSize <= 0 {
+		pageSize = defaultSearchLimit
 	}
-	if memoryKind != "" {
-		facets = append(facets, "memory kind: "+memoryKind)
-	}
-	if searchArgs.IncludeArchived {
-		facets = append(facets, "including archived")
-	}
-	facetStr := ""
-	if len(facets) > 0 {
-		facetStr = fmt.Sprintf(" [filtered by %s]", strings.Join(facets, "; "))
+	pageSize = min(pageSize, maxSearchLimit)
+	page, nextCursor, rpcErr := paginate(matched, a.Cursor, pageSize)
+	if rpcErr != nil {
+		return nil, rpcErr
 	}
 
 	// Build the structured payload first, then render the prose from it, so the two halves of
-	// the answer are the same data and cannot disagree.
-	hits := make([]SearchHit, 0, len(results))
-	for _, res := range results {
-		snippets := make([]string, 0, len(res.Snippets))
-		for _, snippet := range res.Snippets {
+	// the answer are the same data and cannot disagree. Snippets are finished here, for the
+	// page alone: storage skipped the fallback read for fragment-less hits (see
+	// skipFallbackSnippets), and nothing before this point depends on a snippet.
+	hits := make([]SearchHit, 0, len(page))
+	for _, res := range page {
+		raw := res.Snippets
+		if len(raw) == 0 {
+			preview := ""
+			if meta, err := srv.Storage.metaBySlug(res.Slug); err == nil {
+				preview = meta.ContentPreview
+			}
+			raw = srv.Storage.fallbackSnippet(res.Slug, preview)
+		}
+		snippets := make([]string, 0, len(raw))
+		for _, snippet := range raw {
 			snippets = append(snippets, plainSnippet(snippet))
 		}
 		hits = append(hits, SearchHit{
@@ -181,11 +417,16 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 		})
 	}
 
+	facetStr := f.facetSuffix(false)
 	text := bleveNote
-	if len(hits) == 0 {
-		text += fmt.Sprintf("No documents found matching query: '%s'%s\n", searchArgs.Query, facetStr)
+	if len(matched) == 0 {
+		text += fmt.Sprintf("No documents found matching query: '%s'%s\n", a.Query, facetStr)
 	} else {
-		text += fmt.Sprintf("Found %d matching documents in NexWiki%s:\n\n", len(hits), facetStr)
+		showing := ""
+		if len(hits) < len(matched) {
+			showing = fmt.Sprintf(", showing %d", len(hits))
+		}
+		text += fmt.Sprintf("Found %d matching documents in NexWiki%s%s:\n\n", len(matched), facetStr, showing)
 		for i, hit := range hits {
 			tagsStr := ""
 			if len(hit.Tags) > 0 {
@@ -198,20 +439,17 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 			}
 			text += "\n"
 		}
+		if nextCursor != "" {
+			text += fmt.Sprintf("Next page cursor: %s\n", nextCursor)
+		}
 	}
 
-	out := SearchOutput{
-		Query:           searchArgs.Query,
-		Count:           len(hits),
-		Types:           searchArgs.Type,
-		Tags:            tags,
-		MemoryKind:      memoryKind,
-		IncludeArchived: searchArgs.IncludeArchived,
-		Results:         hits,
-	}
+	out := f.output(len(matched), nextCursor)
+	out.Query = a.Query
+	out.Results = hits
 
-	if searchArgs.IncludeHistory {
-		term := historySearchTerm(searchArgs.Query)
+	if a.IncludeHistory {
+		term := historySearchTerm(a.Query)
 		matches, err := srv.Storage.SearchHistory(term)
 		if err != nil {
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error scanning version history: " + srv.clientError(err)}}}, nil
@@ -222,13 +460,28 @@ func (srv *Server) toolSearchWiki(args json.RawMessage) (interface{}, *JSONRPCEr
 			matches = matches[:maxHistoryMatches]
 		}
 		out.HistoryMatches = &matches
-		text += renderHistoryMatches(term, matches, out.HistoryMatchCount, len(facets) > 0)
+		text += renderHistoryMatches(term, matches, out.HistoryMatchCount, facetStr != "")
 	}
 
 	return ToolResponse{
 		Content:           []ToolContent{{Type: "text", Text: text}},
 		StructuredContent: out,
 	}, nil
+}
+
+// output starts the structured payload both modes share: the total, the next cursor, and the
+// applied filters echoed back — including include_archived as it was actually applied, since its
+// default depends on the mode.
+func (f searchFilters) output(count int, nextCursor string) SearchOutput {
+	return SearchOutput{
+		Count:           count,
+		NextCursor:      nextCursor,
+		Types:           f.typeNames,
+		Tags:            f.tags,
+		Status:          f.status,
+		MemoryKind:      f.memoryKind,
+		IncludeArchived: f.includeArchived,
+	}
 }
 
 // maxHistoryMatches caps the history_matches list. An audit term is normally rare; a common word
@@ -454,157 +707,6 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 	return ToolResponse{
 		Content:           []ToolContent{{Type: "text", Text: text}},
 		StructuredContent: out,
-	}, nil
-}
-
-var listArticlesTool = toolDef{
-	Schema: map[string]interface{}{
-		"name":        "list_articles",
-		"description": "List articles, memories, plans, and skills in the knowledge base. Filter by type, status, or tag. Supports limit and cursor pagination.",
-		"inputSchema": map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"type": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional filter by document type: 'articles', 'memories', 'plans', 'skills', or OKF types ('Wiki', 'AI-Agent-Memory', 'Attested Computation', etc.). An unknown value is an error.",
-				},
-				"status": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional filter by lifecycle status (e.g. 'draft', 'implementing', 'completed', 'ready').",
-				},
-				"tag": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional filter by tag (case-insensitive).",
-				},
-				"limit": map[string]interface{}{
-					"type":        "integer",
-					"description": "Optional maximum number of documents to return per page (default 50).",
-				},
-				"cursor": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional opaque pagination cursor returned from a prior call.",
-				},
-			},
-		},
-	},
-	Output:   documentListOutputSchema("Matching documents in the knowledge base, most recently updated first."),
-	Handler:  (*Server).toolListArticles,
-	Behavior: toolBehavior{Title: "List Articles", ReadOnly: true},
-}
-
-func (srv *Server) toolListArticles(args json.RawMessage) (interface{}, *JSONRPCError) {
-	type ListArgs struct {
-		Type   string `json:"type"`
-		Status string `json:"status"`
-		Tag    string `json:"tag"`
-		Limit  int    `json:"limit"`
-		Cursor string `json:"cursor"`
-	}
-	var lArgs ListArgs
-	if e := decodeToolArgs(args, &lArgs); e != nil {
-		return nil, e
-	}
-
-	articles, err := srv.Storage.ListArticles()
-	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: srv.clientError(err)}}}, nil
-	}
-
-	var filtered []Article
-	targetType := ""
-	if strings.TrimSpace(lArgs.Type) != "" {
-		// An unknown type is reported, never answered with a listing of wiki articles — which is
-		// what the old Wiki fallback did, and an agent could not tell it from a correct result.
-		targetType = ResolveDocumentType(lArgs.Type)
-		if targetType == "" {
-			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + unknownDocumentTypeError(lArgs.Type).Error()}}}, nil
-		}
-	}
-
-	statusFilter := strings.ToLower(strings.TrimSpace(lArgs.Status))
-	tagFilter := strings.ToLower(strings.TrimSpace(lArgs.Tag))
-
-	for _, art := range articles {
-		if targetType != "" && art.Type != targetType {
-			continue
-		}
-		if statusFilter != "" {
-			if statusFilter == StatusArchived {
-				if !IsArchived(&art) {
-					continue
-				}
-			} else {
-				if !strings.EqualFold(art.Status, statusFilter) {
-					continue
-				}
-			}
-		}
-		if tagFilter != "" {
-			if !hasTag(art.Tags, tagFilter) {
-				continue
-			}
-		}
-		fullArt, ok := srv.Storage.getArticleForScan(art.Slug)
-		if !ok {
-			continue
-		}
-		item := *fullArt
-		item.Content = ""
-		filtered = append(filtered, item)
-	}
-
-	pageSize := 50
-	if lArgs.Limit > 0 {
-		pageSize = lArgs.Limit
-	}
-
-	page, nextCursor, rpcErr := paginate(filtered, lArgs.Cursor, pageSize)
-	if rpcErr != nil {
-		return nil, rpcErr
-	}
-
-	var text string
-	if len(page) == 0 {
-		text = "No matching articles found.\n"
-	} else {
-		text = fmt.Sprintf("NexWiki Directory Index (%d matching articles, showing %d):\n\n", len(filtered), len(page))
-		for i, art := range page {
-			articleType := "Wiki Article"
-			switch art.Type {
-			case ContentTypeMemory:
-				articleType = "Agent Memory"
-			case ContentTypePlan:
-				articleType = "Agent Plan"
-			case ContentTypeSkill:
-				articleType = "Agent Skill"
-			}
-
-			tagsStr := ""
-			if len(art.Tags) > 0 {
-				tagsStr = fmt.Sprintf(" | Tags: %s", strings.Join(art.Tags, ", "))
-			}
-			statusStr := ""
-			if art.Status != "" {
-				statusStr = fmt.Sprintf(" | Status: %s", art.Status)
-			}
-			text += fmt.Sprintf("[%d] %s (Slug: %s, Type: %s%s, Last Edited: %s%s)\n",
-				i+1, art.Title, art.Slug, articleType, statusStr, art.Timestamp.Format("2006-01-02 15:04:05"), tagsStr)
-			if art.Description != "" {
-				text += fmt.Sprintf("    Summary: %s\n", art.Description)
-			}
-		}
-		if nextCursor != "" {
-			text += fmt.Sprintf("\nNext page cursor: %s\n", nextCursor)
-		}
-	}
-
-	return ToolResponse{
-		Content: []ToolContent{{Type: "text", Text: text}},
-		StructuredContent: DocumentListOutput{
-			Count:      len(filtered),
-			Documents:  nonNilDocuments(page),
-			NextCursor: nextCursor,
-		},
 	}, nil
 }
 

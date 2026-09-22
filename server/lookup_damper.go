@@ -250,9 +250,17 @@ func damperedLookupQuery(tool string, args []byte) (string, bool) {
 	switch tool {
 	case "search_wiki":
 		var a struct {
-			Query string `json:"query"`
+			Query  string `json:"query"`
+			Cursor string `json:"cursor"`
 		}
 		_ = json.Unmarshal(args, &a)
+		// Without a query search_wiki lists the index, which has no question to reword and was
+		// never watched while it was list_articles. A cursor is paging: the second page of a
+		// search is progress through one answer, and fingerprinting it on the query alone would
+		// call a three-page read a loop.
+		if strings.TrimSpace(a.Query) == "" || a.Cursor != "" {
+			return "", false
+		}
 		return a.Query, true
 	case "list_agent_memories":
 		var a struct {

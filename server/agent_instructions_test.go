@@ -130,7 +130,7 @@ func TestAgentInstructionsAreCompactAndGeneric(t *testing.T) {
 		t.Errorf("connect-time instructions are %d characters; keep them between 600 and 1200", n)
 	}
 	for _, want := range []string{
-		"get_wiki_overview", "pinned_memories", "search_wiki", "list_articles", "save_article",
+		"get_wiki_overview", "pinned_memories", "search_wiki", "no query lists the index", "save_article",
 		`"AI-Agent-Plan"`, "project_context", `"AI-Agent-Memory"`, "memory_kind", "description", "source",
 		"once", "not found", "version conflict",
 	} {

@@ -453,7 +453,7 @@ func TestUnlistableArticleDirErrorsHideDataDir(t *testing.T) {
 			const want = "open articles: permission denied"
 
 			for _, call := range []string{
-				`{"name":"list_articles","arguments":{}}`,
+				`{"name":"search_wiki","arguments":{}}`,
 				// delete_article reports a failed inbound-link scan in its refusal.
 				`{"name":"delete_article","arguments":{"slug":"home"}}`,
 				`{"name":"get_wiki_overview","arguments":{}}`,

@@ -277,11 +277,6 @@ func TestResolveSearchTypeAndValidation(t *testing.T) {
 			t.Errorf("ResolveSearchType(%q) = %q, want %q", input, got, want)
 		}
 	}
-
-	unknown := ValidateSearchTypes([]string{"memories", "memorys", "", "bogus"})
-	if len(unknown) != 2 {
-		t.Fatalf("expected 2 unknown type names, got %v", unknown)
-	}
 }
 
 // TestSearchWikiToolExposesFacets exercises the MCP tool end to end, including the typo report.

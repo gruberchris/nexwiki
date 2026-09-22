@@ -353,8 +353,8 @@ func legacyServerCapabilities() map[string]interface{} {
 func agentInstructions() string {
 	return "NexWiki is the user's persistent second brain: keep plans, durable facts and prior knowledge " +
 		"here, not only in chat. At session start call get_wiki_overview once — its pinned_memories are " +
-		"the operator's standing preferences and corrections; follow them. Search with search_wiki or " +
-		"list_articles before writing. Save multi-step work as save_article(type: \"AI-Agent-Plan\", " +
+		"the operator's standing preferences and corrections; follow them. Search with search_wiki (no " +
+		"query lists the index) before writing. Save multi-step work as save_article(type: \"AI-Agent-Plan\", " +
 		"project_context) and durable facts as save_article(type: \"AI-Agent-Memory\") with memory_kind, " +
 		"description and source. Session discipline: run each orientation call once; a \"not found\" is " +
 		"an answer, not a reason to search again; on a version conflict, retry once with the version " +

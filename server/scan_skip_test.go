@@ -114,13 +114,13 @@ func TestListAgentSkillsWarnsAndContinuesPastAnUnreadableSkill(t *testing.T) {
 	corruptBehindCache(t, srv.Storage, "broken-skill")
 	buf := captureLog(t)
 
-	resp := toolCall(t, srv, `{"name":"list_articles","arguments":{"type":"skills"}}`)
+	resp := toolCall(t, srv, `{"name":"search_wiki","arguments":{"type":"skills"}}`)
 	if resp.IsError {
 		t.Fatalf("the listing must survive one unreadable skill: %s", resp.Content[0].Text)
 	}
-	out, ok := resp.StructuredContent.(DocumentListOutput)
+	out, ok := resp.StructuredContent.(SearchOutput)
 	if !ok {
-		t.Fatalf("structured content is %T, want DocumentListOutput", resp.StructuredContent)
+		t.Fatalf("structured content is %T, want SearchOutput", resp.StructuredContent)
 	}
 	if out.Count != 1 || len(out.Documents) != 1 || out.Documents[0].Slug != "good-skill" {
 		t.Errorf("the index must contain exactly the readable skill, got %+v", out)
@@ -141,13 +141,13 @@ func TestListAgentPlansWarnsAndContinuesPastAnUnreadablePlan(t *testing.T) {
 	corruptBehindCache(t, srv.Storage, "broken-plan")
 	buf := captureLog(t)
 
-	resp := toolCall(t, srv, `{"name":"list_articles","arguments":{"type":"plans"}}`)
+	resp := toolCall(t, srv, `{"name":"search_wiki","arguments":{"type":"plans"}}`)
 	if resp.IsError {
 		t.Fatalf("the listing must survive one unreadable plan: %s", resp.Content[0].Text)
 	}
-	out, ok := resp.StructuredContent.(DocumentListOutput)
+	out, ok := resp.StructuredContent.(SearchOutput)
 	if !ok {
-		t.Fatalf("structured content is %T, want DocumentListOutput", resp.StructuredContent)
+		t.Fatalf("structured content is %T, want SearchOutput", resp.StructuredContent)
 	}
 	if out.Count != 1 || len(out.Documents) != 1 || out.Documents[0].Slug != "good-plan" {
 		t.Errorf("the index must contain exactly the readable plan, got %+v", out)

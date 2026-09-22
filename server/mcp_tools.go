@@ -84,7 +84,6 @@ var mcpToolRegistry = []toolDef{
 	readArticleTool,
 	saveArticleTool,
 	appendArticleTool,
-	listArticlesTool,
 	deleteArticleTool,
 	getWikiOverviewTool,
 	wikiHealthTool,

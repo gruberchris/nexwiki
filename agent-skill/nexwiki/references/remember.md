@@ -3,7 +3,7 @@
 Use when the user states a durable fact, decision, or preference, or when you learn
 something non-obvious worth keeping across sessions.
 
-1. **Search first** — `list_articles(type: "memories")` and/or `search_wiki` — so you never create a
+1. **Search first** — `search_wiki` with a query and/or without one (`type: "memories"`) — so you never create a
    blind duplicate.
 2. **Append or create**:
    - If a closely related memory exists, `append_article(slug, content)` to it, or correct it in
@@ -22,7 +22,7 @@ something non-obvious worth keeping across sessions.
 
      The server refuses a new memory whose `memory_kind`, `description`, or `source` is
      absent or blank, and names each missing field. Write real values rather than a
-     placeholder: the description is what `list_articles` and `get_wiki_overview` show, and the
+     placeholder: the description is what the `search_wiki` index and `get_wiki_overview` show, and the
      source is what lets the fact be re-verified later.
 3. **Keep it clean** — retire fully superseded memories with `delete_article(slug)`. Never
    let near-duplicates pile up.

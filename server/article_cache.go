@@ -14,7 +14,7 @@ import (
 
 // articleCache memoizes parsed article metadata and outbound WikiLink targets, keyed by file path.
 //
-// ListArticles backs the sidebar, the dashboard, list_articles, get_context_overview, the OKF
+// ListArticles backs the sidebar, the dashboard, search_wiki's index, get_context_overview, the OKF
 // export, and every backlink scan — and it re-read and re-parsed *every* Markdown file on disk on
 // each of those calls. On a wiki of any size that is the dominant cost of an ordinary page load.
 //

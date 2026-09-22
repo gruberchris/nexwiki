@@ -80,7 +80,7 @@ func (srv *Server) getPrompt(params json.RawMessage) (interface{}, *JSONRPCError
 		promptText := fmt.Sprintf(`You are an AI assistant tasked with creating a new article titled "%s" in the user's NexWiki knowledge base.
 
 Before you begin writing the article, you MUST follow these steps to ensure format consistency, provenance, and alignment with user rules:
-1. If you have not called 'get_wiki_overview' this session, call it once: its pinned memories are the operator's standing preferences and corrections, and they apply here. Then make one 'search_wiki' call (or 'list_articles' with type "memories") for "rules", "formatting", or "style guide" documents covering this kind of article (e.g., programming language guides, system architecture templates). Finding nothing is a completed check — use a sensible structure of your own.
+1. If you have not called 'get_wiki_overview' this session, call it once: its pinned memories are the operator's standing preferences and corrections, and they apply here. Then make one 'search_wiki' call (with a query, or without one and type "memories") for "rules", "formatting", or "style guide" documents covering this kind of article (e.g., programming language guides, system architecture templates). Finding nothing is a completed check — use a sensible structure of your own.
 2. If any formatting rules or style memories are found, read their contents using 'read_article'.
 3. Incorporate those styles, sections, structure, and constraints strictly into the new article's content.
 4. Write the article content in clean, semantic Markdown. When citing external documentation, specifications, or reference materials, use OKF v0.2 footnote links matching source identifiers (e.g. '[^id]: https://...' or inline citations '[^id]').

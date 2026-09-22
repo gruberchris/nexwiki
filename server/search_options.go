@@ -42,6 +42,12 @@ type SearchOptions struct {
 	// unkinded wiki article alongside them would make the facet meaningless.
 	MemoryKind string
 
+	// skipFallbackSnippets leaves a hit with no Bleve fragments without snippets instead of
+	// reading its file for the fallback. For a caller that fetches every hit and pages them
+	// itself (search_wiki), which fills the fallback in for the returned page only — otherwise a
+	// page of 40 could cost 200 file reads. Unexported: only this package pages results.
+	skipFallbackSnippets bool
+
 	// legacyQueryHeuristics restores the pre-facet behavior where agent documents and archived
 	// pages were hidden unless the *query text* happened to mention them. It is deliberately
 	// unexported and currently unused by production callers — both the browser and the MCP tool
@@ -134,8 +140,10 @@ var searchTypeAliases = map[string]string{
 }
 
 // normalizeTypeFilter resolves caller-supplied type names — aliases or canonical OKF types — into
-// a set of canonical types. Unrecognized names are dropped; ValidateSearchTypes reports them to
-// the caller instead of silently returning nothing.
+// a set of canonical types. Unrecognized names are dropped, so a caller must validate them first:
+// search_wiki resolves every name with ResolveDocumentType and reports the unknown ones instead
+// of silently returning nothing (and filters by type itself, since this set cannot hold
+// Attested Computation).
 func normalizeTypeFilter(types []string) map[string]bool {
 	if len(types) == 0 {
 		return nil
@@ -165,21 +173,6 @@ func ResolveSearchType(name string) string {
 		}
 	}
 	return ""
-}
-
-// ValidateSearchTypes returns the names that do not resolve to a known document type, so a caller
-// can be told it made a typo rather than being handed an empty result set.
-func ValidateSearchTypes(types []string) []string {
-	var unknown []string
-	for _, t := range types {
-		if strings.TrimSpace(t) == "" {
-			continue
-		}
-		if ResolveSearchType(t) == "" {
-			unknown = append(unknown, t)
-		}
-	}
-	return unknown
 }
 
 // SearchTypeNames lists the accepted friendly type names, for error messages and tool schemas.

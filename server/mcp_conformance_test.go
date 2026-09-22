@@ -78,7 +78,7 @@ func modernMethodCases() []struct {
 		{"resources/list", nil, true},
 		{"resources/templates/list", nil, true},
 		{"resources/read", map[string]interface{}{"uri": articleResourceURI(conformanceSlug)}, true},
-		{"tools/call", map[string]interface{}{"name": "list_articles", "arguments": map[string]interface{}{}}, false},
+		{"tools/call", map[string]interface{}{"name": "search_wiki", "arguments": map[string]interface{}{}}, false},
 		{"prompts/get", map[string]interface{}{
 			"name":      "article_creation_workflow",
 			"arguments": map[string]interface{}{"title": "Anything"},
@@ -167,7 +167,7 @@ func TestConformanceToolsListShape(t *testing.T) {
 		t.Fatalf("tools is %T, want an array", result["tools"])
 	}
 	// Against the registry rather than a literal: TestRegistryCoversEveryTool already pins the
-	// registry at 8, so what matters here is that tools/list exposes all of it and drops none.
+	// registry at 7, so what matters here is that tools/list exposes all of it and drops none.
 	if len(tools) != len(mcpToolRegistry) {
 		t.Errorf("tools/list returned %d tools, want all %d in the registry", len(tools), len(mcpToolRegistry))
 	}
@@ -322,23 +322,23 @@ func TestConformanceRequiredMetaFields(t *testing.T) {
 // another.
 func TestConformanceHeaderMirroring(t *testing.T) {
 	srv := conformanceServer(t)
-	callParams := map[string]interface{}{"name": "list_articles", "arguments": map[string]interface{}{}}
+	callParams := map[string]interface{}{"name": "search_wiki", "arguments": map[string]interface{}{}}
 
 	for _, tc := range []struct {
 		name    string
 		headers http.Header
 		want    int
 	}{
-		{"missing MCP-Protocol-Version", http.Header{"Mcp-Method": []string{"tools/call"}, "Mcp-Name": []string{"list_articles"}}, errCodeHeaderMismatch},
+		{"missing MCP-Protocol-Version", http.Header{"Mcp-Method": []string{"tools/call"}, "Mcp-Name": []string{"search_wiki"}}, errCodeHeaderMismatch},
 		{"protocol version disagrees with body", http.Header{
 			"Mcp-Protocol-Version": []string{"2025-06-18"},
 			"Mcp-Method":           []string{"tools/call"},
-			"Mcp-Name":             []string{"list_articles"},
+			"Mcp-Name":             []string{"search_wiki"},
 		}, errCodeHeaderMismatch},
 		{"method disagrees with body", http.Header{
 			"Mcp-Protocol-Version": []string{ModernProtocolVersion},
 			"Mcp-Method":           []string{"tools/list"},
-			"Mcp-Name":             []string{"list_articles"},
+			"Mcp-Name":             []string{"search_wiki"},
 		}, errCodeHeaderMismatch},
 		{"name disagrees with body", http.Header{
 			"Mcp-Protocol-Version": []string{ModernProtocolVersion},

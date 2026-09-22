@@ -198,10 +198,10 @@ func TestMCPDescriptionSourceFlow(t *testing.T) {
 		t.Errorf("read_article missing source header: %s", read.Content[0].Text)
 	}
 
-	// list_articles shows the summary line
-	list := toolCall(t, srv, `{"name":"list_articles","arguments":{}}`)
+	// search_wiki's index shows the summary line
+	list := toolCall(t, srv, `{"name":"search_wiki","arguments":{}}`)
 	if !strings.Contains(list.Content[0].Text, "Summary: short summary line") {
-		t.Errorf("list_articles missing summary: %s", list.Content[0].Text)
+		t.Errorf("search_wiki index missing summary: %s", list.Content[0].Text)
 	}
 
 	// save_article omitting description/source preserves them
@@ -230,14 +230,14 @@ func TestMCPDescriptionSourceFlow(t *testing.T) {
 		t.Errorf("expected source preserved on edit2, got '%s'", art2.Source)
 	}
 
-	// save_article carries description into list_articles (memories)
+	// save_article carries description into search_wiki's index (memories)
 	mem := toolCall(t, srv, `{"name":"save_article","arguments":{"type":"AI-Agent-Memory","memory_kind":"project","title":"Mem With Summary","content":"# fact","memory_type":"nexwiki","description":"memory gist","source":"session 2026-06-11"}}`)
 	if mem.IsError {
 		t.Fatalf("create_agent_memory failed: %s", mem.Content[0].Text)
 	}
-	memList := toolCall(t, srv, `{"name":"list_articles","arguments":{"type":"memories"}}`)
+	memList := toolCall(t, srv, `{"name":"search_wiki","arguments":{"type":"memories"}}`)
 	if !strings.Contains(memList.Content[0].Text, "Summary: memory gist") {
-		t.Errorf("list_articles missing summary: %s", memList.Content[0].Text)
+		t.Errorf("search_wiki index missing summary: %s", memList.Content[0].Text)
 	}
 }
 
