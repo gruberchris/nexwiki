@@ -257,8 +257,9 @@ func TestArchivedRequiresOptIn(t *testing.T) {
 	}
 }
 
-// TestResolveSearchTypeAndValidation covers alias resolution and the typo report.
-func TestResolveSearchTypeAndValidation(t *testing.T) {
+// TestResolveSearchType covers alias resolution: friendly names, OKF type names, case and
+// whitespace, and the empty result for anything unrecognized.
+func TestResolveSearchType(t *testing.T) {
 	cases := map[string]string{
 		"memories":        ContentTypeMemory,
 		"MEMORY":          ContentTypeMemory,

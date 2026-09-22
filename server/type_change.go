@@ -13,8 +13,8 @@ import (
 // changed nothing. A document created as a Wiki could never become the plan it was meant to be, and
 // vanished from search_wiki(type: "plans") — list_articles, then — while reading perfectly well by
 // slug. Refusing the change would have left delete-and-recreate as the only route, which costs the
-// document its history and is exactly the call a cautious agent harness refuses. An omitted `type` still means
-// "keep the one it has", so an ordinary edit can never reclassify a document.
+// document its history and is exactly the call a cautious agent harness refuses. An omitted `type`
+// still means "keep the one it has", so an ordinary edit can never reclassify a document.
 
 // ErrInvalidDocumentType reports a `type` value that names no document type. Callers map it to a
 // 4xx / tool error; it is never coerced to Wiki, because a typo that behaves exactly like success

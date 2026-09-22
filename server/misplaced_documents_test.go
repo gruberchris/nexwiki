@@ -1048,52 +1048,46 @@ func TestMisplacedDocumentsOutOfSlugForm(t *testing.T) {
 	}
 }
 
-// TestWikiStatisticsCountsMisplacedDocuments pins that get_wiki_statistics counts misplaced
-// documents as wiki_health does, and points to it for the list.
-func TestWikiStatisticsCountsMisplacedDocuments(t *testing.T) {
+// TestWikiHealthCountsMisplacedDocumentsApart pins that wiki_health counts misplaced documents in
+// their own category — not as unreadable files — and that they do not count as articles: the
+// overview's total_articles is unchanged by them.
+func TestWikiHealthCountsMisplacedDocumentsApart(t *testing.T) {
 	srv := newMCPServer(t)
 	captureLog(t)
 
-	stats := func() (StatisticsOutput, ToolResponse) {
+	totalArticles := func() int {
 		t.Helper()
-		resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`)
 		var overview OverviewOutput
-		decodeStructured(t, resp, &overview)
-		var out StatisticsOutput
-		if overview.Statistics != nil {
-			out = *overview.Statistics
-		}
-		return out, resp
+		decodeStructured(t, toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`), &overview)
+		return overview.TotalArticles
 	}
 
-	clean, resp := stats()
-	if clean.MisplacedDocumentCount != 0 {
-		t.Errorf("a clean wiki should report 0 misplaced documents, got %d:\n%s", clean.MisplacedDocumentCount, resp.Content[0].Text)
+	if clean := healthReport(t, srv, `{}`); clean.MisplacedDocumentCount != 0 {
+		t.Errorf("a clean wiki should report 0 misplaced documents, got %d", clean.MisplacedDocumentCount)
 	}
 
 	if _, err := srv.Storage.SaveArticle("", "Bar", "# Bar", "", "", "", "seed", nil, ""); err != nil {
 		t.Fatalf("SaveArticle failed: %v", err)
 	}
-	before, _ := stats()
+	before := totalArticles()
 	writeWithMtime(t, filepath.Join(srv.Storage.ArticleDir, "bar-copy.md"),
 		[]byte(readFile(t, filepath.Join(srv.Storage.ArticleDir, "bar.md"))), time.Now().Add(-time.Hour))
 	writeArticleFile(t, srv.Storage, "notes/sub-doc.md", "title: Sub Doc\nslug: sub-doc\n", "body\n", time.Now().Add(-time.Hour))
 
-	got, resp := stats()
-	health := healthReport(t, srv, `{}`)
-	if got.MisplacedDocumentCount != 2 || got.MisplacedDocumentCount != health.MisplacedDocumentCount {
-		t.Errorf("get_wiki_overview reports %d misplaced documents, wiki_health %d; want 2 from both",
-			got.MisplacedDocumentCount, health.MisplacedDocumentCount)
+	resp := toolCall(t, srv, `{"name":"wiki_health","arguments":{}}`)
+	var health HealthOutput
+	decodeStructured(t, resp, &health)
+	if health.MisplacedDocumentCount != 2 || health.UnreadableFileCount != 0 {
+		t.Errorf("want 2 misplaced documents and 0 unreadable files, got %d and %d",
+			health.MisplacedDocumentCount, health.UnreadableFileCount)
 	}
-	if got.TotalArticles != before.TotalArticles || got.UnreadableFileCount != 0 {
-		t.Errorf("misplaced documents must not count as articles or unreadable files, got %+v (before %+v)", got, before)
+	if got := totalArticles(); got != before {
+		t.Errorf("misplaced documents must not count as articles: total_articles %d, was %d", got, before)
 	}
-	text := resp.Content[0].Text
-	if !strings.Contains(text, "2 misplaced docs") {
-		t.Errorf("prose is missing '2 misplaced docs':\n%s", text)
+	if text := resp.Content[0].Text; !strings.Contains(text, "Misplaced documents (not at articles/<slug>.md, skipped by every check): 2") {
+		t.Errorf("prose is missing the misplaced count:\n%s", text)
 	}
-
-	assertMatchesOutputSchema(t, resp, getWikiOverviewTool.Output)
+	assertMatchesOutputSchema(t, resp, wikiHealthTool.Output)
 }
 
 // TestIsSlugFormAgreesWithSlugify pins the regex-free check the walks run on every file against the

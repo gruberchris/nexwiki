@@ -77,7 +77,7 @@ var searchWikiTool = toolDef{
 				},
 				"include_archived": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Include archived documents (default: true without 'query', false with it).",
+					"description": "Include archived documents (default: true without 'query', false with it). Tag or status 'archived' includes them even over an explicit false.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
@@ -1456,7 +1456,7 @@ func formatTrustTier(tier string) string {
 var saveArticleTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "save_article",
-		"description": "Create or update any document (wiki article, agent memory, plan, or skill). If 'slug' is provided and matches an existing document, it updates it; otherwise it creates a new document. 'content' is always a full replacement of the body — to change only metadata or status, pass the current body back unchanged. A [[WikiLink]] must name a document that exists in this wiki — never your own local memory files, instruction files, tools, or scratch paths; cite external references as plain URLs. Creating a memory — or changing a document's type to AI-Agent-Memory — requires 'memory_kind', 'description', and 'source'; an ordinary edit of an existing memory does not. Supports optimistic locking via 'loaded_version'. On an update, passing 'type' changes the document's type (omit it to keep the current one); an unknown type is an error. Redaction: set 'purge_history: true' on an update to keep only the revision this call writes and permanently delete every earlier revision — body and metadata — from version history. That is not a deletion of anything a reader sees today: the document, its slug, type, status, and backlinks are unchanged.",
+		"description": "Create or update any document (wiki article, agent memory, plan, or skill). A [[WikiLink]] must name a document that exists in this wiki — never your own local memory files, instruction files, tools, or scratch paths; cite external references as plain URLs. Creating a memory — or changing a document's type to AI-Agent-Memory — requires 'memory_kind', 'description', and 'source'; an ordinary edit of an existing memory does not. To redact text from version history, see 'purge_history'.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1466,7 +1466,7 @@ var saveArticleTool = toolDef{
 				},
 				"content": map[string]interface{}{
 					"type":        "string",
-					"description": "The complete Markdown body. Replaces the existing body in full; it is never merged or appended.",
+					"description": "The complete Markdown body. Replaces the existing body in full; it is never merged or appended — to change only metadata or status, pass the current body back unchanged.",
 				},
 				"slug": map[string]interface{}{
 					"type":        "string",
@@ -1479,11 +1479,11 @@ var saveArticleTool = toolDef{
 				},
 				"description": map[string]interface{}{
 					"type":        "string",
-					"description": "One-line summary, shown in list indexes and overview. Required when creating a memory; otherwise optional. Omit on an update to keep the current one.",
+					"description": "One-line summary, shown in list indexes and overview. Omit on an update to keep the current one.",
 				},
 				"source": map[string]interface{}{
 					"type":        "string",
-					"description": "Provenance: URL, document, ticket, or session context. Required when creating a memory; otherwise optional. Omit on an update to keep the current one.",
+					"description": "Provenance: URL, document, ticket, or session context. Omit on an update to keep the current one.",
 				},
 				"status": map[string]interface{}{
 					"type":        "string",
@@ -1497,7 +1497,7 @@ var saveArticleTool = toolDef{
 				"memory_kind": map[string]interface{}{
 					"type":        "string",
 					"enum":        MemoryKinds,
-					"description": "Kind of an AI-Agent-Memory, required when creating a memory: 'project' (goals and constraints not derivable from the repo), 'reference' (a pointer to an external resource), 'user' (who the operator is), or 'feedback' (a correction the operator gave). Omit on an update to keep the current one.",
+					"description": "Kind of an AI-Agent-Memory: 'project' (goals and constraints not derivable from the repo), 'reference' (a pointer to an external resource), 'user' (who the operator is), or 'feedback' (a correction the operator gave). Omit on an update to keep the current one.",
 				},
 				"memory_type": map[string]interface{}{
 					"type":        "string",

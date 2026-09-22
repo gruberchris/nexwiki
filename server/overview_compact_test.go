@@ -99,16 +99,14 @@ func TestWikiOverviewOnALargeCorpus(t *testing.T) {
 	t.Run("counts and caps", func(t *testing.T) {
 		checkOverviewCountsAndCaps(t, srv)
 	})
-	for _, stats := range []bool{false, true} {
-		t.Run(fmt.Sprintf("schema include_stats=%v", stats), func(t *testing.T) {
-			resp := toolCall(t, srv, fmt.Sprintf(`{"name":"get_wiki_overview","arguments":{"include_stats":%v}}`, stats))
-			assertMatchesOutputSchema(t, resp, toolsByName["get_wiki_overview"].Output)
-			encoded, _ := json.Marshal(resp.StructuredContent)
-			if strings.Contains(string(encoded), `"articles"`) {
-				t.Errorf("structured output still carries the removed articles field")
-			}
-		})
-	}
+	t.Run("schema", func(t *testing.T) {
+		resp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`)
+		assertMatchesOutputSchema(t, resp, toolsByName["get_wiki_overview"].Output)
+		encoded, _ := json.Marshal(resp.StructuredContent)
+		if strings.Contains(string(encoded), `"articles"`) {
+			t.Errorf("structured output still carries the removed articles field")
+		}
+	})
 
 	first := overviewResponseSize(t, toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`))
 	seedOverviewBatch(t, srv, 2)

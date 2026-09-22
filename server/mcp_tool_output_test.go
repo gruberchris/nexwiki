@@ -49,7 +49,7 @@ func structuredCalls() map[string][]string {
 			`{"name":"search_wiki","arguments":{"type":"memories","memory_kind":"project","include_archived":false}}`,
 		},
 		"read_article":      {`{"name":"read_article","arguments":{"slug":"search-design"}}`},
-		"get_wiki_overview": {`{"name":"get_wiki_overview","arguments":{"include_stats":true}}`},
+		"get_wiki_overview": {`{"name":"get_wiki_overview","arguments":{}}`},
 		"wiki_health":       {`{"name":"wiki_health","arguments":{}}`},
 	}
 }
@@ -259,23 +259,12 @@ func TestStructuredOutputCarriesRealData(t *testing.T) {
 		}
 	})
 
-	t.Run("get_wiki_overview carries statistics, status tags, and recent activity", func(t *testing.T) {
+	// Broken links are wiki_health's; TestWikiHealthFindsEachCategory pins them there.
+	t.Run("get_wiki_overview carries status tags and recent activity", func(t *testing.T) {
 		var out OverviewOutput
-		decodeStructured(t, toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`), &out)
-		if out.Statistics == nil || out.StatusTags == nil {
-			t.Fatal("expected statistics and status tags in overview")
-		}
-		if out.Statistics.BrokenLinkCount != len(out.Statistics.BrokenLinks) {
-			t.Errorf("broken_link_count %d disagrees with %d entries", out.Statistics.BrokenLinkCount, len(out.Statistics.BrokenLinks))
-		}
-		var found bool
-		for _, bl := range out.Statistics.BrokenLinks {
-			if bl.TargetSlug == "never-written" && bl.FromSlug == "bleve-notes" {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("the seeded broken link is missing: %+v", out.Statistics.BrokenLinks)
+		decodeStructured(t, toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{}}`), &out)
+		if out.StatusTags == nil {
+			t.Fatal("expected status tags in overview")
 		}
 		if len(out.StatusTags.StatusTags) != len(StatusTags) {
 			t.Errorf("returned %d status tags, want %d", len(out.StatusTags.StatusTags), len(StatusTags))
@@ -319,7 +308,7 @@ func TestEmptyListingsSerializeAsArrays(t *testing.T) {
 
 	for name, call := range map[string]string{
 		"search_wiki":       `{"name":"search_wiki","arguments":{}}`,
-		"get_wiki_overview": `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`,
+		"get_wiki_overview": `{"name":"get_wiki_overview","arguments":{}}`,
 		"wiki_health":       `{"name":"wiki_health","arguments":{}}`,
 	} {
 		resp := toolCall(t, srv, call)

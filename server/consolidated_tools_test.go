@@ -106,17 +106,14 @@ func TestConsolidatedToolsEndToEnd(t *testing.T) {
 		t.Fatalf("expected search hits for 'daemon', got 0")
 	}
 
-	// 11. get_wiki_overview: overview with stats
-	overResp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"since":"24h","include_stats":true}}`)
+	// 11. get_wiki_overview: orientation within a since window
+	overResp := toolCall(t, srv, `{"name":"get_wiki_overview","arguments":{"since":"24h"}}`)
 	if overResp.IsError {
 		t.Fatalf("get_wiki_overview failed: %s", overResp.Content[0].Text)
 	}
 	overOut := overResp.StructuredContent.(OverviewOutput)
 	if overOut.TotalArticles < 3 {
 		t.Fatalf("expected at least 3 articles in overview, got %d", overOut.TotalArticles)
-	}
-	if overOut.Statistics == nil {
-		t.Fatalf("expected statistics in overview")
 	}
 
 	// 12. read_article: inbound links (get_backlinks is retired; the read carries every backlink)

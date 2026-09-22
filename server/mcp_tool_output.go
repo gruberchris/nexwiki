@@ -512,7 +512,9 @@ func activityOutputSchema() map[string]interface{} {
 // hundred documents was close to a million characters — for the call every session is told to
 // make first. Every field here is either a fixed-size summary or a list capped at
 // maxOverviewEntries, so the payload does not grow with the wiki. The full listing is
-// search_wiki's job (without a query), and NextSteps says so.
+// search_wiki's job (without a query), and NextSteps says so. Link-graph statistics (broken
+// links, unreadable and misplaced files) are not here either: they cost a full scan, and
+// wiki_health reports the same scan with the lists attached.
 type OverviewOutput struct {
 	TotalArticles int            `json:"total_articles"`
 	Counts        OverviewCounts `json:"counts"`
@@ -528,7 +530,6 @@ type OverviewOutput struct {
 	ActivePlans     []OverviewPlan    `json:"active_plans"`
 	ActivePlanTotal int               `json:"active_plan_total"`
 	RecentActivity  []LogEvent        `json:"recent_activity"`
-	Statistics      *StatisticsOutput `json:"statistics,omitempty"`
 	StatusTags      *StatusTagsOutput `json:"status_tags,omitempty"`
 	// NextSteps tells the agent where the rest of the wiki is: search_wiki without a query for the
 	// full index, and with one for a topic.
@@ -619,7 +620,6 @@ func overviewOutputSchema() map[string]interface{} {
 		"active_plans":        schemaArrayOf(plan, fmt.Sprintf("Plans with status 'implementing' or 'blocked', newest-updated first, at most %d.", maxOverviewEntries)),
 		"active_plan_total":   schemaOf("integer", "Number of active plans before the cap."),
 		"recent_activity":     schemaArrayOf(event, "Recent activity events within the 'since' window, oldest first, at most 20."),
-		"statistics":          statisticsOutputSchema(),
 		"status_tags":         statusTagsOutputSchema(),
 		"next_steps":          schemaOf("string", "Where to go next: search_wiki without a query for the full document index, with one for a topic, read_article for an entry."),
 	}, "total_articles", "counts", "plan_status_counts", "pinned_memories", "pinned_memory_total", "active_plans", "active_plan_total", "recent_activity", "next_steps")
