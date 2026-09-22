@@ -76,9 +76,12 @@ type DocumentLink struct {
 type ArticleOutput struct {
 	Article   Article        `json:"article"`
 	Backlinks []DocumentLink `json:"backlinks"`
-	// SkippedDocumentCount and SkippedDocuments are the skipped-entries indicator: what the
-	// backlink computation could not see. Present only when something was skipped; the two fields
-	// and their meaning are documented on BacklinksOutput, which carries the same pair.
+	// SkippedDocumentCount is how many entries the backlink scan skipped: unreadable files and
+	// directories plus the misplaced documents that link to this page. Any of them may hold an
+	// inbound link Backlinks does not show, so a nonzero count means Backlinks is a lower bound,
+	// not the answer. SkippedDocuments lists the first maxSkippedDocuments of them, sorted by path;
+	// the count is always the total. Both are absent when nothing was skipped — the only case in
+	// which Backlinks is the whole truth.
 	SkippedDocumentCount int               `json:"skipped_document_count,omitempty"`
 	SkippedDocuments     []SkippedDocument `json:"skipped_documents,omitempty"`
 }
@@ -92,8 +95,8 @@ type DocumentListOutput struct {
 	NextCursor string    `json:"next_cursor,omitempty"`
 }
 
-// SkippedDocument is one entry a backlink scan left out, as the two tools that answer backlink
-// questions report it: a file the scan could not read or parse, or a directory it could not list
+// SkippedDocument is one entry a backlink scan left out, as read_article and delete_article
+// report it: a file the scan could not read or parse, or a directory it could not list
 // (reason "unreadable"), or a document not stored as <slug>.md directly in the article directory
 // (reason "misplaced"). An unreadable entry may link to the target and the scan cannot say; a
 // misplaced one links to it but is no backlink. The indicator exists so "no articles link to
@@ -105,28 +108,13 @@ type SkippedDocument struct {
 	Reason string `json:"reason"`         // "unreadable" or "misplaced"
 }
 
-// BacklinksOutput is the `get_backlinks` payload.
-type BacklinksOutput struct {
-	Slug      string    `json:"slug"`
-	Count     int       `json:"count"`
-	Backlinks []Article `json:"backlinks"`
-	// SkippedDocumentCount is how many entries the scan skipped: unreadable files and
-	// directories plus the misplaced documents that link to the target. Any of them may hold an
-	// inbound link the list does not show, so a nonzero count means Count is a lower bound, not
-	// the answer. SkippedDocuments lists the first maxSkippedDocuments of them, sorted by path;
-	// the count is always the total. Both are absent when nothing was skipped — the only case in
-	// which Count is the whole truth.
-	SkippedDocumentCount int               `json:"skipped_document_count,omitempty"`
-	SkippedDocuments     []SkippedDocument `json:"skipped_documents,omitempty"`
-}
-
 // maxSkippedDocuments caps skipped_documents: the indicator's job is to say the backlink list may
 // be incomplete, not to repeat wiki_health's full report, and the count carries the total anyway.
 const maxSkippedDocuments = 20
 
 // skippedDocuments turns a backlink scan's skipped entries into the capped skipped_documents list
-// both backlink-answering tools publish. Sorted by path, like every health report, so two runs of
-// the same wiki diff clean.
+// read_article publishes and delete_article's refusal names. Sorted by path, like every health
+// report, so two runs of the same wiki diff clean.
 func skippedDocuments(scan backlinkScan) []SkippedDocument {
 	if len(scan.unreadable) == 0 && len(scan.misplaced) == 0 {
 		return nil
@@ -145,16 +133,15 @@ func skippedDocuments(scan backlinkScan) []SkippedDocument {
 	return skipped
 }
 
-// skippedDocumentCount is the total the indicator reports. One helper, because get_backlinks and
-// read_article must never disagree about the number.
+// skippedDocumentCount is the total the indicator reports. One helper, because read_article and
+// delete_article must never disagree about the number.
 func skippedDocumentCount(scan backlinkScan) int {
 	return len(scan.unreadable) + len(scan.misplaced)
 }
 
-// skippedDocumentsNote is the prose half of the indicator: the line get_backlinks and read_article
-// append when their scan skipped entries, so a text-only client gets the same warning the
-// structured payload carries, with the pointer to wiki_health's full detail. Empty when nothing
-// was skipped.
+// skippedDocumentsNote is the prose half of the indicator: the line read_article appends when its
+// scan skipped entries, so a text-only client gets the same warning the structured payload
+// carries, with the pointer to wiki_health's full detail. Empty when nothing was skipped.
 func skippedDocumentsNote(scan backlinkScan) string {
 	var parts []string
 	if n := len(scan.unreadable); n > 0 {
@@ -167,6 +154,25 @@ func skippedDocumentsNote(scan backlinkScan) string {
 		return ""
 	}
 	return fmt.Sprintf("Note: the backlink scan skipped %s that may link to this page; wiki_health lists them in detail.", strings.Join(parts, " and "))
+}
+
+// skippedDocumentsList renders skippedDocuments as one "- path (reason)" line per entry, for prose
+// that must name the entries rather than count them: delete_article's refusal, where the agent
+// has to decide about each one. The cap and its total match the structured indicator.
+func skippedDocumentsList(scan backlinkScan) string {
+	skipped := skippedDocuments(scan)
+	lines := make([]string, 0, len(skipped)+1)
+	for _, d := range skipped {
+		line := fmt.Sprintf("- %s (%s", d.Path, d.Reason)
+		if d.Slug != "" {
+			line += ", slug " + d.Slug
+		}
+		lines = append(lines, line+")")
+	}
+	if more := skippedDocumentCount(scan) - len(skipped); more > 0 {
+		lines = append(lines, fmt.Sprintf("- and %d more; wiki_health lists them all", more))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // RevisionRef is one entry in an article's revision history. Deliberately not a full Article:
@@ -394,7 +400,7 @@ func articleOutputSchema() map[string]interface{} {
 		// stay at articleSchema(false) — a listing is metadata, and a structured index that
 		// inlined every body would be unusable.
 		"article":                articleSchema(true),
-		"backlinks":              schemaArrayOf(documentLinkSchema(), "Documents whose body links here via a WikiLink."),
+		"backlinks":              schemaArrayOf(documentLinkSchema(), "Every document whose body links here, in either internal link form: [[WikiLink]] or [text](/articles/<slug>). Self-links are not listed."),
 		"skipped_document_count": schemaOf("integer", "Entries the backlink scan skipped: unreadable files and directories it could not read or list, plus misplaced documents that link to this page. Any of them may hold an inbound link backlinks does not show. Absent when nothing was skipped; wiki_health lists every entry in full."),
 		"skipped_documents":      schemaArrayOf(skippedDocumentSchema(), "The first skipped entries, up to 20, sorted by path; skipped_document_count is the total. Absent when nothing was skipped."),
 	}, "article", "backlinks")
@@ -408,8 +414,7 @@ func documentListOutputSchema(documentsDescription string) map[string]interface{
 	}, "count", "documents")
 }
 
-// skippedDocumentSchema describes one SkippedDocument. get_backlinks and read_article both publish
-// the skipped-entries indicator, and one builder keeps the two wordings from drifting — the same
+// skippedDocumentSchema describes one SkippedDocument, kept in its own builder for the same
 // reasoning that gave brokenLinkSchema its single home.
 func skippedDocumentSchema() map[string]interface{} {
 	return schemaObject(map[string]interface{}{
@@ -417,16 +422,6 @@ func skippedDocumentSchema() map[string]interface{} {
 		"slug":   schemaOf("string", "The document's slug, declared in its front matter or derived from its title. Present only on misplaced entries; an unreadable file has no slug to report."),
 		"reason": schemaOf("string", "Why the scan skipped it: 'unreadable' (could not be read, parsed, or listed) or 'misplaced' (not stored as <slug>.md directly in the article directory)."),
 	}, "path", "reason")
-}
-
-func backlinksOutputSchema() map[string]interface{} {
-	return schemaObject(map[string]interface{}{
-		"slug":                   schemaOf("string", "The slug whose inbound links were requested."),
-		"count":                  schemaOf("integer", "Number of inbound links found."),
-		"backlinks":              schemaArrayOf(articleSchema(false), "Documents linking to the target, most recently updated first."),
-		"skipped_document_count": schemaOf("integer", "Entries the scan skipped: unreadable files and directories it could not read or list, plus misplaced documents that link to the target. Any of them may hold an inbound link backlinks does not show, so a nonzero count means count is a lower bound. Absent when nothing was skipped; wiki_health lists every entry in full."),
-		"skipped_documents":      schemaArrayOf(skippedDocumentSchema(), "The first skipped entries, up to 20, sorted by path; skipped_document_count is the total. Absent when nothing was skipped."),
-	}, "slug", "count", "backlinks")
 }
 
 func historyOutputSchema() map[string]interface{} {

@@ -233,8 +233,8 @@ type LinkGraph struct {
 	// Mentions maps a document's slug to the slugs its body names in code — a
 	// `read_article(slug: "…")` call or a backticked slug reference. This is how a *skill* is
 	// referenced, and none of it is a link, so it is tracked separately from InboundCount and
-	// deliberately kept out of it: counting these would change what get_backlinks and the orphan
-	// check mean. See ExtractSlugMentions.
+	// deliberately kept out of it: counting these would change what read_article's backlinks and
+	// the orphan check mean. See ExtractSlugMentions.
 	//
 	// Stored in the forward direction, as the walk produces it, because the only consumer
 	// (liveReferencedSlugs) iterates documents anyway. An inverted mentioned-by map was tried
@@ -245,7 +245,7 @@ type LinkGraph struct {
 	// insert per file. Extraction itself is free, riding the body read cachedBodyRefs already
 	// performs and caches by mtime. Only wiki_health reads the field; get_wiki_statistics calls this
 	// scan too and pays that overhead anyway, a cost judged small enough not to maintain a second
-	// scan without it. (get_backlinks does not use this scan: GetBacklinks walks on its own.)
+	// scan without it. (Backlink lookups do not use this scan: scanBacklinks walks on its own.)
 	Mentions map[string][]string
 	// Unreadable lists the files the scan skipped because they could not be read or parsed, and the
 	// directories it skipped because they could not be listed, sorted by path. A skipped file is
@@ -862,7 +862,7 @@ var markdownCodeRegions = regexp.MustCompile("(?s)```.*?```|~~~.*?~~~|`[^`\n]+`"
 // This exists because a skill is not referenced the way an article is. Articles are linked;
 // skills are *invoked*, by a `read_article(slug: "…")` call written into another document's
 // prose, or named in a backticked slug reference. Neither form is a link, so ScanLinkGraph never
-// sees them and get_backlinks reports zero.
+// sees them and read_article lists no backlinks.
 //
 // Measured on the real corpus: nexwiki-agent-core-guidelines referenced
 // enhanced-memory-decision-making-skill four times in exactly these forms, and

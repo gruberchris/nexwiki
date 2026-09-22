@@ -416,7 +416,7 @@ func TestScanLinkGraphCountsMarkdownLinks(t *testing.T) {
 		t.Errorf("Display() = %q — a Markdown link rendered as [[…]] sends the author looking for text that is not in the file", got)
 	}
 
-	// 3. get_backlinks sees it too; agents run it before a rename.
+	// 3. The backlink scan sees it too; read_article lists it, and agents read a page before a rename.
 	backlinks, err := srv.Storage.GetBacklinks("target-page")
 	if err != nil {
 		t.Fatalf("GetBacklinks failed: %v", err)

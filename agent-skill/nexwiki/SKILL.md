@@ -21,7 +21,7 @@ At the start of a session, or when picking up prior work:
    The overview does not list every document: use `list_articles` (filter by `type`, `status`,
    or `tag`) for the full index and `search_wiki` to find a topic.
 
-Then `read_article` only the entries you actually need; `get_backlinks` follows related pages.
+Then `read_article` only the entries you actually need; its backlinks lead to related pages.
 Run each orientation call once: a search that finds nothing is an answer, not a reason to
 search again with reworded queries.
 

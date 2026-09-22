@@ -167,7 +167,7 @@ func TestConformanceToolsListShape(t *testing.T) {
 		t.Fatalf("tools is %T, want an array", result["tools"])
 	}
 	// Against the registry rather than a literal: TestRegistryCoversEveryTool already pins the
-	// registry at 9, so what matters here is that tools/list exposes all of it and drops none.
+	// registry at 8, so what matters here is that tools/list exposes all of it and drops none.
 	if len(tools) != len(mcpToolRegistry) {
 		t.Errorf("tools/list returned %d tools, want all %d in the registry", len(tools), len(mcpToolRegistry))
 	}

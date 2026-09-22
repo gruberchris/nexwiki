@@ -11,7 +11,7 @@ import (
 )
 
 // This file holds the wiki article tools: search, read, list, create, edit, tag, delete, history, revert,
-// backlinks, and the legacy context overview. get_wiki_overview lives in mcp_tools_overview.go.
+// and the legacy context overview. get_wiki_overview lives in mcp_tools_overview.go.
 // Each tool pairs its JSON schema with its handler in one place, so the two can never
 // drift apart. Registration order lives in mcp_tools.go.
 
@@ -286,7 +286,7 @@ func plainSnippet(snippet string) string {
 var readArticleTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "read_article",
-		"description": "Retrieve the full raw Markdown content, front-matter configurations, and inbound backlinks of a document by its URL slug. Optionally specify 'version' to load a historical revision.",
+		"description": "Retrieve the full raw Markdown content, front-matter configurations, and inbound backlinks of a document by its URL slug. The backlinks are every document linking to this one, in either internal link form — [[WikiLinks]] or [text](/articles/<slug>) — so read a page to see what references it before editing or deleting it. Optionally specify 'version' to load a historical revision.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -407,27 +407,21 @@ func (srv *Server) toolReadArticle(args json.RawMessage) (interface{}, *JSONRPCE
 
 	// Append inbound links for graph discoverability; never fail the read over a scan error.
 	//
-	// The scan itself, not GetBacklinks: a read is one of the two places an agent checks what
-	// references a page before editing or deleting it, so the entries the walk skipped — unreadable
-	// files, misplaced documents — are reported in the structured output and the note below rather
-	// than letting a missing Linked from list read as "nothing references this" (#162).
+	// The scan itself, not GetBacklinks: a read is where an agent checks what references a page
+	// before editing or deleting it, so the entries the walk skipped — unreadable files, misplaced
+	// documents — are reported in the structured output and the note below rather than letting a
+	// missing Linked from list read as "nothing references this" (#162).
 	links := []DocumentLink{}
 	out := ArticleOutput{Article: *art, Backlinks: links}
 	if scan, blErr := srv.Storage.scanBacklinks(art.Slug); blErr == nil {
 		if backlinks := scan.backlinks; len(backlinks) > 0 {
-			const maxShownBacklinks = 15
-			var refs []string
-			for i, bl := range backlinks {
-				// The structured payload carries every backlink. Only the prose is truncated,
-				// because that cap exists to keep a read from burying the article in a link list.
+			// Every backlink, in the prose as in the structured payload. The prose used to stop
+			// at 15 with "and N more", but read_article is now the only tool that answers "what
+			// links here", and a text-only client given a truncated list cannot ask for the rest.
+			refs := make([]string, 0, len(backlinks))
+			for _, bl := range backlinks {
 				links = append(links, DocumentLink{Title: bl.Title, Slug: bl.Slug})
-				if i >= maxShownBacklinks {
-					continue
-				}
 				refs = append(refs, fmt.Sprintf("%s (%s)", bl.Title, bl.Slug))
-			}
-			if len(backlinks) > maxShownBacklinks {
-				refs = append(refs[:maxShownBacklinks], fmt.Sprintf("and %d more", len(backlinks)-maxShownBacklinks))
 			}
 			text += fmt.Sprintf("\n\n---\nLinked from: %s", strings.Join(refs, ", "))
 		}
@@ -1225,81 +1219,6 @@ func (srv *Server) toolRevertArticleVersion(args json.RawMessage) (interface{}, 
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }
 
-var getBacklinksTool = toolDef{
-	Schema: map[string]interface{}{
-		"name":        "get_backlinks",
-		"description": "List all articles whose content links to the given article, in either internal link form — double-bracket [[WikiLinks]] or absolute [text](/articles/<slug>) Markdown links. Use this to traverse the knowledge graph in reverse: find the pages that reference a concept, decision, or note before editing or deleting it.",
-		"inputSchema": map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"slug": map[string]interface{}{
-					"type":        "string",
-					"description": "The URL-safe slug of the target article to find inbound links for.",
-				},
-			},
-			"required": []string{"slug"},
-		},
-	},
-	Output:   backlinksOutputSchema(),
-	Handler:  (*Server).toolGetBacklinks,
-	Behavior: toolBehavior{Title: "Get Backlinks", ReadOnly: true},
-}
-
-func (srv *Server) toolGetBacklinks(args json.RawMessage) (interface{}, *JSONRPCError) {
-	type BacklinkArgs struct {
-		Slug string `json:"slug"`
-	}
-	var bArgs BacklinkArgs
-	if e := decodeToolArgs(args, &bArgs); e != nil {
-		return nil, e
-	}
-	if bArgs.Slug == "" {
-		return nil, &JSONRPCError{Code: -32602, Message: "Missing or invalid 'slug' argument"}
-	}
-
-	target, err := srv.Storage.GetArticle(bArgs.Slug)
-	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", bArgs.Slug)}}}, nil
-	}
-
-	// The scan itself, not GetBacklinks: this tool is what an agent runs before a rename or a
-	// delete, so it reports what the walk skipped — unreadable entries and misplaced documents —
-	// instead of letting a short or empty list read as a complete answer (#162). The REST handler
-	// keeps GetBacklinks and its unchanged response.
-	scan, err := srv.Storage.scanBacklinks(target.Slug)
-	if err != nil {
-		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error scanning backlinks: %s", srv.clientError(err))}}}, nil
-	}
-	backlinks := scan.backlinks
-
-	var text string
-	if len(backlinks) == 0 {
-		text = fmt.Sprintf("No articles link to '%s'.\n", target.Slug)
-	} else {
-		text = fmt.Sprintf("Articles linking to '%s' (%d):\n\n", target.Slug, len(backlinks))
-		for i, bl := range backlinks {
-			text += fmt.Sprintf("[%d] %s (Slug: %s, Updated: %s)\n", i+1, bl.Title, bl.Slug, bl.Timestamp.Format("2006-01-02 15:04:05"))
-			if bl.Description != "" {
-				text += fmt.Sprintf("    Summary: %s\n", bl.Description)
-			}
-		}
-	}
-	if note := skippedDocumentsNote(scan); note != "" {
-		text += "\n" + note + "\n"
-	}
-
-	return ToolResponse{
-		Content: []ToolContent{{Type: "text", Text: text}},
-		StructuredContent: BacklinksOutput{
-			Slug:                 target.Slug,
-			Count:                len(backlinks),
-			Backlinks:            nonNilDocuments(backlinks),
-			SkippedDocumentCount: skippedDocumentCount(scan),
-			SkippedDocuments:     skippedDocuments(scan),
-		},
-	}, nil
-}
-
 var getContextOverviewTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "get_context_overview",
@@ -1902,13 +1821,17 @@ func (srv *Server) toolAppendArticle(args json.RawMessage) (interface{}, *JSONRP
 var deleteArticleTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "delete_article",
-		"description": "Permanently delete any document (wiki article, agent memory, plan, or skill) by slug. Irreversible: it destroys the document's version history and assets and breaks every backlink to it. A last resort — to change a document's type, pass 'type' to save_article; to remove text from history, use save_article with 'purge_history: true'.",
+		"description": "Permanently delete any document (wiki article, agent memory, plan, or skill) by slug. Irreversible: it destroys the document's version history and assets. It refuses, deleting nothing, while other documents link to the target (naming every one) or when the inbound-link check is incomplete, unless 'break_links: true' is passed; with it, the delete proceeds and lists the documents whose links it broke. A last resort — to change a document's type, pass 'type' to save_article; to remove text from history, use save_article with 'purge_history: true'.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"slug": map[string]interface{}{
 					"type":        "string",
 					"description": "The unique URL-safe slug of the document to delete.",
+				},
+				"break_links": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional, default false. Delete even though other documents link to the target, or the inbound-link check could not see every document; their links to it become broken. Prefer fixing the links first.",
 				},
 			},
 			"required": []string{"slug"},
@@ -1921,7 +1844,8 @@ var deleteArticleTool = toolDef{
 
 func (srv *Server) toolDeleteArticle(args json.RawMessage) (interface{}, *JSONRPCError) {
 	type DelArgs struct {
-		Slug string `json:"slug"`
+		Slug       string `json:"slug"`
+		BreakLinks bool   `json:"break_links"`
 	}
 	var dArgs DelArgs
 	if e := decodeToolArgs(args, &dArgs); e != nil {
@@ -1936,11 +1860,60 @@ func (srv *Server) toolDeleteArticle(args json.RawMessage) (interface{}, *JSONRP
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: article with slug '%s' not found", dArgs.Slug)}}}, nil
 	}
 
+	// The same scan read_article runs, so the refusal names exactly the documents a read of the
+	// target lists. A delete cannot be undone, so an incomplete scan — a failed walk, or entries it
+	// skipped (#162) — is refused too: an empty backlink list is only "nothing links here" when
+	// the walk saw everything. break_links: true is the agent saying it has looked and accepts
+	// the breakage. Self-links never block: scanBacklinks does not count a document's own file.
+	scan, scanErr := srv.Storage.scanBacklinks(existing.Slug)
+	incomplete := ""
+	if scanErr != nil {
+		incomplete = fmt.Sprintf("The inbound-link check failed (%s), so it cannot say whether other documents link to '%s'.", srv.clientError(scanErr), existing.Slug)
+	} else if n := skippedDocumentCount(scan); n > 0 {
+		incomplete = fmt.Sprintf("The inbound-link check was incomplete: it skipped %d %s that may link to '%s':\n%s",
+			n, plural(n, "entry", "entries"), existing.Slug, skippedDocumentsList(scan))
+	}
+	linkers := make([]string, 0, len(scan.backlinks))
+	for _, bl := range scan.backlinks {
+		linkers = append(linkers, fmt.Sprintf("- %s (%s)", bl.Title, bl.Slug))
+	}
+
+	if !dArgs.BreakLinks && (len(linkers) > 0 || incomplete != "") {
+		var msg strings.Builder
+		msg.WriteString("Refused: nothing was deleted.")
+		if len(linkers) > 0 {
+			fmt.Fprintf(&msg, " %d %s link to '%s', and deleting it would break those links:\n%s\n",
+				len(linkers), plural(len(linkers), "document", "documents"), existing.Slug, strings.Join(linkers, "\n"))
+		} else {
+			msg.WriteString("\n")
+		}
+		if incomplete != "" {
+			msg.WriteString(incomplete + "\n")
+		}
+		if len(linkers) > 0 {
+			msg.WriteString("Fix or remove those links first")
+		} else {
+			msg.WriteString("Resolve what the check could not see first")
+		}
+		msg.WriteString(" (wiki_health reports unreadable and misplaced entries in detail), or call delete_article again with break_links: true to delete anyway.\n")
+		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: msg.String()}}}, nil
+	}
+
 	err = srv.Storage.DeleteArticle(existing.Slug)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error deleting article: %s", srv.clientError(err))}}}, nil
 	}
 
 	respText := fmt.Sprintf("Success! Document with slug '%s' has been permanently deleted from disk along with all history backups and media assets.\n", existing.Slug)
+	if len(linkers) > 0 {
+		respText += fmt.Sprintf("These %d %s now hold broken links to '%s':\n%s\n",
+			len(linkers), plural(len(linkers), "document", "documents"), existing.Slug, strings.Join(linkers, "\n"))
+	}
+	if incomplete != "" {
+		respText += incomplete + "\n"
+		if scanErr == nil {
+			respText += "Any of those may now hold a broken link too.\n"
+		}
+	}
 	return ToolResponse{Content: []ToolContent{{Type: "text", Text: respText}}}, nil
 }

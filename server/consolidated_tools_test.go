@@ -119,11 +119,14 @@ func TestConsolidatedToolsEndToEnd(t *testing.T) {
 		t.Fatalf("expected statistics in overview")
 	}
 
-	// 12. get_backlinks
+	// 12. read_article: inbound links (get_backlinks is retired; the read carries every backlink)
 	_ = toolCall(t, srv, `{"name":"save_article","arguments":{"title":"Other Page","content":"# Other Page Body"}}`)
-	blResp := toolCall(t, srv, `{"name":"get_backlinks","arguments":{"slug":"other-page"}}`)
+	blResp := toolCall(t, srv, `{"name":"read_article","arguments":{"slug":"other-page"}}`)
 	if blResp.IsError {
-		t.Fatalf("get_backlinks failed: %s", blResp.Content[0].Text)
+		t.Fatalf("read_article failed: %s", blResp.Content[0].Text)
+	}
+	if blOut, ok := blResp.StructuredContent.(ArticleOutput); !ok || blOut.Backlinks == nil {
+		t.Fatalf("expected ArticleOutput with a backlinks array, got %#v", blResp.StructuredContent)
 	}
 
 	// 13. delete_article: delete article

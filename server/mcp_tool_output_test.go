@@ -42,7 +42,6 @@ func structuredCalls() map[string]string {
 		"search_wiki":       `{"name":"search_wiki","arguments":{"query":"bleve"}}`,
 		"read_article":      `{"name":"read_article","arguments":{"slug":"search-design"}}`,
 		"list_articles":     `{"name":"list_articles","arguments":{}}`,
-		"get_backlinks":     `{"name":"get_backlinks","arguments":{"slug":"search-design"}}`,
 		"get_wiki_overview": `{"name":"get_wiki_overview","arguments":{"include_stats":true}}`,
 		"wiki_health":       `{"name":"wiki_health","arguments":{}}`,
 	}
@@ -286,7 +285,9 @@ func TestErrorResultsCarryNoStructuredContent(t *testing.T) {
 
 	for _, call := range []string{
 		`{"name":"read_article","arguments":{"slug":"no-such-article"}}`,
-		`{"name":"get_backlinks","arguments":{"slug":"no-such-article"}}`,
+		`{"name":"delete_article","arguments":{"slug":"no-such-article"}}`,
+		// Refused because bleve-notes links here: a refusal is an error result too.
+		`{"name":"delete_article","arguments":{"slug":"search-design"}}`,
 		`{"name":"search_wiki","arguments":{"query":"anything","type":["nonsense"]}}`,
 		`{"name":"get_wiki_overview","arguments":{"since":"not-a-duration"}}`,
 	} {
