@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-09-22
+
 ### Added
 - **`delete_article` refuses to break links silently**: it runs the same inbound-link scan as `read_article` first and refuses, deleting nothing, while other documents link to the target, naming every one. An incomplete scan — a failed walk, or unreadable files or misplaced documents it skipped — is refused too, so an empty list never reads as "nothing links here". Pass the new optional `break_links: true` to delete anyway; the response then lists the documents that now hold broken links. Self-links never block.
 
@@ -25,7 +27,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **BREAKING: `get_wiki_overview` no longer takes `include_stats` or returns `statistics`**: broken links, unreadable files and misplaced documents are `wiki_health`'s report, from the same link-graph scan, and `total_links` moved to `wiki_health` unchanged. `total_articles` stays at the top level.
 
 ### Fixed
-
 - `PUT /api/articles/{slug}` no longer clears a document's tags when the request omits `tags`. An omitted or `null` `tags` key now preserves the current set, matching `description`, `source`, `status`, `type` and the MCP `save_article` tool; an explicit `[]` still clears it. The web editor always sends its full tag list and is unaffected.
 
 ## [0.23.0] — 2026-09-21
@@ -718,7 +719,8 @@ Completes the memory-enforcement work begun in 0.14.0. That release moved three 
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/gruberchris/nexwiki/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/gruberchris/nexwiki/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/gruberchris/nexwiki/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/gruberchris/nexwiki/compare/v0.20.0...v0.21.0
