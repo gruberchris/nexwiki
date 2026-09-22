@@ -203,7 +203,7 @@ type ArticleRequest struct {
 	Resource      *string  `json:"resource"`       // Optional OKF canonical URI of the concept
 	EditSummary   string   `json:"edit_summary"`   // Summary for revision history
 	LoadedVersion int      `json:"loaded_version"` // Version loaded by client for conflict validation
-	Tags          []string `json:"tags"`           // Tags list
+	Tags          []string `json:"tags"`           // Tags list; on update, omit (or null) to preserve and [] to clear
 	Status        *string  `json:"status"`         // Optional lifecycle status; omit to preserve
 	// MemoryKind classifies an AI-Agent-Memory; omit to preserve.
 	MemoryKind *string `json:"memory_kind"`
@@ -219,6 +219,15 @@ type ArticleRequest struct {
 }
 
 type CreateArticleReq = ArticleRequest
+
+// optionalTags maps a decoded "tags" field onto an edit: nil when the key was omitted or null, so
+// the existing tags are preserved, and the list — possibly empty — when the caller sent one.
+func optionalTags(tags []string) *[]string {
+	if tags == nil {
+		return nil
+	}
+	return &tags
+}
 
 // validateAndCleanUserTags preserves tool-managed memory-scope tags (memory-<scope>) that already
 // exist on a document and strips any the user tries to forge onto one. The document *class* is carried
@@ -476,11 +485,12 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 		Source:      req.Source,
 		Resource:    req.Resource,
 		EditSummary: req.EditSummary,
-		// The REST editor always submits the full tag set, so tags are always replaced here
-		// (an omitted "tags" key clears them, which is the pre-existing behavior).
-		Tags: &req.Tags,
-		// Status, by contrast, is preserved when omitted: an editor that does not manage
-		// lifecycle state must not be able to silently reset a completed plan.
+		// Tags follow the same omitted-means-preserve rule as every other optional field: an
+		// omitted (or null) "tags" key keeps the current set, and an explicit [] clears it. The
+		// web editor always sends the full array, so it is unaffected.
+		Tags: optionalTags(req.Tags),
+		// Status is preserved when omitted too: an editor that does not manage lifecycle
+		// state must not be able to silently reset a completed plan.
 		Status:        req.Status,
 		MemoryKind:    req.MemoryKind,
 		Type:          req.Type,
