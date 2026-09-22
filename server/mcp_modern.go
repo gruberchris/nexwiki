@@ -345,14 +345,20 @@ func legacyServerCapabilities() map[string]interface{} {
 // agentInstructions is the connect-time hint MCP clients surface as a system-prompt-style nudge,
 // so an agent reaches for NexWiki as a second brain without being told to every session. Shared
 // by the legacy initialize result and the modern discover result.
+//
+// It carries only the universal rules, and names no document: the operator's own conventions are
+// ordinary user and feedback memories, which get_wiki_overview returns as pinned_memories, and the
+// rules a single tool enforces live in that tool's description. Keep it short — every client
+// injects it into every session.
 func agentInstructions() string {
-	return "This NexWiki server is the user's persistent second brain. Use it to store plans and " +
-		"memories and to look up prior knowledge — do not keep that only in chat. At session start, load the " +
-		"operating rules with read_article(slug: \"" + AgentGuidelinesSlug + "\"), then call " +
-		"get_wiki_overview(since: \"48h\") for counts, the user and feedback memories, the plans in flight, and the " +
-		"recent activity; list_articles gives the full document index and search_wiki finds a topic. Save multi-step work with " +
-		"save_article(type: \"AI-Agent-Plan\"), durable facts with save_article(type: \"AI-Agent-Memory\", " +
-		"setting memory_kind, description and source), and search before writing."
+	return "NexWiki is the user's persistent second brain: keep plans, durable facts and prior knowledge " +
+		"here, not only in chat. At session start call get_wiki_overview once — its pinned_memories are " +
+		"the operator's standing preferences and corrections; follow them. Search with search_wiki or " +
+		"list_articles before writing. Save multi-step work as save_article(type: \"AI-Agent-Plan\", " +
+		"project_context) and durable facts as save_article(type: \"AI-Agent-Memory\") with memory_kind, " +
+		"description and source. Session discipline: run each orientation call once; a \"not found\" is " +
+		"an answer, not a reason to search again; on a version conflict, retry once with the version " +
+		"the error names."
 }
 
 // handleModernMethod dispatches a request that opted into the per-request-metadata era. It shares

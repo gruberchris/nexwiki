@@ -55,7 +55,7 @@ func TestExtractWikiLinkTargetsIgnoresCode(t *testing.T) {
 }
 
 // TestExtractArticlePathTargets pins the other half of the link graph (§3.21). The corpus is
-// overwhelmingly written in this form — the agent guidelines tell authors to prefer it — and it
+// overwhelmingly written in this form — authors prefer it in body prose — and it
 // was invisible to the scanner, so wiki_health reported 0 broken links against 26 real ones and
 // called 44 of 84 documents orphans.
 func TestExtractArticlePathTargets(t *testing.T) {

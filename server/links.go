@@ -88,9 +88,8 @@ type LinkForm string
 const (
 	// LinkFormWiki is the double-bracket form, [[Target]] or [[Target|display]].
 	LinkFormWiki LinkForm = "wikilink"
-	// LinkFormMarkdown is the absolute Markdown form, [display](/articles/<slug>). This is the
-	// form nexwiki-agent-guidelines §5 tells agents to prefer in body prose, and it accounts for
-	// the large majority of internal links in a real corpus.
+	// LinkFormMarkdown is the absolute Markdown form, [display](/articles/<slug>). Authors prefer
+	// it in body prose, and it accounts for the large majority of internal links in a real corpus.
 	LinkFormMarkdown LinkForm = "markdown"
 )
 
@@ -134,7 +133,7 @@ var articlePathLink = regexp.MustCompile(`(^|[^!])(\[[^]]*]\(/articles/)([^)\s"]
 // ExtractArticlePathTargets returns the raw destinations of all absolute Markdown links to wiki
 // articles — [text](/articles/<slug>) — found in a Markdown body, in order of appearance.
 //
-// This is the form nexwiki-agent-guidelines §5 tells agents to prefer, and until §3.21 it was
+// This is the form most internal links in a real corpus take, and until §3.21 it was
 // invisible to the link graph: broken-link detection reported none, orphan detection reported
 // pages the home page links to, and get_backlinks under-reported inbound references.
 //

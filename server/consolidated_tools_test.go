@@ -55,7 +55,7 @@ func TestConsolidatedToolsEndToEnd(t *testing.T) {
 	}
 
 	// 7. save_article: create Memory with memory_kind and memory_type
-	memResp := toolCall(t, srv, `{"name":"save_article","arguments":{"title":"Docker Daemon Config","content":"# Memory\n\nConfigure daemon.json.","type":"AI-Agent-Memory","memory_kind":"reference","memory_type":"docker","description":"Docker config memory"}}`)
+	memResp := toolCall(t, srv, `{"name":"save_article","arguments":{"title":"Docker Daemon Config","content":"# Memory\n\nConfigure daemon.json.","type":"AI-Agent-Memory","memory_kind":"reference","memory_type":"docker","description":"Docker config memory","source":"docker docs"}}`)
 	if memResp.IsError {
 		t.Fatalf("save_article memory failed: %s", memResp.Content[0].Text)
 	}

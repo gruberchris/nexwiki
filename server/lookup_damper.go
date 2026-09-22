@@ -13,8 +13,8 @@ import (
 
 // The repeat-lookup damper.
 //
-// §0 of the seeded guidelines says a lookup returning nothing is a *completed* check and that
-// reworded retries are forbidden. That is the rule an agent broke on 2026-08-18, alternating
+// A lookup returning nothing is a *completed* check, and a reworded retry does not change the
+// answer — the connect-time instructions say so. That is the rule an agent broke on 2026-08-18, alternating
 // read_article and search_wiki for 31 minutes and ~170 MCP calls, and the remediation for it was
 // more prose. Nothing in the server noticed the repetition — LogEvent records the tool name but
 // not the query, so even the activity log could not see the same search run eleven times.
@@ -222,8 +222,8 @@ func (d *lookupDamper) evict() {
 //
 // It escalates because the two cases are different. A second identical lookup is usually a
 // harmless double-check and one line is enough. A third means the agent is not reading its own
-// results, so the notice stops describing and starts instructing — naming §0, stating that the
-// check is complete, and pointing at the action that ends the loop.
+// results, so the notice stops describing and starts instructing — stating that the check is
+// complete and pointing at the action that ends the loop.
 func damperNotice(occurrence int, sinceFirst time.Duration) string {
 	switch {
 	case occurrence < 2:
@@ -234,9 +234,9 @@ func damperNotice(occurrence int, sinceFirst time.Duration) string {
 	default:
 		return fmt.Sprintf("⚠️  You have run this same lookup %d times in the last %d seconds, "+
 			"rewording it does not change the answer.\n"+
-			"Per §0 of the agent guidelines: a lookup that returns nothing is a COMPLETED check, not a "+
-			"failed one. Stop searching and act on what you have — if you were looking for something to "+
-			"create, create it now with the relevant create_* tool.\n\n",
+			"A lookup that returns nothing is a COMPLETED check, not a failed one. Stop searching and "+
+			"act on what you have — if you were looking for something to create, create it now with "+
+			"save_article.\n\n",
 			occurrence, int(sinceFirst.Seconds()))
 	}
 }
@@ -245,8 +245,7 @@ func damperNotice(occurrence int, sinceFirst time.Duration) string {
 // this tool is a lookup the damper watches at all.
 //
 // Only the two tools that take a free-text question are watched. read_article is deliberately not:
-// re-reading a page is sometimes correct, its slug is not a reworded question, and §0 already
-// covers the guidelines-reread case with a rule the tool descriptions repeat.
+// re-reading a page is sometimes correct, and its slug is not a reworded question.
 func damperedLookupQuery(tool string, args []byte) (string, bool) {
 	switch tool {
 	case "search_wiki":

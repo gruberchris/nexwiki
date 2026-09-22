@@ -121,10 +121,12 @@ from the **directory** name (`nexwiki/`), not from the frontmatter `name` field.
 
 ## Customizing agent behavior
 
-**Don't fork `SKILL.md` to change the rules.** The skill points every agent at a live,
-editable wiki page — **`nexwiki-agent-guidelines`** — which NexWiki seeds automatically on
-first start. Edit it in your browser to add style rules, conventions, or project specifics;
-changes reach every connected agent immediately, with no re-copying and no restart.
+**Don't fork `SKILL.md` to change the rules.** Save your conventions as ordinary memories
+instead: a `feedback` memory for a correction or house rule ("use sentence-case headings"),
+a `user` memory for who you are and how you work. `get_wiki_overview` — the first call the
+skill and the server's instructions both make — returns every `user` and `feedback` memory as
+`pinned_memories`, and agents follow them over the skill's defaults. Changes reach every
+connected agent immediately, with no re-copying and no restart.
 
 Your NexWiki also announces itself over MCP: on connect, the server sends a short
 instructions hint telling the agent it is a second brain — so agents get a nudge even

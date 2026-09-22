@@ -627,7 +627,7 @@ func nonNilDocuments(articles []Article) []Article {
 var createWikiArticleTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "create_wiki_article",
-		"description": "Create a brand new wiki article. Set 'title' to the subject's human-readable name — never a tool name, an action verb, or a placeholder, since the slug is derived from it. (IMPORTANT: If you have not already loaded the global operational guidelines skill this session, load it once with 'read_article(slug: \"nexwiki-agent-guidelines\")' to understand formatting and style-guide check requirements. If it is already in your context, do not re-read it — call this tool.)",
+		"description": "Create a brand new wiki article. Set 'title' to the subject's human-readable name — never a tool name, an action verb, or a placeholder, since the slug is derived from it.' to understand formatting and style-guide check requirements. If it is already in your context, do not re-read it — call this tool.)",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1435,7 +1435,7 @@ func formatTrustTier(tier string) string {
 var saveArticleTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "save_article",
-		"description": "Create or update any document (wiki article, agent memory, plan, or skill). If 'slug' is provided and matches an existing document, it updates it; otherwise it creates a new document. Supports optimistic locking via 'loaded_version'. On an update, passing 'type' changes the document's type (omit it to keep the current one); an unknown type is an error. Redaction: set 'purge_history: true' on an update to keep only the revision this call writes and permanently delete every earlier revision — body and metadata — from version history. That is not a deletion of anything a reader sees today: the document, its slug, type, status, and backlinks are unchanged.",
+		"description": "Create or update any document (wiki article, agent memory, plan, or skill). If 'slug' is provided and matches an existing document, it updates it; otherwise it creates a new document. 'content' is always a full replacement of the body — to change only metadata or status, pass the current body back unchanged. A [[WikiLink]] must name a document that exists in this wiki — never your own local memory files, instruction files, tools, or scratch paths; cite external references as plain URLs. Creating a memory — or changing a document's type to AI-Agent-Memory — requires 'memory_kind', 'description', and 'source'; an ordinary edit of an existing memory does not. Supports optimistic locking via 'loaded_version'. On an update, passing 'type' changes the document's type (omit it to keep the current one); an unknown type is an error. Redaction: set 'purge_history: true' on an update to keep only the revision this call writes and permanently delete every earlier revision — body and metadata — from version history. That is not a deletion of anything a reader sees today: the document, its slug, type, status, and backlinks are unchanged.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1445,7 +1445,7 @@ var saveArticleTool = toolDef{
 				},
 				"content": map[string]interface{}{
 					"type":        "string",
-					"description": "Raw Markdown body content of the document.",
+					"description": "The complete Markdown body. Replaces the existing body in full; it is never merged or appended.",
 				},
 				"slug": map[string]interface{}{
 					"type":        "string",
@@ -1458,11 +1458,11 @@ var saveArticleTool = toolDef{
 				},
 				"description": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional one-line summary, shown in list indexes and overview.",
+					"description": "One-line summary, shown in list indexes and overview. Required when creating a memory; otherwise optional. Omit on an update to keep the current one.",
 				},
 				"source": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional provenance: URL, document, ticket, or session context.",
+					"description": "Provenance: URL, document, ticket, or session context. Required when creating a memory; otherwise optional. Omit on an update to keep the current one.",
 				},
 				"status": map[string]interface{}{
 					"type":        "string",
@@ -1476,7 +1476,7 @@ var saveArticleTool = toolDef{
 				"memory_kind": map[string]interface{}{
 					"type":        "string",
 					"enum":        MemoryKinds,
-					"description": "Optional kind when type is AI-Agent-Memory: 'project', 'reference', 'user', or 'feedback'.",
+					"description": "Kind of an AI-Agent-Memory, required when creating a memory: 'project' (goals and constraints not derivable from the repo), 'reference' (a pointer to an external resource), 'user' (who the operator is), or 'feedback' (a correction the operator gave). Omit on an update to keep the current one.",
 				},
 				"memory_type": map[string]interface{}{
 					"type":        "string",
@@ -1585,6 +1585,28 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 			kindOverride = &mk
 		}
 
+		desc := existing.Description
+		if sArgs.Description != "" {
+			desc = sArgs.Description
+		}
+		src := existing.Source
+		if sArgs.Source != "" {
+			src = sArgs.Source
+		}
+
+		// A type change into the memory class is a memory coming into existence, so it passes the
+		// same gate as a create. An ordinary edit of an existing memory does not: see
+		// checkNewMemoryMetadata.
+		if docType == ContentTypeMemory && normalizeType(existing.Type) != ContentTypeMemory {
+			kind := sArgs.MemoryKind
+			if kind == "" {
+				kind = existing.MemoryKind
+			}
+			if err := checkNewMemoryMetadata(kind, desc, src); err != nil {
+				return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+			}
+		}
+
 		var tags []string
 		if sArgs.Tags != nil {
 			switch docType {
@@ -1651,14 +1673,6 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
 		}
 
-		desc := existing.Description
-		if sArgs.Description != "" {
-			desc = sArgs.Description
-		}
-		src := existing.Source
-		if sArgs.Source != "" {
-			src = sArgs.Source
-		}
 		summary := sArgs.EditSummary
 		if summary == "" {
 			summary = fmt.Sprintf("Updated %s", existing.Title)
@@ -1704,6 +1718,11 @@ func (srv *Server) toolSaveArticle(args json.RawMessage) (interface{}, *JSONRPCE
 	docType, err := resolveRequestedType(sArgs.Type, ContentTypeWiki)
 	if err != nil {
 		return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+	}
+	if docType == ContentTypeMemory {
+		if err := checkNewMemoryMetadata(sArgs.MemoryKind, sArgs.Description, sArgs.Source); err != nil {
+			return ToolResponse{IsError: true, Content: []ToolContent{{Type: "text", Text: "Error: " + err.Error()}}}, nil
+		}
 	}
 
 	targetSlug := Slugify(sArgs.Title)
@@ -1883,7 +1902,7 @@ func (srv *Server) toolAppendArticle(args json.RawMessage) (interface{}, *JSONRP
 var deleteArticleTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "delete_article",
-		"description": "Permanently delete any document (wiki article, agent memory, plan, or skill) and its historical backups from disk by slug.",
+		"description": "Permanently delete any document (wiki article, agent memory, plan, or skill) by slug. Irreversible: it destroys the document's version history and assets and breaks every backlink to it. A last resort — to change a document's type, pass 'type' to save_article; to remove text from history, use save_article with 'purge_history: true'.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

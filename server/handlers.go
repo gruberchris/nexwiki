@@ -320,6 +320,13 @@ func (srv *Server) HandleCreateArticle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The memory write gate, the same one save_article applies.
+	if docType == ContentTypeMemory {
+		if err := checkNewMemoryMetadata(derefOr(req.MemoryKind), derefOr(req.Description), derefOr(req.Source)); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 
 	// Verify if slug already exists before writing
 	slug := Slugify(req.Title)
@@ -490,7 +497,8 @@ func (srv *Server) HandleUpdateArticle(w http.ResponseWriter, r *http.Request) {
 	case err != nil && strings.Contains(err.Error(), "article not found"):
 		writeError(w, http.StatusNotFound, "article not found")
 		return
-	case errors.Is(err, ErrInvalidDocumentType), errors.Is(err, ErrInvalidTypeChange), errors.Is(err, ErrInvalidStatus):
+	case errors.Is(err, ErrInvalidDocumentType), errors.Is(err, ErrInvalidTypeChange), errors.Is(err, ErrInvalidStatus),
+		errors.Is(err, ErrMemoryMetadataMissing):
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	case err != nil:

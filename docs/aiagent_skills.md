@@ -6,11 +6,11 @@ This guide details what AI skills are, how to manage them inside NexWiki, how th
 
 ---
 
-## ⚠️ Before You Start: Create the Core Guidelines Skill
+## ⚠️ Before You Start: Skills Are Procedures, Not Standing Rules
 
-If you are connecting AI agents (Claude Desktop, Cursor, etc.) to NexWiki, the **most important skill to create first** is the `nexwiki-agent-guidelines` skill. The instructions the MCP server sends every client at initialization tell agents to load this skill at session start, before writing anything. If it does not exist, agents will error and proceed without any governance rules.
+A skill is loaded when an agent looks for it — through `search_wiki`, `list_articles(type: "skills")`, or a link from another document. Nothing makes an agent read a particular skill at session start. Rules you want applied to **every** task belong in `feedback` and `user` memories instead, which `get_wiki_overview` returns as `pinned_memories` at the start of every session.
 
-See **[AI Agent Integration Guide](agent_integration_guide.md)** → *Crafting Your `nexwiki-agent-guidelines` Skill* for exactly what to write and what to leave out.
+See **[AI Agent Integration Guide](agent_integration_guide.md)** → *Writing Good Operator Memories* for what to pin and what to leave to a skill.
 
 ---
 

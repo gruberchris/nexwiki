@@ -14,7 +14,7 @@ import (
 var createAgentMemoryTool = toolDef{
 	Schema: map[string]interface{}{
 		"name":        "create_agent_memory",
-		"description": "Create a brand new protected AI Agent Memory document. A memory has two independent axes and both are set here. 'memory_kind' (REQUIRED) says what sort of fact this is — 'project', 'reference', 'user', or 'feedback' — and 'memory_type' says how far it reaches: use a project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for reusable cross-project knowledge, or omit it for general knowledge (no scope tag). The two are independent; every combination is legal. Memories must be succinct and high-value — they are loaded into agent context windows, so keep them short, specific, and free of repetition. Search for an existing memory first; if one becomes stale later, use 'edit_agent_memory' to correct it or 'delete_agent_memory' to retire it rather than creating near-duplicates. The reserved AI-Agent-Memory type must NEVER be relabelled unless explicitly instructed. (IMPORTANT: If you have not already loaded the global operational guidelines skill this session, load it once with 'read_article(slug: \"nexwiki-agent-guidelines\")'. If it is already in your context, do not re-read it — call this tool.)",
+		"description": "Create a brand new protected AI Agent Memory document. A memory has two independent axes and both are set here. 'memory_kind' (REQUIRED) says what sort of fact this is — 'project', 'reference', 'user', or 'feedback' — and 'memory_type' says how far it reaches: use a project name (e.g. 'nexwiki') for project-specific knowledge, a topic name (e.g. 'docker') for reusable cross-project knowledge, or omit it for general knowledge (no scope tag). The two are independent; every combination is legal. Memories must be succinct and high-value — they are loaded into agent context windows, so keep them short, specific, and free of repetition. Search for an existing memory first; if one becomes stale later, use 'edit_agent_memory' to correct it or 'delete_agent_memory' to retire it rather than creating near-duplicates. The reserved AI-Agent-Memory type must NEVER be relabelled unless explicitly instructed.'. If it is already in your context, do not re-read it — call this tool.)",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -98,8 +98,8 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 	// wiki_health already reports memories with no source, and that check exists because agents
 	// skip the field. It is the right check on the wrong side of the write: a fact whose origin
 	// was never recorded cannot have its origin *recovered* by a later report. Both fields were
-	// already documented as mandatory in the guidelines; this makes the schema agree with the
-	// guidance instead of leaving it to prose an agent may not have loaded.
+	// already documented as mandatory; this makes the schema agree with the guidance instead of
+	// leaving it to prose an agent may not have loaded.
 	//
 	// description is included because it powers get_context_overview, which is the first call the
 	// server's own instructions tell an agent to make. A memory with no description is invisible
@@ -160,7 +160,7 @@ func (srv *Server) toolCreateAgentMemory(args json.RawMessage) (interface{}, *JS
 	//
 	// wiki_health has always found these — but only after both memories exist. Running the same
 	// comparison here catches it while there is still one document, and it moves the work off the
-	// agent: the guideline used to be a retrieval chain the agent performed before creating, and
+	// agent: the old instruction was a retrieval chain the agent performed before creating, and
 	// that chain is livelock-shaped. The server already owns the comparison, so the agent should
 	// not be running lookups at all.
 	//

@@ -80,8 +80,8 @@ func (srv *Server) getPrompt(params json.RawMessage) (interface{}, *JSONRPCError
 		promptText := fmt.Sprintf(`You are an AI assistant tasked with creating a new article titled "%s" in the user's NexWiki knowledge base.
 
 Before you begin writing the article, you MUST follow these steps to ensure format consistency, provenance, and alignment with user rules:
-1. Call 'list_articles' with type "memories", or 'search_wiki', specifically looking for "rules", "formatting", or "style guide" memories regarding this type of article (e.g., programming language guides, system architecture templates, etc.).
-2. If any formatting guidelines or style memories are found, read their contents using 'read_article'.
+1. If you have not called 'get_wiki_overview' this session, call it once: its pinned memories are the operator's standing preferences and corrections, and they apply here. Then make one 'search_wiki' call (or 'list_articles' with type "memories") for "rules", "formatting", or "style guide" documents covering this kind of article (e.g., programming language guides, system architecture templates). Finding nothing is a completed check — use a sensible structure of your own.
+2. If any formatting rules or style memories are found, read their contents using 'read_article'.
 3. Incorporate those styles, sections, structure, and constraints strictly into the new article's content.
 4. Write the article content in clean, semantic Markdown. When citing external documentation, specifications, or reference materials, use OKF v0.2 footnote links matching source identifiers (e.g. '[^id]: https://...' or inline citations '[^id]').
 5. Save the article using 'save_article' (type "Wiki"). Set 'description' to a one-line summary and 'source' to where the material came from; list every cited reference as a footnote in the body so each one stays attached to the claim it supports.
@@ -124,7 +124,7 @@ Please follow these strict steps:
 4. Inform the user that the plan is saved in NexWiki, provide the article slug, and ask for their feedback or approval on the plan.
 5. As tasks are completed or updated during implementation, use 'append_article' to log the progress and update the checklists.
 6. When the plan is fully implemented, use 'append_article' to add final notes documenting anything worth noting (plan deviations, files created, tools used, unexpected challenges, or other observations).
-7. After adding final notes, use 'save_article' with the plan's slug, its current loaded_version, and status: "completed" to close the plan. Lifecycle state is the 'status' field, not a tag — a status word passed in 'tags' is rejected.
+7. After adding final notes, use 'save_article' with the plan's slug, its current loaded_version, status: "completed", and the plan's current body passed back unchanged as 'content' (content always replaces the whole body) to close the plan. Lifecycle state is the 'status' field, not a tag — a status word passed in 'tags' is rejected.
 
 IMPORTANT: The reserved AI-Agent-Plan type must NEVER be relabelled unless explicitly instructed by the user.`, project, title, project)
 

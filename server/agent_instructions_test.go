@@ -6,22 +6,22 @@ import (
 	"testing"
 )
 
-// The texts NexWiki ships to instruct agents: the guidelines seeded into a fresh wiki, and the
-// MCP prompts. They are the only places where a stale sentence does not merely misinform but
-// makes an agent's next tool call *fail*.
+// The texts NexWiki ships to instruct agents: the connect-time instructions and the MCP prompts.
+// They are the only places where a stale sentence does not merely misinform but makes an agent's
+// next tool call *fail*.
 //
 // This exists because exactly that shipped in 0.12.0. Lifecycle status moved from a tag to the
 // `status` field, and `ValidateStatusFreeTags` began rejecting a status word in a plan's tags —
-// while the seeded guidelines still said "add the `completed` tag with edit_agent_plan" and the
-// create-plan prompt still said to "mark the plan as completed by adding the 'completed' status
-// tag". An agent following either instruction to the letter got a rejected write. Documentation
-// drifting out of date is cosmetic; instructions that are actively rejected by the code shipping
-// alongside them are not.
+// while the then-seeded instructions page still said "add the `completed` tag with edit_agent_plan"
+// and the create-plan prompt still said to "mark the plan as completed by adding the 'completed'
+// status tag". An agent following either instruction to the letter got a rejected write.
+// Documentation drifting out of date is cosmetic; instructions that are actively rejected by the
+// code shipping alongside them are not.
 func agentFacingTexts(t *testing.T) map[string]string {
 	t.Helper()
 	srv := newMCPServer(t)
 
-	texts := map[string]string{"seeded agent guidelines": defaultAgentGuidelines}
+	texts := map[string]string{"connect-time instructions": agentInstructions()}
 
 	// Names come from promptDefinitions. A typo here would silently skip a prompt, so the count
 	// is asserted below rather than trusted.
@@ -45,7 +45,7 @@ func agentFacingTexts(t *testing.T) map[string]string {
 
 	// Every prompt NexWiki advertises must be covered; adding one without adding it here would
 	// leave its text unguarded.
-	if got, want := len(texts)-1, len(promptDefinitions()); got != want {
+	if got, want := len(texts)-1, len(promptDefinitions()); got != want { // -1: the instructions
 		t.Fatalf("guarding %d prompts but %d are advertised — add the new one to this list", got, want)
 	}
 	return texts
@@ -86,30 +86,61 @@ func TestAgentInstructionsDoNotTeachStatusTags(t *testing.T) {
 	}
 }
 
-// TestAgentInstructionsNameTheStatusField is the positive half: the guidelines a fresh wiki seeds
-// must actually teach the field, otherwise an agent has no way to learn where state lives.
+// TestAgentInstructionsNameTheStatusField is the positive half: save_article, the one write tool,
+// must actually teach the field and its vocabulary, otherwise an agent has no way to learn where
+// state lives.
 func TestAgentInstructionsNameTheStatusField(t *testing.T) {
-	guidelines := strings.ToLower(defaultAgentGuidelines)
-	for _, want := range []string{"status", "status_tags"} {
-		if !strings.Contains(guidelines, want) {
-			t.Errorf("the seeded agent guidelines never mention %q — an agent cannot learn the lifecycle from them", want)
+	props := saveArticleTool.Schema["inputSchema"].(map[string]interface{})["properties"].(map[string]interface{})
+	status, ok := props["status"].(map[string]interface{})
+	if !ok {
+		t.Fatal("save_article declares no status argument")
+	}
+	desc := status["description"].(string)
+	for _, want := range append(append([]string{}, PlanStatusTags...), SkillStatusTags...) {
+		if !strings.Contains(desc, want) {
+			t.Errorf("save_article's status description never names %q — an agent cannot learn the lifecycle from it", want)
 		}
 	}
 }
 
-// TestSeededGuidelinesUseOnlyLiveStatusValues catches the other drift direction: a status value
-// named in the seeded text that the validator no longer accepts. Every plan status the guidelines
-// mention by name has to survive ValidateStatus, or the instructions cite a value that fails.
-func TestSeededGuidelinesUseOnlyLiveStatusValues(t *testing.T) {
-	// The retired vocabulary. If one of these appears as a plan status in the seeded guidelines,
-	// an agent copying it gets a rejected write naming the replacement.
-	for _, retired := range retiredStatusTagLabels {
-		if retired == "draft" || retired == "ready" {
-			continue // still live: draft is a plan and skill status, ready is a skill status
+// TestAgentTextsUseOnlyLiveStatusValues catches the other drift direction: a status value named in
+// a shipped text that the validator no longer accepts.
+func TestAgentTextsUseOnlyLiveStatusValues(t *testing.T) {
+	for source, text := range agentFacingTexts(t) {
+		for _, retired := range retiredStatusTagLabels {
+			if retired == "draft" || retired == "ready" {
+				continue // still live: draft is a plan and skill status, ready is a skill status
+			}
+			if strings.Contains(strings.ToLower(text), "`"+retired+"`") {
+				t.Errorf("%s cites retired status %q as if it were usable; ValidateStatus rejects it", source, retired)
+			}
 		}
-		if strings.Contains(strings.ToLower(defaultAgentGuidelines), "`"+retired+"`") {
-			t.Errorf("the seeded guidelines cite retired status %q as if it were usable; "+
-				"ValidateStatus rejects it", retired)
+	}
+}
+
+// TestAgentInstructionsAreCompactAndGeneric pins the connect-time instructions to what they are
+// for. Every client injects them into every session, so they stay short; and they carry only the
+// universal rules, naming no document — an operator's own conventions are feedback and user
+// memories, which get_wiki_overview surfaces as pinned_memories. The instructions once sent every
+// agent to read a seeded rules page by slug, which any caller could rewrite and every instance had
+// to maintain by hand.
+func TestAgentInstructionsAreCompactAndGeneric(t *testing.T) {
+	text := agentInstructions()
+	if n := len([]rune(text)); n < 600 || n > 1200 {
+		t.Errorf("connect-time instructions are %d characters; keep them between 600 and 1200", n)
+	}
+	for _, want := range []string{
+		"get_wiki_overview", "pinned_memories", "search_wiki", "list_articles", "save_article",
+		`"AI-Agent-Plan"`, "project_context", `"AI-Agent-Memory"`, "memory_kind", "description", "source",
+		"once", "not found", "version conflict",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("connect-time instructions do not mention %q:\n%s", want, text)
+		}
+	}
+	for _, forbidden := range []string{"read_article(slug", "guideline", "slug:"} {
+		if strings.Contains(strings.ToLower(text), forbidden) {
+			t.Errorf("connect-time instructions name a specific document (%q); they must stay generic:\n%s", forbidden, text)
 		}
 	}
 }

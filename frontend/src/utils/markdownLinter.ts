@@ -157,8 +157,8 @@ export function lintMarkdown(content: string, articles: { slug: string; title: s
     
     // MDLINK_BROKEN: absolute internal Markdown links, [text](/articles/slug)
     //
-    // The other half of the same check. NexWiki's guidelines tell agents to prefer this form over
-    // [[WikiLinks]] in body prose, so leaving it unlinted meant the link form the house style
+    // The other half of the same check. Most internal links in a real wiki take this form rather
+    // than [[WikiLinks]] in body prose, so leaving it unlinted meant the link form the house style
     // actually uses got no warning at all. The leading (^|[^!]) skips the image form.
     //
     // Carries a `hint`, never a `fix`: there is no single correct replacement — the destination

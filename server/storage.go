@@ -2511,6 +2511,17 @@ func (s *Storage) ApplyArticleEdit(slug string, edit ArticleEdit) (*Article, err
 	if err != nil {
 		return nil, err
 	}
+	// A type change into the memory class brings a memory into existence, so it passes the memory
+	// write gate; an ordinary edit of an existing memory does not.
+	if newType == ContentTypeMemory && normalizeType(existing.Type) != ContentTypeMemory {
+		kind := existing.MemoryKind
+		if edit.MemoryKind != nil {
+			kind = *edit.MemoryKind
+		}
+		if err := checkNewMemoryMetadata(kind, description, source); err != nil {
+			return nil, err
+		}
+	}
 
 	// Preserve tool-managed memory-scope tags a user edit must not be able to drop or forge. They
 	// are tool-managed only on a memory, so a document leaving the memory class leaves them behind.

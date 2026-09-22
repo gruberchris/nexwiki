@@ -116,9 +116,9 @@ To run a stdio MCP server alongside your running web instance — or standalone,
 ```
 *(Note: Passing `-mcp-only` is required for stdio subprocesses. It skips the web port bind, and if a NexWiki web server is already running, it proxies to it instead of opening the data directory; see [Sidecar proxy mode](docs/mcp_server.md#-sidecar-proxy-mode)).*
 
-### Universal Agent Skill & In-Wiki Governance
+### Universal Agent Skill & Operator Conventions
 - **Agent Skill**: Copy [`agent-skill/nexwiki/`](agent-skill/nexwiki/) into your agent's skills folder (`~/.claude/skills/`, `~/.copilot/skills/`, `.agents/skills/`, etc.). Built on the open [Agent Skills](https://agentskills.io) standard, it works across Claude Code, GitHub Copilot CLI, Google Antigravity, OpenCode, and OpenAI Codex. See the [Agent Skill Guide](agent-skill/README.md).
-- **In-Wiki Governance**: Connected agents automatically load the live [`nexwiki-agent-guidelines`](docs/agent_integration_guide.md) wiki page on startup. Edit this page in your browser at any time to modify agent rules and behaviors—changes take effect immediately across all agents without restarts.
+- **Operator Conventions as Memories**: Your own rules for agents — house style, corrections, how you like work done — are ordinary `feedback` and `user` memories. `get_wiki_overview`, the first call every agent is told to make, returns them as `pinned_memories`, and agents follow them. Edit one in your browser and every connected agent sees it on its next session, with no restart. The universal rules (what a memory must carry, that `content` replaces the whole body, what a `[[WikiLink]]` may point at) are built into the tools. See the [AI Agent Integration Guide](docs/agent_integration_guide.md).
 
 ---
 
@@ -144,7 +144,7 @@ Explore in-depth technical manuals, architectural specifications, and workflow g
 - [User & Content Creation Guide](docs/user_guide.md) — Managing articles, trust signals, backlinks, and export options.
 - [Second Brain Workflow Guide](docs/second_brain_workflow_guide.md) — Orientation loop, progressive disclosure, and source ingestion.
 - [Model Context Protocol (MCP) Reference](docs/mcp_server.md) — Canonical reference for all 9 tools, annotations, and schemas.
-- [Agent Integration & SOP Guide](docs/agent_integration_guide.md) — Governance layers, standard operating procedures, and agent blueprints.
+- [Agent Integration & SOP Guide](docs/agent_integration_guide.md) — Connect-time instructions, operator memories, and agent blueprints.
 - [Plan Lifecycle & State Machine Guide](docs/plan_lifecycle_guide.md) — Enforced plan statuses, auto-archiving, and retention timers.
 - [Open Knowledge Format (OKF v0.2) Guide](docs/okf_v02_guide.md) — Trust tiers, freshness expiration, and bundle import/export.
 - [Rich Text Sharing & Clipboard Guide](docs/rich_text_sharing_guide.md) — Formatting interoperability, clipboard APIs, and sharing to Teams/Slack/Outlook.

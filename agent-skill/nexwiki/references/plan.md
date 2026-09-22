@@ -10,5 +10,6 @@ just print a plan in chat.
 4. To rewrite plan steps, use `save_article` with `slug`, `content`, and `loaded_version` (full replacement,
    with optimistic locking).
 5. On completion: append final notes (deviations, files created, surprises) via `append_article`, then set
-   `status: "completed"` with `save_article`.
+   `status: "completed"` with `save_article` — passing the plan's current body back unchanged as
+   `content`, since `content` always replaces the whole body.
 6. Report the plan's slug.

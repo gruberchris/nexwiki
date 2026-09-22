@@ -115,10 +115,17 @@ func TestSaveArticleTypeTransitionMatrix(t *testing.T) {
 				assertListedAs(t, srv, slug, from)
 
 				before, _ := srv.Storage.GetArticle(slug)
-				resp := saveCall(t, srv, map[string]interface{}{
+				args := map[string]interface{}{
 					"slug": slug, "title": before.Title, "content": "# changed", "type": to,
 					"loaded_version": before.Version,
-				})
+				}
+				if to == ContentTypeMemory {
+					// Becoming a memory passes the memory write gate, as creating one does.
+					args["memory_kind"] = "reference"
+					args["description"] = "d"
+					args["source"] = "s"
+				}
+				resp := saveCall(t, srv, args)
 				want := expect[[2]string{from, to}]
 				if want.wantErr {
 					if !resp.IsError {
@@ -187,6 +194,7 @@ func TestSaveArticleTypeChangeAppliesClassificationArgs(t *testing.T) {
 	resp = saveCall(t, srv, map[string]interface{}{
 		"slug": mem, "title": "Operator Prefers Tables", "content": "# pref", "loaded_version": 1,
 		"type": "memories", "memory_type": "style", "memory_kind": "feedback",
+		"description": "table preference", "source": "operator, in session",
 	})
 	if resp.IsError {
 		t.Fatalf("relabel failed: %s", resp.Content[0].Text)

@@ -387,7 +387,7 @@ See [SECURITY.md](../SECURITY.md#secret-scanning-on-agent-writes) for the full l
 |---|---|
 | 1st | normal |
 | 2nd | one line: this repeats a lookup you ran *N* seconds ago |
-| 3rd+ | explicit: names §0 of the guidelines, states the check is complete, points at `save_article` |
+| 3rd+ | explicit: states the check is complete and points at `save_article` |
 
 **Rewordings are the point.** The fingerprint lowercases, strips punctuation, drops stop words, applies a crude stem, sorts the tokens and hashes — so *"docker build error"* and *"error building docker"* are the same question. An agent asking an identical question twice is easy to catch and is **not** the failure mode this exists for: the 31-minute livelock on this wiki was rewordings.
 
@@ -460,16 +460,22 @@ Retrieves the raw Markdown content, front-matter configurations, and inbound bac
 ### 3. `save_article`
 Create or update any document (wiki article, agent memory, plan, or skill). If `slug` is provided and matches an existing document, it updates/revises it; if omitted or not existing, it creates a new document. Supports optimistic concurrency locking via `loaded_version`. On an update, `type` changes the document's type, and `purge_history` redacts its earlier revisions.
 
+The description carries three rules every caller needs:
+
+* **`content` is always a full replacement of the body.** To change only metadata or status, pass the current body back unchanged.
+* **A `[[WikiLink]]` must name a document that exists in this wiki** — never an agent's own local memory files, instruction files, tools, or scratch paths. External references are plain URLs.
+* **Creating a memory requires `memory_kind`, `description`, and `source`** — see [the memory write gate](#the-memory-write-gate).
+
 * **Arguments**:
   * `title` (string, **required**): Human-readable title of the document. Never use a bare tool verb.
-  * `content` (string, **required**): Raw Markdown body content of the document.
+  * `content` (string, **required**): The complete Markdown body. Replaces the existing body in full; it is never merged or appended.
   * `slug` (string, *optional*): Optional slug. If provided and matches an existing document, updates/revises it; if omitted or not existing, creates a new document.
   * `type` (string, *optional*): Document type: `Wiki` (default on create), `AI-Agent-Memory`, `AI-Agent-Plan`, `AI-Agent-Skill`, or `Attested Computation` (the aliases `articles`, `memories`, `plans`, `skills` are accepted too). On an update, omit it to keep the current type, or pass one to change it — see [changing a document's type](#changing-a-documents-type). An unknown value is an error naming the valid ones, never a silent `Wiki`.
-  * `description` (string, *optional*): Optional one-line summary, shown in list indexes and overview.
-  * `source` (string, *optional*): Optional provenance: URL, document, ticket, or session context.
+  * `description` (string, **required when creating a memory**, otherwise optional): One-line summary, shown in list indexes and overview. Omit on an update to keep the current one.
+  * `source` (string, **required when creating a memory**, otherwise optional): Provenance: URL, document, ticket, or session context. Omit on an update to keep the current one.
   * `status` (string, *optional*): Optional lifecycle status for plans (`draft`, `implementing`, `blocked`, `completed`, `superseded`, `parked`, `evergreen`, `archived`) or skills (`draft`, `ready`, `archived`).
   * `tags` (array of string, *optional*): Optional tags for topics and context. Lifecycle status belongs in `status`, not tags.
-  * `memory_kind` (string, *optional*): Optional kind when type is `AI-Agent-Memory`: `project`, `reference`, `user`, or `feedback`.
+  * `memory_kind` (string, **required when creating a memory**): Kind of an `AI-Agent-Memory`: `project` (goals and constraints not derivable from the repo), `reference` (a pointer to an external resource), `user` (who the operator is), or `feedback` (a correction the operator gave). Omit on an update to keep the current one.
   * `memory_type` (string, *optional*): Optional scope for `AI-Agent-Memory` (e.g. `nexwiki` or `docker`). Generates `memory-<memory_type>` tag.
   * `project_context` (string, *optional*): Optional project context for `AI-Agent-Plan`. Generates custom project tag.
   * `loaded_version` (integer, *optional*): Optional active version number from `read_article` to enforce optimistic concurrency locking on edits.
@@ -477,7 +483,7 @@ Create or update any document (wiki article, agent memory, plan, or skill). If `
   * `purge_history` (boolean, *optional*): Update only, and requires `loaded_version`. After the save succeeds, permanently delete every earlier revision of the document from version history — body and front matter — keeping only the revision this call wrote, and retitle the document's earlier activity-log entries to its current title and slug. It is **not** a deletion of anything a reader sees today: the document, slug, type, status, backlinks, and version counter are unchanged. See the [History Redaction & Audit Guide](./history_redaction_guide.md).
 * **Behavior**:
   Automatically handles slug generation from title (or uses provided slug), validates document type and title against bare tool verbs, and verifies secret scanning on content, description, and source. When revising an existing document, validates `loaded_version` against disk for optimistic concurrency control, increments version, creates a gzipped history backup snapshot, updates flat-file storage, and refreshes Bleve search indexing.
-  When saving an `AI-Agent-Memory`, validates `memory_kind` and applies the scoped `memory-<memory_type>` tag. (Near-duplicate memories are reported by `wiki_health`, not at write time.)
+  When saving an `AI-Agent-Memory`, validates `memory_kind` and applies the scoped `memory-<memory_type>` tag. A new memory must pass [the memory write gate](#the-memory-write-gate). (Near-duplicate memories are reported by `wiki_health`, not at write time.)
   The success response names the document's type — `Type: AI-Agent-Plan`, or `Type: Wiki → AI-Agent-Plan` when this save changed it. With `purge_history`, it also reports `revisions_removed: [..]`, `activity_entries_retitled: N`, and which revision survives.
 * **Annotations**: Title: `Save Article`, `readOnlyHint`: `false`, `destructiveHint`: `true`, `idempotentHint`: `false`, `openWorldHint`: `false`.
 * **Structured output**: None (prose response confirming success or reporting validation/concurrency conflict errors).
@@ -492,6 +498,7 @@ A document created with the wrong type — a plan saved as a `Wiki`, say — is 
 * Into `Wiki` or `AI-Agent-Memory`: the lifecycle status is dropped unless `status` is passed.
 * A plan or skill status the new type does not accept (`implementing` onto a skill, `ready` onto a plan) with no `status` passed is **refused** — a lifecycle state is never silently converted. Pass the status you want.
 * Leaving `AI-Agent-Memory` drops the `memory-<scope>` tags and the `memory_kind`.
+* Into `AI-Agent-Memory`: the change must pass [the memory write gate](#the-memory-write-gate). The document's existing `description` and `source` count when the call omits them; `memory_kind` must be passed.
 * A same-type re-save is an ordinary edit. Verify a change through `list_articles(type: …)`, not a read.
 
 ```jsonc
@@ -499,6 +506,18 @@ A document created with the wrong type — a plan saved as a `Wiki`, say — is 
   "type": "AI-Agent-Plan", "project_context": "kimmydb", "status": "implementing" }
 // → Type: Wiki → AI-Agent-Plan
 ```
+
+#### The memory write gate
+
+A memory comes into existence with the metadata that makes it useful, or not at all. `save_article` refuses to create an `AI-Agent-Memory` — or to change a document's type into one — unless:
+
+* `memory_kind` is one of `project`, `reference`, `user`, `feedback`;
+* `description` is non-blank — it is what `list_articles` and `get_wiki_overview` show, so a memory without one is invisible when an agent orients;
+* `source` is non-blank — a fact with no recorded origin cannot be re-verified, and its origin cannot be recovered later.
+
+Whitespace-only values count as blank. The refusal names every missing field and says what belongs in it. `POST /api/articles` with a memory type, and a `PUT /api/articles/{slug}` that changes the type into a memory, apply the same rule and answer `400`.
+
+An **ordinary edit of an existing memory is not gated**: omitted fields are preserved, and a memory written before the gate existed stays editable. `wiki_health` reports that backlog as `unsourced_memories` and `unkinded_memories`.
 
 > **A conflict names the value to retry with.** Every optimistic-locking failure reports the version on disk *and* the exact `loaded_version` to send next:
 > ```
@@ -539,7 +558,7 @@ List articles, memories, plans, and skills in the knowledge base. Filter by type
 ---
 
 ### 6. `delete_article`
-Permanently delete any document (wiki article, agent memory, plan, or skill) and its historical backups from disk by slug.
+Permanently delete any document (wiki article, agent memory, plan, or skill) by slug. **Irreversible**: it destroys the document's version history and assets and breaks every backlink to it. It is a last resort — to change a document's type, pass `type` to `save_article`; to remove text from history, use `save_article` with `purge_history: true`.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the document to delete.

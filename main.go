@@ -363,14 +363,6 @@ func main() {
 		}
 	}
 
-	// Ensure the governance skill the MCP tool-description hooks reference actually exists,
-	// so agents can load nexwiki-agent-guidelines out of the box. Idempotent.
-	//
-	// Before either mode serves anything, because the server's instructions tell agents to load it
-	// first. A standalone -mcp-only process owns its data directory just as the web server does, so
-	// it seeds too; a proxy never gets here, and its primary has seeded already.
-	srv.SeedAgentGuidelinesIfMissing()
-
 	// In -mcp-only mode, run the stdio MCP server in the foreground and never bind the web port.
 	if mcpOnlyMode {
 		log.Printf("Running in stdio MCP-only mode (no web server). All MCP tools operate against the in-process storage layer.")

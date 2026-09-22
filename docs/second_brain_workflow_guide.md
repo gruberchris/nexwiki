@@ -51,16 +51,15 @@ mkdir -p ~/.claude/skills && cp -r agent-skill/nexwiki ~/.claude/skills/
 ```
 
 The skill (a `SKILL.md` in its own folder, per the [Agent Skills](https://agentskills.io)
-standard) activates the whole workflow — load `nexwiki-agent-guidelines`,
-`get_wiki_overview(since: "48h")` at session start — which in turn
-drives style checks, plan auto-saving, and memory hygiene. Agents load it automatically when
+standard) activates the whole workflow — `get_wiki_overview(since: "48h")` once at session
+start, then follow its pinned memories — which in turn drives style checks, plan auto-saving, and memory hygiene. Agents load it automatically when
 relevant, or you can invoke it with `/nexwiki`. NexWiki also sends a short "you are a second
 brain" hint to any MCP client on connect, so agents get a nudge even before the skill loads.
 Full per-tool paths and tips: [`agent-skill/README.md`](../agent-skill/README.md).
 
-### 4. The governance skill is seeded for you
+### 4. Teach agents your conventions with memories
 
-The wiki article with slug `nexwiki-agent-guidelines` (OKF type `AI-Agent-Skill`) is the system's "schema file" — the equivalent of Karpathy's `CLAUDE.md`. NexWiki **seeds a default version automatically the first time the server starts**, so the MCP hooks resolve out of the box. Refine it in the wiki UI at any time — changes reach every agent immediately. To author it from scratch, see [Crafting Your nexwiki-agent-guidelines Skill](./agent_integration_guide.md#-crafting-your-nexwiki-agent-guidelines-skill).
+The system's "schema file" — the equivalent of Karpathy's `CLAUDE.md` — is split in two. The universal rules are built into NexWiki's tools and its connect-time instructions. Your own conventions are ordinary memories of kind `feedback` (a correction or house rule) or `user` (who you are and how you work): `get_wiki_overview` returns them as `pinned_memories` at the start of every session, and agents follow them. Edit one in the wiki UI and the next session of every agent sees it. See [Writing Good Operator Memories](./agent_integration_guide.md#-writing-good-operator-memories).
 
 ---
 
@@ -83,11 +82,11 @@ For deeper graph traversal it calls **`get_backlinks(slug)`** — *"what referen
 
 ### Step 3 — Work, with plans
 
-When you give the agent a multi-step task, the governance rules force it to:
+When you give the agent a multi-step task, the connect-time instructions tell it to:
 
 1. **`save_article`** (with `type: "AI-Agent-Plan"` and `project_context`) *before* starting work — never just print a plan in chat.
 2. **`append_article`** progress notes after each milestone.
-3. On completion: append final notes (deviations, files created, surprises), then **`save_article`** with `status: "completed"` to close the plan.
+3. On completion: append final notes (deviations, files created, surprises), then **`save_article`** with `status: "completed"` — passing the current body back unchanged, since `content` always replaces the whole body — to close the plan.
 
 > **Correcting plan steps:** Use `save_article` with a `content` field and `loaded_version` to rewrite plan content in-place (full replacement with optimistic locking). Use `append_article` for additive progress notes only. The same tool sets `description` and `source`, so a plan's one-line summary can be corrected after creation rather than only at it.
 
@@ -98,7 +97,7 @@ You watch all of this live in the Activity Drawer, and the plan is a normal wiki
 When the agent solves something non-obvious or you tell it a durable fact:
 
 1. **Search first**: `list_articles(type: "memories")` → `search_wiki` — never create blind duplicates.
-2. **Append or create**: prefer `append_article` on an existing memory; otherwise `save_article` with `type: "AI-Agent-Memory"` and a scoped `memory_type` (project name, topic name, or omitted for general), plus a `description`, `source`, and `memory_kind`.
+2. **Append or create**: prefer `append_article` on an existing memory; otherwise `save_article` with `type: "AI-Agent-Memory"` and a scoped `memory_type` (project name, topic name, or omitted for general), plus a `description`, `source`, and `memory_kind` — all three required: the server refuses a new memory missing any of them.
 3. **Hygiene loop** (the key behavioral upgrade): when a memory turns out to be *wrong or stale*, the agent corrects it in place with **`save_article`** or retires it with **`delete_article`** — instead of letting contradictions pile up.
 
 ---
@@ -115,7 +114,7 @@ Paste anything into a quick wiki article tagged **`inbox`** (or just hand the ag
 
 Say *"ingest my inbox"* or *"ingest this article: \<URL\>"*. The agent loads the **`ingest-source`** skill from your wiki's Skills Registry, which walks it through:
 
-1. Load the governance skill and style guides.
+1. Follow the pinned `feedback` and `user` memories and any style guides.
 2. Search with `search_wiki` (and `list_articles` when scanning a type or tag) to avoid duplicates.
 3. Read the source **fully** before writing.
 4. Synthesize a proper wiki article — a compilation in the wiki's voice, not a transcript — with `save_article`, setting `description` and `source` (the citation), and
@@ -151,7 +150,7 @@ That sequence exercises every piece of the system: the ingest skill, overview + 
 
 * **Activity log filtering**: activity events land in the activity log too — included in `get_wiki_overview(since: "48h")`.
 * **`since` formats**: `get_wiki_overview` accepts Go durations (`30m`, `24h`, `168h` for a week) or RFC3339 timestamps in its `since` argument.
-* **Descriptions pay rent**: the one-line `description` field is what `list_articles` and `get_wiki_overview` show for each entry. Encourage agents (via the guidelines skill) to set it on everything they create; add them yourself in the editor's description input when writing manually.
+* **Descriptions pay rent**: the one-line `description` field is what `list_articles` and `get_wiki_overview` show for each entry. Agents are told to set it on everything they create, and a memory cannot be created without one; add them yourself in the editor's description input when writing manually.
 * **Sources keep knowledge auditable**: a `source` can be a URL, a document reference, or simply `"conversation with Chris, 2026-06-11"`. Six months later, provenance is the difference between trusting and re-verifying a note.
 * **Stdio fallback**: each stdio client spawns its own `nexwiki -mcp-only` process. If the web server is already running, that process proxies to it. Otherwise it opens the data directory itself, and a web server started on that directory while it runs exits with a search-index lock error — so start the web server first. See [Connecting Clients](./mcp_server.md#-connecting-clients).
 
@@ -160,6 +159,6 @@ That sequence exercises every piece of the system: the ingest skill, overview + 
 ## 📚 Related Guides
 
 * [MCP Server Guide](./mcp_server.md) — all 9 tools in detail, client connection configs
-* [AI Agent Integration & SOP Guide](./agent_integration_guide.md) — governance layers and the guidelines skill
+* [AI Agent Integration & SOP Guide](./agent_integration_guide.md) — connect-time instructions and operator memories
 * [Tags & AI Agent Memories Guide](./tags.md) — protected tags and memory isolation
 * [AI Agent Skills & Custom Registry Guide](./aiagent_skills.md) — the skills registry powering `ingest-source`
