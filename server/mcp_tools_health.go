@@ -93,6 +93,7 @@ type HealthOutput struct {
 
 	OrphanCount     int             `json:"orphan_count"`
 	Orphans         []HealthFinding `json:"orphans"`
+	TotalLinks      int             `json:"total_links"`
 	BrokenLinkCount int             `json:"broken_link_count"`
 	BrokenLinks     []BrokenLinkRef `json:"broken_links"`
 	UnsourcedCount  int             `json:"unsourced_memory_count"`
@@ -196,6 +197,7 @@ func healthOutputSchema() map[string]interface{} {
 		"misplaced_documents":        schemaArrayOf(misplaced, "Misplaced documents, sorted by path, up to the limit."),
 		"orphan_count":               schemaOf("integer", "Documents no other document links to."),
 		"orphans":                    schemaArrayOf(finding, "Orphaned documents, up to the limit."),
+		"total_links":                schemaOf("integer", "Internal links scanned, broken or not, in either link form."),
 		"broken_link_count":          schemaOf("integer", "Internal links with no destination, in either link form."),
 		"broken_links":               schemaArrayOf(broken, "Broken internal links, up to the limit."),
 		"unsourced_memory_count":     schemaOf("integer", "Agent memories recorded without a source."),
@@ -222,7 +224,7 @@ func healthOutputSchema() map[string]interface{} {
 	}, "total_documents", "stale_days", "limit", "truncated",
 		"unreadable_file_count", "unreadable_files",
 		"misplaced_document_count", "misplaced_documents",
-		"orphan_count", "orphans", "broken_link_count", "broken_links",
+		"orphan_count", "orphans", "total_links", "broken_link_count", "broken_links",
 		"unsourced_memory_count", "unsourced_memories",
 		"unkinded_memory_count", "unkinded_memories",
 		"contested_memory_count", "contested_memories", "stale_plan_count", "stale_plans",
@@ -445,6 +447,7 @@ func (srv *Server) toolWikiHealth(args json.RawMessage) (interface{}, *JSONRPCEr
 		MisplacedDocumentCount: len(graph.Misplaced),
 		UnreferencedSkillCount: len(unreferencedSkills),
 		OrphanCount:            len(orphans),
+		TotalLinks:             graph.TotalLinks,
 		BrokenLinkCount:        len(graph.Broken),
 		UnsourcedCount:         len(unsourced),
 		UnkindedCount:          len(unkinded),
@@ -722,6 +725,7 @@ func renderHealthReport(out HealthOutput) string {
 	fmt.Fprintf(&b, "- Unreadable article files and folders (skipped by every check): %d\n", out.UnreadableFileCount)
 	fmt.Fprintf(&b, "- Misplaced documents (not at articles/<slug>.md, skipped by every check): %d\n", out.MisplacedDocumentCount)
 	fmt.Fprintf(&b, "- Orphan pages: %d\n", out.OrphanCount)
+	fmt.Fprintf(&b, "- Internal links scanned: %d\n", out.TotalLinks)
 	fmt.Fprintf(&b, "- Broken internal links: %d\n", out.BrokenLinkCount)
 	fmt.Fprintf(&b, "- Memories with no source: %d\n", out.UnsourcedCount)
 	fmt.Fprintf(&b, "- Memories with no kind: %d\n", out.UnkindedCount)

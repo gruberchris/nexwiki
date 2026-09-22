@@ -22,7 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Removed
 - **BREAKING: `get_backlinks` is removed**: `read_article` returns the same inbound links in both link forms, in its prose and in `structuredContent.backlinks`.
 - **BREAKING: `list_articles` is removed**: call `search_wiki` without a `query`, with the same `type`, `status`, `tag`, `limit` and `cursor` arguments.
-- **BREAKING: `get_wiki_overview` no longer takes `include_stats` or returns `statistics`**: broken links, unreadable files and misplaced documents are `wiki_health`'s report, from the same link-graph scan. `total_articles` stays at the top level.
+- **BREAKING: `get_wiki_overview` no longer takes `include_stats` or returns `statistics`**: broken links, unreadable files and misplaced documents are `wiki_health`'s report, from the same link-graph scan, and `total_links` moved to `wiki_health` unchanged. `total_articles` stays at the top level.
 
 ### Fixed
 

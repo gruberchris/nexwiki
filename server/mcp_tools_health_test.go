@@ -282,6 +282,56 @@ func TestWikiHealthProseMatchesStructure(t *testing.T) {
 	}
 }
 
+// TestWikiHealthReportsTotalLinks pins total_links, which moved here when get_wiki_overview lost
+// include_stats. It is graph.TotalLinks, the number the overview's statistics reported: every
+// internal link scanned, in either form, broken ones included.
+func TestWikiHealthReportsTotalLinks(t *testing.T) {
+	srv := newMCPServer(t)
+	health := func() (HealthOutput, ToolResponse) {
+		t.Helper()
+		resp := toolCall(t, srv, `{"name":"wiki_health","arguments":{}}`)
+		if resp.IsError {
+			t.Fatalf("wiki_health failed: %s", resp.Content[0].Text)
+		}
+		var out HealthOutput
+		decodeStructured(t, resp, &out)
+		return out, resp
+	}
+
+	// The seeded home dashboard carries links of its own; count only what the test adds.
+	before, _ := health()
+
+	seed := func(title, content string) {
+		if _, err := srv.Storage.SaveArticle("", title, content, "", "", "", "seed", nil, ""); err != nil {
+			t.Fatalf("seeding %q failed: %v", title, err)
+		}
+	}
+	seed("Target Page", "# Target")
+	seed("Linker", "A WikiLink, [[Target Page]], and a Markdown link, [the target](/articles/target-page).")
+	seed("Dangler", "Points nowhere: [gone](/articles/no-such-page).")
+
+	out, resp := health()
+	if got, want := out.TotalLinks, before.TotalLinks+3; got != want {
+		t.Errorf("total_links = %d, want %d (one live link in each form plus one broken)", got, want)
+	}
+	if got, want := out.BrokenLinkCount, before.BrokenLinkCount+1; got != want {
+		t.Errorf("broken_link_count = %d, want %d", got, want)
+	}
+
+	graph, err := srv.Storage.ScanLinkGraph()
+	if err != nil {
+		t.Fatalf("ScanLinkGraph failed: %v", err)
+	}
+	if out.TotalLinks != graph.TotalLinks {
+		t.Errorf("total_links = %d, want graph.TotalLinks = %d", out.TotalLinks, graph.TotalLinks)
+	}
+	if want := "Internal links scanned: " + itoa(out.TotalLinks) + "\n"; strings.Count(resp.Content[0].Text, "Internal links scanned: ") != 1 ||
+		!strings.Contains(resp.Content[0].Text, want) {
+		t.Errorf("prose should show %q once:\n%s", want, resp.Content[0].Text)
+	}
+	assertMatchesOutputSchema(t, resp, wikiHealthTool.Output)
+}
+
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

@@ -243,9 +243,8 @@ type LinkGraph struct {
 	// Collecting mentions at all costs ScanLinkGraph ~10% on the 1k/5k/10k benchmarks
 	// (10000 docs: 127ms → 139ms), from retaining the per-document slices and one extra map
 	// insert per file. Extraction itself is free, riding the body read cachedBodyRefs already
-	// performs and caches by mtime. Only wiki_health reads the field; get_wiki_statistics calls this
-	// scan too and pays that overhead anyway, a cost judged small enough not to maintain a second
-	// scan without it. (Backlink lookups do not use this scan: scanBacklinks walks on its own.)
+	// performs and caches by mtime. wiki_health is the only live caller of this scan and the only
+	// reader of the field. (Backlink lookups do not use this scan: scanBacklinks walks on its own.)
 	Mentions map[string][]string
 	// Unreadable lists the files the scan skipped because they could not be read or parsed, and the
 	// directories it skipped because they could not be listed, sorted by path. A skipped file is
