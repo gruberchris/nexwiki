@@ -26,7 +26,7 @@ An advanced technical and user guide covering the flat-file gzipped backup and c
 ### 3. [NexWiki Model Context Protocol (MCP) Server Guide](./mcp_server.md)
 A comprehensive technical manual describing the always-on Go MCP engine:
 * **Transport Layers**: Connecting AI clients over standard input/output (Stdio) or Streamable HTTP network streams.
-* **Exposed Tools**: In-depth explanations of all nine consolidated tools including search, read, unified document save with optimistic locking, append, listing with pagination, deletion, wiki overview, backlinks, and wiki health auditing.
+* **Exposed Tools**: In-depth explanations of all seven consolidated tools including search and paged listing, read with backlinks, unified document save with optimistic locking, append, link-guarded deletion, wiki overview, and wiki health auditing.
 * **Client Configurations**: Step-by-step setup guides for Claude Desktop and Cursor IDE.
 
 ### 4. [NexWiki Tags & AI Agent Memories Guide](./tags.md)
@@ -72,7 +72,7 @@ A detailed guide explaining how to programmatically manage plan metadata and vie
 
 ### 10. [NexWiki Second Brain Workflow Guide](./second_brain_workflow_guide.md)
 A step-by-step walkthrough of using NexWiki as an AI second brain with your agent CLI (Claude Code, Cursor, Copilot CLI):
-* **One-Time Setup**: Deploying the 9-tool build, connecting over Streamable HTTP, and activating session-start orientation via `CLAUDE.md`.
+* **One-Time Setup**: Deploying the 7-tool build, connecting over Streamable HTTP, and activating session-start orientation via `CLAUDE.md`.
 * **The Session Loop**: Progressive disclosure and catching up on recent activity with `get_wiki_overview`, selective reads with backlinks, plan lifecycle, and memory hygiene.
 * **Capture-and-Compile**: The `inbox` tag convention and the `ingest-source` skill implementing the one-source-at-a-time Karpathy ingestion loop.
 * **Tuning Tips**: Activity log filtering, description/source discipline, and transport caveats.

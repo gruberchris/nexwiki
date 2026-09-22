@@ -8,7 +8,7 @@ This guide details what AI skills are, how to manage them inside NexWiki, how th
 
 ## ⚠️ Before You Start: Skills Are Procedures, Not Standing Rules
 
-A skill is loaded when an agent looks for it — through `search_wiki`, `list_articles(type: "skills")`, or a link from another document. Nothing makes an agent read a particular skill at session start. Rules you want applied to **every** task belong in `feedback` and `user` memories instead, which `get_wiki_overview` returns as `pinned_memories` at the start of every session.
+A skill is loaded when an agent looks for it — through `search_wiki` (with a query, or `search_wiki(type: "skills")` to list them all), or a link from another document. Nothing makes an agent read a particular skill at session start. Rules you want applied to **every** task belong in `feedback` and `user` memories instead, which `get_wiki_overview` returns as `pinned_memories` at the start of every session.
 
 See **[AI Agent Integration Guide](agent_integration_guide.md)** → *Writing Good Operator Memories* for what to pin and what to leave to a skill.
 
@@ -55,7 +55,7 @@ If you are explicitly looking for a skill, it will appear in your search results
 1. Your search query contains `aiagent` or `ai-agent` (e.g. `ai-agent docker`). This opts **every** agent-typed document — skills, plans, and memories — back into the results.
 2. Your search query matches the skill's **title** or **slug** (e.g. `docker-clean`).
 
-You can also enumerate skills directly, bypassing search entirely, with the `list_articles(type: "skills")` MCP tool or `GET /api/skills`.
+You can also enumerate skills directly, bypassing search entirely, with `search_wiki(type: "skills")` — no query — or `GET /api/skills`.
 
 ---
 

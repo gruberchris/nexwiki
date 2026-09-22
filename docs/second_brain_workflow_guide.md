@@ -12,15 +12,15 @@ The workflow combines three ideas from the second-brain literature (captured in 
 
 ## 🚀 One-Time Setup
 
-### 1. Deploy a build with the 9-tool MCP surface
+### 1. Deploy a build with the 7-tool MCP surface
 
-The consolidated second-brain tools (`get_wiki_overview`, `get_backlinks`, `save_article`, `append_article`, `list_articles`, `delete_article`, `wiki_health`, plus the `description`/`source` front-matter fields) require a current build. If you run the Docker container, rebuild and redeploy:
+The consolidated second-brain tools (the bounded `get_wiki_overview`, `search_wiki` as both search and index, `read_article` with every backlink, the link-guarded `delete_article`, `wiki_health`, plus the `description`/`source` front-matter fields) require a current build. If you run the Docker container, rebuild and redeploy:
 
 ```bash
 docker compose up -d --build
 ```
 
-**Verify**: ask your agent to list NexWiki's tools — you should see **9**, including `get_wiki_overview` and `wiki_health`.
+**Verify**: ask your agent to list NexWiki's tools — you should see **7**, including `get_wiki_overview` and `wiki_health`.
 
 ### 2. Connect your CLI over Streamable HTTP
 
@@ -69,16 +69,16 @@ What a well-configured agent does every session, in order:
 
 ### Step 1 — Orient (progressive disclosure)
 
-The agent calls **`get_wiki_overview(since: "48h")`** and receives a bounded orientation: document counts by type and plan status, the `user` and `feedback` memories that apply to every task, the plans in flight (`implementing` or `blocked`), recent activity events, and the status vocabularies. This is the "lean root context": its size stays the same however large the wiki grows. It deliberately does not list every document — for that the agent calls **`list_articles`** filtered by `type`, `status`, or `tag`, and for a topic it calls **`search_wiki`**.
+The agent calls **`get_wiki_overview(since: "48h")`** and receives a bounded orientation: document counts by type and plan status, the `user` and `feedback` memories that apply to every task, the plans in flight (`implementing` or `blocked`), recent activity events, and the status vocabularies. This is the "lean root context": its size stays the same however large the wiki grows. It deliberately does not list every document — for that the agent calls **`search_wiki`** without a query, filtered by `type`, `status`, or `tag` and paged with `cursor`, and for a topic it gives **`search_wiki`** a query.
 
 ### Step 2 — Drill in selectively
 
 Based on the overview, the agent calls **`read_article`** only on relevant entries. Each read now includes:
 
 * the **Description** and **Source** metadata (when set), and
-* a **`Linked from:`** footer listing inbound internal links, in either form.
+* a **`Linked from:`** footer listing **every** inbound internal link, in either form.
 
-For deeper graph traversal it calls **`get_backlinks(slug)`** — *"what references this decision?"* — and hops the knowledge graph associatively, the way a human brain follows threads. Writing flows in the other direction too: agents add internal links when creating content — `[[WikiLinks]]` or absolute `[text](/articles/slug)` Markdown links, both of which the graph counts — and the **Linked from** panel in the web UI shows you the same inbound links.
+For deeper graph traversal it follows those backlinks — *"what references this decision?"* — reading each linking page in turn and hopping the knowledge graph associatively, the way a human brain follows threads. Writing flows in the other direction too: agents add internal links when creating content — `[[WikiLinks]]` or absolute `[text](/articles/slug)` Markdown links, both of which the graph counts — and the **Linked from** panel in the web UI shows you the same inbound links.
 
 ### Step 3 — Work, with plans
 
@@ -96,9 +96,9 @@ You watch all of this live in the Activity Drawer, and the plan is a normal wiki
 
 When the agent solves something non-obvious or you tell it a durable fact:
 
-1. **Search first**: `list_articles(type: "memories")` → `search_wiki` — never create blind duplicates.
+1. **Search first**: `search_wiki(type: "memories")` (the index) → `search_wiki` with a query — never create blind duplicates.
 2. **Append or create**: prefer `append_article` on an existing memory; otherwise `save_article` with `type: "AI-Agent-Memory"` and a scoped `memory_type` (project name, topic name, or omitted for general), plus a `description`, `source`, and `memory_kind` — all three required: the server refuses a new memory missing any of them.
-3. **Hygiene loop** (the key behavioral upgrade): when a memory turns out to be *wrong or stale*, the agent corrects it in place with **`save_article`** or retires it with **`delete_article`** — instead of letting contradictions pile up.
+3. **Hygiene loop** (the key behavioral upgrade): when a memory turns out to be *wrong or stale*, the agent corrects it in place with **`save_article`** or retires it with **`delete_article`** (which refuses while other pages still link to it, naming them, unless called with `break_links: true`) — instead of letting contradictions pile up.
 
 ---
 
@@ -115,7 +115,7 @@ Paste anything into a quick wiki article tagged **`inbox`** (or just hand the ag
 Say *"ingest my inbox"* or *"ingest this article: \<URL\>"*. The agent loads the **`ingest-source`** skill from your wiki's Skills Registry, which walks it through:
 
 1. Follow the pinned `feedback` and `user` memories and any style guides.
-2. Search with `search_wiki` (and `list_articles` when scanning a type or tag) to avoid duplicates.
+2. Search with `search_wiki` (without a query when scanning a type or tag) to avoid duplicates.
 3. Read the source **fully** before writing.
 4. Synthesize a proper wiki article — a compilation in the wiki's voice, not a transcript — with `save_article`, setting `description` and `source` (the citation), and
 5. Cross-link to related pages — `[[WikiLinks]]` or absolute `/articles/<slug>` Markdown links, whichever the wiki's house style prefers — and add backlinks from 1–3 closely related existing pages.
@@ -150,7 +150,7 @@ That sequence exercises every piece of the system: the ingest skill, overview + 
 
 * **Activity log filtering**: activity events land in the activity log too — included in `get_wiki_overview(since: "48h")`.
 * **`since` formats**: `get_wiki_overview` accepts Go durations (`30m`, `24h`, `168h` for a week) or RFC3339 timestamps in its `since` argument.
-* **Descriptions pay rent**: the one-line `description` field is what `list_articles` and `get_wiki_overview` show for each entry. Agents are told to set it on everything they create, and a memory cannot be created without one; add them yourself in the editor's description input when writing manually.
+* **Descriptions pay rent**: the one-line `description` field is what the `search_wiki` index and `get_wiki_overview` show for each entry. Agents are told to set it on everything they create, and a memory cannot be created without one; add them yourself in the editor's description input when writing manually.
 * **Sources keep knowledge auditable**: a `source` can be a URL, a document reference, or simply `"conversation with Chris, 2026-06-11"`. Six months later, provenance is the difference between trusting and re-verifying a note.
 * **Stdio fallback**: each stdio client spawns its own `nexwiki -mcp-only` process. If the web server is already running, that process proxies to it. Otherwise it opens the data directory itself, and a web server started on that directory while it runs exits with a search-index lock error — so start the web server first. See [Connecting Clients](./mcp_server.md#-connecting-clients).
 
@@ -158,7 +158,7 @@ That sequence exercises every piece of the system: the ingest skill, overview + 
 
 ## 📚 Related Guides
 
-* [MCP Server Guide](./mcp_server.md) — all 9 tools in detail, client connection configs
+* [MCP Server Guide](./mcp_server.md) — all 7 tools in detail, client connection configs
 * [AI Agent Integration & SOP Guide](./agent_integration_guide.md) — connect-time instructions and operator memories
 * [Tags & AI Agent Memories Guide](./tags.md) — protected tags and memory isolation
 * [AI Agent Skills & Custom Registry Guide](./aiagent_skills.md) — the skills registry powering `ingest-source`

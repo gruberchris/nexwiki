@@ -36,7 +36,7 @@ The MCP specification changed shape in revision **`2026-07-28`**. NexWiki implem
 
 That second signal matters. A modern client whose body is missing the required `_meta` used to fall through to the legacy switch and get a plausible-looking legacy answer with no hint that anything was wrong. It is now recognised as modern and rejected as malformed (`-32602`), which is what the specification requires.
 
-Both eras share the same 9 tools and the same 2 prompts — only the envelope differs.
+Both eras share the same 7 tools and the same 2 prompts — only the envelope differs.
 
 #### Modern-era requirements
 
@@ -116,7 +116,7 @@ The `2026-07-28` revision lets a server tell clients how long a result stays fre
 | Method | `ttlMs` | `cacheScope` | Why |
 |---|---|---|---|
 | `server/discover` | `3600000` (1h) | `public` | identity and capabilities are compiled in |
-| `tools/list` | `3600000` (1h) | `public` | the 9 tools are compiled in and identical for every caller |
+| `tools/list` | `3600000` (1h) | `public` | the 7 tools are compiled in and identical for every caller |
 | `prompts/list` | `3600000` (1h) | `public` | the 2 prompts are compiled in |
 | `resources/templates/list` | `3600000` (1h) | `public` | a single static URI template |
 | `resources/list` | `30000` (30s) | `private` | your article slugs and titles |
@@ -177,33 +177,33 @@ Prefix matches rank above substring matches, and each band is sorted alphabetica
 
 Every tool carries MCP `annotations` telling your client what calling it actually does. Clients use these to **auto-approve safe reads and confirm destructive writes**, so an agent isn't interrupting you to run `get_wiki_overview` — the tool the agent skill says to call first in every session.
 
-This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 9 tools might destroy data and reach arbitrary external systems.
+This matters because the spec's defaults are **pessimistic**: an unannotated tool is assumed `destructiveHint: true` and `openWorldHint: true`. Shipping no annotations tells every client that all 7 tools might destroy data and reach arbitrary external systems.
 
 | Hint | NexWiki's values |
 |---|---|
-| `readOnlyHint` | `true` on **6** tools that never modify the wiki |
+| `readOnlyHint` | `true` on **4** tools that never modify the wiki |
 | `destructiveHint` | `false` for additive appends; `true` for document saves and deletes |
 | `idempotentHint` | `true` on `delete_article` — deleting an already-deleted document changes nothing further |
 | `openWorldHint` | **`false` on every tool, without exception.** The entire surface operates on the local wiki directory and never reaches an external system |
 | `title` | A human-readable display name, e.g. `Get Wiki Overview` |
 
-**Read-only (6):** `search_wiki` · `read_article` · `list_articles` · `get_wiki_overview` · `get_backlinks` · `wiki_health`
+**Read-only (4):** `search_wiki` · `read_article` · `get_wiki_overview` · `wiki_health`
 
 **Additive write (1)** — appends new text, never overwrites: `append_article`.
 
 **Destructive writes (2)** — can overwrite or remove existing content: `save_article` (can revise existing documents when given an existing `slug`) and `delete_article`.
 
-> **Annotations are hints, not guarantees.** The specification is explicit that clients must treat them as untrusted from untrusted servers. They describe intent; the actual guards are the optimistic-locking checks and the reserved-type rules enforced inside the handlers.
+> **Annotations are hints, not guarantees.** The specification is explicit that clients must treat them as untrusted from untrusted servers. They describe intent; the actual guards are the optimistic-locking checks, `delete_article`'s inbound-link refusal, and the reserved-type rules enforced inside the handlers.
 >
 > Note that every successful call — reads included — appends to the durable activity log. That is server-side audit bookkeeping, not a change to the content the tool operates on, so it does not disqualify `readOnlyHint`.
 
 ### 📤 Structured output — parse data, don't scrape prose
 
-Six read tools declare an **`outputSchema`** and return a **`structuredContent`** object alongside their text. An agent that needs an article's version number to pass as `loaded_version` reads an integer instead of pulling one out of a sentence.
+All four read tools declare an **`outputSchema`** and return a **`structuredContent`** object alongside their text. An agent that needs an article's version number to pass as `loaded_version` reads an integer instead of pulling one out of a sentence.
 
 | | |
 |---|---|
-| Tools with `outputSchema` | `search_wiki` · `read_article` · `list_articles` · `get_wiki_overview` · `get_backlinks` · `wiki_health` |
+| Tools with `outputSchema` | `search_wiki` · `read_article` · `get_wiki_overview` · `wiki_health` |
 | Prose only | `save_article` · `append_article` · `delete_article` |
 
 Three properties hold across all of them:
@@ -212,7 +212,7 @@ Three properties hold across all of them:
 - **Error results carry no `structuredContent`.** A payload that fails its own published schema is worse than no payload: every consumer would have to handle a shape the schema says cannot occur.
 - **Field names match the REST API.** A document read over MCP and the same document read from `GET /api/articles` have identical keys, so an agent that has seen one already knows the other.
 
-Document listings share one unified shape — `{ "count": N, "documents": [ … ] }` — in `list_articles` (with pagination via `cursor`/`next_cursor`), so a NexWiki listing is learned once. Listings carry metadata only; the body is what `read_article` is for.
+`search_wiki` answers both a search and a listing with one shape — `{ "count": N, …, "next_cursor"? }`, carrying `results[]` for a query and `documents[]` for the index, both paged with `cursor`/`next_cursor` — so a NexWiki listing is learned once. Listings carry metadata only; the body is what `read_article` is for.
 
 ```jsonc
 // tools/call → read_article {"slug": "home"}
@@ -232,7 +232,7 @@ Document listings share one unified shape — `{ "count": N, "documents": [ … 
 
 > `search_wiki`'s structured snippets are **plain text with Markdown bold**, not the HTML the browser sidebar renders. Handing an agent `<mark>` markup invites it to paste that markup back into an article.
 >
-> The structured payload also echoes the applied facets (`type`, `tags`, `include_archived`), so an agent can tell "no such knowledge" from "my filter excluded it" without re-reading the prose.
+> The structured payload also echoes the applied facets (`type`, `tags`, `status`, `memory_kind`, `include_archived`), so an agent can tell "no such knowledge" from "my filter excluded it" without re-reading the prose.
 
 ## 📎 Resources — `@`-mention a wiki page
 
@@ -406,23 +406,27 @@ State is per resolved agent, bounded (8 lookups each, 64 agents, least-recently-
 
 > **Stdio alongside a web primary (`-mcp-only`).** A normal launch binds the web port; if it cannot bind, it halts rather than silently falling back. To run a stdio MCP server next to an always-running web primary — e.g., a Claude Desktop subprocess — start NexWiki with the **`-mcp-only`** flag (or `NEXWIKI_MCP_ONLY=true`); it skips the port bind entirely. If it detects a running NexWiki web server on its `-port`, it proxies all MCP traffic to it and never opens the data directory, so the primary executes every call and records its successful tool calls in the activity log (see [Sidecar proxy mode](#-sidecar-proxy-mode)). With no NexWiki web server, it opens the data directory itself, serves all tools from the in-process storage layer, and persists the activity log directly. The clean single-process recommendation remains Streamable HTTP (`claude mcp add --transport http ...`).
 
-The NexWiki MCP server registers and exposes **nine** powerful tools for AI agents:
+The NexWiki MCP server registers and exposes **seven** powerful tools for AI agents:
 
 ### 1. `search_wiki`
-Performs a high-speed, full-text search across the **entire** knowledge base using the built-in **Bleve Search** engine — wiki articles *and* your agent memories, plans, and skills.
+Both the search and the index of the **entire** knowledge base — wiki articles *and* your agent memories, plans, and skills. **With a `query`** it runs a high-speed, scored full-text search using the built-in **Bleve Search** engine. **Without one** it returns the document index: every matching document's metadata, most recently updated first. The filters and cursor paging mean the same thing in both modes.
 
 * **Arguments**:
-  * `query` (string, **required**): The search keywords or query string. Supports wildcards, quotes for exact matches, and boolean terms.
-  * `type` (string, *optional*): Optional document type to restrict search to: `articles`, `memories`, `plans`, `skills`, or canonical OKF types (`Wiki`, `AI-Agent-Memory`, etc.). Omit to search every type.
-  * `tag` (string, *optional*): Optional tag a result must carry (case-insensitive), e.g. `wip` or `memory-nexwiki`.
-  * `limit` (integer, *optional*): Optional maximum number of results (default `40`, maximum `200`).
-  * `memory_kind` (string, *optional*): Restrict results to memories of this kind: `project`, `reference`, `user`, or `feedback`. An unknown kind is an error.
-  * `include_archived` (boolean, *optional*): Include archived documents, which are otherwise left out.
-  * `include_history` (boolean, *optional*): Also scan **every stored revision** of every document — version history plus the live files — for the query as a case-insensitive literal substring over the whole file, front matter included, and return the matching `(slug, version)` pairs. One pair of surrounding double quotes is stripped; no other syntax is interpreted. The `type`, `tag`, `memory_kind`, and archived filters **do not narrow** this scan, and the response says so. Use it to verify a redaction: an empty list means no revision anywhere contains the text. A query the Bleve parser rejects (say `/[/`) still runs the history scan; the index half is reported as failed.
+  * `query` (string, *optional*): The search keywords or query string. Supports wildcards, quotes for exact matches, and boolean terms. Omit it (or pass only whitespace) to list the index instead.
+  * `type` (string, *optional*): Restrict to one document type: `articles`, `memories`, `plans`, `skills`, or a canonical OKF type (`Wiki`, `AI-Agent-Memory`, `AI-Agent-Plan`, `AI-Agent-Skill`, `Attested Computation`). Omit to cover every type. An unknown value is an error naming the valid ones in both modes — never an empty result.
+  * `tag` (string, *optional*): A tag every result must carry (case-insensitive), e.g. `wip` or `memory-nexwiki`.
+  * `status` (string, *optional*): Lifecycle status, matched case-insensitively (e.g. `draft`, `implementing`, `completed`, `ready`). `archived` matches every archived document, including wiki articles and memories archived by tag.
+  * `memory_kind` (string, *optional*): Only memories of this kind: `project`, `reference`, `user`, or `feedback`. An unknown kind is an error.
+  * `include_archived` (boolean, *optional*): Include archived documents. The default depends on the mode: **`true` without a query** (the index lists everything), **`false` with one** (a search leaves archived documents out). A `tag` or `status` of `archived` includes them even over an explicit `false`, since otherwise the filter would discard every document asked for.
+  * `limit` (integer, *optional*): Page size. Without a query: default `50`, no ceiling (an index entry is metadata only). With a query: default `40`, maximum `200`.
+  * `cursor` (string, *optional*): The `next_cursor` from the previous page. Keep the other arguments the same. A cursor NexWiki did not issue, or one past the end of a list that has since shrunk, is rejected with `-32602`; re-request without a cursor.
+  * `include_history` (boolean, *optional*): **Requires a non-empty `query`** — without one the call is rejected with `-32602`, rather than answered with an index and an empty `history_matches` an audit would read as "the text is gone". Also scans **every stored revision** of every document — version history plus the live files — for the query as a case-insensitive literal substring over the whole file, front matter included, and returns the matching `(slug, version)` pairs. One pair of surrounding double quotes is stripped; no other syntax is interpreted. The `type`, `tag`, `status`, `memory_kind`, and archived filters **do not narrow** this scan, and the response says so. Use it to verify a redaction: an empty list means no revision anywhere contains the text. A query the Bleve parser rejects (say `/[/`) still runs the history scan; the index half is reported as failed.
 * **Behavior**:
-  Executes the query against the local Bleve index and converts scored matches into a readable text block, reporting each hit's document `Type` so you can tell a memory from an article. HTML `<mark>` highlights become Markdown bold (`**`) to save context. When facets are applied they are echoed in the response header line, so an empty result set is distinguishable from an over-narrow filter. An unrecognized `type` value is reported as an error rather than silently returning nothing.
+  * **Query mode** executes the query against the local Bleve index and converts scored matches into a readable text block, reporting each hit's document `Type` so you can tell a memory from an article. HTML `<mark>` highlights become Markdown bold (`**`) to save context. Paging runs over the **200 best-scoring hits**, filtered: pages are disjoint, together they are the whole result, and the first page is exactly what a call without a cursor returns. `count` is the number of matches across all pages (within those 200), not the length of the page.
+  * **Index mode** scans the document metadata, applies the filters, sorts matches by most recently updated first, and pages by cursor. Each entry shows its title, slug, type, status, last-edited time, tags, and description. `count` is every matching document across all pages.
+  * In both modes, applied facets are echoed in the response header line, so an empty result set is distinguishable from an over-narrow filter, and a `Next page cursor:` line closes any page that has more after it.
 * **Annotations**: Title: `Search Wiki`, `readOnlyHint`: `true`, `openWorldHint`: `false`.
-* **Structured output**: `structuredContent` as `{query, count, type, tags, memory_kind, include_archived, results[], include_history?, history_matches?, history_match_count?}`. Each result carries `title`, `slug`, `type`, `score`, `timestamp`, `tags`, and plain-text `snippets`. With `include_history`, `history_matches` is always present (empty when nothing matched) and lists `{slug, title, version, current}` — `title` is the document's current title and `current` is true for the live revision — sorted by slug then version and capped at 500; `history_match_count` is the uncapped total.
+* **Structured output**: `structuredContent` as `{query?, count, type?, tags?, status?, memory_kind?, include_archived, results[]?, documents[]?, next_cursor?, include_history?, history_matches?, history_match_count?}`. Query mode carries `query` and `results[]` — each result carries `title`, `slug`, `type`, `score`, `timestamp`, `tags`, and plain-text `snippets`. Index mode carries `documents[]` instead: document metadata with the same keys as `GET /api/articles`, no body. `include_archived` is the value actually applied, so the mode's default is visible. `next_cursor` is absent on the last page. With `include_history`, `history_matches` is always present (empty when nothing matched) and lists `{slug, title, version, current}` — `title` is the document's current title and `current` is true for the live revision — sorted by slug then version and capped at 500; `history_match_count` is the uncapped total.
 
 > **Search spans everything by default — agents and browser alike.** Search spans every document type unless you narrow it with `type`, in both the MCP tool and the browser search view (`GET /api/search`).
 
@@ -435,8 +439,17 @@ Performs a high-speed, full-text search across the **entire** knowledge base usi
 // Only what you remember about this project
 { "query": "retrieval", "type": "memories", "tag": "memory-nexwiki" }
 
-// In-flight plans, newest handful
-{ "query": "migration", "type": "plans", "tag": "wip", "limit": 5 }
+// In-flight plans about a topic, newest handful
+{ "query": "migration", "type": "plans", "status": "implementing", "limit": 5 }
+
+// The index: every plan being implemented, 50 per page, newest first
+{ "type": "plans", "status": "implementing" }
+
+// ...and the next page, with the same filters
+{ "type": "plans", "status": "implementing", "cursor": "<next_cursor from the previous page>" }
+
+// Every memory of kind feedback, archived ones left out
+{ "type": "memories", "memory_kind": "feedback", "include_archived": false }
 
 // Does any revision of any document still mention this name?
 { "query": "Acme Corp", "include_history": true }
@@ -445,22 +458,22 @@ Performs a high-speed, full-text search across the **entire** knowledge base usi
 ---
 
 ### 2. `read_article`
-Retrieves the raw Markdown content, front-matter configurations, and inbound backlinks of a document by its URL slug. Optionally specify `version` to load a historical revision.
+Retrieves the raw Markdown content, front-matter configurations, and inbound backlinks of a document by its URL slug. The backlinks are **every** document linking to this one, which makes a read the way to see what references a page before editing or deleting it. Optionally specify `version` to load a historical revision.
 
 * **Arguments**:
   * `slug` (string, **required**): The clean URL-safe slug of the target document (e.g. `home` or `setup-guide`).
   * `version` (integer, *optional*): Optional historical revision number to load. Omit to load the latest version.
 * **Behavior**:
-  Reads the Markdown file on disk and parses the front-matter metadata conforming to OKF v0.2. The text block starts with a metadata header — Type, Title, Slug, **Version**, Created, Updated, plus Description, Resource, Source, Sources (`[id] Title (resource)`), Tags, **Trust Tier** (`🟢 Human-Reviewed`, `🔵 Machine-Confirmed`, `⚪ Unverified`), and Attested Computation details (`Runtime`, `Parameters`) when present. If the concept has exceeded its freshness date (`stale_after`), a prominent warning is included: `⚠️ STALE CONCEPT: this document passed its freshness expiration on YYYY-MM-DD`. This is followed by the complete Markdown body content. If other articles link to this page — via `[[WikiLinks]]` or absolute `/articles/<slug>` Markdown links — a `Linked from:` section is appended (capped at 15 entries) so agents can traverse the knowledge graph in reverse. When the backlink scan skipped unreadable entries or misplaced documents that link to this page, a `Note:` line says the `Linked from:` list may be incomplete and points to `wiki_health` for the detail.
+  Reads the Markdown file on disk and parses the front-matter metadata conforming to OKF v0.2. The text block starts with a metadata header — Type, Title, Slug, **Version**, Created, Updated, plus Description, Resource, Source, Sources (`[id] Title (resource)`), Tags, **Trust Tier** (`🟢 Human-Reviewed`, `🔵 Machine-Confirmed`, `⚪ Unverified`), and Attested Computation details (`Runtime`, `Parameters`) when present. If the concept has exceeded its freshness date (`stale_after`), a prominent warning is included: `⚠️ STALE CONCEPT: this document passed its freshness expiration on YYYY-MM-DD`. This is followed by the complete Markdown body content. If other documents link to this page — via `[[WikiLinks]]` or absolute `[text](/articles/<slug>)` Markdown links — a `Linked from:` section is appended listing **every** one as `Title (slug)`, uncapped, so agents can traverse the knowledge graph in reverse; a text-only client sees the same complete list as the structured `backlinks`. Self-links are not listed. When the backlink scan skipped unreadable entries or misplaced documents that link to this page, a `Note:` line says the `Linked from:` list may be incomplete and points to `wiki_health` for the detail.
 * **Annotations**: Title: `Read Article`, `readOnlyHint`: `true`, `openWorldHint`: `false`.
-* **Structured output**: `structuredContent` as `{article, backlinks[], skipped_document_count, skipped_documents[]}`. The raw Markdown body is in `article.content`. The article also includes `version` (to pass to `save_article` or `append_article` as `loaded_version`), plus OKF v0.2 metadata: `sources`, `trust_tier`, `generated`, `verified`, `stale_after`, `is_stale`, and computation fields when applicable. Both `content[0].text` and `structuredContent.article.content` carry the body, guaranteeing that both text-only clients and structured-only clients can read and edit documents seamlessly.
+* **Structured output**: `structuredContent` as `{article, backlinks[], skipped_document_count?, skipped_documents[]?}`. `backlinks` lists every linking document as `{title, slug}` and is always an array — empty when nothing links here. `skipped_document_count` and `skipped_documents` (the first 20 skipped entries, sorted by path) are present only when the backlink scan skipped something. The raw Markdown body is in `article.content`. The article also includes `version` (to pass to `save_article` or `append_article` as `loaded_version`), plus OKF v0.2 metadata: `sources`, `trust_tier`, `generated`, `verified`, `stale_after`, `is_stale`, and computation fields when applicable. Both `content[0].text` and `structuredContent.article.content` carry the body, guaranteeing that both text-only clients and structured-only clients can read and edit documents seamlessly.
 
 ---
 
 ### 3. `save_article`
 Create or update any document (wiki article, agent memory, plan, or skill). If `slug` is provided and matches an existing document, it updates/revises it; if omitted or not existing, it creates a new document. Supports optimistic concurrency locking via `loaded_version`. On an update, `type` changes the document's type, and `purge_history` redacts its earlier revisions.
 
-The description carries three rules every caller needs:
+The schema states three rules every caller needs, each exactly once — the first on the `content` argument, the other two in the tool description:
 
 * **`content` is always a full replacement of the body.** To change only metadata or status, pass the current body back unchanged.
 * **A `[[WikiLink]]` must name a document that exists in this wiki** — never an agent's own local memory files, instruction files, tools, or scratch paths. External references are plain URLs.
@@ -468,7 +481,7 @@ The description carries three rules every caller needs:
 
 * **Arguments**:
   * `title` (string, **required**): Human-readable title of the document. Never use a bare tool verb.
-  * `content` (string, **required**): The complete Markdown body. Replaces the existing body in full; it is never merged or appended.
+  * `content` (string, **required**): The complete Markdown body. Replaces the existing body in full; it is never merged or appended — to change only metadata or status, pass the current body back unchanged.
   * `slug` (string, *optional*): Optional slug. If provided and matches an existing document, updates/revises it; if omitted or not existing, creates a new document.
   * `type` (string, *optional*): Document type: `Wiki` (default on create), `AI-Agent-Memory`, `AI-Agent-Plan`, `AI-Agent-Skill`, or `Attested Computation` (the aliases `articles`, `memories`, `plans`, `skills` are accepted too). On an update, omit it to keep the current type, or pass one to change it — see [changing a document's type](#changing-a-documents-type). An unknown value is an error naming the valid ones, never a silent `Wiki`.
   * `description` (string, **required when creating a memory**, otherwise optional): One-line summary, shown in list indexes and overview. Omit on an update to keep the current one.
@@ -490,7 +503,7 @@ The description carries three rules every caller needs:
 
 #### Changing a document's type
 
-A document created with the wrong type — a plan saved as a `Wiki`, say — is invisible to `list_articles(type: "plans")` while reading perfectly well by slug. Fix it in place with `save_article` (its `slug`, `loaded_version`, and the right `type`); never delete and recreate it, which destroys its history and backlinks. The same rules apply to `PUT /api/articles/{slug}` with a `"type"` field:
+A document created with the wrong type — a plan saved as a `Wiki`, say — is invisible to `search_wiki(type: "plans")` while reading perfectly well by slug. Fix it in place with `save_article` (its `slug`, `loaded_version`, and the right `type`); never delete and recreate it, which destroys its history and backlinks. The same rules apply to `PUT /api/articles/{slug}` with a `"type"` field:
 
 * **Omitting `type` keeps the current one.** An ordinary edit can never reclassify a document; an explicit `type` is the instruction to relabel it.
 * The type is resolved **first**, and `status`, `memory_kind`, `memory_type`, and `project_context` are validated and applied against the type the document is becoming.
@@ -499,7 +512,7 @@ A document created with the wrong type — a plan saved as a `Wiki`, say — is 
 * A plan or skill status the new type does not accept (`implementing` onto a skill, `ready` onto a plan) with no `status` passed is **refused** — a lifecycle state is never silently converted. Pass the status you want.
 * Leaving `AI-Agent-Memory` drops the `memory-<scope>` tags and the `memory_kind`.
 * Into `AI-Agent-Memory`: the change must pass [the memory write gate](#the-memory-write-gate). The document's existing `description` and `source` count when the call omits them; `memory_kind` must be passed.
-* A same-type re-save is an ordinary edit. Verify a change through `list_articles(type: …)`, not a read.
+* A same-type re-save is an ordinary edit. Verify a change through `search_wiki(type: …)`, not a read.
 
 ```jsonc
 { "slug": "kimmydb-cold-start", "title": "KimmyDB Cold Start", "content": "...", "loaded_version": 3,
@@ -512,7 +525,7 @@ A document created with the wrong type — a plan saved as a `Wiki`, say — is 
 A memory comes into existence with the metadata that makes it useful, or not at all. `save_article` refuses to create an `AI-Agent-Memory` — or to change a document's type into one — unless:
 
 * `memory_kind` is one of `project`, `reference`, `user`, `feedback`;
-* `description` is non-blank — it is what `list_articles` and `get_wiki_overview` show, so a memory without one is invisible when an agent orients;
+* `description` is non-blank — it is what the `search_wiki` index and `get_wiki_overview` show, so a memory without one is invisible when an agent orients;
 * `source` is non-blank — a fact with no recorded origin cannot be re-verified, and its origin cannot be recovered later.
 
 Whitespace-only values count as blank. The refusal names every missing field and says what belongs in it. `POST /api/articles` with a memory type, and a `PUT /api/articles/{slug}` that changes the type into a memory, apply the same rule and answer `400`.
@@ -541,40 +554,42 @@ Append text or logs to the end of an existing document without modifying its met
 
 ---
 
-### 5. `list_articles`
-List articles, memories, plans, and skills in the knowledge base. Filter by type, status, or tag. Supports limit and cursor pagination.
-
-* **Arguments**:
-  * `type` (string, *optional*): Optional filter by document type: `articles`, `memories`, `plans`, `skills`, or OKF types (`Wiki`, `AI-Agent-Memory`, `Attested Computation`, etc.). An unknown value is an error naming the valid ones — it never falls back to listing wiki articles.
-  * `status` (string, *optional*): Optional filter by lifecycle status (e.g. `draft`, `implementing`, `completed`, `ready`).
-  * `tag` (string, *optional*): Optional filter by tag (case-insensitive).
-  * `limit` (integer, *optional*): Optional maximum number of documents to return per page (default `50`).
-  * `cursor` (string, *optional*): Optional opaque pagination cursor returned from a prior call.
-* **Behavior**:
-  Scans all active articles, applies type/status/tag filters, sorts matching documents by most recently updated first, and paginates using cursor tokens.
-* **Annotations**: Title: `List Articles`, `readOnlyHint`: `true`, `openWorldHint`: `false`.
-* **Structured output**: `structuredContent` as `{count, documents[], next_cursor?}`. Metadata only; full document bodies come from `read_article`.
-
----
-
-### 6. `delete_article`
-Permanently delete any document (wiki article, agent memory, plan, or skill) by slug. **Irreversible**: it destroys the document's version history and assets and breaks every backlink to it. It is a last resort — to change a document's type, pass `type` to `save_article`; to remove text from history, use `save_article` with `purge_history: true`.
+### 5. `delete_article`
+Permanently delete any document (wiki article, agent memory, plan, or skill) by slug. **Irreversible**: it destroys the document's version history and assets. It **refuses while other documents link to the target** unless `break_links: true` is passed, so a delete never breaks links silently. It is a last resort — to change a document's type, pass `type` to `save_article`; to remove text from history, use `save_article` with `purge_history: true`.
 
 * **Arguments**:
   * `slug` (string, **required**): The unique URL-safe slug of the document to delete.
+  * `break_links` (boolean, *optional*, default `false`): Delete even though other documents link to the target, or the inbound-link check could not see every document. Their links to it become broken. Prefer fixing the links first.
 * **Behavior**:
-  Permanently deletes the Markdown file, all historical `.md.gz` backup snapshots, and any uploaded media assets associated with the slug. De-indexes the document from Bleve search. Deleting an already-deleted or non-existent document changes nothing further (`idempotentHint: true`). To remove text from a document's history **without** deleting the document, use `save_article` with `purge_history: true` instead.
+  Before deleting, runs the same inbound-link scan `read_article` runs, so a refusal names exactly the documents a read of the target lists as `Linked from:`. Self-links never block.
+  * **Linked, without `break_links`**: refused with an error result — `Refused: nothing was deleted.` — naming **every** linking document as `- Title (slug)`, and suggesting to fix those links or call again with `break_links: true`.
+  * **Incomplete check, without `break_links`**: refused too, even when no link was found — an empty backlink list only means "nothing links here" when the scan saw every document. This covers a scan that failed outright and one that skipped unreadable files or misplaced documents that may link to the target; the refusal lists what was skipped and points to `wiki_health` for the detail.
+  * **With `break_links: true`**: deletes the Markdown file, all historical `.md.gz` backup snapshots, and any uploaded media assets associated with the slug, and de-indexes the document from Bleve search. The success response lists the documents that now hold broken links to it, plus anything the check could not see.
+  * **Nothing links here and the check was complete**: deletes as above, with no `break_links` needed.
+
+  A slug that does not exist is reported as not found and changes nothing (`idempotentHint: true`). To remove text from a document's history **without** deleting the document, use `save_article` with `purge_history: true` instead.
 * **Annotations**: Title: `Delete Article`, `readOnlyHint`: `false`, `destructiveHint`: `true`, `idempotentHint`: `true`, `openWorldHint`: `false`.
-* **Structured output**: None (prose response confirming deletion).
+* **Structured output**: None (prose response confirming deletion, or naming the links that blocked it).
+
+```jsonc
+{ "slug": "old-decision" }
+// → Refused: nothing was deleted. 2 documents link to 'old-decision', and deleting it would break those links:
+//   - Architecture Index (architecture-index)
+//   - New Decision (new-decision)
+//   Fix or remove those links first (wiki_health reports unreadable and misplaced entries in detail), or call delete_article again with break_links: true to delete anyway.
+
+{ "slug": "old-decision", "break_links": true }
+// → Success! … permanently deleted …
+//   These 2 documents now hold broken links to 'old-decision': …
+```
 
 ---
 
-### 7. `get_wiki_overview`
-Session orientation in one bounded call: document counts by type and plan status, the `user` and `feedback` memories that apply to any task, the plans in flight, recent activity since a duration, and the status vocabularies. This is the recommended first call of any agent session. It is **not** an index and does not list every document: use `list_articles` (with `type`, `status`, or `tag` filters and cursor paging) for the full listing, and `search_wiki` to find documents on a topic.
+### 6. `get_wiki_overview`
+Session orientation in one bounded call: document counts by type and plan status, the `user` and `feedback` memories that apply to any task, the plans in flight, recent activity since a duration, and the status vocabularies. This is the recommended first call of any agent session. It is **not** an index and does not list every document: use `search_wiki` without a query (with `type`, `status`, or `tag` filters and cursor paging) for the full listing, and `search_wiki` with a query to find documents on a topic. Broken links and other link-graph problems are `wiki_health`'s job, not the overview's.
 
 * **Arguments**:
   * `since` (string, *optional*): Optional filter for recent activity. Accepts a Go duration (e.g. `24h`, `48h`) or RFC3339 timestamp. Defaults to `48h`.
-  * `include_stats` (boolean, *optional*): Optional; set `true` to scan and include full link graph health and broken link statistics.
 * **Behavior**:
   Performs a metadata-only pass over the knowledge base and returns a payload whose size does not grow with the number of documents:
   * **Counts** of wiki articles, memories, plans, and skills (plus Attested Computations when there are any), and the number of plans in each lifecycle status.
@@ -582,9 +597,9 @@ Session orientation in one bounded call: document counts by type and plan status
   * **Active plans**: plans with status `implementing` or `blocked`, newest-updated first, at most 25, with their tags (at most 10). `active_plan_total` is the count before the cap.
   * **Recent activity**: at most 20 events since `since`, from the durable activity log (`data/activity.jsonl`).
   * **Status vocabularies** for plans and skills.
-  * **Next steps**: a pointer to `list_articles` and `search_wiki`.
+  * **Next steps**: a pointer to `search_wiki` (without a query for the index, with one for a topic) and `read_article`.
 
-  Each compact entry's description is its `description` (or the first line of its body when it has none), collapsed to one line and truncated to 200 characters with an ellipsis, so one long description cannot inflate the response. When `include_stats` is true, it also scans the link graph for broken links, unreadable files, and misplaced documents. The prose and the structured output are rendered from the same data. Example prose:
+  Each compact entry's description is its `description` (or the first line of its body when it has none), collapsed to one line and truncated to 200 characters with an ellipsis, so one long description cannot inflate the response. It does not scan the link graph: broken links, unreadable files, and misplaced documents are reported by `wiki_health`. The prose and the structured output are rendered from the same data. Example prose:
 
   ```text
   NexWiki Knowledge Base Overview (660 articles total)
@@ -604,26 +619,14 @@ Session orientation in one bounded call: document counts by type and plan status
   - 2026-09-21 10:02:11 [mcp/edit] save_article → 'Compact Wiki Overview' (compact-wiki-overview)
 
   == Next Steps ==
-  This overview does not list every document. For the full index call list_articles, filtered by type ('articles', 'memories', 'plans', 'skills'), status, or tag and paged with cursor. To find documents about a topic call search_wiki. Open any entry with read_article(slug).
+  This overview does not list every document. For the full index call search_wiki without a query, filtered by type ('articles', 'memories', 'plans', 'skills'), status, or tag and paged with cursor. To find documents about a topic give search_wiki a query. Open any entry with read_article(slug).
   ```
 * **Annotations**: Title: `Get Wiki Overview`, `readOnlyHint`: `true`, `openWorldHint`: `false`.
-* **Structured output**: `structuredContent` as `{total_articles, counts{wiki, memories, plans, skills, computations?}, plan_status_counts{<status>…, other?}, pinned_memories[{title, slug, description?, memory_kind}], pinned_memory_total, active_plans[{title, slug, status, description?, timestamp, tags?}], active_plan_total, recent_activity[], statistics, status_tags, next_steps}`. `plan_status_counts` carries every status in the plan vocabulary, zero included. `statistics.broken_links` is always an array — empty when `include_stats` is off or nothing is broken. `status_tags` carries the closed plan and skill status vocabularies. There is no `articles` field: the full listing is `list_articles`.
+* **Structured output**: `structuredContent` as `{total_articles, counts{wiki, memories, plans, skills, computations?}, plan_status_counts{<status>…, other?}, pinned_memories[{title, slug, description?, memory_kind}], pinned_memory_total, active_plans[{title, slug, status, description?, timestamp, tags?}], active_plan_total, recent_activity[], status_tags, next_steps}`. `plan_status_counts` carries every status in the plan vocabulary, zero included. `status_tags` carries the closed plan and skill status vocabularies. There is no `articles` field — the full listing is `search_wiki` without a query — and no link-graph `statistics` object: that is `wiki_health`.
 
 ---
 
-### 8. `get_backlinks`
-Lists all articles whose content links to the given article, in either internal link form — double-bracket `[[WikiLinks]]` or absolute `[text](/articles/<slug>)` Markdown links — reverse traversal of the knowledge graph.
-
-* **Arguments**:
-  * `slug` (string, **required**): The URL-safe slug of the target article to find inbound links for.
-* **Behavior**:
-  Scans all article bodies on demand for internal links resolving to the target slug, skipping self-links. Returns matching articles sorted newest first. When the scan skipped unreadable entries or misplaced documents, a `Note:` line says so and points to `wiki_health`.
-* **Annotations**: Title: `Get Backlinks`, `readOnlyHint`: `true`, `openWorldHint`: `false`.
-* **Structured output**: `structuredContent` as `{slug, count, backlinks[], skipped_document_count?, skipped_documents?}`.
-
----
-
-### 9. `wiki_health`
+### 7. `wiki_health`
 Audits the knowledge base for maintenance work in one call: unreadable files, misplaced documents, orphan pages, broken internal links, agent memories recorded without a `source` or without a `memory_kind`, in-flight plans that have gone stale, unreferenced skills, cold memories, and near-duplicate memories.
 
 * **Arguments**:

@@ -136,7 +136,7 @@ export NEXWIKI_AUTO_DELETE_ARCHIVED_AFTER_DAYS=30
 ### Setting a Status
 
 * **In the Editor**: use the **Status** dropdown beside the Tags row. It appears only when editing a plan or a skill — the two types that have a status. Statuses render as a colored badge on article cards and in the article header.
-* **Via MCP**: pass `status` to `save_article` when creating or updating a plan or skill (omitting it on an update preserves the current status). `get_wiki_overview` returns the two vocabularies in its structured output (`plan_status_tags`, `skill_status_tags`, and their union `status_tags`). `list_articles` takes a `status` filter, e.g. `list_articles(type: "plans", status: "implementing")`.
+* **Via MCP**: pass `status` to `save_article` when creating or updating a plan or skill (omitting it on an update preserves the current status). `get_wiki_overview` returns the two vocabularies in its structured output (`plan_status_tags`, `skill_status_tags`, and their union `status_tags`). `search_wiki` takes a `status` filter, with or without a query, e.g. `search_wiki(type: "plans", status: "implementing")`.
 * **Via REST API**: include `"status"` in the `POST /api/articles` or `PUT /api/articles/{slug}` body. Omitting it **preserves** the current status, so an editor that does not manage lifecycle state cannot silently reset a completed plan.
 
 Every write path enforces the contract: a save that leaves a plan without a valid status, gives a skill an unrecognized one, or puts a lifecycle word in either one's tags is rejected with an error naming the valid vocabulary.
@@ -168,7 +168,7 @@ Ask two different questions about any memory, and NexWiki answers them with two 
 | Vocabulary | **Closed**: `project`, `reference`, `user`, `feedback` | **Open**: any project or topic name |
 | Stored as | the `memory_kind` **field** | the tool-managed `memory-<scope>` **tag** |
 | Set with | `memory_kind` (optional, but always set it on a new memory) | `memory_type` (optional) |
-| Filter with | `search_wiki(memory_kind:)` | `list_articles(type: "memories", tag: "memory-<scope>")`, `search_wiki(tag:)` |
+| Filter with | `search_wiki(memory_kind:)` | `search_wiki(type: "memories", tag: "memory-<scope>")` |
 
 The split is not arbitrary — it is the same rule NexWiki learned the hard way with lifecycle status: **closed vocabularies are fields, open vocabularies are tags.** A single value with a fixed set of options stored inside an unordered folksonomy forces "exactly one" counting and a denylist for near-misses; a dedicated field makes the invalid states unrepresentable instead of merely detectable.
 
@@ -195,7 +195,7 @@ The one system tag that remains is the **memory-scope tag**, `memory-<scope>`. I
 | `docker`, `golang` (any topic) | `memory-docker` | Reusable knowledge across projects |
 | *(omitted)* | *(none)* | Knowledge with no clear project or topic home |
 
-Scope tags are **tool-managed**: preserved automatically when `save_article` or `PUT /api/articles/{slug}/tags` replaces a memory's user tags, hidden from the sidebar tag cloud, and not freely assignable by users to non-memory documents. Filter memories by scope with `list_articles(type: "memories", tag: "memory-nexwiki")`, and by both axes at once with `search_wiki(query: "...", type: "memories", tag: "memory-nexwiki", memory_kind: "reference")`.
+Scope tags are **tool-managed**: preserved automatically when `save_article` or `PUT /api/articles/{slug}/tags` replaces a memory's user tags, hidden from the sidebar tag cloud, and not freely assignable by users to non-memory documents. Filter memories by scope with `search_wiki(type: "memories", tag: "memory-nexwiki")`, and by both axes at once with `search_wiki(query: "...", type: "memories", tag: "memory-nexwiki", memory_kind: "reference")`.
 
 In the web UI, kind renders as a badge beside the status badge on cards and in the article header, is edited from a **Kind** dropdown in the editor (memories only), and is matched by the filter bar alongside titles, tags and status — so typing `feedback` finds the corrections, and `feedback || user` finds everything known about the operator.
 
@@ -249,4 +249,4 @@ If a server build fails, the agent can document the investigation with `save_art
 * **`memory_type`**: `nexwiki` → applies the tool-managed scope tag `memory-nexwiki`
 * **Additional user tags**: `backend`
 * **Content**: Logs the specific error message, hypotheses tested, steps taken, and the final solution (e.g., importing the missing `strings` package).
-* **Benefit**: The next time a build error occurs, the agent (or you!) can run `list_articles(type: "memories", tag: "memory-nexwiki")`, or search `ai-agent build error`, to find past resolutions instantly — avoiding repeated debugging.
+* **Benefit**: The next time a build error occurs, the agent (or you!) can run `search_wiki(type: "memories", tag: "memory-nexwiki")`, or search `ai-agent build error`, to find past resolutions instantly — avoiding repeated debugging.

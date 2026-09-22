@@ -24,6 +24,7 @@ something non-obvious worth keeping across sessions.
      absent or blank, and names each missing field. Write real values rather than a
      placeholder: the description is what the `search_wiki` index and `get_wiki_overview` show, and the
      source is what lets the fact be re-verified later.
-3. **Keep it clean** — retire fully superseded memories with `delete_article(slug)`. Never
-   let near-duplicates pile up.
+3. **Keep it clean** — retire fully superseded memories with `delete_article(slug)`. It refuses
+   while other documents link to the memory and names them: repoint those links to the memory
+   that replaces it, then delete. Never let near-duplicates pile up.
 4. Report the memory's slug and exactly what you wrote.

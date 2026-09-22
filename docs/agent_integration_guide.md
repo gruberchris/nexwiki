@@ -46,7 +46,7 @@ graph TD
 
 ### 1. Connect-time instructions
 The MCP server returns short, generic **`instructions`** when a client initializes (`agentInstructions()` in `server/mcp_modern.go`), which MCP clients place in the model's context before it selects any tool:
-> *`NexWiki is the user's persistent second brain: keep plans, durable facts and prior knowledge here, not only in chat. At session start call get_wiki_overview once — its pinned_memories are the operator's standing preferences and corrections; follow them. Search with search_wiki or list_articles before writing. Save multi-step work as save_article(type: "AI-Agent-Plan", project_context) and durable facts as save_article(type: "AI-Agent-Memory") with memory_kind, description and source. Session discipline: run each orientation call once; a "not found" is an answer, not a reason to search again; on a version conflict, retry once with the version the error names.`*
+> *`NexWiki is the user's persistent second brain: keep plans, durable facts and prior knowledge here, not only in chat. At session start call get_wiki_overview once — its pinned_memories are the operator's standing preferences and corrections; follow them. Search with search_wiki (no query lists the index) before writing. Save multi-step work as save_article(type: "AI-Agent-Plan", project_context) and durable facts as save_article(type: "AI-Agent-Memory") with memory_kind, description and source. Session discipline: run each orientation call once; a "not found" is an answer, not a reason to search again; on a version conflict, retry once with the version the error names.`*
 
 They name no document. Every client injects them into every session, so they stay short, and anything a single tool enforces is said in that tool's own description instead.
 
@@ -135,7 +135,7 @@ Add to `.github/copilot-instructions.md` in each repository:
 #### Option E: Any MCP-Compatible Agent
 1. The agent calls `get_wiki_overview` once and reads `pinned_memories`.
 2. Those memories become active instructions for the rest of the session.
-3. For a task that needs a specific procedure, it calls `list_articles(type: "skills")` or `search_wiki` and reads the matching skill.
+3. For a task that needs a specific procedure, it calls `search_wiki` — with a query, or without one and `type: "skills"` — and reads the matching skill.
 
 ---
 
@@ -148,7 +148,7 @@ Imagine you are working in a Python service (`/Projects/python-api`) and tell Cu
 1. **Agent connects**: The agent initializes the MCP session and sees `save_article` in the tools list.
 2. **Agent orients**: Following the connect-time instructions, it calls `get_wiki_overview` once. A pinned `feedback` memory says database articles follow the SQL format template.
 3. **Agent searches once**: The instructions say to search before writing.
-4. **Agent checks style memories**: The agent calls `list_articles(type="memories", tag="memory-rules")` or `search_wiki(query="style guide", type="memories")`. It discovers `sql-dialect-article-format-template`.
+4. **Agent checks style memories**: The agent calls `search_wiki(type="memories", tag="memory-rules")` or `search_wiki(query="style guide", type="memories")`. It discovers `sql-dialect-article-format-template`.
 5. **Agent reads template**: It calls `read_article(slug="sql-dialect-article-format-template")`, discovering the required schema table headers and syntax blocks.
 6. **Agent creates page**: The agent drafts a beautiful, perfectly formatted Postgres article conforming to the wiki's rules, and saves it using `save_article` (type `Wiki`, the default on create).
 
