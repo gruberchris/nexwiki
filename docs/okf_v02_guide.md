@@ -257,7 +257,7 @@ Updates or replaces sources and freshness boundaries alongside optimistic lockin
   "stale_after": "2027-06-01"
 }
 ```
-*Note: Omit `sources` or `stale_after` to preserve existing values; pass an empty array `[]` to clear `sources`. Send the document's `tags` too: this endpoint always replaces the tag set, so an omitted `tags` key clears them.* Over MCP, the equivalent body edit is `save_article(slug: "postgresql-replica-lag-diagnostics", title, content, loaded_version: 1)`.
+*Note: Omit `sources`, `stale_after` or `tags` to preserve existing values; pass an empty array `[]` to clear `sources` or `tags`.* Over MCP, the equivalent body edit is `save_article(slug: "postgresql-replica-lag-diagnostics", title, content, loaded_version: 1)`.
 
 ### 3. `read_article`
 Returns all trust signals in the header prose and in `structuredContent`:

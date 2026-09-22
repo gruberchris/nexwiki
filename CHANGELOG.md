@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- `PUT /api/articles/{slug}` no longer clears a document's tags when the request omits `tags`. An omitted or `null` `tags` key now preserves the current set, matching `description`, `source`, `status`, `type` and the MCP `save_article` tool; an explicit `[]` still clears it. The web editor always sends its full tag list and is unaffected.
+
 ## [0.23.0] — 2026-09-21
 
 ### Changed
