@@ -21,7 +21,7 @@ something non-obvious worth keeping across sessions.
      *why* the correction was given and *how to apply it*, not just what was said.
 
      `description` and `source` are refused if absent or blank. Write real values rather
-     than a placeholder: the description is what `get_wiki_overview` shows, and the
+     than a placeholder: the description is what `list_articles` and `get_wiki_overview` show, and the
      source is what lets the fact be re-verified later.
 3. **Keep it clean** — retire fully superseded memories with `delete_article(slug)`. Never
    let near-duplicates pile up.

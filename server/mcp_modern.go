@@ -349,7 +349,8 @@ func agentInstructions() string {
 	return "This NexWiki server is the user's persistent second brain. Use it to store plans and " +
 		"memories and to look up prior knowledge — do not keep that only in chat. At session start, load the " +
 		"operating rules with read_article(slug: \"" + AgentGuidelinesSlug + "\"), then call " +
-		"get_wiki_overview(since: \"48h\") for a compact index and the recent activity. Save multi-step work with " +
+		"get_wiki_overview(since: \"48h\") for counts, the user and feedback memories, the plans in flight, and the " +
+		"recent activity; list_articles gives the full document index and search_wiki finds a topic. Save multi-step work with " +
 		"save_article(type: \"AI-Agent-Plan\"), durable facts with save_article(type: \"AI-Agent-Memory\", " +
 		"setting memory_kind, description and source), and search before writing."
 }
