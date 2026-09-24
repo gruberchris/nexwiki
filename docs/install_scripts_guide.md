@@ -51,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/titusai-io/nexwiki/main/scripts/doc
 
 # From a cloned repository
 ./scripts/docker-run.sh
-IMAGE=ghcr.io/titusai-io/nexwiki TAG=v0.2.0 CONTAINER_NAME=nexwiki HOST_PORT=5808 ./scripts/docker-run.sh
+IMAGE=ghcr.io/titusai-io/nexwiki TAG=0.24.0 CONTAINER_NAME=nexwiki HOST_PORT=5808 ./scripts/docker-run.sh
 ```
 
 ```powershell
@@ -60,8 +60,10 @@ irm https://raw.githubusercontent.com/titusai-io/nexwiki/main/scripts/docker-run
 
 # From a cloned repository
 .\scripts\docker-run.ps1
-.\scripts\docker-run.ps1 -Tag v0.2.0 -HostPort 5808
+.\scripts\docker-run.ps1 -Tag 0.24.0 -HostPort 5808
 ```
+
+Image tags are the release number **without** a leading `v` (`0.24.0`, not `v0.24.0`), unlike the binary installers' version pins, which take the release tag (`v0.24.0`).
 
 What it does:
 1. Resolves the OS-correct data directory (`$XDG_CONFIG_HOME` else `~/.config/nexwiki/nexwiki-data` on Linux, `~/.config/...` on macOS, `%AppData%/nexwiki/nexwiki-data` under Git Bash).

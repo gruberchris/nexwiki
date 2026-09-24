@@ -16,7 +16,7 @@
 #      mounted at /app/data.
 #
 # Overrides:
-#   IMAGE=ghcr.io/titusai-io/nexwiki TAG=v0.2.0 CONTAINER_NAME=nexwiki HOST_PORT=5808 ./scripts/docker-run.sh
+#   IMAGE=ghcr.io/titusai-io/nexwiki TAG=0.24.0 CONTAINER_NAME=nexwiki HOST_PORT=5808 ./scripts/docker-run.sh
 #
 
 set -euo pipefail

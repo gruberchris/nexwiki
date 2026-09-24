@@ -26,7 +26,7 @@
 .EXAMPLE
   .\scripts\docker-run.ps1
 .EXAMPLE
-  .\scripts\docker-run.ps1 -Tag v0.2.0 -HostPort 5808
+  .\scripts\docker-run.ps1 -Tag 0.24.0 -HostPort 5808
 #>
 param(
   [string]$Image = $env:NEXWIKI_IMAGE,
