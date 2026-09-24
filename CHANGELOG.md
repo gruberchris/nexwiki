@@ -8,7 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 - **NexWiki moved to the `titusai-io` organization**: the repository is now `titusai-io/nexwiki`, maintained by Titus AI LLC, and stays MIT-licensed. GitHub redirects the old `gruberchris/nexwiki` URLs, git remotes and release downloads, so existing install commands keep working.
-- **BREAKING: the container image moved to `ghcr.io/titusai-io/nexwiki`**: releases after 0.24.0 publish there. `ghcr.io/gruberchris/nexwiki` is not redirected and stays at 0.24.0, so update any `docker pull`, Compose file or `IMAGE` override that names it. The Docker runner scripts and guides use the new image.
+- **BREAKING: the container image moved to `ghcr.io/titusai-io/nexwiki`**: 0.24.0 was republished there, and every later release publishes there. `ghcr.io/gruberchris/nexwiki` is not redirected and stays at 0.24.0, so update any `docker pull`, Compose file or `IMAGE` override that names it. Earlier versions remain only at the old path. The Docker runner scripts and guides use the new image.
+
+### Fixed
+- The Docker runner examples pinned `TAG=v0.2.0` (`-Tag v0.2.0` in PowerShell), which never matched an image: image tags carry no leading `v`, and no 0.2.0 image was ever published. They now pin `0.24.0`, and the install guide explains the difference from the binary installers' `v`-prefixed pins.
 - **Contributions now require a Contributor License Agreement**: every contributor signs [`CLA.md`](CLA.md) once, through the CLA bot on their first pull request, in addition to the existing DCO sign-off. `CONTRIBUTING.md` now states what is in and out of NexWiki's scope.
 
 ## [0.24.0] — 2026-09-22
