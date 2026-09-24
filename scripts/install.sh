@@ -9,7 +9,7 @@
 #   - Linux/macOS: ~/.local/bin (or ~/bin if already in PATH)
 #
 # The script always installs the latest GitHub release of
-# gruberchris/nexwiki — never an unreleased main-branch build. Override with:
+# titusai-io/nexwiki — never an unreleased main-branch build. Override with:
 #   NEXWIKI_VERSION=v0.2.0 ./scripts/install.sh
 #
 # Windows users: run scripts/install.ps1 in PowerShell instead.
@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-REPO="gruberchris/nexwiki"
+REPO="titusai-io/nexwiki"
 BIN_NAME="nexwiki"
 
 # Detect OS

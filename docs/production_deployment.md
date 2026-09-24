@@ -203,7 +203,7 @@ services:
       - nexwiki
 
   nexwiki:
-    image: ghcr.io/gruberchris/nexwiki:latest
+    image: ghcr.io/titusai-io/nexwiki:latest
     container_name: nexwiki-app
     restart: always
     environment:

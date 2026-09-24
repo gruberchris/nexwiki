@@ -1,6 +1,6 @@
 # NexWiki Install Scripts Guide 🚀
 
-NexWiki ships installer scripts under [`scripts/`](../scripts/) that always fetch the **latest GitHub release** — never an unreleased main-branch build. Release binaries are built by the `release.yml` workflow on every `v*` tag (`nexwiki-<version>-{linux-amd64,linux-arm64,darwin-arm64,windows-amd64.exe}` plus `SHA256SUMS.txt`), and the Docker image is published to `ghcr.io/gruberchris/nexwiki` (`:latest` plus version tags).
+NexWiki ships installer scripts under [`scripts/`](../scripts/) that always fetch the **latest GitHub release** — never an unreleased main-branch build. Release binaries are built by the `release.yml` workflow on every `v*` tag (`nexwiki-<version>-{linux-amd64,linux-arm64,darwin-arm64,windows-amd64.exe}` plus `SHA256SUMS.txt`), and the Docker image is published to `ghcr.io/titusai-io/nexwiki` (`:latest` plus version tags).
 
 > **Intel Macs are not supported**: the release pipeline publishes no `darwin-amd64` binary. Use `docker-run.sh` or build from source instead.
 
@@ -47,16 +47,16 @@ Uninstallers remove **the binary only** — your wiki content (`~/.config/nexwik
 
 ```bash
 # One-line run without cloning
-curl -fsSL https://raw.githubusercontent.com/gruberchris/nexwiki/main/scripts/docker-run.sh | bash
+curl -fsSL https://raw.githubusercontent.com/titusai-io/nexwiki/main/scripts/docker-run.sh | bash
 
 # From a cloned repository
 ./scripts/docker-run.sh
-IMAGE=ghcr.io/gruberchris/nexwiki TAG=v0.2.0 CONTAINER_NAME=nexwiki HOST_PORT=5808 ./scripts/docker-run.sh
+IMAGE=ghcr.io/titusai-io/nexwiki TAG=v0.2.0 CONTAINER_NAME=nexwiki HOST_PORT=5808 ./scripts/docker-run.sh
 ```
 
 ```powershell
 # One-line run without cloning
-irm https://raw.githubusercontent.com/gruberchris/nexwiki/main/scripts/docker-run.ps1 | iex
+irm https://raw.githubusercontent.com/titusai-io/nexwiki/main/scripts/docker-run.ps1 | iex
 
 # From a cloned repository
 .\scripts\docker-run.ps1
@@ -65,7 +65,7 @@ irm https://raw.githubusercontent.com/gruberchris/nexwiki/main/scripts/docker-ru
 
 What it does:
 1. Resolves the OS-correct data directory (`$XDG_CONFIG_HOME` else `~/.config/nexwiki/nexwiki-data` on Linux, `~/.config/...` on macOS, `%AppData%/nexwiki/nexwiki-data` under Git Bash).
-2. `docker pull`s the latest **released** image (`ghcr.io/gruberchris/nexwiki:latest`).
+2. `docker pull`s the latest **released** image (`ghcr.io/titusai-io/nexwiki:latest`).
 3. Recreates the `nexwiki` container with `-p 5808:5808`, the data dir mounted at `/app/data`, and `--restart unless-stopped`.
 
 ## Opening the browser on startup

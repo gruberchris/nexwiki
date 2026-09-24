@@ -3,7 +3,7 @@
   Installs the latest released nexwiki binary on Windows.
 
 .DESCRIPTION
-  Downloads the latest gruberchris/nexwiki GitHub release asset
+  Downloads the latest titusai-io/nexwiki GitHub release asset
   (nexwiki-<version>-windows-amd64.exe, never an unreleased main-branch
   build) and installs it as nexwiki.exe. Your wiki content lives in
   %AppData%\nexwiki\nexwiki-data and is created on first launch.
@@ -25,7 +25,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Repo = "gruberchris/nexwiki"
+$Repo = "titusai-io/nexwiki"
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
   Write-Host "==> Fetching latest release tag..."

@@ -6,7 +6,7 @@ NexWiki publishes official, ready-to-run multi-platform Docker container images 
 
 ## 📦 Container Registry & Architecture
 
-* **Image Repository**: [`ghcr.io/gruberchris/nexwiki`](https://github.com/gruberchris/nexwiki/pkgs/container/nexwiki)
+* **Image Repository**: [`ghcr.io/titusai-io/nexwiki`](https://github.com/titusai-io/nexwiki/pkgs/container/nexwiki)
 * **Supported Architectures**:
   * `linux/amd64` (Standard x86_64 servers and PCs)
   * `linux/arm64` (ARM64 servers, Raspberry Pi 4/5, and native Apple Silicon M-series via Docker Desktop)
@@ -29,7 +29,7 @@ docker run -d \
   -p 5808:5808 \
   -v "$(pwd)/wiki-data:/app/data" \
   --restart unless-stopped \
-  ghcr.io/gruberchris/nexwiki:latest
+  ghcr.io/titusai-io/nexwiki:latest
 ```
 
 Open your browser to `http://localhost:5808` to view the initial seeded homepage.
@@ -52,7 +52,7 @@ docker run -d \
   -e NEXWIKI_PLAN_ARCHIVE_AFTER_DAYS="60" \
   -e NEXWIKI_SECRET_SCAN="refuse" \
   --restart unless-stopped \
-  ghcr.io/gruberchris/nexwiki:latest \
+  ghcr.io/titusai-io/nexwiki:latest \
   -port=9090
 ```
 
@@ -71,7 +71,7 @@ version: "3.8"
 
 services:
   nexwiki:
-    image: ghcr.io/gruberchris/nexwiki:latest
+    image: ghcr.io/titusai-io/nexwiki:latest
     container_name: nexwiki
     restart: unless-stopped
     ports:
@@ -169,7 +169,7 @@ ENTRYPOINT ["/app/nexwiki", "-port=5808", "-data=/app/data"]
 ```
 Any command arguments passed after the image name in `docker run` are appended to the entrypoint invocation. For example:
 ```bash
-docker run -d -p 5808:5808 -v $(pwd)/data:/app/data ghcr.io/gruberchris/nexwiki:latest -theme="midnight"
+docker run -d -p 5808:5808 -v $(pwd)/data:/app/data ghcr.io/titusai-io/nexwiki:latest -theme="midnight"
 ```
 Because trailing CLI flags take effect during argument parsing, you can customize or override flags directly.
 
@@ -211,7 +211,7 @@ For users who prefer running NexWiki in Docker without writing compose files man
 
 These scripts automatically:
 1. Detect your host operating system and resolve the standard user data directory (`~/.config/nexwiki/nexwiki-data` or `%AppData%\nexwiki\nexwiki-data`).
-2. Pull the latest release image (`ghcr.io/gruberchris/nexwiki:latest`).
+2. Pull the latest release image (`ghcr.io/titusai-io/nexwiki:latest`).
 3. Gracefully stop and remove any existing `nexwiki` container.
 4. Launch a new container with volume mapping and port configuration.
 

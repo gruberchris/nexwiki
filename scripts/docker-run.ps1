@@ -6,13 +6,13 @@
   Windows counterpart to scripts/docker-run.sh:
   1. Resolves the wiki data directory (%AppData%\nexwiki\nexwiki-data,
      matching the binary's defaultDataDir).
-  2. Pulls the latest RELEASED image (ghcr.io/gruberchris/nexwiki:latest) —
+  2. Pulls the latest RELEASED image (ghcr.io/titusai-io/nexwiki:latest) —
      never a local unreleased build.
   3. Recreates the 'nexwiki' container with -p 5808:5808 and the data dir
      mounted at /app/data.
 
 .PARAMETER Image
-  Container image. Defaults to ghcr.io/gruberchris/nexwiki.
+  Container image. Defaults to ghcr.io/titusai-io/nexwiki.
 
 .PARAMETER Tag
   Image tag. Defaults to latest (always the latest release).
@@ -37,7 +37,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if ([string]::IsNullOrWhiteSpace($Image)) { $Image = "ghcr.io/gruberchris/nexwiki" }
+if ([string]::IsNullOrWhiteSpace($Image)) { $Image = "ghcr.io/titusai-io/nexwiki" }
 if ([string]::IsNullOrWhiteSpace($Tag)) { $Tag = "latest" }
 if ([string]::IsNullOrWhiteSpace($ContainerName)) { $ContainerName = "nexwiki" }
 if ([string]::IsNullOrWhiteSpace($HostPort)) { $HostPort = "5808" }
