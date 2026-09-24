@@ -5,6 +5,7 @@ First off, thank you for considering contributing to NexWiki! It's people like y
 ## Table of Contents
 
 - [Code of Conduct](#code-of-conduct)
+- [What NexWiki Is (and Isn't)](#what-nexwiki-is-and-isnt)
 - [How Can I Contribute?](#how-can-i-contribute)
   - [Reporting Bugs](#reporting-bugs)
   - [Suggesting Enhancements](#suggesting-enhancements)
@@ -14,11 +15,26 @@ First off, thank you for considering contributing to NexWiki! It's people like y
 - [Documentation Rules](#documentation-rules)
 - [Commit Messages](#commit-messages)
 - [Developer Certificate of Origin (DCO)](#developer-certificate-of-origin-dco)
+- [Contributor License Agreement (CLA)](#contributor-license-agreement-cla)
 - [Running Tests](#running-tests)
 
 ## Code of Conduct
 
 This project and everyone participating in it is governed by our community standards. Please be respectful, constructive, and inclusive in all interactions.
+
+## What NexWiki Is (and Isn't)
+
+NexWiki is a stable, MIT-licensed project maintained by Titus AI LLC. It is a **single-user, local** knowledge base: Markdown files on disk, a full-text search index, a web UI, and an MCP server for AI agents.
+
+Contributions that make that better are welcome: bug fixes, performance and security improvements, documentation, MCP improvements, and new features that fit a single person's wiki.
+
+These are **out of scope**, and pull requests adding them will be declined:
+
+- User accounts, multi-user sharing, or per-user permissions
+- Replacing the Markdown files with a database backend
+- Hosted or multi-tenant features
+
+Not sure whether an idea fits? Open a [Feature Request](#suggesting-enhancements) before writing the code.
 
 ## How Can I Contribute?
 
@@ -26,7 +42,7 @@ This project and everyone participating in it is governed by our community stand
 
 Before submitting a bug report, please check existing issues to avoid duplicates.
 
-1. Navigate to the [Issues](https://github.com/gruberchris/nexwiki/issues) page
+1. Navigate to the [Issues](https://github.com/titusai-io/nexwiki/issues) page
 2. Click **New Issue** and select the **Bug Report** template
 3. Fill in the template with as much detail as possible, including:
    - Steps to reproduce
@@ -38,7 +54,7 @@ Before submitting a bug report, please check existing issues to avoid duplicates
 
 Feature requests help shape the future of NexWiki.
 
-1. Navigate to the [Issues](https://github.com/gruberchris/nexwiki/issues) page
+1. Navigate to the [Issues](https://github.com/titusai-io/nexwiki/issues) page
 2. Click **New Issue** and select the **Feature Request** template
 3. Describe the problem you're solving, your proposed solution, and any alternatives you've considered
 
@@ -53,6 +69,7 @@ Feature requests help shape the future of NexWiki.
 4. Run the tests to ensure nothing is broken
 5. Push your branch and open a Pull Request against `main`
 6. Fill in the PR description with a clear summary of your changes
+7. On your first Pull Request, sign the [CLA](#contributor-license-agreement-cla) when the CLA bot asks
 
 ## Development Setup
 
@@ -186,6 +203,12 @@ git commit --amend --no-edit -s
 # Or sign off multiple commits in an interactive rebase
 git rebase --signoff origin/main
 ```
+
+## Contributor License Agreement (CLA)
+
+In addition to the DCO sign-off, every contributor signs NexWiki's [Contributor License Agreement](./CLA.md) once, before their first pull request is merged. The CLA bot comments on your first pull request with a link to sign.
+
+The two cover different things. The DCO confirms each commit is yours to submit. The CLA covers licensing: **you keep the copyright in your work**, and you grant Titus AI LLC a license to use it, including in its other products. If you are contributing on behalf of a company, contact <licensing@titusai.io> for the corporate CLA.
 
 ## Running Tests
 

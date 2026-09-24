@@ -111,7 +111,7 @@ A comprehensive guide to clipboard interoperability and formatting fidelity acro
 ### 15. [NexWiki Install Scripts Guide](./install_scripts_guide.md)
 How to install the latest release without building from source:
 * **Binary Installers**: `scripts/install.sh` (macOS/Linux) and `scripts/install.ps1` (Windows) with SHA256 verification, plus `uninstall` companions that leave wiki data in place.
-* **Docker Runner**: `scripts/docker-run.sh` (macOS/Linux) / `scripts/docker-run.ps1` (Windows) pulls `ghcr.io/gruberchris/nexwiki:latest` and mounts the OS-correct data directory.
+* **Docker Runner**: `scripts/docker-run.sh` (macOS/Linux) / `scripts/docker-run.ps1` (Windows) pulls `ghcr.io/titusai-io/nexwiki:latest` and mounts the OS-correct data directory.
 * **Browser Launch**: The `-launch-in-browser` flag that opens the wiki once the server answers.
 
 ### 16. [NexWiki Configuration Guide](./configuration.md)
@@ -123,7 +123,7 @@ A complete reference manual for command-line flags and environment variables:
 
 ### 17. [NexWiki Docker Deployment Guide](./docker_deployment.md)
 A guide to running NexWiki in containers using official multi-platform images:
-* **Multi-Platform GHCR Images**: Pulling and running `ghcr.io/gruberchris/nexwiki:latest` on `linux/amd64` and `linux/arm64`.
+* **Multi-Platform GHCR Images**: Pulling and running `ghcr.io/titusai-io/nexwiki:latest` on `linux/amd64` and `linux/arm64`.
 * **Container Run Commands**: Minimal and advanced `docker run` invocations with port mapping and environment variables.
 * **Production Docker Compose**: Production-ready `docker-compose.yml` configuration with persistent volumes.
 * **Volume Persistence**: Understanding `/app/data` structure (`articles/`, `assets/`, `history/`, `search.bleve/`, `activity.jsonl`, `custom_themes.json`) and graceful shutdown handling.

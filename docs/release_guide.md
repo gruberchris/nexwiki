@@ -165,8 +165,8 @@ flowchart TD
    * `SHA256SUMS.txt` (cryptographic verification file)
    * Auto-generated release notes listing merged PRs and committers
 2. **Container Registry**:
-   * `ghcr.io/gruberchris/nexwiki:0.17.0`
-   * `ghcr.io/gruberchris/nexwiki:latest`
+   * `ghcr.io/titusai-io/nexwiki:0.17.0`
+   * `ghcr.io/titusai-io/nexwiki:latest`
 
 ### Embedded Version Injection:
 Every binary is compiled with linker flags:
@@ -189,7 +189,7 @@ gh run watch
 gh release view v0.17.0
 
 # 3. Pull and verify the container image
-docker pull ghcr.io/gruberchris/nexwiki:0.17.0
+docker pull ghcr.io/titusai-io/nexwiki:0.17.0
 
 # 4. Verify version reported by running server
 curl -s http://localhost:5808/api/config | jq .version
@@ -204,7 +204,7 @@ In production environments, never point containers to `:latest`. Always pin expl
 ```yaml
 services:
   nexwiki:
-    image: ghcr.io/gruberchris/nexwiki:0.17.0
+    image: ghcr.io/titusai-io/nexwiki:0.17.0
 ```
 
 ### Handling Storage Migrations

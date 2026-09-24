@@ -40,7 +40,7 @@ To build and develop NexWiki locally, ensure you have the following installed:
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/gruberchris/nexwiki.git
+git clone https://github.com/titusai-io/nexwiki.git
 cd nexwiki
 ```
 

@@ -38,28 +38,28 @@ Installs the pre-compiled, SHA256-verified standalone binary for your OS and arc
 
 - **macOS / Linux**:
   ```bash
-  curl -fsSL https://raw.githubusercontent.com/gruberchris/nexwiki/main/scripts/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/titusai-io/nexwiki/main/scripts/install.sh | bash
   ```
   *(or run `./scripts/install.sh` from a cloned repo)*
 
 - **Windows (PowerShell)**:
   ```powershell
-  irm https://raw.githubusercontent.com/gruberchris/nexwiki/main/scripts/install.ps1 | iex
+  irm https://raw.githubusercontent.com/titusai-io/nexwiki/main/scripts/install.ps1 | iex
   ```
   *(or run `.\scripts\install.ps1` from a cloned repo)*
 
 #### Docker Container Runner (Alternative)
-Pulls the latest multi-arch image (`ghcr.io/gruberchris/nexwiki:latest`) and automatically mounts your OS data directory:
+Pulls the latest multi-arch image (`ghcr.io/titusai-io/nexwiki:latest`) and automatically mounts your OS data directory:
 
 - **macOS / Linux**:
   ```bash
-  curl -fsSL https://raw.githubusercontent.com/gruberchris/nexwiki/main/scripts/docker-run.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/titusai-io/nexwiki/main/scripts/docker-run.sh | bash
   ```
   *(or run `./scripts/docker-run.sh` from a cloned repo)*
 
 - **Windows (PowerShell)**:
   ```powershell
-  irm https://raw.githubusercontent.com/gruberchris/nexwiki/main/scripts/docker-run.ps1 | iex
+  irm https://raw.githubusercontent.com/titusai-io/nexwiki/main/scripts/docker-run.ps1 | iex
   ```
   *(or run `.\scripts\docker-run.ps1` from a cloned repo)*
 
@@ -154,3 +154,9 @@ Explore in-depth technical manuals, architectural specifications, and workflow g
 - [Developer Setup & Build Automation Guide](docs/developer_guide.md) — Local development, Vite hot-reloading, and cross-compilation.
 - [Release Engineering & Versioning Guide](docs/release_guide.md) — CI quality gates, tag automation, and semantic versioning.
 - [History Redaction & Audit Guide](docs/history_redaction_guide.md) — Purging old revisions, auditing every revision for a term, and fixing a document's type in place.
+
+---
+
+## 📄 License & Contributing
+
+NexWiki is released under the [MIT License](LICENSE) and maintained by [Titus AI LLC](https://github.com/titusai-io). Contributions are welcome: read [CONTRIBUTING.md](CONTRIBUTING.md) for what fits NexWiki's scope, and sign the [Contributor License Agreement](CLA.md) with your first pull request.

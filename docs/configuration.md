@@ -181,7 +181,7 @@ docker run -d \
   -p 5808:5808 \
   -v /var/data/nexwiki:/app/data \
   --name nexwiki \
-  ghcr.io/gruberchris/nexwiki:latest
+  ghcr.io/titusai-io/nexwiki:latest
 ```
 
 ### Example 5: Windows PowerShell Launch

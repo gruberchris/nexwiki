@@ -8,7 +8,7 @@ NexWiki is designed for **a single user on a trusted machine or private network*
 
 > ⚠️ **Do not expose NexWiki directly to the public internet.** The reverse-proxy examples in the [README](./README.md#3-setting-up-ssl--reverse-proxy-caddy--nginx) terminate TLS; they do **not** add access control. If you need NexWiki reachable from outside your network, put it behind something that authenticates — a VPN (Tailscale, WireGuard), an identity-aware proxy, or your reverse proxy's own auth (e.g. Caddy `basic_auth`, `oauth2-proxy`).
 
-Multi-user support with accounts and per-user permissions is planned as a separate, explicitly enterprise-oriented variant. It does not exist today.
+Multi-user support with accounts and per-user permissions is out of scope for NexWiki (see [What NexWiki Is (and Isn't)](./CONTRIBUTING.md#what-nexwiki-is-and-isnt)).
 
 ## Request Host validation
 
@@ -84,10 +84,10 @@ Self-reported names are length-capped and stripped of control characters before 
 
 Please report security issues **privately** — do not open a public issue.
 
-Use [GitHub's private vulnerability reporting](https://github.com/gruberchris/nexwiki/security/advisories/new) for this repository.
+Use [GitHub's private vulnerability reporting](https://github.com/titusai-io/nexwiki/security/advisories/new) for this repository.
 
 Include: what you found, how to reproduce it, and the impact you believe it has. You can expect an initial response within about a week. Once a fix is available, you will be credited in the advisory unless you prefer otherwise.
 
 ## Supported versions
 
-NexWiki is pre-1.0 and under active development. Fixes land on `main` and ship in the next release; older releases are not patched.
+NexWiki is pre-1.0 and maintained by Titus AI LLC. Security and bug fixes land on `main` and ship in the next release; older releases are not patched.

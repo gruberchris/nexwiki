@@ -10,18 +10,18 @@
 #        Linux:   $XDG_CONFIG_HOME/nexwiki/nexwiki-data (or ~/.config/...)
 #        macOS:   ~/.config/nexwiki/nexwiki-data
 #        Windows (Git Bash): %AppData%/nexwiki/nexwiki-data
-#   2. Pulls the latest RELEASED image (ghcr.io/gruberchris/nexwiki:latest) —
+#   2. Pulls the latest RELEASED image (ghcr.io/titusai-io/nexwiki:latest) —
 #      never a local unreleased build.
 #   3. Recreates the 'nexwiki' container with -p 5808:5808 and the data dir
 #      mounted at /app/data.
 #
 # Overrides:
-#   IMAGE=ghcr.io/gruberchris/nexwiki TAG=v0.2.0 CONTAINER_NAME=nexwiki HOST_PORT=5808 ./scripts/docker-run.sh
+#   IMAGE=ghcr.io/titusai-io/nexwiki TAG=v0.2.0 CONTAINER_NAME=nexwiki HOST_PORT=5808 ./scripts/docker-run.sh
 #
 
 set -euo pipefail
 
-IMAGE="${IMAGE:-ghcr.io/gruberchris/nexwiki}"
+IMAGE="${IMAGE:-ghcr.io/titusai-io/nexwiki}"
 TAG="${TAG:-latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-nexwiki}"
 HOST_PORT="${HOST_PORT:-5808}"

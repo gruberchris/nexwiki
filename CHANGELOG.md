@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+- **NexWiki moved to the `titusai-io` organization**: the repository is now `titusai-io/nexwiki`, maintained by Titus AI LLC, and stays MIT-licensed. GitHub redirects the old `gruberchris/nexwiki` URLs, git remotes and release downloads, so existing install commands keep working.
+- **BREAKING: the container image moved to `ghcr.io/titusai-io/nexwiki`**: releases after 0.24.0 publish there. `ghcr.io/gruberchris/nexwiki` is not redirected and stays at 0.24.0, so update any `docker pull`, Compose file or `IMAGE` override that names it. The Docker runner scripts and guides use the new image.
+- **Contributions now require a Contributor License Agreement**: every contributor signs [`CLA.md`](CLA.md) once, through the CLA bot on their first pull request, in addition to the existing DCO sign-off. `CONTRIBUTING.md` now states what is in and out of NexWiki's scope.
+
 ## [0.24.0] — 2026-09-22
 
 ### Added
@@ -657,7 +662,7 @@ Completes the memory-enforcement work begun in 0.14.0. That release moved three 
 ## [0.5.2] — 2026-08-08
 
 ### Fixed
-- Enhanced CORS handling, added a mutex for concurrent writes, and tightened security ([#17](https://github.com/gruberchris/nexwiki/pull/17)). In detail:
+- Enhanced CORS handling, added a mutex for concurrent writes, and tightened security ([#17](https://github.com/titusai-io/nexwiki/pull/17)). In detail:
   - **Wildcard CORS on every route.** With no authentication, any website you visited could read and delete your entire wiki over `localhost`. Origins are now validated against an allow-list (`NEXWIKI_ALLOWED_ORIGINS`).
   - **Stored XSS** in the search-snippet fallback path, which emitted unescaped article content into a `dangerouslySetInnerHTML` sink.
   - **Lost revisions under concurrent writes.** `SaveArticle` assigned version numbers without a lock; a measured test lost 8 of 13 revisions with 12 concurrent writers.
@@ -719,38 +724,38 @@ Completes the memory-enforcement work begun in 0.14.0. That release moved three 
 ### Added
 - CI/CD pipeline.
 
-[Unreleased]: https://github.com/gruberchris/nexwiki/compare/v0.24.0...HEAD
-[0.24.0]: https://github.com/gruberchris/nexwiki/compare/v0.23.0...v0.24.0
-[0.23.0]: https://github.com/gruberchris/nexwiki/compare/v0.22.0...v0.23.0
-[0.22.0]: https://github.com/gruberchris/nexwiki/compare/v0.21.0...v0.22.0
-[0.21.0]: https://github.com/gruberchris/nexwiki/compare/v0.20.0...v0.21.0
-[0.20.0]: https://github.com/gruberchris/nexwiki/compare/v0.19.0...v0.20.0
-[0.19.0]: https://github.com/gruberchris/nexwiki/compare/v0.18.0...v0.19.0
-[0.18.0]: https://github.com/gruberchris/nexwiki/compare/v0.17.1...v0.18.0
-[0.17.1]: https://github.com/gruberchris/nexwiki/compare/v0.17.0...v0.17.1
-[0.17.0]: https://github.com/gruberchris/nexwiki/compare/v0.16.0...v0.17.0
-[0.16.0]: https://github.com/gruberchris/nexwiki/compare/v0.15.1...v0.16.0
-[0.15.1]: https://github.com/gruberchris/nexwiki/compare/v0.15.0...v0.15.1
-[0.15.0]: https://github.com/gruberchris/nexwiki/compare/v0.14.0...v0.15.0
-[0.14.0]: https://github.com/gruberchris/nexwiki/compare/v0.13.0...v0.14.0
-[0.13.0]: https://github.com/gruberchris/nexwiki/compare/v0.12.3...v0.13.0
-[0.12.3]: https://github.com/gruberchris/nexwiki/compare/v0.12.2...v0.12.3
-[0.12.2]: https://github.com/gruberchris/nexwiki/compare/v0.12.1...v0.12.2
-[0.12.1]: https://github.com/gruberchris/nexwiki/compare/v0.12.0...v0.12.1
-[0.12.0]: https://github.com/gruberchris/nexwiki/compare/v0.11.1...v0.12.0
-[0.11.1]: https://github.com/gruberchris/nexwiki/compare/v0.11.0...v0.11.1
-[0.11.0]: https://github.com/gruberchris/nexwiki/compare/v0.10.0...v0.11.0
-[0.10.0]: https://github.com/gruberchris/nexwiki/compare/v0.9.0...v0.10.0
-[0.9.0]: https://github.com/gruberchris/nexwiki/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/gruberchris/nexwiki/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/gruberchris/nexwiki/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/gruberchris/nexwiki/compare/v0.5.2...v0.6.0
-[0.5.2]: https://github.com/gruberchris/nexwiki/compare/v0.5.1...v0.5.2
-[0.5.1]: https://github.com/gruberchris/nexwiki/compare/v0.5.0...v0.5.1
-[0.5.0]: https://github.com/gruberchris/nexwiki/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/gruberchris/nexwiki/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/gruberchris/nexwiki/compare/v0.2.5...v0.3.0
-[0.2.5]: https://github.com/gruberchris/nexwiki/compare/v0.2.3...v0.2.5
-[0.2.3]: https://github.com/gruberchris/nexwiki/compare/v0.2.1...v0.2.3
-[0.2.1]: https://github.com/gruberchris/nexwiki/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/gruberchris/nexwiki/releases/tag/v0.2.0
+[Unreleased]: https://github.com/titusai-io/nexwiki/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/titusai-io/nexwiki/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/titusai-io/nexwiki/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/titusai-io/nexwiki/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/titusai-io/nexwiki/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/titusai-io/nexwiki/compare/v0.19.0...v0.20.0
+[0.19.0]: https://github.com/titusai-io/nexwiki/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/titusai-io/nexwiki/compare/v0.17.1...v0.18.0
+[0.17.1]: https://github.com/titusai-io/nexwiki/compare/v0.17.0...v0.17.1
+[0.17.0]: https://github.com/titusai-io/nexwiki/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/titusai-io/nexwiki/compare/v0.15.1...v0.16.0
+[0.15.1]: https://github.com/titusai-io/nexwiki/compare/v0.15.0...v0.15.1
+[0.15.0]: https://github.com/titusai-io/nexwiki/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/titusai-io/nexwiki/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/titusai-io/nexwiki/compare/v0.12.3...v0.13.0
+[0.12.3]: https://github.com/titusai-io/nexwiki/compare/v0.12.2...v0.12.3
+[0.12.2]: https://github.com/titusai-io/nexwiki/compare/v0.12.1...v0.12.2
+[0.12.1]: https://github.com/titusai-io/nexwiki/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/titusai-io/nexwiki/compare/v0.11.1...v0.12.0
+[0.11.1]: https://github.com/titusai-io/nexwiki/compare/v0.11.0...v0.11.1
+[0.11.0]: https://github.com/titusai-io/nexwiki/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/titusai-io/nexwiki/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/titusai-io/nexwiki/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/titusai-io/nexwiki/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/titusai-io/nexwiki/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/titusai-io/nexwiki/compare/v0.5.2...v0.6.0
+[0.5.2]: https://github.com/titusai-io/nexwiki/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/titusai-io/nexwiki/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/titusai-io/nexwiki/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/titusai-io/nexwiki/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/titusai-io/nexwiki/compare/v0.2.5...v0.3.0
+[0.2.5]: https://github.com/titusai-io/nexwiki/compare/v0.2.3...v0.2.5
+[0.2.3]: https://github.com/titusai-io/nexwiki/compare/v0.2.1...v0.2.3
+[0.2.1]: https://github.com/titusai-io/nexwiki/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/titusai-io/nexwiki/releases/tag/v0.2.0
